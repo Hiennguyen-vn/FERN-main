@@ -9,6 +9,7 @@ import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
@@ -19,6 +20,7 @@ import java.util.Optional;
 import java.util.Set;
 import javax.sql.DataSource;
 import org.springframework.stereotype.Repository;
+import org.postgresql.util.PSQLException;
 
 @Repository
 public class ProductRepository extends BaseRepository {
@@ -120,9 +122,12 @@ public class ProductRepository extends BaseRepository {
         ps.setTimestamp(10, Timestamp.from(now));
         ps.setTimestamp(11, Timestamp.from(now));
         ps.executeUpdate();
-      } catch (java.sql.SQLException e) {
+      } catch (SQLException e) {
         if ("23505".equals(e.getSQLState())) {
           throw ServiceException.conflict("Product code already exists");
+        }
+        if ("23503".equals(e.getSQLState())) {
+          throw invalidProductReference(request, e);
         }
         throw e;
       }
@@ -205,9 +210,12 @@ public class ProductRepository extends BaseRepository {
         ps.setTimestamp(9, Timestamp.from(now));
         ps.setTimestamp(10, Timestamp.from(now));
         ps.executeUpdate();
-      } catch (java.sql.SQLException e) {
+      } catch (SQLException e) {
         if ("23505".equals(e.getSQLState())) {
           throw ServiceException.conflict("Item code already exists");
+        }
+        if ("23503".equals(e.getSQLState())) {
+          throw invalidItemReference(request, e);
         }
         throw e;
       }
@@ -384,57 +392,64 @@ public class ProductRepository extends BaseRepository {
   ) {
     return executeInTransaction(conn -> {
       Instant now = clock.instant();
-      try (PreparedStatement ps = conn.prepareStatement(
-          """
-          INSERT INTO core.recipe (
-            product_id, version, yield_qty, yield_uom_code, status, created_by_user_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?::recipe_status_enum, ?, ?, ?)
-          ON CONFLICT (product_id, version)
-          DO UPDATE SET
-            yield_qty = EXCLUDED.yield_qty,
-            yield_uom_code = EXCLUDED.yield_uom_code,
-            status = EXCLUDED.status,
-            updated_at = EXCLUDED.updated_at
-          """
-      )) {
-        ps.setLong(1, productId);
-        ps.setString(2, request.version().trim());
-        ps.setBigDecimal(3, request.yieldQty());
-        ps.setString(4, request.yieldUomCode().trim());
-        ps.setString(5, normalizeRecipeStatus(request.status()));
-        if (actorUserId == null) {
-          ps.setNull(6, java.sql.Types.BIGINT);
-        } else {
-          ps.setLong(6, actorUserId);
-        }
-        ps.setTimestamp(7, Timestamp.from(now));
-        ps.setTimestamp(8, Timestamp.from(now));
-        ps.executeUpdate();
-      }
-      try (PreparedStatement delete = conn.prepareStatement(
-          "DELETE FROM core.recipe_item WHERE product_id = ? AND version = ?"
-      )) {
-        delete.setLong(1, productId);
-        delete.setString(2, request.version().trim());
-        delete.executeUpdate();
-      }
-      for (ProductDtos.RecipeLineRequest line : request.items()) {
+      try {
         try (PreparedStatement ps = conn.prepareStatement(
             """
-            INSERT INTO core.recipe_item (
-              product_id, version, item_id, uom_code, qty, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO core.recipe (
+              product_id, version, yield_qty, yield_uom_code, status, created_by_user_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?::recipe_status_enum, ?, ?, ?)
+            ON CONFLICT (product_id, version)
+            DO UPDATE SET
+              yield_qty = EXCLUDED.yield_qty,
+              yield_uom_code = EXCLUDED.yield_uom_code,
+              status = EXCLUDED.status,
+              updated_at = EXCLUDED.updated_at
             """
         )) {
           ps.setLong(1, productId);
           ps.setString(2, request.version().trim());
-          ps.setLong(3, line.itemId());
-          ps.setString(4, line.uomCode().trim());
-          ps.setBigDecimal(5, line.qty());
-          ps.setTimestamp(6, Timestamp.from(now));
+          ps.setBigDecimal(3, request.yieldQty());
+          ps.setString(4, request.yieldUomCode().trim());
+          ps.setString(5, normalizeRecipeStatus(request.status()));
+          if (actorUserId == null) {
+            ps.setNull(6, java.sql.Types.BIGINT);
+          } else {
+            ps.setLong(6, actorUserId);
+          }
           ps.setTimestamp(7, Timestamp.from(now));
+          ps.setTimestamp(8, Timestamp.from(now));
           ps.executeUpdate();
         }
+        try (PreparedStatement delete = conn.prepareStatement(
+            "DELETE FROM core.recipe_item WHERE product_id = ? AND version = ?"
+        )) {
+          delete.setLong(1, productId);
+          delete.setString(2, request.version().trim());
+          delete.executeUpdate();
+        }
+        for (ProductDtos.RecipeLineRequest line : request.items()) {
+          try (PreparedStatement ps = conn.prepareStatement(
+              """
+              INSERT INTO core.recipe_item (
+                product_id, version, item_id, uom_code, qty, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?)
+              """
+          )) {
+            ps.setLong(1, productId);
+            ps.setString(2, request.version().trim());
+            ps.setLong(3, line.itemId());
+            ps.setString(4, line.uomCode().trim());
+            ps.setBigDecimal(5, line.qty());
+            ps.setTimestamp(6, Timestamp.from(now));
+            ps.setTimestamp(7, Timestamp.from(now));
+            ps.executeUpdate();
+          }
+        }
+      } catch (SQLException e) {
+        if ("23503".equals(e.getSQLState())) {
+          throw invalidRecipeReference(productId, request, e);
+        }
+        throw e;
       }
       return findRecipeVersionTransactional(conn, productId, request.version().trim())
           .orElseThrow(() -> new IllegalStateException("Saved recipe not found"));
@@ -723,6 +738,63 @@ public class ProductRepository extends BaseRepository {
       return "draft";
     }
     return status.trim();
+  }
+
+  private static ServiceException invalidProductReference(ProductDtos.CreateProductRequest request, SQLException exception) {
+    String constraint = constraintName(exception);
+    if (constraint == null) {
+      return ServiceException.badRequest("Invalid product reference in request");
+    }
+    return switch (constraint) {
+      case "product_category_code_fkey" -> ServiceException.badRequest(
+          "Unknown product category code: " + trimToNull(request.categoryCode())
+      );
+      default -> ServiceException.badRequest("Invalid product reference in request");
+    };
+  }
+
+  private static ServiceException invalidItemReference(ProductDtos.CreateItemRequest request, SQLException exception) {
+    String constraint = constraintName(exception);
+    if (constraint == null) {
+      return ServiceException.badRequest("Invalid item reference in request");
+    }
+    return switch (constraint) {
+      case "item_category_code_fkey" -> ServiceException.badRequest(
+          "Unknown item category code: " + trimToNull(request.categoryCode())
+      );
+      case "item_base_uom_code_fkey" -> ServiceException.badRequest(
+          "Unknown unit of measure code: " + trimToNull(request.baseUomCode())
+      );
+      default -> ServiceException.badRequest("Invalid item reference in request");
+    };
+  }
+
+  private static ServiceException invalidRecipeReference(
+      long productId,
+      ProductDtos.UpsertRecipeRequest request,
+      SQLException exception
+  ) {
+    String constraint = constraintName(exception);
+    if (constraint == null) {
+      return ServiceException.badRequest("Invalid recipe reference in request");
+    }
+    return switch (constraint) {
+      case "recipe_product_id_fkey" -> ServiceException.badRequest("Product not found for recipe: " + productId);
+      case "recipe_yield_uom_code_fkey" -> ServiceException.badRequest(
+          "Unknown recipe yield unit of measure code: " + trimToNull(request.yieldUomCode())
+      );
+      case "recipe_item_item_id_fkey" -> ServiceException.badRequest("One or more recipe items do not exist");
+      case "recipe_item_uom_code_fkey" -> ServiceException.badRequest("One or more recipe line UOM codes are invalid");
+      case "fk_recipe_item_recipe" -> ServiceException.badRequest("Recipe version must exist before adding recipe lines");
+      default -> ServiceException.badRequest("Invalid recipe reference in request");
+    };
+  }
+
+  private static String constraintName(SQLException exception) {
+    if (exception instanceof PSQLException pgException && pgException.getServerErrorMessage() != null) {
+      return pgException.getServerErrorMessage().getConstraint();
+    }
+    return null;
   }
 
   private static String trimToNull(String value) {

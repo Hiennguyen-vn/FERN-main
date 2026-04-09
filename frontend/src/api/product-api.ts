@@ -55,6 +55,8 @@ export interface RecipeLineItemView {
 export interface RecipeView {
   productId?: string | null;
   version?: string | null;
+  yieldQty?: number | null;
+  yieldUomCode?: string | null;
   status?: string | null;
   items?: RecipeLineItemView[];
   [key: string]: unknown;
@@ -116,13 +118,22 @@ export interface UpsertPricePayload {
 }
 
 export interface UpsertRecipePayload {
-  items: Array<{ itemId: string | number; qtyRequired: number; uomCode: string }>;
+  version: string;
+  yieldQty: number;
+  yieldUomCode: string;
+  status?: string | null;
+  items: Array<{ itemId: string | number; qty?: number; qtyRequired?: number; uomCode: string }>;
 }
 
 function toLongValue(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
   return /^\d+$/.test(text) ? Number(text) : null;
+}
+
+function trimToNull(value: unknown): string | null {
+  const text = String(value ?? '').trim();
+  return text ? text : null;
 }
 
 function decodeProduct(value: unknown): ProductView {
@@ -179,7 +190,7 @@ function decodeRecipe(value: unknown): RecipeView {
         return {
           ...itemRecord,
           itemId: asNullableString(itemRecord.itemId),
-          qtyRequired: asNullableNumber(itemRecord.qtyRequired),
+          qtyRequired: asNullableNumber(itemRecord.qtyRequired ?? itemRecord.qty),
           uomCode: asNullableString(itemRecord.uomCode),
         };
       })
@@ -188,6 +199,8 @@ function decodeRecipe(value: unknown): RecipeView {
     ...record,
     productId: asNullableString(record.productId),
     version: asNullableString(record.version),
+    yieldQty: asNullableNumber(record.yieldQty),
+    yieldUomCode: asNullableString(record.yieldUomCode),
     status: asNullableString(record.status),
     items,
   };
@@ -205,7 +218,7 @@ export const productApi = {
       body: {
         code: asString(payload.code).trim(),
         name: asString(payload.name).trim(),
-        categoryCode: payload.categoryCode ?? null,
+        categoryCode: trimToNull(payload.categoryCode),
         imageUrl: payload.imageUrl ?? null,
         description: payload.description ?? null,
       },
@@ -221,8 +234,8 @@ export const productApi = {
       body: {
         code: asString(payload.code).trim(),
         name: asString(payload.name).trim(),
-        categoryCode: payload.categoryCode ?? null,
-        baseUomCode: asString(payload.baseUomCode ?? payload.unitCode ?? 'EA').trim() || 'EA',
+        categoryCode: trimToNull(payload.categoryCode),
+        baseUomCode: asString(payload.baseUomCode ?? payload.unitCode ?? 'kg').trim() || 'kg',
         minStockLevel: payload.minStockLevel ?? null,
         maxStockLevel: payload.maxStockLevel ?? null,
       },
@@ -247,5 +260,19 @@ export const productApi = {
   recipe: async (token: string, productId: string): Promise<RecipeView> =>
     decodeRecipe(await apiRequest(`/api/v1/product/recipes/${productId}`, { token })),
   upsertRecipe: async (token: string, productId: string, payload: UpsertRecipePayload): Promise<unknown> =>
-    apiRequest(`/api/v1/product/recipes/${productId}`, { method: 'PUT', token, body: payload }),
+    apiRequest(`/api/v1/product/recipes/${productId}`, {
+      method: 'PUT',
+      token,
+      body: {
+        version: asString(payload.version).trim(),
+        yieldQty: payload.yieldQty,
+        yieldUomCode: asString(payload.yieldUomCode).trim(),
+        status: trimToNull(payload.status),
+        items: payload.items.map((item) => ({
+          itemId: toLongValue(item.itemId),
+          qty: item.qty ?? item.qtyRequired ?? null,
+          uomCode: asString(item.uomCode).trim(),
+        })),
+      },
+    }),
 };

@@ -98,11 +98,28 @@ export interface PromotionView {
   id: string;
   code?: string | null;
   name?: string | null;
+  promoType?: string | null;
   status?: string | null;
+  valueAmount?: number | null;
+  valuePercent?: number | null;
+  minOrderAmount?: number | null;
+  maxDiscountAmount?: number | null;
   outletIds?: string[];
   effectiveFrom?: string | null;
   effectiveTo?: string | null;
   [key: string]: unknown;
+}
+
+export interface CreatePromotionPayload {
+  name: string;
+  promoType: string;
+  valueAmount?: number | null;
+  valuePercent?: number | null;
+  minOrderAmount?: number | null;
+  maxDiscountAmount?: number | null;
+  effectiveFrom: string;
+  effectiveTo?: string | null;
+  outletIds: number[];
 }
 
 export interface SalesOrdersQuery {
@@ -293,10 +310,15 @@ function decodePromotion(value: unknown): PromotionView {
     id: asId(record.id),
     code: asNullableString(record.code),
     name: asNullableString(record.name),
+    promoType: asNullableString(record.promoType),
     status: asNullableString(record.status),
+    valueAmount: asNullableNumber(record.valueAmount),
+    valuePercent: asNullableNumber(record.valuePercent),
+    minOrderAmount: asNullableNumber(record.minOrderAmount),
+    maxDiscountAmount: asNullableNumber(record.maxDiscountAmount),
     outletIds: Array.isArray(record.outletIds) ? record.outletIds.map((item) => asId(item)) : [],
-    effectiveFrom: asDateOnly(record.effectiveFrom),
-    effectiveTo: asDateOnly(record.effectiveTo),
+    effectiveFrom: asNullableString(record.effectiveFrom),
+    effectiveTo: asNullableString(record.effectiveTo),
   };
 }
 
@@ -334,8 +356,8 @@ export const salesApi = {
     decodeOutletStats(await apiRequest('/api/v1/sales/outlet-stats', { token, query: { outletId, onDate } })),
   promotions: async (token: string, query: PromotionsQuery): Promise<PagedResponse<PromotionView>> =>
     decodePaged(await apiRequest('/api/v1/sales/promotions', { token, query }), decodePromotion),
-  createPromotion: async (token: string, payload: unknown): Promise<unknown> =>
-    apiRequest('/api/v1/sales/promotions', { method: 'POST', token, body: payload }),
+  createPromotion: async (token: string, payload: CreatePromotionPayload): Promise<PromotionView> =>
+    decodePromotion(await apiRequest('/api/v1/sales/promotions', { method: 'POST', token, body: payload })),
   deactivatePromotion: async (token: string, promotionId: string): Promise<unknown> =>
     apiRequest(`/api/v1/sales/promotions/${promotionId}/deactivate`, { method: 'POST', token }),
 };

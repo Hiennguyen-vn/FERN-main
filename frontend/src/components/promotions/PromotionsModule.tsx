@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { salesApi, type PromotionView } from '@/api/fern-api';
+import { salesApi, type CreatePromotionPayload, type PromotionView } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
 import { normalizeNumericId } from '@/constants/pos';
@@ -45,6 +45,15 @@ function toLong(value: unknown): number | null {
   const text = String(value ?? '').trim();
   if (!/^\d+$/.test(text)) return null;
   return Number(text);
+}
+
+function derivePromotionStatus(status: string, effectiveFrom: string, effectiveTo?: string) {
+  const now = Date.now();
+  const start = effectiveFrom ? new Date(effectiveFrom).getTime() : Number.NaN;
+  const end = effectiveTo ? new Date(effectiveTo).getTime() : Number.NaN;
+  if (Number.isFinite(end) && end < now) return 'expired';
+  if (Number.isFinite(start) && start > now) return 'scheduled';
+  return status;
 }
 
 export function PromotionsModule() {
@@ -86,7 +95,7 @@ export function PromotionsModule() {
         id: String(item.id),
         name: String(item.name ?? ''),
         promoType: String(item.promoType ?? 'promotion'),
-        status: String(item.status ?? 'draft'),
+        status: derivePromotionStatus(String(item.status ?? 'draft'), String(item.effectiveFrom ?? ''), item.effectiveTo ? String(item.effectiveTo) : undefined),
         valueAmount: toNumber(item.valueAmount),
         valuePercent: toNumber(item.valuePercent),
         effectiveFrom: String(item.effectiveFrom ?? ''),
@@ -131,12 +140,13 @@ export function PromotionsModule() {
       return;
     }
 
-    const payload: Record<string, unknown> = {
+    const payload: CreatePromotionPayload = {
       name: form.name.trim(),
       promoType: form.promoType,
       valueAmount: form.valueAmount ? toNumber(form.valueAmount) : null,
       valuePercent: form.valuePercent ? toNumber(form.valuePercent) : null,
       minOrderAmount: form.minOrderAmount ? toNumber(form.minOrderAmount) : null,
+      maxDiscountAmount: null,
       effectiveFrom: new Date(form.effectiveFrom).toISOString(),
       effectiveTo: form.effectiveTo ? new Date(form.effectiveTo).toISOString() : null,
       outletIds: (() => {

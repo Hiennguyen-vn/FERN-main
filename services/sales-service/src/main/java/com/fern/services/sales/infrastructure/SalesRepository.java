@@ -1211,6 +1211,7 @@ public class SalesRepository extends BaseRepository {
       long promotionId = snowflakeIdGenerator.generateId();
       Instant now = clock.instant();
       String normalizedPromoType = normalizePromotionType(request.promoType());
+      String initialStatus = resolvePromotionStatusForCreate(request.effectiveFrom(), now);
       try (PreparedStatement ps = conn.prepareStatement(
           """
           INSERT INTO core.promotion (
@@ -1222,7 +1223,7 @@ public class SalesRepository extends BaseRepository {
         ps.setLong(1, promotionId);
         ps.setString(2, request.name().trim());
         ps.setString(3, normalizedPromoType);
-        ps.setString(4, "active");
+        ps.setString(4, initialStatus);
         ps.setBigDecimal(5, request.valueAmount());
         ps.setBigDecimal(6, request.valuePercent());
         ps.setBigDecimal(7, request.minOrderAmount());
@@ -2681,6 +2682,10 @@ public class SalesRepository extends BaseRepository {
       case "subsidy" -> "subsidy";
       default -> throw ServiceException.badRequest("Unsupported promoType: " + promoType);
     };
+  }
+
+  private static String resolvePromotionStatusForCreate(Instant effectiveFrom, Instant now) {
+    return effectiveFrom != null && effectiveFrom.isAfter(now) ? "draft" : "active";
   }
 
   private static String normalizePromotionStatusFilter(String status) {
