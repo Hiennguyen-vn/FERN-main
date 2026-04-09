@@ -6,6 +6,39 @@ describe('inventoryApi', () => {
     vi.unstubAllGlobals();
   });
 
+  it('does not send qty when creating waste records', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 1 }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await inventoryApi.createWaste('token', {
+      outletId: '2001',
+      itemId: '4000',
+      qty: 0.25,
+      quantity: 0.25,
+      businessDate: '2026-04-10',
+      reason: 'Spoilage',
+      note: 'Damaged during storage',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, options] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(options?.body));
+    expect(body).toMatchObject({
+      outletId: '2001',
+      itemId: '4000',
+      quantity: 0.25,
+      businessDate: '2026-04-10',
+      reason: 'Spoilage',
+      note: 'Damaged during storage',
+    });
+    expect(body.qty).toBeUndefined();
+  });
+
   it('does not send businessDate when creating stock count sessions', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ id: 1 }), {

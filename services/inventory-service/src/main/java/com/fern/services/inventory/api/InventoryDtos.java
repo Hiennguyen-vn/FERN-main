@@ -48,6 +48,7 @@ public final class InventoryDtos {
   ) {
   }
 
+  @JsonIgnoreProperties(ignoreUnknown = true)
   public record CreateWasteRequest(
       @NotNull Long outletId,
       @NotNull Long itemId,

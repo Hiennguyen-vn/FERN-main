@@ -209,8 +209,11 @@ export const inventoryApi = {
       method: 'POST',
       token,
       body: {
-        ...payload,
-        qty: payload.qty ?? payload.quantity ?? 0,
+        ...(() => {
+          const { qty: _qty, quantity: _quantity, ...rest } = payload;
+          return rest;
+        })(),
+        quantity: payload.quantity ?? payload.qty ?? 0,
       },
     }),
   createStockCountSession: async (token: string, payload: CreateStockCountSessionPayload): Promise<unknown> =>

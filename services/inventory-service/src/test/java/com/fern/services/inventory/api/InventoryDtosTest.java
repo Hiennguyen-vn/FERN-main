@@ -11,6 +11,29 @@ class InventoryDtosTest {
   private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
   @Test
+  void createWasteRequestIgnoresQtyAliasWhenQuantityIsPresent() throws Exception {
+    InventoryDtos.CreateWasteRequest request = objectMapper.readValue(
+        """
+            {
+              "outletId": 2001,
+              "itemId": 4000,
+              "quantity": 0.25,
+              "qty": 0.25,
+              "businessDate": "2026-04-10",
+              "reason": "Spoilage",
+              "note": "Damaged during storage"
+            }
+            """,
+        InventoryDtos.CreateWasteRequest.class
+    );
+
+    assertEquals(2001L, request.outletId());
+    assertEquals(4000L, request.itemId());
+    assertEquals(LocalDate.parse("2026-04-10"), request.businessDate());
+    assertEquals("Spoilage", request.reason());
+  }
+
+  @Test
   void createStockCountSessionRequestIgnoresBusinessDateWhenCountDateIsPresent() throws Exception {
     InventoryDtos.CreateStockCountSessionRequest request = objectMapper.readValue(
         """
