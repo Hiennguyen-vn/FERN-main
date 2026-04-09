@@ -1,0 +1,31 @@
+# FERN Data Simulator — Medium Preset (5 years)
+simulation:
+  namespace: "SIM-MEDIUM"
+  startDate: "2020-01-01"
+  endDate: "2024-12-31"
+  seed: 42
+  startingRegion: "VN-HCM"
+
+expansion:
+  globalExpansionEnabled: true
+  initialOutlets: 1
+  minActiveOutletsBeforeSubregion: 3
+  minConsecutiveProfitableMonths: 3
+  minAverageMonthlyRevenue: 50000000
+  minStaffRetentionRate: 0.80
+  minInventoryFulfillmentRate: 0.90
+  maxRegionsPerYear: 2
+  maxOutletsPerRegionPerYear: 4
+  expansionOrder:
+    - tier: "local"
+      triggerOutlets: 2
+      triggerMonths: 0
+    - tier: "subregion"
+      triggerOutlets: 5
+      triggerMonths: 6
+    - tier: "country"
+      triggerOutlets: 10
+      triggerMonths: 12
+    - tier: "international"
+      triggerOutlets: 20
+      triggerMonths: 18

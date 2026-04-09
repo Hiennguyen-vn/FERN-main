@@ -1,0 +1,72 @@
+# FERN Data Simulator — Small Preset (1 year)
+simulation:
+  namespace: "SIM-SMALL"
+  startDate: "2024-01-01"
+  endDate: "2024-12-31"
+  seed: 42
+  startingRegion: "VN-HCM"
+
+expansion:
+  globalExpansionEnabled: true
+  initialOutlets: 1
+  minActiveOutletsBeforeSubregion: 2
+  minConsecutiveProfitableMonths: 2
+  minAverageMonthlyRevenue: 30000000
+  minStaffRetentionRate: 0.76
+  minInventoryFulfillmentRate: 0.86
+  maxRegionsPerYear: 2
+  maxOutletsPerRegionPerYear: 5
+  expansionOrder:
+    - tier: "local"
+      triggerOutlets: 2
+      triggerMonths: 0
+    - tier: "subregion"
+      triggerOutlets: 4
+      triggerMonths: 4
+    - tier: "country"
+      triggerOutlets: 8
+      triggerMonths: 8
+    - tier: "international"
+      triggerOutlets: 16
+      triggerMonths: 12
+
+probability:
+  outletOpenChancePerMonth: 0.28
+  outletCloseChancePerMonth: 0.01
+  outletCloseRevenueThresholdPercent: 30
+  outletCloseConsecutiveMonths: 3
+  monthlyTurnoverRate: 0.08
+  replacementLagDays: 14
+  replacementChance: 0.90
+  suspensionChance: 0.03
+  foundingStaffPerOutlet: 3
+  maxStaffPerOutlet: 12
+  hiringChancePerMonth: 0.28
+  baseDailySalesPerOutlet: 92
+  demandRampDays: 90
+  demandGrowthPerMonth: 0.02
+  demandDeclinePerMonth: 0.01
+  weekdayMultipliers:
+    MONDAY: 0.8
+    TUESDAY: 0.85
+    WEDNESDAY: 0.9
+    THURSDAY: 0.95
+    FRIDAY: 1.2
+    SATURDAY: 1.4
+    SUNDAY: 1.1
+  promotionStartChancePerMonth: 0.10
+  promotionDurationDays: [7, 14, 30]
+  promotionDiscountPercent: [5, 10, 15, 20]
+  reorderLeadTimeDays: [2, 3, 5, 7]
+  wasteRateDaily: 0.005
+  payrollCadence: "MONTHLY"
+  payDayOfMonth: 5
+  roleDistribution:
+    cashier: 0.35
+    inventory_clerk: 0.15
+    kitchen_staff: 0.25
+    employee_no_role: 0.25
+  saleCancelChance: 0.03
+  saleRefundChance: 0.02
+  salePartialRefundChance: 0.01
+  saleVoidChance: 0.005

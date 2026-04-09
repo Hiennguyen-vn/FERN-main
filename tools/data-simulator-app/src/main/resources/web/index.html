@@ -1,0 +1,1824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FERN Data Simulator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23246a43'/%3E%3Cpath d='M18 44c10-1 18-9 20-19 6 0 12 4 14 11-8 8-21 12-34 8Z' fill='%23f7f1e4'/%3E%3Cpath d='M26 18c6 2 10 8 10 15-7 0-13-4-16-10 1-2 3-4 6-5Z' fill='%23dcecf5'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+:root{
+  --bg:#061017;--surface:#0b1822;--surface-2:#112432;--line:#1f3949;
+  --ink:#ecf7ff;--muted:#8ea9ba;--soft:#698293;
+  --accent:#2bd2a8;--accent-2:#13947c;--accent-soft:rgba(43,210,168,.12);
+  --warn:#ffb454;--warn-soft:rgba(255,180,84,.12);--danger:#ff6b6b;--danger-soft:rgba(255,107,107,.12);
+  --blue:#5ab8ff;--blue-soft:rgba(90,184,255,.14);--grid:rgba(115,154,176,.16);
+  --shadow:0 28px 60px rgba(0,0,0,.34);--glow:0 0 0 1px rgba(90,184,255,.08),0 0 28px rgba(43,210,168,.08);
+  --radius:18px;
+}
+body{
+  margin:0;
+  position:relative;
+  font-family:"Space Grotesk",system-ui,sans-serif;
+  background:
+  radial-gradient(circle at top left, rgba(43,210,168,.18), transparent 24%),
+  radial-gradient(circle at top right, rgba(90,184,255,.14), transparent 26%),
+  linear-gradient(180deg,#07121a 0%,#050d13 100%);
+  color:var(--ink);
+  min-height:100vh;
+}
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  background:
+    linear-gradient(rgba(115,154,176,.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(115,154,176,.05) 1px, transparent 1px);
+  background-size:32px 32px;
+  mask-image:linear-gradient(180deg, rgba(0,0,0,.7), transparent 90%);
+}
+button,input,select{font:inherit}
+.app{display:grid;grid-template-columns:360px minmax(0,1fr);min-height:100vh;position:relative;z-index:1}
+.sidebar{padding:28px 22px;border-right:1px solid rgba(90,184,255,.14);background:rgba(7,17,25,.84);backdrop-filter:blur(20px);display:flex;flex-direction:column;gap:18px;box-shadow:inset -1px 0 0 rgba(255,255,255,.03)}
+.brand{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.brand h1{margin:0;font-size:1.7rem;line-height:1}
+.brand p{margin:6px 0 0;color:var(--muted);font-size:.92rem}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;font-size:.8rem;font-weight:700;background:rgba(17,36,50,.88);border:1px solid var(--line);color:var(--muted);box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.pill-dot{width:9px;height:9px;border-radius:50%}
+.pill-dot.ok{background:var(--accent)}
+.pill-dot.warn{background:var(--warn)}
+.pill-dot.danger{background:var(--danger)}
+.panel{background:linear-gradient(180deg,rgba(10,24,34,.92),rgba(8,19,28,.96));border:1px solid rgba(90,184,255,.14);border-radius:var(--radius);box-shadow:var(--shadow),var(--glow);padding:18px}
+.panel h2,.panel h3{margin:0 0 12px}
+.section-kicker{font-size:.76rem;letter-spacing:.12em;text-transform:uppercase;color:var(--blue);margin-bottom:10px;font-family:"IBM Plex Mono",monospace}
+.preset-grid{display:grid;gap:10px}
+.preset-card{padding:14px;border-radius:14px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(17,36,50,.96),rgba(13,28,39,.96));cursor:pointer;transition:.18s ease;color:var(--ink)}
+.preset-card strong{display:block;font-size:1rem;margin-bottom:4px}
+.preset-card small{display:block;color:var(--muted);line-height:1.4}
+.preset-card.active{border-color:rgba(43,210,168,.6);background:linear-gradient(180deg,rgba(16,44,47,.98),rgba(11,30,38,.98));transform:translateY(-1px);box-shadow:0 0 0 1px rgba(43,210,168,.18),0 16px 34px rgba(43,210,168,.1)}
+.config-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.kv{padding:12px;border-radius:14px;background:rgba(17,36,50,.9);border:1px solid rgba(90,184,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
+.kv span{display:block;font-size:.76rem;color:var(--soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em}
+.kv strong{font-size:.98rem}
+.check-row{display:flex;align-items:center;gap:10px;padding:12px 0;color:var(--muted)}
+.check-row input{accent-color:var(--accent);width:16px;height:16px}
+.btn-stack{display:grid;gap:10px}
+.btn{border:none;border-radius:14px;padding:13px 14px;font-weight:700;cursor:pointer;transition:.18s ease;display:flex;align-items:center;justify-content:center;gap:8px}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.btn-primary{background:linear-gradient(135deg,#1bcaa1 0%,#0f8f98 100%);color:#031118;box-shadow:0 14px 30px rgba(16,173,159,.22)}
+.btn-secondary{background:rgba(17,36,50,.94);color:var(--ink);border:1px solid var(--line)}
+.btn-warn{background:var(--warn-soft);color:var(--warn);border:1px solid rgba(255,180,84,.22)}
+.btn-danger{background:var(--danger-soft);color:var(--danger);border:1px solid rgba(255,107,107,.22)}
+.btn:hover:not(:disabled){transform:translateY(-1px);filter:brightness(1.06)}
+.main{padding:28px;display:flex;flex-direction:column;gap:18px}
+.hero{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}
+.hero h2{margin:0;font-size:2rem;letter-spacing:-.02em}
+.hero p{margin:8px 0 0;color:var(--muted);max-width:780px;line-height:1.5}
+.hero-meta{display:flex;gap:10px;flex-wrap:wrap}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.incident-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
+.metric{padding:18px;border-radius:18px;background:linear-gradient(180deg,rgba(10,24,34,.96),rgba(8,19,28,.98));border:1px solid rgba(90,184,255,.14);box-shadow:var(--shadow),var(--glow)}
+.metric span{display:block;font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:6px}
+.metric strong{font-size:1.8rem;display:block}
+.metric small{display:block;margin-top:6px;color:var(--muted)}
+.wide-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:18px}
+.progress-card,.status-card,.chart-card,.table-card,.log-card{background:linear-gradient(180deg,rgba(10,24,34,.96),rgba(8,19,28,.98));border:1px solid rgba(90,184,255,.14);border-radius:22px;box-shadow:var(--shadow),var(--glow);padding:20px}
+.progress-top,.row-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.progress-bar{height:12px;border-radius:999px;background:rgba(90,184,255,.12);overflow:hidden;margin:14px 0 10px;box-shadow:inset 0 0 0 1px rgba(90,184,255,.08)}
+.progress-fill{height:100%;width:0;background:linear-gradient(90deg,#29d3a6,#5ab8ff);border-radius:999px;transition:width .25s ease;box-shadow:0 0 18px rgba(43,210,168,.35)}
+.progress-meta{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;font-size:.9rem;color:var(--muted)}
+.status-list{display:grid;gap:12px}
+.status-chip{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-radius:14px;background:rgba(17,36,50,.86);border:1px solid rgba(90,184,255,.1)}
+.status-chip strong{font-size:.9rem}
+.status-chip span{font-family:"IBM Plex Mono",monospace;color:var(--muted);font-size:.82rem}
+.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.chart-grid.single{grid-template-columns:1fr}
+.chart-wrap{position:relative;height:260px}
+.table-card table{width:100%;border-collapse:collapse}
+.table-card th,.table-card td{padding:12px 10px;text-align:left;border-bottom:1px solid rgba(90,184,255,.09);font-size:.9rem}
+.table-card th{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--soft)}
+.table-card tbody tr:hover{background:rgba(90,184,255,.08)}
+.table-card tbody tr.is-losing{background:rgba(255,107,107,.05)}
+.table-card tbody tr.is-losing:hover{background:rgba(255,107,107,.09)}
+.mono{font-family:"IBM Plex Mono",monospace}
+.badge{display:inline-flex;align-items:center;padding:5px 10px;border-radius:999px;font-size:.76rem;font-weight:700}
+.badge.running{background:var(--blue-soft);color:#9dd7ff;border:1px solid rgba(90,184,255,.18)}
+.badge.complete{background:var(--accent-soft);color:#8bf0d1;border:1px solid rgba(43,210,168,.18)}
+.badge.error,.badge.cancelled{background:var(--danger-soft);color:#ff9d9d;border:1px solid rgba(255,107,107,.18)}
+.badge.closed{background:rgba(105,130,147,.16);color:#b7cad6;border:1px solid rgba(105,130,147,.24)}
+.badge.idle{background:rgba(17,36,50,.9);color:var(--muted);border:1px solid rgba(90,184,255,.1)}
+.log-card{min-height:240px}
+.log-list{display:flex;flex-direction:column;gap:8px;max-height:260px;overflow:auto}
+.log-item{padding:12px;border-radius:14px;background:rgba(17,36,50,.86);border:1px solid rgba(90,184,255,.08);display:grid;grid-template-columns:88px 90px 1fr;gap:12px;align-items:start;font-size:.87rem}
+.log-item time{font-family:"IBM Plex Mono",monospace;color:var(--soft)}
+.log-item b{font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.table-card tbody tr.is-closed{opacity:.76}
+.cell-negative{color:#ff9d9d}
+.muted{color:var(--muted)}
+.empty{padding:18px;border-radius:16px;background:rgba(17,36,50,.78);border:1px dashed var(--line);color:var(--muted)}
+.modal-shell{position:fixed;inset:0;background:rgba(2,8,12,.56);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:20px;z-index:10}
+.modal-shell.open{display:flex}
+.modal{width:min(1080px,96vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg,rgba(10,24,34,.98),rgba(8,19,28,.99));border:1px solid rgba(90,184,255,.16);border-radius:24px;box-shadow:0 32px 80px rgba(0,0,0,.45),var(--glow);padding:22px}
+.modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}
+.modal-head p{margin:8px 0 0;color:var(--muted)}
+.close-btn{border:none;background:rgba(17,36,50,.92);border-radius:12px;padding:8px 11px;cursor:pointer;color:var(--ink);border:1px solid rgba(90,184,255,.1)}
+.cleanup-scope{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.scope-btn{padding:10px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(17,36,50,.92);cursor:pointer;color:var(--muted)}
+.scope-btn.active{background:var(--accent-soft);border-color:var(--accent);color:#8bf0d1}
+.cleanup-grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:18px}
+.field{display:grid;gap:8px}
+.field input,.field select{width:100%;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(7,17,25,.94);color:var(--ink)}
+.field small{color:var(--muted)}
+.preview-list{display:grid;gap:12px;max-height:420px;overflow:auto}
+.preview-card{padding:14px;border-radius:16px;background:rgba(17,36,50,.88);border:1px solid rgba(90,184,255,.1)}
+.preview-card h4{margin:0 0 10px;font-size:1rem}
+.preview-table{width:100%;border-collapse:collapse}
+.preview-table td{padding:5px 0;font-size:.88rem}
+.cleanup-progress{padding:14px;border-radius:16px;background:rgba(17,36,50,.88);border:1px solid rgba(90,184,255,.1);margin-top:14px}
+.cleanup-progress-track{height:8px;border-radius:999px;background:rgba(90,184,255,.14);overflow:hidden;margin-top:10px}
+.cleanup-progress-fill{height:100%;width:0%;border-radius:999px;background:linear-gradient(90deg,#2bd2a8,#5ab8ff);transition:width .25s ease}
+.cleanup-progress-meta{margin-top:8px;font-size:.82rem;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.inline-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.filter-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.filter-chip{padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:rgba(17,36,50,.92);cursor:pointer;color:var(--muted)}
+.filter-chip.active{background:var(--accent-soft);border-color:var(--accent);color:#8bf0d1}
+.chart-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.chart-select{display:flex;align-items:center;gap:10px;color:var(--muted);margin-left:auto}
+.chart-select select{padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(7,17,25,.94);color:var(--ink);min-width:220px}
+.result-tabs{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+@media (max-width:1200px){
+  .app{grid-template-columns:1fr}
+  .sidebar{border-right:none;border-bottom:1px solid rgba(90,184,255,.14)}
+  .cards,.incident-grid,.chart-grid,.wide-grid,.cleanup-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div>
+        <div class="section-kicker">Local Operator Console</div>
+        <h1>FERN Data Simulator</h1>
+        <p>Deterministic ERP data generation, run tracking, and ownership-safe cleanup for local PostgreSQL.</p>
+      </div>
+      <div class="pill"><span class="pill-dot warn" id="dbDot"></span><span id="dbLabel">Checking DB</span></div>
+    </div>
+
+    <section class="panel">
+      <div class="section-kicker">Preset</div>
+      <div class="preset-grid" id="presetGroup"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-kicker">Configuration</div>
+      <div class="config-grid">
+        <div class="kv"><span>Namespace</span><strong id="cfgNamespace">SIM-SMALL</strong></div>
+        <div class="kv"><span>Seed</span><strong id="cfgSeed">42</strong></div>
+        <div class="kv"><span>Window</span><strong id="cfgDays">366 days</strong></div>
+        <div class="kv"><span>Region</span><strong id="cfgRegion">VN-HCM</strong></div>
+      </div>
+      <div class="kv" style="margin-top:12px"><span>Period</span><strong id="cfgPeriod">2024-01-01 → 2024-12-31</strong></div>
+      <div class="kv" style="margin-top:12px"><span>Growth Model</span><strong id="cfgGrowth">1 outlet start, 90-day maturity ramp, scheduled procurement</strong></div>
+      <label class="check-row"><input type="checkbox" id="chkDryRun"> Dry run only. Validate chronology and metrics without database writes.</label>
+      <div class="btn-stack">
+        <button class="btn btn-primary" id="btnStart" onclick="startSim()">Start simulation</button>
+        <button class="btn btn-secondary" id="btnStop" onclick="stopSim()" disabled>Stop active run</button>
+        <button class="btn btn-secondary" onclick="showAccounts()">View generated accounts</button>
+        <button class="btn btn-secondary" onclick="downloadAccountsCsv('namespace')">Export namespace CSV</button>
+        <button class="btn btn-secondary" onclick="downloadAccountsCsv('all')">Export all simulator accounts CSV</button>
+        <button class="btn btn-secondary" id="btnExportSql" onclick="exportDbSql()">Export DB SQL</button>
+        <button class="btn btn-warn" onclick="openCleanupModal('namespace', state.currentNamespace)">Cleanup namespace</button>
+        <button class="btn btn-danger" onclick="openCleanupModal('all')">Clear all SIM data</button>
+      </div>
+      <div class="cleanup-progress" id="dbExportProgressBox" style="display:none;margin-top:12px">
+        <strong id="dbExportProgressTitle">DB export idle</strong>
+        <div class="muted" id="dbExportProgressBody" style="margin-top:6px">Export writes to simulator-output/runtime/db-exports.</div>
+        <div class="cleanup-progress-track"><div class="cleanup-progress-fill" id="dbExportProgressFill"></div></div>
+        <div class="cleanup-progress-meta mono muted">
+          <span id="dbExportProgressElapsed">Elapsed: —</span>
+          <span id="dbExportProgressEta">ETA: —</span>
+        </div>
+      </div>
+    </section>
+  </aside>
+
+  <main class="main">
+    <section class="hero">
+      <div>
+        <div class="section-kicker">Operator View</div>
+        <h2 id="heroTitle">Ready for a new simulation run</h2>
+        <p id="heroText">Choose a preset, confirm the growth profile, and run the simulator. Live metrics, timing diagnostics, namespace ownership, and cleanup safety are all kept in one place.</p>
+      </div>
+      <div class="hero-meta">
+        <div class="pill"><span class="pill-dot ok" id="opDot"></span><span id="opLabel">Idle</span></div>
+        <div class="pill mono" id="runNamespacePill">Namespace: SIM-SMALL</div>
+      </div>
+    </section>
+
+    <section class="cards">
+      <div class="metric"><span>Total revenue</span><strong id="metricRevenue">0</strong><small id="metricRevenueSub">Revenue across completed and in-flight months</small></div>
+      <div class="metric"><span>Database writes</span><strong id="metricRows">0</strong><small id="metricRowsSub">Simulator-owned rows written</small></div>
+      <div class="metric"><span>Active outlets</span><strong id="metricOutlets">0</strong><small id="metricOutletsSub">Current simulated network</small></div>
+      <div class="metric"><span>Active employees</span><strong id="metricEmployees">0</strong><small id="metricEmployeesSub">Scheduled staffing and churn-aware hires</small></div>
+    </section>
+
+    <section class="incident-grid">
+      <div class="metric"><span>Waste events</span><strong id="metricWaste">0</strong><small id="metricWasteSub">Expiry, spoilage, damage, prepared excess</small></div>
+      <div class="metric"><span>Stockouts</span><strong id="metricStockouts">0</strong><small id="metricStockoutsSub">Today’s unmet demand incidents</small></div>
+      <div class="metric"><span>Delayed receipts</span><strong id="metricDeliveries">0</strong><small id="metricDeliveriesSub">Late or partial deliveries today</small></div>
+      <div class="metric"><span>Absenteeism</span><strong id="metricAbsences">0</strong><small id="metricAbsencesSub">Absent or late shifts today</small></div>
+      <div class="metric"><span>Lost sales</span><strong id="metricLostSales">0</strong><small id="metricLostSalesSub">Current-day value of unmet demand</small></div>
+    </section>
+
+    <section class="wide-grid">
+      <div class="progress-card">
+        <div class="progress-top">
+          <div>
+            <div class="section-kicker">Run Progress</div>
+            <h3 id="progressTitle">No active run</h3>
+          </div>
+          <div class="mono" id="progressPercent">0%</div>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-meta">
+          <div><strong id="progressDate">—</strong><div class="muted">Business date</div></div>
+          <div><strong id="progressDay">0 / 0</strong><div class="muted">Simulated days</div></div>
+          <div><strong id="progressRevenue">0</strong><div class="muted" id="progressRevenueLabel">Current month revenue</div></div>
+          <div><strong id="progressSales">0</strong><div class="muted" id="progressSalesLabel">Current month sales</div></div>
+          <div><strong id="progressCleanup">Idle</strong><div class="muted">Cleanup state</div></div>
+        </div>
+      </div>
+
+      <div class="status-card">
+        <div class="section-kicker">Diagnostics</div>
+        <div class="status-list">
+          <div class="status-chip"><strong>Total runtime</strong><span id="diagElapsed">—</span></div>
+          <div class="status-chip"><strong>Persistence time</strong><span id="diagPersist">—</span></div>
+          <div class="status-chip"><strong>Rows / second</strong><span id="diagThroughput">—</span></div>
+          <div class="status-chip"><strong>Top phase</strong><span id="diagTopPhase">—</span></div>
+          <div class="status-chip"><strong>Top persistence bucket</strong><span id="diagTopPersist">—</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="chart-card">
+      <div class="row-head">
+        <div><div class="section-kicker">Chart Controls</div><h3>Portfolio, grouped, or single-outlet lens</h3></div>
+      </div>
+      <div class="chart-controls">
+        <button class="filter-chip active" id="chartModeTotal" onclick="setChartViewMode('total')">Portfolio total</button>
+        <button class="filter-chip" id="chartModeStacked" onclick="setChartViewMode('stacked')">Compare outlets</button>
+        <button class="filter-chip" id="chartModeOutlet" onclick="setChartViewMode('outlet')">Single outlet</button>
+        <label class="chart-select">Outlet
+          <select id="chartOutletSelect" onchange="handleChartOutletChange()" disabled>
+            <option value="all">Portfolio total</option>
+          </select>
+        </label>
+      </div>
+      <div class="result-tabs">
+        <button class="filter-chip active" id="resultTabRevenue" onclick="setResultTab('revenue')">Revenue result</button>
+        <button class="filter-chip" id="resultTabProfit" onclick="setResultTab('profit')">Profit result</button>
+      </div>
+    </section>
+
+    <section class="chart-grid single" id="chartGrid">
+      <div class="chart-card" id="revenueResultCard">
+        <div class="row-head">
+          <div><div class="section-kicker">Revenue Trend</div><h3>Revenue by period</h3></div>
+          <span class="badge idle" id="revenueBadge">Idle</span>
+        </div>
+        <div class="chart-wrap"><canvas id="revenueChart"></canvas></div>
+      </div>
+      <div class="chart-card" id="profitResultCard" style="display:none">
+        <div class="row-head">
+          <div><div class="section-kicker">Margin View</div><h3>Profit and loss by period</h3></div>
+          <span class="badge idle" id="profitBadge">Waiting</span>
+        </div>
+        <div class="chart-wrap"><canvas id="profitChart"></canvas></div>
+      </div>
+    </section>
+
+    <section class="table-card">
+      <div class="row-head">
+        <div><div class="section-kicker">Outlet Economics</div><h3>Revenue and cost share by outlet</h3></div>
+      </div>
+      <div id="outletsEmpty" class="empty">Outlet contribution appears after a completed run.</div>
+      <table id="outletsTable" style="display:none">
+        <thead><tr><th>Outlet</th><th>Status</th><th>Region</th><th>Revenue</th><th>Revenue %</th><th>COGS %</th><th>Labor %</th><th>Waste %</th><th>OpEx %</th><th>Contribution</th><th>Net</th><th>Loss Margin</th><th>Seat Util.</th><th>Slot Util.</th><th>Lost Sales</th><th>Payback</th><th>Band</th></tr></thead>
+        <tbody id="outletsBody"></tbody>
+      </table>
+    </section>
+
+    <section class="table-card">
+      <div class="row-head">
+        <div><div class="section-kicker">Run History</div><h3>Recent simulator runs</h3></div>
+        <button class="btn btn-secondary" style="padding:10px 14px" onclick="loadRuns()">Refresh runs</button>
+      </div>
+      <div id="runsEmpty" class="empty">No recorded runs yet.</div>
+      <table id="runsTable" style="display:none">
+        <thead><tr><th>Namespace</th><th>Status</th><th>Rows</th><th>Days</th><th>Started</th><th>Completed</th><th>Cleanup</th></tr></thead>
+        <tbody id="runsBody"></tbody>
+      </table>
+    </section>
+
+    <section class="table-card">
+      <div class="row-head">
+        <div><div class="section-kicker">Ownership</div><h3>Simulator namespaces</h3></div>
+        <button class="btn btn-secondary" style="padding:10px 14px" onclick="loadCleanupNamespaces()">Refresh namespaces</button>
+      </div>
+      <div id="namespacesEmpty" class="empty">No simulator-owned namespaces found.</div>
+      <table id="namespacesTable" style="display:none">
+        <thead><tr><th>Namespace</th><th>Estimated rows</th><th>Runs</th><th>Latest status</th><th>Last started</th><th>Action</th></tr></thead>
+        <tbody id="namespacesBody"></tbody>
+      </table>
+    </section>
+
+    <section class="log-card">
+      <div class="row-head">
+        <div><div class="section-kicker">Operator Log</div><h3>Events and warnings</h3></div>
+        <span class="mono" id="logCount">0 events</span>
+      </div>
+      <div class="log-list" id="logList"></div>
+    </section>
+  </main>
+</div>
+
+<div class="modal-shell" id="accountsModal">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <div class="section-kicker">Generated Accounts</div>
+        <h3>Namespace login inventory</h3>
+        <p>Generated application users for the selected namespace.</p>
+      </div>
+      <button class="close-btn" onclick="closeModal('accountsModal')">Close</button>
+    </div>
+    <div class="inline-actions" style="margin-top:0;margin-bottom:14px">
+      <button class="btn btn-secondary" style="padding:10px 14px" onclick="downloadAccountsCsv('namespace')">Export namespace CSV</button>
+      <button class="btn btn-secondary" style="padding:10px 14px" onclick="downloadAccountsCsv('all')">Export all simulator accounts CSV</button>
+    </div>
+    <div class="filter-row">
+      <button class="filter-chip active" id="accountFilterAll" onclick="setAccountFilter('all')">All</button>
+      <button class="filter-chip" id="accountFilterActive" onclick="setAccountFilter('active')">Active</button>
+      <button class="filter-chip" id="accountFilterInactive" onclick="setAccountFilter('inactive')">Inactive</button>
+      <button class="filter-chip" id="accountFilterSuspended" onclick="setAccountFilter('suspended')">Suspended</button>
+      <button class="filter-chip" id="accountFilterFormer" onclick="setAccountFilter('former')">Former</button>
+      <button class="filter-chip" id="accountFilterNoRole" onclick="setAccountFilter('no-role')">No role</button>
+    </div>
+    <div class="field" style="margin-bottom:16px">
+      <input type="text" id="accountSearch" placeholder="Filter by username, role, or full name" oninput="filterAccounts()">
+    </div>
+    <div class="table-card" style="box-shadow:none;border:none;padding:0">
+      <table>
+        <thead><tr><th>Username</th><th>Employee code</th><th>Full name</th><th>Role</th><th>Status</th><th>Contract</th><th>Outlet</th><th>Created</th></tr></thead>
+        <tbody id="accountsBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal-shell" id="cleanupModal">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <div class="section-kicker">Cleanup Control</div>
+        <h3>Preview and clear simulator-owned data</h3>
+        <p>Preview row counts before deleting. Namespace cleanup is atomic per namespace; clear-all runs namespace by namespace to keep very large cleanups manageable.</p>
+      </div>
+      <button class="close-btn" onclick="closeModal('cleanupModal')">Close</button>
+    </div>
+
+    <div class="cleanup-scope">
+      <button class="scope-btn active" id="scopeNamespace" onclick="setCleanupScope('namespace')">Single namespace</button>
+      <button class="scope-btn" id="scopeAll" onclick="setCleanupScope('all')">All simulator namespaces</button>
+    </div>
+
+    <div class="cleanup-grid">
+      <div>
+        <div class="field">
+          <label for="cleanupNamespace">Namespace</label>
+          <select id="cleanupNamespace"></select>
+          <small id="cleanupNamespaceHelp">Choose the namespace you want to preview or delete.</small>
+        </div>
+        <div class="inline-actions">
+          <button class="btn btn-secondary" onclick="previewCleanup()">Preview impact</button>
+          <button class="btn btn-danger" id="btnCleanupExecute" onclick="executeCleanup()">Execute cleanup</button>
+        </div>
+        <div class="cleanup-progress" id="cleanupProgressBox" style="display:none">
+          <strong id="cleanupProgressTitle">Cleanup idle</strong>
+          <div class="muted" id="cleanupProgressBody" style="margin-top:6px">No cleanup has been started.</div>
+          <div class="cleanup-progress-track"><div class="cleanup-progress-fill" id="cleanupProgressFill"></div></div>
+          <div class="cleanup-progress-meta mono muted" id="cleanupProgressMeta">
+            <span id="cleanupProgressElapsed">Elapsed: —</span>
+            <span id="cleanupProgressEta">ETA: —</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-kicker">Preview</div>
+        <div id="cleanupPreviewEmpty" class="empty">Run a preview to estimate row counts before deleting simulator-owned data.</div>
+        <div class="preview-list" id="cleanupPreviewList" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const state = {
+  currentPreset: 'small',
+  currentNamespace: 'SIM-SMALL',
+  simStatus: 'idle',
+  cleanupStatus: { status: 'idle' },
+  dbExportStatus: { status: 'idle' },
+  diagnostics: {},
+  operational: {},
+  operationalScope: 'daily',
+  accounts: [],
+  accountStatusFilter: 'all',
+  logs: [],
+  cleanupScope: 'namespace',
+  cleanupPreview: null,
+  monthSeries: [],
+  outletEconomics: [],
+  chartViewMode: 'total',
+  resultTab: 'revenue',
+  selectedOutletCode: 'all',
+  currentMonthKey: null,
+  currentMonthRevenue: 0,
+  totalRevenueFinal: 0,
+  runs: [],
+  revenueChart: null,
+  profitChart: null,
+  dbExporting: false
+};
+let cleanupProgressTimer = null;
+let dbExportProgressTimer = null;
+
+document.addEventListener('DOMContentLoaded', async () => {
+  initCharts();
+  updateResultTabState();
+  await Promise.all([loadPresets(), checkDbStatus(), loadPresetConfig('small'), loadRuns(), loadCleanupNamespaces(), refreshOperationState()]);
+  connectEvents();
+  document.getElementById('cleanupModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal('cleanupModal'); });
+  document.getElementById('accountsModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal('accountsModal'); });
+});
+
+async function loadPresets() {
+  const res = await fetch('/api/presets');
+  const presets = await res.json();
+  const group = document.getElementById('presetGroup');
+  group.innerHTML = presets.map(p => `
+    <button class="preset-card ${p.name === state.currentPreset ? 'active' : ''}" onclick="selectPreset('${p.name}')">
+      <strong>${p.label}</strong>
+      <small>${p.description}</small>
+    </button>
+  `).join('');
+}
+
+async function selectPreset(name) {
+  state.currentPreset = name;
+  await loadPresetConfig(name);
+  await loadPresets();
+}
+
+async function loadPresetConfig(preset) {
+  const res = await fetch(`/api/config/${preset}`);
+  const cfg = await res.json();
+  state.currentNamespace = cfg.namespace;
+  document.getElementById('cfgNamespace').textContent = cfg.namespace;
+  document.getElementById('cfgSeed').textContent = cfg.seed;
+  document.getElementById('cfgDays').textContent = `${cfg.totalDays} days`;
+  document.getElementById('cfgRegion').textContent = cfg.startingRegion;
+  document.getElementById('cfgPeriod').textContent = `${cfg.startDate} → ${cfg.endDate}`;
+  document.getElementById('cfgGrowth').textContent = cfg.growth.initialOutlets > 0
+    ? `${cfg.growth.initialOutlets} outlet start, ${cfg.growth.rampDays}-day maturity ramp, lead time ${cfg.growth.reorderLeadTimeDays.join('/')}, stockout carryover ${cfg.realism.carryoverDays}d, late delivery ${(cfg.realism.lateDeliveryChance * 100).toFixed(0)}%`
+    : `No outlet bootstrap by default, ${cfg.growth.rampDays}-day maturity ramp ready if a custom config enables outlets, lead time ${cfg.growth.reorderLeadTimeDays.join('/')}, stockout carryover ${cfg.realism.carryoverDays}d, late delivery ${(cfg.realism.lateDeliveryChance * 100).toFixed(0)}%`;
+  document.getElementById('runNamespacePill').textContent = `Namespace: ${cfg.namespace}`;
+}
+
+async function checkDbStatus() {
+  try {
+    const res = await fetch('/api/db-status');
+    const data = await res.json();
+    const dot = document.getElementById('dbDot');
+    const label = document.getElementById('dbLabel');
+    if (data.connected) {
+      dot.className = 'pill-dot ok';
+      label.textContent = 'DB connected';
+    } else {
+      dot.className = 'pill-dot danger';
+      label.textContent = 'DB unavailable';
+    }
+  } catch {
+    document.getElementById('dbDot').className = 'pill-dot danger';
+    document.getElementById('dbLabel').textContent = 'DB unavailable';
+  }
+}
+
+async function refreshOperationState() {
+  const [runRes, cleanupRes, exportRes] = await Promise.all([
+    fetch('/api/simulate/status').then(r => r.json()),
+    fetch('/api/cleanup/status').then(r => r.json()),
+    fetch('/api/db/export/status').then(r => r.json())
+  ]);
+  state.simStatus = runRes.status || 'idle';
+  state.diagnostics = runRes.diagnostics || {};
+  state.cleanupStatus = cleanupRes || { status: 'idle' };
+  state.dbExportStatus = exportRes || { status: 'idle' };
+  renderDbExportProgress();
+  applyStatus();
+  renderDiagnostics();
+}
+
+function upsertMonthPoint(point) {
+  const existingIndex = state.monthSeries.findIndex(entry => entry.label === point.label);
+  if (existingIndex >= 0) {
+    state.monthSeries.splice(existingIndex, 1, point);
+  } else {
+    state.monthSeries.push(point);
+    state.monthSeries.sort((left, right) => left.label.localeCompare(right.label));
+  }
+}
+
+function revenueSoFar() {
+  const closedRevenue = state.monthSeries.reduce((sum, point) => sum + (point.revenue || 0), 0);
+  if (state.simStatus === 'complete' && state.totalRevenueFinal > 0) {
+    return state.totalRevenueFinal;
+  }
+  if (!state.currentMonthKey) {
+    return closedRevenue;
+  }
+  const monthAlreadyClosed = state.monthSeries.some(point => point.label === state.currentMonthKey);
+  return closedRevenue + (monthAlreadyClosed ? 0 : state.currentMonthRevenue || 0);
+}
+
+function renderRevenueSummary() {
+  document.getElementById('metricRevenue').textContent = formatCurrency(revenueSoFar());
+  if (state.operationalScope === 'run' && state.totalRevenueFinal > 0 && state.monthSeries.length) {
+    document.getElementById('metricRevenueSub').textContent = `${state.monthSeries.length} closed months in the latest completed run`;
+    return;
+  }
+  if (state.simStatus === 'complete' && state.monthSeries.length) {
+    document.getElementById('metricRevenueSub').textContent = `${state.monthSeries.length} closed months across the full run`;
+    return;
+  }
+  if (state.currentMonthKey) {
+    document.getElementById('metricRevenueSub').textContent = `Revenue recognized through ${state.currentMonthKey}`;
+    return;
+  }
+  document.getElementById('metricRevenueSub').textContent = 'Revenue across completed and in-flight months';
+}
+
+function refreshProgressLabels() {
+  const label = state.simStatus === 'running' ? 'Current month' : 'Latest month';
+  document.getElementById('progressRevenueLabel').textContent = `${label} revenue`;
+  document.getElementById('progressSalesLabel').textContent = `${label} sales`;
+}
+
+function connectEvents() {
+  const source = new EventSource('/api/simulate/progress');
+  source.addEventListener('connected', e => {
+    const payload = JSON.parse(e.data);
+    state.simStatus = payload.runStatus || 'idle';
+    state.cleanupStatus = payload.cleanupStatus || { status: 'idle' };
+    state.dbExportStatus = payload.dbExportStatus || { status: 'idle' };
+    renderDbExportProgress();
+    applyStatus();
+  });
+  source.addEventListener('start', e => {
+    const payload = JSON.parse(e.data);
+    state.simStatus = 'running';
+    resetRunVisuals();
+    addLog('run', `Started ${payload.namespace} for ${payload.totalDays} simulated days.`);
+    applyStatus();
+  });
+  source.addEventListener('day', e => {
+    const payload = JSON.parse(e.data);
+    const pct = Math.round((payload.day / payload.totalDays) * 100);
+    state.currentMonthKey = payload.date.slice(0, 7);
+    state.currentMonthRevenue = payload.revenue || 0;
+    document.getElementById('progressTitle').textContent = `Simulation in progress`;
+    document.getElementById('progressFill').style.width = `${pct}%`;
+    document.getElementById('progressPercent').textContent = `${pct}%`;
+    document.getElementById('progressDate').textContent = payload.date;
+    document.getElementById('progressDay').textContent = `${payload.day} / ${payload.totalDays}`;
+    document.getElementById('progressRevenue').textContent = formatCurrency(payload.revenue);
+    document.getElementById('progressSales').textContent = Number(payload.sales || 0).toLocaleString();
+    document.getElementById('metricRows').textContent = Number(payload.rows).toLocaleString();
+    document.getElementById('metricRowsSub').textContent = 'Simulator-owned rows written so far';
+    document.getElementById('metricOutlets').textContent = payload.outlets;
+    document.getElementById('metricEmployees').textContent = payload.employees;
+    renderRevenueSummary();
+    document.getElementById('revenueBadge').className = 'badge running';
+    document.getElementById('revenueBadge').textContent = `${Number(payload.sales || 0).toLocaleString()} sales MTD`;
+  });
+  source.addEventListener('month', e => {
+    const payload = JSON.parse(e.data);
+    const label = `${payload.year}-${String(payload.month).padStart(2, '0')}`;
+    upsertMonthPoint({
+      label,
+      year: payload.year,
+      month: payload.month,
+      revenue: payload.revenue,
+      sales: payload.sales,
+      cogs: payload.cogs,
+      payrollCost: payload.payrollCost,
+      operatingCost: payload.operatingCost,
+      wasteCost: payload.wasteCost || 0,
+      lostSalesValue: payload.lostSalesValue || 0,
+      netContribution: payload.revenue - payload.cogs - payload.payrollCost - payload.operatingCost - (payload.wasteCost || 0)
+    });
+    state.currentMonthKey = label;
+    state.currentMonthRevenue = payload.revenue || 0;
+    renderRevenueSummary();
+    renderMonthCharts();
+    document.getElementById('revenueBadge').className = 'badge running';
+    document.getElementById('revenueBadge').textContent = `${Number(payload.sales || 0).toLocaleString()} sales in ${label}`;
+    const monthlyNet = payload.revenue - payload.cogs - payload.payrollCost - payload.operatingCost - (payload.wasteCost || 0);
+    document.getElementById('profitBadge').className = monthlyNet >= 0 ? 'badge complete' : 'badge error';
+    document.getElementById('profitBadge').textContent = `${formatCurrency(monthlyNet)} net`;
+    addLog('month', `${label}: revenue ${formatCurrency(payload.revenue)}, net ${formatCurrency(monthlyNet)}, lost sales ${formatCurrency(payload.lostSalesValue || 0)}.`);
+  });
+  source.addEventListener('diagnostics', e => {
+    state.diagnostics = JSON.parse(e.data);
+    renderDiagnostics();
+  });
+  source.addEventListener('operational', e => {
+    state.operational = JSON.parse(e.data);
+    state.operationalScope = 'daily';
+    renderOperational();
+    const summary = state.operational;
+    if ((summary.wasteEvents || 0) + (summary.stockouts || 0) + (summary.lateDeliveries || 0) + (summary.absentShifts || 0) > 0) {
+      addLog('ops', `${summary.date}: waste ${summary.wasteEvents || 0}, stockouts ${summary.stockouts || 0}, late deliveries ${summary.lateDeliveries || 0}, absent shifts ${summary.absentShifts || 0}.`);
+    }
+  });
+  source.addEventListener('complete', async e => {
+    const payload = JSON.parse(e.data);
+    state.simStatus = 'complete';
+    state.totalRevenueFinal = payload.totalRevenue || 0;
+    document.getElementById('metricOutlets').textContent = payload.activeOutlets;
+    document.getElementById('metricEmployees').textContent = payload.activeEmployees;
+    document.getElementById('metricRowsSub').textContent = 'Committed simulator-owned rows';
+    document.getElementById('progressTitle').textContent = 'Simulation complete';
+    document.getElementById('progressFill').style.width = '100%';
+    document.getElementById('progressPercent').textContent = '100%';
+    renderRevenueSummary();
+    document.getElementById('revenueBadge').className = 'badge complete';
+    document.getElementById('revenueBadge').textContent = `${formatCurrency(payload.totalRevenue || 0)} total revenue`;
+    addLog('success', `Completed run with ${payload.totalOutlets} total outlets, ${payload.totalEmployees} total employees, and ${formatCurrency(payload.totalRevenue || 0)} in revenue.`);
+    applyStatus();
+    await Promise.all([loadRuns(), loadCleanupNamespaces()]);
+  });
+  source.addEventListener('run-error', e => {
+    const payload = JSON.parse(e.data);
+    state.simStatus = 'error';
+    addLog('error', payload.message || 'Operation failed.');
+    applyStatus();
+  });
+  source.addEventListener('cleanup-status', e => {
+    state.cleanupStatus = JSON.parse(e.data);
+    renderCleanupProgress();
+    applyStatus();
+  });
+  source.addEventListener('cleanup-progress', e => {
+    state.cleanupStatus = JSON.parse(e.data);
+    renderCleanupProgress();
+    addLog('cleanup', `Cleanup progressed through ${state.cleanupStatus.currentNamespace}.`);
+    applyStatus();
+  });
+  source.addEventListener('cleanup-complete', async e => {
+    state.cleanupStatus = JSON.parse(e.data);
+    renderCleanupProgress();
+    addLog('cleanup', `Cleanup finished. ${Number(state.cleanupStatus.rowsDeleted || 0).toLocaleString()} rows affected.`);
+    applyStatus();
+    await Promise.all([loadRuns(), loadCleanupNamespaces()]);
+  });
+  source.addEventListener('cleanup-error', e => {
+    state.cleanupStatus = JSON.parse(e.data);
+    renderCleanupProgress();
+    addLog('error', `Cleanup failed: ${state.cleanupStatus.message || 'Unknown error'}`);
+    applyStatus();
+  });
+
+  source.addEventListener('db-export-status', e => {
+    state.dbExportStatus = JSON.parse(e.data);
+    renderDbExportProgress();
+    applyStatus();
+  });
+
+  source.addEventListener('db-export-progress', e => {
+    state.dbExportStatus = JSON.parse(e.data);
+    renderDbExportProgress();
+    applyStatus();
+  });
+
+  source.addEventListener('db-export-complete', e => {
+    state.dbExportStatus = JSON.parse(e.data);
+    renderDbExportProgress();
+    const filePath = state.dbExportStatus.outputFile || state.dbExportStatus.outputDir || 'runtime export folder';
+    addLog('export', `DB export complete: ${filePath}`);
+    applyStatus();
+  });
+
+  source.addEventListener('db-export-error', e => {
+    state.dbExportStatus = JSON.parse(e.data);
+    renderDbExportProgress();
+    addLog('error', `DB export failed: ${state.dbExportStatus.message || 'Unknown error'}`);
+    applyStatus();
+  });
+}
+
+async function startSim() {
+  const res = await fetch('/api/simulate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ preset: state.currentPreset, dryRun: document.getElementById('chkDryRun').checked })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    addLog('error', data.error || 'Failed to start simulation.');
+    return;
+  }
+  resetRunVisuals();
+  state.simStatus = 'running';
+  applyStatus();
+}
+
+async function stopSim() {
+  const res = await fetch('/api/simulate/stop', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) {
+    addLog('error', data.error || 'Failed to stop the simulation.');
+    return;
+  }
+  addLog('warning', 'Stop requested for the active run.');
+}
+
+function applyStatus() {
+  const running = state.simStatus === 'running';
+  const cleanupRunning = state.cleanupStatus.status === 'running';
+  const exportRunning = state.dbExportStatus.status === 'running';
+  const latestRunVisible = !running && !cleanupRunning && !exportRunning && state.operationalScope === 'run' && state.monthSeries.length > 0;
+  refreshProgressLabels();
+  document.getElementById('btnStart').disabled = running || cleanupRunning || exportRunning;
+  document.getElementById('btnStop').disabled = !running;
+  updateDbExportButtonState();
+  document.getElementById('opDot').className = `pill-dot ${running ? 'ok' : (cleanupRunning || exportRunning) ? 'warn' : state.simStatus === 'error' ? 'danger' : 'ok'}`;
+  document.getElementById('opLabel').textContent = running ? 'Simulation running' : cleanupRunning ? 'Cleanup running' : exportRunning ? 'DB export running' : state.simStatus === 'complete' ? 'Run complete' : state.simStatus === 'error' ? 'Run error' : 'Idle';
+  document.getElementById('progressCleanup').textContent = cleanupRunning ? `${state.cleanupStatus.completedNamespaces || 0}/${state.cleanupStatus.totalNamespaces || 0}` : (state.cleanupStatus.status || 'idle');
+  document.getElementById('heroTitle').textContent = running
+    ? 'Simulation is generating chronological business data'
+    : cleanupRunning
+      ? 'Cleanup is removing simulator-owned rows'
+      : exportRunning
+        ? 'Database export is writing SQL to runtime folder'
+      : latestRunVisible
+        ? 'Latest completed run is ready to inspect'
+        : 'Ready for a new simulation run';
+  document.getElementById('heroText').textContent = running
+    ? 'Live progress shows simulated business date, monthly performance, cumulative rows, and final run diagnostics.'
+    : cleanupRunning
+      ? 'Cleanup runs only against simulator-owned namespaces, previews row counts first, and reports progress namespace by namespace.'
+      : exportRunning
+        ? 'The SQL dump is saved to simulator-output/runtime/db-exports with elapsed time and ETA shown in the export panel.'
+      : latestRunVisible
+        ? 'The dashboard stays anchored to the newest completed run so you can review revenue, diagnostics, and row scale before starting the next simulation.'
+        : 'Choose a preset, review the growth profile, and start a local-only simulator run with preserved chronology and schema-safe persistence.';
+}
+
+function renderDiagnostics() {
+  const diag = state.diagnostics || {};
+  document.getElementById('diagElapsed').textContent = diag.elapsedMs ? formatDuration(diag.elapsedMs) : '—';
+  document.getElementById('diagPersist').textContent = diag.persistMs ? formatDuration(diag.persistMs) : '—';
+  document.getElementById('diagThroughput').textContent = diag.rowsPerSecond ? `${Number(diag.rowsPerSecond).toLocaleString()} rows/s` : '—';
+  const topPhase = topEntry(diag.phaseMs || {});
+  const topPersist = topEntry(diag.persistBreakdownMs || {});
+  document.getElementById('diagTopPhase').textContent = topPhase ? `${topPhase[0]} • ${formatDuration(topPhase[1])}` : '—';
+  document.getElementById('diagTopPersist').textContent = topPersist ? `${topPersist[0]} • ${formatDuration(topPersist[1])}` : '—';
+}
+
+function renderOperational() {
+  const ops = state.operational || {};
+  const runScope = state.operationalScope === 'run';
+  document.getElementById('metricWaste').textContent = Number(ops.wasteEvents || 0).toLocaleString();
+  document.getElementById('metricWasteSub').textContent = runScope
+    ? `${shortNumber(ops.wasteCost || 0)} wasted across the latest run`
+    : `${shortNumber(ops.wasteCost || 0)} wasted today`;
+  document.getElementById('metricStockouts').textContent = Number(ops.stockouts || 0).toLocaleString();
+  const stockoutLostValue = Number(ops.stockoutLostSalesValue || 0);
+  const carryoverUnits = Number(ops.carryoverDemand || 0);
+  document.getElementById('metricStockoutsSub').textContent = runScope
+    ? `${shortNumber(stockoutLostValue)} stockout value lost across the run • ${carryoverUnits.toLocaleString()} carryover units`
+    : `${shortNumber(stockoutLostValue)} stockout value lost today • ${carryoverUnits.toLocaleString()} carryover units`;
+  document.getElementById('metricDeliveries').textContent = Number((ops.lateDeliveries || 0) + (ops.partialDeliveries || 0)).toLocaleString();
+  document.getElementById('metricDeliveriesSub').textContent = runScope
+    ? `${ops.lateDeliveries || 0} late • ${ops.partialDeliveries || 0} partial over the run`
+    : `${ops.lateDeliveries || 0} late • ${ops.partialDeliveries || 0} partial`;
+  document.getElementById('metricAbsences').textContent = Number((ops.absentShifts || 0) + (ops.lateShifts || 0)).toLocaleString();
+  document.getElementById('metricAbsencesSub').textContent = runScope
+    ? `${ops.absentShifts || 0} absent • ${ops.lateShifts || 0} late • ${ops.overtimeShifts || 0} overtime over the run`
+    : `${ops.absentShifts || 0} absent • ${ops.lateShifts || 0} late • ${ops.overtimeShifts || 0} overtime`;
+  document.getElementById('metricLostSales').textContent = shortNumber(ops.lostSalesValue || 0);
+  document.getElementById('metricLostSalesSub').textContent = runScope
+    ? `${shortNumber(ops.stockoutLostSalesValue || 0)} stock • ${shortNumber(ops.serviceLostSalesValue || 0)} queue • ${shortNumber(ops.basketShrinkLostSalesValue || 0)} basket over the run`
+    : `${shortNumber(ops.stockoutLostSalesValue || 0)} stock • ${shortNumber(ops.serviceLostSalesValue || 0)} queue • ${shortNumber(ops.basketShrinkLostSalesValue || 0)} basket today`;
+}
+
+function initCharts() {
+  const readTheme = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+  const chartText = readTheme('--muted', '#8ea9ba');
+  const chartGrid = readTheme('--grid', 'rgba(115,154,176,.16)');
+  const common = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { labels: { color: chartText, font: { family: 'IBM Plex Mono', size: 11 } } } },
+    scales: {
+      x: { ticks: { color: chartText }, grid: { color: chartGrid }, stacked: false },
+      y: { ticks: { color: chartText, callback: v => shortNumber(v) }, grid: { color: chartGrid }, stacked: false },
+      y1: {
+        position: 'right',
+        ticks: { color: chartText, callback: v => shortNumber(v) },
+        grid: { drawOnChartArea: false, color: chartGrid },
+        stacked: false
+      }
+    }
+  };
+  state.revenueChart = new Chart(document.getElementById('revenueChart'), {
+    type: 'bar',
+    data: { labels: [], datasets: [] },
+    options: common
+  });
+  state.profitChart = new Chart(document.getElementById('profitChart'), {
+    type: 'bar',
+    data: { labels: [], datasets: [] },
+    options: common
+  });
+}
+
+function resetRunVisuals() {
+  state.currentMonthKey = null;
+  state.currentMonthRevenue = 0;
+  state.totalRevenueFinal = 0;
+  state.operational = {};
+  state.operationalScope = 'daily';
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('progressPercent').textContent = '0%';
+  document.getElementById('progressDate').textContent = '—';
+  document.getElementById('progressDay').textContent = '0 / 0';
+  document.getElementById('progressRevenue').textContent = '0';
+  document.getElementById('progressSales').textContent = '0';
+  document.getElementById('metricRevenue').textContent = '0';
+  document.getElementById('metricRevenueSub').textContent = 'Revenue across completed and in-flight months';
+  document.getElementById('metricRows').textContent = '0';
+  document.getElementById('metricRowsSub').textContent = 'Simulator-owned rows written';
+  state.monthSeries = [];
+  state.outletEconomics = [];
+  syncChartOutletOptions();
+  renderMonthCharts();
+  renderOutletEconomics();
+  document.getElementById('revenueBadge').className = 'badge idle';
+  document.getElementById('revenueBadge').textContent = 'Waiting for sales';
+  document.getElementById('profitBadge').className = 'badge idle';
+  document.getElementById('profitBadge').textContent = 'Waiting';
+  refreshProgressLabels();
+  renderOperational();
+  renderDiagnostics();
+}
+
+const OUTLET_PALETTE = [
+  { fill: 'rgba(43,210,168,.55)', line: '#2bd2a8' },
+  { fill: 'rgba(90,184,255,.48)', line: '#5ab8ff' },
+  { fill: 'rgba(255,180,84,.46)', line: '#ffb454' },
+  { fill: 'rgba(201,167,255,.46)', line: '#c9a7ff' },
+  { fill: 'rgba(255,107,107,.42)', line: '#ff6b6b' },
+  { fill: 'rgba(132,231,196,.46)', line: '#84e7c4' }
+];
+
+function outletColor(index) {
+  return OUTLET_PALETTE[index % OUTLET_PALETTE.length];
+}
+
+function syncChartOutletOptions() {
+  const select = document.getElementById('chartOutletSelect');
+  const outlets = state.outletEconomics || [];
+  const hasOutletSeries = outlets.some(outlet => Array.isArray(outlet.monthlySeries) && outlet.monthlySeries.length);
+  if (!hasOutletSeries && state.chartViewMode !== 'total') {
+    state.chartViewMode = 'total';
+  }
+  const options = ['<option value="all">Portfolio total</option>']
+    .concat(outlets.map(outlet => `<option value="${outlet.code}">${outlet.code} · ${outlet.subregionCode || outlet.regionCode || '—'} · ${outlet.status || 'unknown'}</option>`));
+  select.innerHTML = options.join('');
+  if (!outlets.some(outlet => outlet.code === state.selectedOutletCode)) {
+    state.selectedOutletCode = outlets.length ? outlets[0].code : 'all';
+  }
+  if (state.chartViewMode === 'outlet') {
+    select.value = state.selectedOutletCode;
+  } else {
+    select.value = 'all';
+  }
+  updateChartControlState();
+}
+
+function updateChartControlState() {
+  const hasOutletSeries = state.outletEconomics.some(outlet => Array.isArray(outlet.monthlySeries) && outlet.monthlySeries.length);
+  document.getElementById('chartModeTotal').classList.toggle('active', state.chartViewMode === 'total');
+  document.getElementById('chartModeStacked').classList.toggle('active', state.chartViewMode === 'stacked');
+  document.getElementById('chartModeOutlet').classList.toggle('active', state.chartViewMode === 'outlet');
+  document.getElementById('chartModeStacked').disabled = !hasOutletSeries;
+  document.getElementById('chartModeOutlet').disabled = !hasOutletSeries;
+  const select = document.getElementById('chartOutletSelect');
+  const canPickOutlet = state.chartViewMode === 'outlet' && hasOutletSeries;
+  select.disabled = !canPickOutlet;
+  select.value = canPickOutlet ? state.selectedOutletCode : 'all';
+}
+
+function setChartViewMode(mode) {
+  state.chartViewMode = mode;
+  updateChartControlState();
+  renderMonthCharts();
+}
+
+function handleChartOutletChange() {
+  state.selectedOutletCode = document.getElementById('chartOutletSelect').value || 'all';
+  renderMonthCharts();
+}
+
+function updateResultTabState() {
+  const showRevenue = state.resultTab !== 'profit';
+  document.getElementById('resultTabRevenue').classList.toggle('active', showRevenue);
+  document.getElementById('resultTabProfit').classList.toggle('active', !showRevenue);
+  document.getElementById('revenueResultCard').style.display = showRevenue ? '' : 'none';
+  document.getElementById('profitResultCard').style.display = showRevenue ? 'none' : '';
+  document.getElementById('chartGrid').classList.add('single');
+}
+
+function setResultTab(tab) {
+  state.resultTab = tab === 'profit' ? 'profit' : 'revenue';
+  updateResultTabState();
+}
+
+function selectedOutletEconomics() {
+  return (state.outletEconomics || []).find(outlet => outlet.code === state.selectedOutletCode) || null;
+}
+
+function rollingAverage(values, windowSize = 3) {
+  return values.map((_, index) => {
+    const start = Math.max(0, index - windowSize + 1);
+    const slice = values.slice(start, index + 1);
+    const total = slice.reduce((sum, value) => sum + value, 0);
+    return Math.round(total / Math.max(1, slice.length));
+  });
+}
+
+function renderMonthCharts() {
+  const labels = state.monthSeries.map(point => point.label);
+  const selectedOutlet = selectedOutletEconomics();
+  const selectedSeries = Array.isArray(selectedOutlet && selectedOutlet.monthlySeries)
+    ? selectedOutlet.monthlySeries
+    : [];
+  const mode = state.chartViewMode;
+  const trendWindow = labels.length > 24 ? 6 : 3;
+  const pointRadius = labels.length > 24 ? 0 : 2.5;
+  const totalLostSales = state.monthSeries.map(point => point.lostSalesValue || 0);
+  const totalRevenue = state.monthSeries.map(point => point.revenue || 0);
+  const totalNet = state.monthSeries.map(point => point.netContribution || 0);
+
+  let revenueDatasets = [];
+  let profitDatasets = [];
+
+  if (mode === 'stacked' && state.outletEconomics.length) {
+    revenueDatasets = state.outletEconomics.map((outlet, index) => {
+      const palette = outletColor(index);
+      const series = Array.isArray(outlet.monthlySeries) ? outlet.monthlySeries : [];
+      return {
+        label: outlet.code,
+        data: series.map(point => point.revenue || 0),
+        backgroundColor: palette.fill,
+        borderColor: palette.line,
+        borderWidth: 1,
+        borderRadius: 6
+      };
+    }).concat([
+      {
+        label: 'Lost Sales',
+        data: totalLostSales,
+        type: 'line',
+        borderColor: '#ff6b6b',
+        backgroundColor: 'transparent',
+        tension: .25,
+        pointRadius,
+        pointHoverRadius: pointRadius === 0 ? 3 : 4,
+        borderDash: [6, 4],
+        borderWidth: 2,
+        yAxisID: 'y1'
+      },
+      {
+        label: 'Trend',
+        data: rollingAverage(totalRevenue, trendWindow),
+        type: 'line',
+        borderColor: '#5ab8ff',
+        backgroundColor: 'transparent',
+        tension: .28,
+        pointRadius: 0,
+        borderDash: [8, 6],
+        borderWidth: 2
+      }
+    ]);
+
+    profitDatasets = state.outletEconomics.map((outlet, index) => {
+      const palette = outletColor(index);
+      const series = Array.isArray(outlet.monthlySeries) ? outlet.monthlySeries : [];
+      return {
+        label: outlet.code,
+        data: series.map(point => point.netContribution || 0),
+        backgroundColor: palette.fill,
+        borderColor: palette.line,
+        borderWidth: 1,
+        borderRadius: 6
+      };
+    }).concat([
+      {
+        label: 'Portfolio Net',
+        data: totalNet,
+        type: 'line',
+        borderColor: '#a6ffe2',
+        backgroundColor: 'transparent',
+        tension: .28,
+        pointRadius,
+        pointHoverRadius: pointRadius === 0 ? 3 : 4,
+        borderWidth: 2
+      },
+      {
+        label: 'Lost Sales',
+        data: totalLostSales,
+        type: 'line',
+        borderColor: '#ff6b6b',
+        backgroundColor: 'transparent',
+        tension: .22,
+        pointRadius: 0,
+        borderDash: [6, 4],
+        borderWidth: 2,
+        yAxisID: 'y1'
+      }
+    ]);
+  } else {
+    const series = mode === 'outlet' && selectedSeries.length ? selectedSeries : state.monthSeries;
+    const revenue = series.map(point => point.revenue || 0);
+    const cogs = series.map(point => point.cogs || 0);
+    const payroll = series.map(point => point.payrollCost || 0);
+    const operating = series.map(point => point.operatingCost || 0);
+    const waste = series.map(point => point.wasteCost || 0);
+    const lostSales = series.map(point => point.lostSalesValue || 0);
+    const netContribution = series.map(point => point.netContribution || 0);
+    const trend = rollingAverage(revenue, trendWindow);
+    const scopeLabel = mode === 'outlet' && selectedOutlet ? `${selectedOutlet.code} Revenue` : 'Revenue';
+    const lostSalesLabel = mode === 'outlet' && selectedOutlet ? `${selectedOutlet.code} Lost Sales` : 'Lost Sales';
+
+    revenueDatasets = [
+      {
+        label: scopeLabel,
+        data: revenue,
+        type: 'line',
+        borderColor: '#2bd2a8',
+        backgroundColor: 'rgba(43,210,168,.16)',
+        fill: false,
+        tension: .24,
+        pointRadius,
+        pointHoverRadius: pointRadius === 0 ? 3 : 4,
+        borderWidth: 3
+      },
+      {
+        label: 'Trend',
+        data: trend,
+        type: 'line',
+        borderColor: '#5ab8ff',
+        backgroundColor: 'transparent',
+        fill: false,
+        tension: .3,
+        pointRadius: 0,
+        borderDash: [8, 6],
+        borderWidth: 2
+      },
+      {
+        label: lostSalesLabel,
+        data: lostSales,
+        type: 'line',
+        borderColor: '#ff6b6b',
+        backgroundColor: 'transparent',
+        tension: .22,
+        pointRadius: 0,
+        borderDash: [6, 4],
+        borderWidth: 2,
+        yAxisID: 'y1'
+      }
+    ];
+
+    profitDatasets = [
+      { label: 'COGS', data: cogs, backgroundColor: 'rgba(255,180,84,.42)', borderRadius: 8 },
+      { label: 'Payroll', data: payroll, backgroundColor: 'rgba(90,184,255,.42)', borderRadius: 8 },
+      { label: 'OpEx', data: operating, backgroundColor: 'rgba(105,130,147,.42)', borderRadius: 8 },
+      { label: 'Waste', data: waste, backgroundColor: 'rgba(255,107,107,.32)', borderRadius: 8 },
+      {
+        label: 'Revenue',
+        data: revenue,
+        type: 'line',
+        borderColor: '#2bd2a8',
+        backgroundColor: 'transparent',
+        tension: .25,
+        pointRadius,
+        pointHoverRadius: pointRadius === 0 ? 3 : 4,
+        borderWidth: 3
+      },
+      {
+        label: 'Net',
+        data: netContribution,
+        type: 'line',
+        borderColor: '#a6ffe2',
+        backgroundColor: 'transparent',
+        tension: .28,
+        pointRadius,
+        pointHoverRadius: pointRadius === 0 ? 3 : 4,
+        borderWidth: 2
+      },
+      {
+        label: lostSalesLabel,
+        data: lostSales,
+        type: 'line',
+        borderColor: '#ff6b6b',
+        backgroundColor: 'transparent',
+        tension: .22,
+        pointRadius: 0,
+        borderDash: [6, 4],
+        borderWidth: 2,
+        yAxisID: 'y1'
+      }
+    ];
+  }
+
+  state.revenueChart.data.labels = labels;
+  state.revenueChart.data.datasets = revenueDatasets;
+  state.revenueChart.options.scales.x.stacked = false;
+  state.revenueChart.options.scales.y.stacked = false;
+  state.revenueChart.update();
+
+  state.profitChart.data.labels = labels;
+  state.profitChart.data.datasets = profitDatasets;
+  state.profitChart.options.scales.x.stacked = false;
+  state.profitChart.options.scales.y.stacked = false;
+  state.profitChart.update();
+}
+
+function renderOutletEconomics() {
+  const empty = document.getElementById('outletsEmpty');
+  const table = document.getElementById('outletsTable');
+  const body = document.getElementById('outletsBody');
+  if (!state.outletEconomics.length) {
+    empty.style.display = '';
+    table.style.display = 'none';
+    body.innerHTML = '';
+    return;
+  }
+
+  empty.style.display = 'none';
+  table.style.display = '';
+  body.innerHTML = state.outletEconomics.map(outlet => `
+    <tr class="${[
+      outlet.status === 'closed' ? 'is-closed' : '',
+      (outlet.lossMarginPct || 0) > 0 ? 'is-losing' : ''
+    ].filter(Boolean).join(' ')}">
+      <td>
+        <strong>${outlet.code || '—'}</strong>
+        <div class="muted">${outlet.name || 'Unnamed outlet'}</div>
+        <div class="muted mono">${formatCurrency(outlet.revenue || 0)} / ${formatCurrency(outlet.cost || 0)}</div>
+      </td>
+      <td><span class="badge ${outlet.status === 'closed' ? 'closed' : outlet.status === 'active' ? 'complete' : outlet.status || 'idle'}">${outlet.status || 'unknown'}</span></td>
+      <td>${outlet.subregionCode || outlet.regionCode || '—'}<div class="muted">${outlet.locationTier || '—'} · ${Number(outlet.areaSqm || 0).toLocaleString()} sqm</div><div class="muted">dine-in ${formatPercent(outlet.dineInSharePct || 0)} · delivery ${formatPercent(outlet.deliverySharePct || 0)}</div><div class="muted">${Number(outlet.ordersPerDay || 0).toFixed(1)} orders/day · ${formatCurrency(outlet.avgTicket || 0)} avg ticket</div></td>
+      <td class="mono">${formatCurrency(outlet.revenue || 0)}</td>
+      <td class="mono">${formatPercent(outlet.revenueSharePct || 0)}</td>
+      <td class="mono">${formatPercent(outlet.cogsPct || 0)}</td>
+      <td class="mono">${formatPercent(outlet.laborPct || 0)}<div class="muted">FT ${Number(outlet.activeFullTimeEmployees || 0).toLocaleString()} · PT ${Number(outlet.activePartTimeEmployees || 0).toLocaleString()}</div><div class="muted">${formatCurrency(outlet.fullTimePayrollRunRate || 0)} FT · ${formatCurrency(outlet.partTimePayrollRunRate || 0)} PT/mo</div></td>
+      <td class="mono">${formatPercent(outlet.wastePct || 0)}</td>
+      <td class="mono">${formatPercent(outlet.operatingPct || 0)}</td>
+      <td class="mono">${formatCurrency(outlet.storeContribution || 0)}<div class="muted">${formatPercent(outlet.contributionMarginPct || 0)}</div></td>
+      <td class="mono ${(outlet.netContribution || 0) < 0 ? 'cell-negative' : ''}">${formatCurrency(outlet.netContribution || 0)}<div class="muted">${formatPercent(outlet.netMarginPct || 0)}</div></td>
+      <td class="mono ${(outlet.lossMarginPct || 0) > 0 ? 'cell-negative' : ''}">${(outlet.lossMarginPct || 0) > 0 ? formatPercent(outlet.lossMarginPct || 0) : '—'}</td>
+      <td class="mono">${formatPercent(outlet.seatUtilization || 0)}</td>
+      <td class="mono">${formatPercent(outlet.serviceSlotUtilization || 0)}</td>
+      <td class="mono">${formatCurrency(outlet.lostSalesValue || 0)}<div class="muted">${formatPercent(outlet.lostSalesPct || 0)} of revenue</div><div class="muted">stock ${formatCurrency(outlet.stockoutLostSalesValue || 0)} · queue ${formatCurrency(outlet.serviceLostSalesValue || 0)}</div><div class="muted">basket ${formatCurrency(outlet.basketShrinkLostSalesValue || 0)}</div></td>
+      <td class="mono">${formatPayback(outlet.paybackEstimateMonths)}</td>
+      <td>${outlet.viabilityBand || '—'}</td>
+    </tr>
+  `).join('');
+}
+
+function formatPayback(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return '—';
+  }
+  if (!Number.isFinite(Number(value))) {
+    return 'Not viable';
+  }
+  return `${Number(value).toFixed(1)} mo`;
+}
+
+async function loadRuns() {
+  const res = await fetch('/api/runs');
+  const runs = await res.json();
+  state.runs = runs;
+  const empty = document.getElementById('runsEmpty');
+  const table = document.getElementById('runsTable');
+  const body = document.getElementById('runsBody');
+  if (!runs.length) {
+    empty.style.display = '';
+    table.style.display = 'none';
+    if (state.simStatus !== 'running' && state.cleanupStatus.status !== 'running' && state.dbExportStatus.status !== 'running') {
+      resetRunVisuals();
+      applyStatus();
+    }
+    return;
+  }
+  empty.style.display = 'none';
+  table.style.display = '';
+  body.innerHTML = runs.map(run => `
+    <tr>
+      <td class="mono">${run.namespace}</td>
+      <td><span class="badge ${run.status || 'idle'}">${run.status}</span></td>
+      <td>${Number((run.result && run.result.rows) || 0).toLocaleString()}</td>
+      <td>${run.daysCompleted}/${run.totalDays}</td>
+      <td>${shortDate(run.startedAt)}</td>
+      <td>${shortDate(run.completedAt)}</td>
+      <td>${run.cleanedAt ? shortDate(run.cleanedAt) : 'Active'}</td>
+    </tr>
+  `).join('');
+  if (state.simStatus !== 'running' && state.cleanupStatus.status !== 'running' && state.dbExportStatus.status !== 'running') {
+    hydrateLatestCompletedRun(runs);
+    applyStatus();
+  }
+}
+
+function buildMonthSeriesFromRun(run) {
+  const months = (run && run.result && run.result.months) || (run && run.result && run.result.monthlyData) || [];
+  return months.map(month => ({
+    label: month.period || `${month.year}-${String(month.month).padStart(2, '0')}`,
+    revenue: month.revenue || 0,
+    sales: month.sales || month.salesCount || 0,
+    cogs: month.cogs || 0,
+    payrollCost: month.payrollCost || 0,
+    operatingCost: month.operatingCost || 0,
+    wasteCost: month.wasteCost || 0,
+    lostSalesValue: month.lostSalesValue || 0,
+    stockoutLostSalesValue: month.stockoutLostSalesValue || 0,
+    serviceLostSalesValue: month.serviceLostSalesValue || 0,
+    basketShrinkLostSalesValue: month.basketShrinkLostSalesValue || 0,
+    dineInOrders: month.dineInOrders || 0,
+    deliveryOrders: month.deliveryOrders || 0,
+    avgTicket: month.avgTicket || 0,
+    netContribution: (month.revenue || 0)
+      - (month.cogs || 0)
+      - (month.payrollCost || 0)
+      - (month.operatingCost || 0)
+      - (month.wasteCost || 0)
+  })).sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function hydrateLatestCompletedRun(runs) {
+  const latest = runs.find(run => run.status === 'complete' && !run.cleanedAt);
+  if (!latest) {
+    resetRunVisuals();
+    return;
+  }
+
+  state.monthSeries = buildMonthSeriesFromRun(latest);
+  state.outletEconomics = (latest.result && latest.result.outletEconomics) || [];
+  syncChartOutletOptions();
+  state.totalRevenueFinal = Number((latest.result && latest.result.totalRevenue) || 0);
+  state.currentMonthKey = state.monthSeries.length ? state.monthSeries[state.monthSeries.length - 1].label : '';
+  state.currentMonthRevenue = state.monthSeries.length ? state.monthSeries[state.monthSeries.length - 1].revenue : 0;
+  state.diagnostics = (latest.result && latest.result.diagnostics) || {};
+  state.operational = (latest.result && latest.result.realism) || {};
+  state.operationalScope = 'run';
+
+  document.getElementById('progressTitle').textContent = 'Latest completed run';
+  document.getElementById('progressFill').style.width = '100%';
+  document.getElementById('progressPercent').textContent = '100%';
+  document.getElementById('progressDate').textContent = state.currentMonthKey || (latest.progress && latest.progress.date) || '—';
+  document.getElementById('progressDay').textContent = `${latest.daysCompleted || 0} / ${latest.totalDays || 0}`;
+  document.getElementById('progressRevenue').textContent = formatCurrency(state.currentMonthRevenue || 0);
+  document.getElementById('progressSales').textContent = Number(state.monthSeries.length ? state.monthSeries[state.monthSeries.length - 1].sales || 0 : 0).toLocaleString();
+  document.getElementById('progressCleanup').textContent = latest.cleanedAt ? shortDate(latest.cleanedAt) : 'active';
+  document.getElementById('metricRows').textContent = Number((latest.result && latest.result.rows) || 0).toLocaleString();
+  document.getElementById('metricRowsSub').textContent = 'Committed simulator-owned rows from the latest run';
+  document.getElementById('metricOutlets').textContent = Number((latest.result && (latest.result.activeOutlets || latest.result.totalOutlets || latest.result.outlets)) || 0).toLocaleString();
+  document.getElementById('metricOutletsSub').textContent = 'Active outlets in the latest completed run';
+  document.getElementById('metricEmployees').textContent = Number((latest.result && (latest.result.activeEmployees || latest.result.totalEmployees || latest.result.employees)) || 0).toLocaleString();
+  document.getElementById('metricEmployeesSub').textContent = 'Active employees in the latest completed run';
+  renderRevenueSummary();
+  renderOperational();
+  renderDiagnostics();
+  renderMonthCharts();
+  renderOutletEconomics();
+
+  document.getElementById('revenueBadge').className = 'badge complete';
+  document.getElementById('revenueBadge').textContent = state.totalRevenueFinal > 0
+    ? `${formatCurrency(state.totalRevenueFinal)} latest run`
+    : 'Latest completed run';
+  const latestNet = state.monthSeries.length ? state.monthSeries[state.monthSeries.length - 1].netContribution : 0;
+  document.getElementById('profitBadge').className = latestNet >= 0 ? 'badge complete' : 'badge error';
+  document.getElementById('profitBadge').textContent = state.monthSeries.length
+    ? `${formatCurrency(latestNet)} latest month`
+    : 'Latest completed run';
+}
+
+async function loadCleanupNamespaces() {
+  const res = await fetch('/api/cleanup/namespaces');
+  const namespaces = await res.json();
+  const empty = document.getElementById('namespacesEmpty');
+  const table = document.getElementById('namespacesTable');
+  const body = document.getElementById('namespacesBody');
+  const select = document.getElementById('cleanupNamespace');
+  if (!namespaces.length) {
+    empty.style.display = '';
+    table.style.display = 'none';
+    select.innerHTML = '';
+    return;
+  }
+  empty.style.display = 'none';
+  table.style.display = '';
+  body.innerHTML = namespaces.map(ns => `
+    <tr>
+      <td class="mono">${ns.namespace}</td>
+      <td>${Number(ns.estimatedRows || 0).toLocaleString()}</td>
+      <td>${ns.runCount}</td>
+      <td><span class="badge ${ns.latestStatus || 'idle'}">${ns.latestStatus || 'unknown'}</span></td>
+      <td>${shortDate(ns.lastStartedAt)}</td>
+      <td><button class="btn btn-warn" style="padding:9px 12px" onclick="openCleanupModal('namespace','${ns.namespace}')">Cleanup</button></td>
+    </tr>
+  `).join('');
+  select.innerHTML = namespaces.map(ns => `<option value="${ns.namespace}">${ns.namespace} (${Number(ns.estimatedRows || 0).toLocaleString()} rows)</option>`).join('');
+  if (state.currentNamespace) {
+    select.value = namespaces.some(ns => ns.namespace === state.currentNamespace) ? state.currentNamespace : namespaces[0].namespace;
+  }
+}
+
+function openCleanupModal(scope, namespace = '') {
+  setCleanupScope(scope);
+  document.getElementById('cleanupModal').classList.add('open');
+  if (namespace) {
+    document.getElementById('cleanupNamespace').value = namespace;
+  }
+  renderCleanupProgress();
+}
+
+function setCleanupScope(scope) {
+  state.cleanupScope = scope;
+  document.getElementById('scopeNamespace').classList.toggle('active', scope === 'namespace');
+  document.getElementById('scopeAll').classList.toggle('active', scope === 'all');
+  document.getElementById('cleanupNamespace').disabled = scope === 'all';
+  document.getElementById('cleanupNamespaceHelp').textContent = scope === 'all'
+    ? 'All namespaces recorded in simulator_run will be previewed and cleaned.'
+    : 'Choose the namespace you want to preview or delete.';
+}
+
+async function previewCleanup() {
+  const payload = {
+    scope: state.cleanupScope,
+    namespace: document.getElementById('cleanupNamespace').value
+  };
+  const res = await fetch('/api/cleanup/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    addLog('error', data.error || 'Failed to preview cleanup.');
+    return;
+  }
+  state.cleanupPreview = data;
+  renderCleanupPreview();
+}
+
+async function executeCleanup() {
+  const payload = {
+    scope: state.cleanupScope,
+    namespace: document.getElementById('cleanupNamespace').value
+  };
+  const res = await fetch('/api/cleanup/execute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    addLog('error', data.error || 'Failed to start cleanup.');
+    return;
+  }
+  state.cleanupStatus = data && typeof data === 'object' ? data : { status: 'running', scope: state.cleanupScope };
+  addLog('cleanup', `Cleanup started for ${state.cleanupScope === 'all' ? 'all namespaces' : payload.namespace}.`);
+  renderCleanupProgress();
+  applyStatus();
+}
+
+function renderCleanupPreview() {
+  const empty = document.getElementById('cleanupPreviewEmpty');
+  const list = document.getElementById('cleanupPreviewList');
+  if (!state.cleanupPreview) {
+    empty.style.display = '';
+    list.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  list.style.display = '';
+  list.innerHTML = state.cleanupPreview.namespaces.map(ns => `
+    <div class="preview-card">
+      <h4>${ns.namespace} <span class="mono muted">• ${Number(ns.totalRows || 0).toLocaleString()} rows</span></h4>
+      <table class="preview-table">
+        ${Object.entries(ns.counts).filter(([,value]) => value > 0).map(([key,value]) => `<tr><td>${key}</td><td class="mono" style="text-align:right">${Number(value).toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">No matching simulator-owned rows.</td></tr>'}
+      </table>
+    </div>
+  `).join('') + `
+    <div class="preview-card">
+      <h4>Total impact <span class="mono muted">• ${Number(state.cleanupPreview.totalRows || 0).toLocaleString()} rows</span></h4>
+      <table class="preview-table">
+        ${Object.entries(state.cleanupPreview.totals).filter(([,value]) => value > 0).map(([key,value]) => `<tr><td>${key}</td><td class="mono" style="text-align:right">${Number(value).toLocaleString()}</td></tr>`).join('')}
+      </table>
+    </div>`;
+}
+
+function renderCleanupProgress() {
+  const box = document.getElementById('cleanupProgressBox');
+  const title = document.getElementById('cleanupProgressTitle');
+  const body = document.getElementById('cleanupProgressBody');
+  const fill = document.getElementById('cleanupProgressFill');
+  const elapsedNode = document.getElementById('cleanupProgressElapsed');
+  const etaNode = document.getElementById('cleanupProgressEta');
+  const executeButton = document.getElementById('btnCleanupExecute');
+  box.style.display = '';
+  const status = state.cleanupStatus || { status: 'idle' };
+  const progressPct = cleanupProgressPercent(status);
+  fill.style.width = `${progressPct}%`;
+  executeButton.disabled = status.status === 'running';
+
+  const elapsedMs = cleanupElapsedMs(status);
+  elapsedNode.textContent = `Elapsed: ${elapsedMs > 0 ? formatDuration(elapsedMs) : '—'}`;
+
+  const etaMs = cleanupEtaMs(status, elapsedMs);
+  etaNode.textContent = `ETA: ${etaMs === null ? 'estimating…' : etaMs <= 0 ? 'done' : formatDuration(etaMs)}`;
+
+  if (status.status === 'running') {
+    ensureCleanupProgressTimer();
+  } else {
+    stopCleanupProgressTimer();
+  }
+
+  if (status.status === 'running') {
+    title.textContent = 'Cleanup running';
+    const stepText = (status.totalSteps || 0) > 0
+      ? `${status.completedSteps || 0}/${status.totalSteps || 0} steps`
+      : `${status.completedNamespaces || 0}/${status.totalNamespaces || 0} namespaces`;
+    body.textContent = `${status.currentNamespace || status.namespace || 'Preparing'} • ${stepText} • ${Number(status.rowsDeleted || 0).toLocaleString()} rows affected`;
+  } else if (status.status === 'complete') {
+    title.textContent = 'Cleanup complete';
+    const speedText = status.rowsPerSecond ? ` • ${Number(status.rowsPerSecond || 0).toLocaleString()} rows/s` : '';
+    body.textContent = `${status.totalNamespaces || 0} namespaces processed • ${Number(status.rowsDeleted || 0).toLocaleString()} rows affected${speedText}`;
+    etaNode.textContent = 'ETA: done';
+    fill.style.width = '100%';
+  } else if (status.status === 'error') {
+    title.textContent = 'Cleanup failed';
+    body.textContent = status.message || 'Cleanup failed before completion.';
+    etaNode.textContent = 'ETA: unavailable';
+  } else {
+    title.textContent = 'Cleanup idle';
+    body.textContent = 'Preview the cleanup scope before executing.';
+    elapsedNode.textContent = 'Elapsed: —';
+    etaNode.textContent = 'ETA: —';
+    fill.style.width = '0%';
+  }
+}
+
+function cleanupProgressPercent(status) {
+  const completedSteps = Number(status.completedSteps || 0);
+  const totalSteps = Number(status.totalSteps || 0);
+  if (totalSteps > 0) {
+    return Math.max(0, Math.min(100, (completedSteps / totalSteps) * 100));
+  }
+  const completedNamespaces = Number(status.completedNamespaces || 0);
+  const totalNamespaces = Number(status.totalNamespaces || 0);
+  if (totalNamespaces > 0) {
+    return Math.max(0, Math.min(100, (completedNamespaces / totalNamespaces) * 100));
+  }
+  return status.status === 'complete' ? 100 : 0;
+}
+
+function cleanupElapsedMs(status) {
+  if (status.status === 'running' && status.startedAtMs) {
+    return Math.max(0, Date.now() - Number(status.startedAtMs));
+  }
+  return Number(status.elapsedMs || 0);
+}
+
+function cleanupEtaMs(status, elapsedMs) {
+  if (status.status !== 'running') {
+    if (status.status === 'complete') return 0;
+    return null;
+  }
+  if (status.etaMs !== undefined && status.etaMs !== null) {
+    return Math.max(0, Number(status.etaMs));
+  }
+  const completedSteps = Number(status.completedSteps || 0);
+  const totalSteps = Number(status.totalSteps || 0);
+  if (completedSteps <= 0 || totalSteps <= 0 || elapsedMs <= 0) {
+    return null;
+  }
+  const projectedTotalMs = Math.round((elapsedMs * totalSteps) / completedSteps);
+  return Math.max(0, projectedTotalMs - elapsedMs);
+}
+
+function ensureCleanupProgressTimer() {
+  if (cleanupProgressTimer) return;
+  cleanupProgressTimer = window.setInterval(() => {
+    if (state.cleanupStatus.status !== 'running') {
+      stopCleanupProgressTimer();
+      return;
+    }
+    renderCleanupProgress();
+  }, 1000);
+}
+
+function stopCleanupProgressTimer() {
+  if (!cleanupProgressTimer) return;
+  window.clearInterval(cleanupProgressTimer);
+  cleanupProgressTimer = null;
+}
+
+function renderDbExportProgress() {
+  const box = document.getElementById('dbExportProgressBox');
+  const title = document.getElementById('dbExportProgressTitle');
+  const body = document.getElementById('dbExportProgressBody');
+  const fill = document.getElementById('dbExportProgressFill');
+  const elapsedNode = document.getElementById('dbExportProgressElapsed');
+  const etaNode = document.getElementById('dbExportProgressEta');
+  const status = state.dbExportStatus || { status: 'idle' };
+
+  box.style.display = '';
+  const elapsedMs = dbExportElapsedMs(status);
+  const etaMs = dbExportEtaMs(status, elapsedMs);
+  const progressPct = dbExportProgressPct(status);
+  fill.style.width = `${progressPct}%`;
+  elapsedNode.textContent = `Elapsed: ${elapsedMs > 0 ? formatDuration(elapsedMs) : '—'}`;
+  etaNode.textContent = `ETA: ${etaMs === null ? 'estimating…' : etaMs <= 0 ? 'done' : formatDuration(etaMs)}`;
+
+  if (status.status === 'running') {
+    ensureDbExportProgressTimer();
+    const path = status.outputFile || status.outputDir || 'simulator-output/runtime/db-exports';
+    const bytes = Number(status.outputBytes || 0);
+    title.textContent = 'DB export running';
+    body.textContent = `${path} • ${formatBytes(bytes)} written`;
+  } else if (status.status === 'complete') {
+    stopDbExportProgressTimer();
+    title.textContent = 'DB export complete';
+    body.textContent = `${status.outputFile || status.outputDir || 'runtime folder'} • ${formatBytes(status.outputBytes || 0)}`;
+    fill.style.width = '100%';
+    etaNode.textContent = 'ETA: done';
+  } else if (status.status === 'error') {
+    stopDbExportProgressTimer();
+    title.textContent = 'DB export failed';
+    body.textContent = status.message || 'DB export failed.';
+    etaNode.textContent = 'ETA: unavailable';
+  } else {
+    stopDbExportProgressTimer();
+    title.textContent = 'DB export idle';
+    body.textContent = 'Export writes to simulator-output/runtime/db-exports.';
+    fill.style.width = '0%';
+    elapsedNode.textContent = 'Elapsed: —';
+    etaNode.textContent = 'ETA: —';
+  }
+}
+
+function dbExportElapsedMs(status) {
+  if (status.status === 'running' && status.startedAtMs) {
+    return Math.max(0, Date.now() - Number(status.startedAtMs));
+  }
+  return Number(status.elapsedMs || 0);
+}
+
+function dbExportEtaMs(status, elapsedMs) {
+  if (status.status !== 'running') {
+    return status.status === 'complete' ? 0 : null;
+  }
+  if (status.etaMs !== undefined && status.etaMs !== null) {
+    return Math.max(0, Number(status.etaMs));
+  }
+  const outputBytes = Number(status.outputBytes || 0);
+  const dbBytes = Number(status.databaseSizeBytes || 0);
+  if (elapsedMs <= 0 || outputBytes <= 0 || dbBytes <= outputBytes) {
+    return null;
+  }
+  const bytesPerMs = outputBytes / elapsedMs;
+  if (bytesPerMs <= 0) {
+    return null;
+  }
+  return Math.max(0, Math.round((dbBytes - outputBytes) / bytesPerMs));
+}
+
+function dbExportProgressPct(status) {
+  if (status.status === 'complete') return 100;
+  if (status.status !== 'running') return 0;
+  if (status.progressPct !== undefined && status.progressPct !== null) {
+    return Math.max(0, Math.min(100, Number(status.progressPct)));
+  }
+  return 10;
+}
+
+function ensureDbExportProgressTimer() {
+  if (dbExportProgressTimer) return;
+  dbExportProgressTimer = window.setInterval(() => {
+    if (state.dbExportStatus.status !== 'running') {
+      stopDbExportProgressTimer();
+      return;
+    }
+    renderDbExportProgress();
+  }, 1000);
+}
+
+function stopDbExportProgressTimer() {
+  if (!dbExportProgressTimer) return;
+  window.clearInterval(dbExportProgressTimer);
+  dbExportProgressTimer = null;
+}
+
+async function showAccounts() {
+  const res = await fetch(`/api/accounts/${state.currentNamespace}`);
+  const accounts = await res.json();
+  if (!res.ok) {
+    addLog('error', accounts.error || 'Failed to load accounts.');
+    return;
+  }
+  state.accounts = accounts;
+  renderAccounts();
+  document.getElementById('accountsModal').classList.add('open');
+}
+
+function renderAccounts() {
+  const q = document.getElementById('accountSearch').value.toLowerCase();
+  const filtered = state.accounts.filter(account => {
+    const matchesQuery =
+      account.username.toLowerCase().includes(q) ||
+      account.employeeCode.toLowerCase().includes(q) ||
+      account.fullName.toLowerCase().includes(q) ||
+      account.role.toLowerCase().includes(q);
+    const matchesStatus = state.accountStatusFilter === 'all'
+      || (state.accountStatusFilter === 'former' && !!account.terminationDate)
+      || (state.accountStatusFilter === 'no-role' && (!account.role || account.role === 'none'))
+      || account.status === state.accountStatusFilter;
+    return matchesQuery && matchesStatus;
+  });
+  document.getElementById('accountsBody').innerHTML = filtered.map(account => `
+    <tr>
+      <td class="mono">${account.username}</td>
+      <td class="mono">${account.employeeCode}</td>
+      <td>${account.fullName}</td>
+      <td>${account.role}</td>
+      <td><span class="badge ${account.status || 'idle'}">${account.status}</span></td>
+      <td>${account.contractStatus || 'none'}</td>
+      <td>${account.outletCode || '—'}</td>
+      <td>${shortDate(account.createdAt)}</td>
+    </tr>
+  `).join('');
+}
+
+function filterAccounts() {
+  renderAccounts();
+}
+
+function setAccountFilter(filter) {
+  state.accountStatusFilter = filter;
+  ['all', 'active', 'inactive', 'suspended', 'former', 'no-role'].forEach(value => {
+    document.getElementById(`accountFilter${value === 'no-role' ? 'NoRole' : value.charAt(0).toUpperCase() + value.slice(1)}`)
+      .classList.toggle('active', value === filter);
+  });
+  renderAccounts();
+}
+
+function downloadAccountsCsv(scope) {
+  const url = scope === 'all'
+    ? '/api/accounts/export.csv?scope=all'
+    : `/api/accounts/export.csv?scope=namespace&namespace=${encodeURIComponent(state.currentNamespace)}`;
+  window.open(url, '_blank', 'noopener');
+}
+
+function updateDbExportButtonState() {
+  const button = document.getElementById('btnExportSql');
+  if (!button) return;
+  const exportRunning = state.dbExportStatus.status === 'running';
+  const busy = state.simStatus === 'running' || state.cleanupStatus.status === 'running' || exportRunning;
+  button.disabled = busy || state.dbExporting;
+  button.textContent = (state.dbExporting || exportRunning) ? 'Exporting SQL…' : 'Export DB SQL';
+}
+
+async function exportDbSql() {
+  if (state.dbExporting) return;
+  if (state.dbExportStatus.status === 'running') {
+    addLog('warning', 'DB export is already running.');
+    renderDbExportProgress();
+    return;
+  }
+  state.dbExporting = true;
+  updateDbExportButtonState();
+  try {
+    const res = await fetch('/api/db/export/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const message = data && data.error ? data.error : 'Failed to start DB export.';
+      addLog('error', message);
+      return;
+    }
+    state.dbExportStatus = data || { status: 'running' };
+    renderDbExportProgress();
+    const outputDir = state.dbExportStatus.outputDir || 'simulator-output/runtime/db-exports';
+    addLog('export', `DB export started. Output folder: ${outputDir}`);
+    applyStatus();
+  } catch (error) {
+    addLog('error', `DB export failed to start: ${error.message || 'Unknown error'}`);
+  } finally {
+    state.dbExporting = false;
+    updateDbExportButtonState();
+  }
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+function addLog(type, message) {
+  const time = new Date().toLocaleTimeString('en-GB');
+  state.logs.unshift({ type, message, time });
+  state.logs = state.logs.slice(0, 120);
+  document.getElementById('logCount').textContent = `${state.logs.length} events`;
+  document.getElementById('logList').innerHTML = state.logs.map(entry => `
+    <div class="log-item">
+      <time>${entry.time}</time>
+      <b>${entry.type}</b>
+      <div>${entry.message}</div>
+    </div>
+  `).join('');
+}
+
+function formatCurrency(value) {
+  return shortNumber(value || 0);
+}
+
+function shortNumber(value) {
+  const abs = Math.abs(value);
+  if (abs >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
+  return Number(value || 0).toLocaleString();
+}
+
+function formatDuration(ms) {
+  if (!ms && ms !== 0) return '—';
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (value >= 1024 ** 3) return `${(value / (1024 ** 3)).toFixed(2)} GB`;
+  if (value >= 1024 ** 2) return `${(value / (1024 ** 2)).toFixed(2)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${Math.round(value)} B`;
+}
+
+function formatPercent(value) {
+  return `${Number(value || 0).toFixed(1)}%`;
+}
+
+function shortDate(value) {
+  if (!value) return '—';
+  return value.replace('T', ' ').slice(0, 16);
+}
+
+function topEntry(obj) {
+  const entries = Object.entries(obj || {});
+  if (!entries.length) return null;
+  return entries.sort((a, b) => b[1] - a[1])[0];
+}
+</script>
+</body>
+</html>

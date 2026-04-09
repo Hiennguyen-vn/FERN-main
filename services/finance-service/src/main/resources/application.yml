@@ -1,0 +1,37 @@
+server:
+  port: ${SERVER_PORT:8090}
+
+spring:
+  application:
+    name: finance-service
+  threads:
+    virtual:
+      enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+info:
+  service:
+    name: ${spring.application.name}
+    description: Finance expense and posting service bootstrap.
+
+dependencies:
+  postgres:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/fern}
+    username: ${POSTGRES_USER:fern}
+    password: ${POSTGRES_PASSWORD:fern}
+    poolSize: ${DB_POOL_SIZE:16}
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap: ${KAFKA_BOOTSTRAP:localhost:9092}
+  masterNode:
+    baseUrl: ${MASTER_NODE_URL:http://localhost:8082}

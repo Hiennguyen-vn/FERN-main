@@ -1,0 +1,7 @@
+# FERN Data Simulator — Large Preset (20 years)
+simulation:
+  namespace: "SIM-LARGE"
+  startDate: "2005-01-01"
+  endDate: "2024-12-31"
+  seed: 42
+  startingRegion: "VN-HCM"

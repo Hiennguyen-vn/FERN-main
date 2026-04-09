@@ -1,0 +1,217 @@
+# FERN Data Simulator — Default Configuration
+# This configuration creates a 1-year simulation starting from a single region.
+# It does not bootstrap outlets by default; outlet generation must be enabled
+# explicitly in a custom config or preset override.
+# Seed is mandatory for reproducibility.
+
+simulation:
+  namespace: "SIM-DEFAULT"
+  startDate: "2024-01-01"
+  endDate: "2024-12-31"
+  seed: 42
+  startingRegion: "VN-HCM"
+
+database:
+  url: "jdbc:postgresql://localhost:5432/fern"
+  username: "fern"
+  password: "fern"
+  allowNonLocal: false
+
+expansion:
+  globalExpansionEnabled: false
+  initialOutlets: 0
+  minActiveOutletsBeforeSubregion: 3
+  minConsecutiveProfitableMonths: 3
+  minAverageMonthlyRevenue: 50000000
+  minStaffRetentionRate: 0.80
+  minInventoryFulfillmentRate: 0.90
+  maxRegionsPerYear: 2
+  maxOutletsPerRegionPerYear: 4
+  expansionOrder:
+    - tier: "local"
+      triggerOutlets: 2
+      triggerMonths: 0
+    - tier: "subregion"
+      triggerOutlets: 5
+      triggerMonths: 6
+    - tier: "country"
+      triggerOutlets: 10
+      triggerMonths: 12
+    - tier: "international"
+      triggerOutlets: 20
+      triggerMonths: 18
+
+regions:
+  - code: "VN"
+    currency: "VND"
+    timezone: "Asia/Ho_Chi_Minh"
+    subregions:
+      - code: "VN-HCM"
+        name: "Ho Chi Minh City"
+      - code: "VN-DN"
+        name: "Da Nang"
+      - code: "VN-HN"
+        name: "Ha Noi"
+    holidays:
+      - date: "01-01"
+        demandMultiplier: 0.5
+        name: "New Year"
+      - date: "04-30"
+        demandMultiplier: 0.3
+        name: "Reunification Day"
+      - date: "05-01"
+        demandMultiplier: 0.4
+        name: "Labour Day"
+      - date: "09-02"
+        demandMultiplier: 0.6
+        name: "National Day"
+    seasonalMultipliers:
+      Q1: 0.95
+      Q2: 1.0
+      Q3: 1.1
+      Q4: 1.15
+    staffChurnMultiplier: 1.0
+    supplierLeadTimeDaysRange: [2, 5]
+
+  - code: "US"
+    currency: "USD"
+    timezone: "America/New_York"
+    subregions:
+      - code: "US-NYC"
+        name: "New York City"
+      - code: "US-LA"
+        name: "Los Angeles"
+    holidays:
+      - date: "01-01"
+        demandMultiplier: 0.5
+        name: "New Year"
+      - date: "07-04"
+        demandMultiplier: 0.6
+        name: "Independence Day"
+      - date: "11-28"
+        demandMultiplier: 0.4
+        name: "Thanksgiving"
+      - date: "12-25"
+        demandMultiplier: 0.5
+        name: "Christmas"
+    seasonalMultipliers:
+      Q1: 0.9
+      Q2: 1.0
+      Q3: 1.05
+      Q4: 1.2
+    staffChurnMultiplier: 0.8
+    supplierLeadTimeDaysRange: [3, 7]
+
+  - code: "JP"
+    currency: "JPY"
+    timezone: "Asia/Tokyo"
+    subregions:
+      - code: "JP-TYO"
+        name: "Tokyo"
+    holidays:
+      - date: "01-01"
+        demandMultiplier: 0.3
+        name: "New Year"
+      - date: "05-03"
+        demandMultiplier: 0.5
+        name: "Constitution Day"
+    seasonalMultipliers:
+      Q1: 0.9
+      Q2: 1.0
+      Q3: 1.1
+      Q4: 1.15
+    staffChurnMultiplier: 0.6
+    supplierLeadTimeDaysRange: [1, 3]
+
+probability:
+  outletOpenChancePerMonth: 0.15
+  outletCloseChancePerMonth: 0.02
+  outletCloseRevenueThresholdPercent: 30
+  outletCloseConsecutiveMonths: 3
+  monthlyTurnoverRate: 0.08
+  replacementLagDays: 14
+  replacementChance: 0.90
+  suspensionChance: 0.03
+  foundingStaffPerOutlet: 3
+  maxStaffPerOutlet: 12
+  hiringChancePerMonth: 0.20
+  baseDailySalesPerOutlet: 80
+  demandRampDays: 90
+  demandGrowthPerMonth: 0.02
+  demandDeclinePerMonth: 0.01
+  weekdayMultipliers:
+    MONDAY: 0.8
+    TUESDAY: 0.85
+    WEDNESDAY: 0.9
+    THURSDAY: 0.95
+    FRIDAY: 1.2
+    SATURDAY: 1.4
+    SUNDAY: 1.1
+  promotionStartChancePerMonth: 0.10
+  promotionDurationDays: [7, 14, 30]
+  promotionDiscountPercent: [5, 10, 15, 20]
+  reorderLeadTimeDays: [2, 3, 5, 7]
+  wasteRateDaily: 0.005
+  payrollCadence: "MONTHLY"
+  payDayOfMonth: 5
+  roleDistribution:
+    cashier: 0.35
+    inventory_clerk: 0.15
+    kitchen_staff: 0.25
+    employee_no_role: 0.25
+  saleCancelChance: 0.03
+  saleRefundChance: 0.02
+  salePartialRefundChance: 0.01
+  saleVoidChance: 0.005
+
+realism:
+  stockoutCarryoverDays: 7
+  stockoutCarryoverRate: 0.45
+  stockoutCarryoverWeights: [28, 20, 16, 12, 10, 8, 6]
+  lateDeliveryChance: 0.18
+  partialDeliveryChance: 0.12
+  invoiceLagDaysRange: [1, 5]
+  paymentDelayChance: 0.20
+  paymentDelayDaysRange: [1, 7]
+  weekdayAbsenceChance: 0.03
+  weekendAbsenceChance: 0.05
+  lateChance: 0.06
+  noShowChance: 0.01
+  leaveChance: 0.01
+  categoryProfiles:
+    PROTEIN:
+      perishabilityTier: "very_high"
+      shelfLifeDays: 3
+      prepWasteWeight: 0.45
+      damageRiskWeight: 0.20
+      incidentWasteChance: 0.028
+    VEGETABLE:
+      perishabilityTier: "high"
+      shelfLifeDays: 4
+      prepWasteWeight: 0.38
+      damageRiskWeight: 0.16
+      incidentWasteChance: 0.022
+    EGG_DAIRY:
+      perishabilityTier: "high"
+      shelfLifeDays: 5
+      prepWasteWeight: 0.30
+      damageRiskWeight: 0.15
+      incidentWasteChance: 0.018
+    SAUCE:
+      perishabilityTier: "medium"
+      shelfLifeDays: 12
+      prepWasteWeight: 0.18
+      damageRiskWeight: 0.08
+      incidentWasteChance: 0.008
+    NOODLE:
+      perishabilityTier: "low"
+      shelfLifeDays: 21
+      prepWasteWeight: 0.08
+      damageRiskWeight: 0.05
+      incidentWasteChance: 0.004
+    AROMATIC:
+      perishabilityTier: "low"
+      shelfLifeDays: 16
+      prepWasteWeight: 0.10
+      damageRiskWeight: 0.06
+      incidentWasteChance: 0.006

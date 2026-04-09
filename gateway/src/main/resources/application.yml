@@ -1,0 +1,50 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: gateway
+  threads:
+    virtual:
+      enabled: true
+  main:
+    web-application-type: reactive
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+info:
+  service:
+    name: ${spring.application.name}
+    description: Spring Cloud Gateway ingress for FERN ERP.
+
+fern:
+  gateway:
+    cors:
+      allowed-origins: ${GATEWAY_CORS_ALLOWED_ORIGINS:}
+      allowed-methods: ${GATEWAY_CORS_ALLOWED_METHODS:GET,POST,PUT,PATCH,DELETE,OPTIONS}
+      allowed-headers: ${GATEWAY_CORS_ALLOWED_HEADERS:Authorization,Content-Type,X-Correlation-ID}
+      exposed-headers: ${GATEWAY_CORS_EXPOSED_HEADERS:X-Correlation-ID,X-Gateway-Upstream-Service}
+
+dependencies:
+  postgres:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/fern}
+    username: ${POSTGRES_USER:fern}
+    password: ${POSTGRES_PASSWORD:fern}
+    poolSize: ${DB_POOL_SIZE:8}
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap: ${KAFKA_BOOTSTRAP:localhost:9092}
+  masterNode:
+    baseUrl: ${MASTER_NODE_URL:http://localhost:8082}
+    heartbeatEnabled: true
+    heartbeatLeaseSeconds: ${CONTROL_HEARTBEAT_LEASE_SECONDS:30}
+    heartbeatIntervalSeconds: ${CONTROL_HEARTBEAT_INTERVAL_SECONDS:10}

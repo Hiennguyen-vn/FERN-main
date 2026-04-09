@@ -1,0 +1,58 @@
+FERN_DEPENDENCY_SERVICES=(
+  postgres
+  postgres-replica
+  redis
+  kafka
+  prometheus
+  grafana
+)
+
+FERN_LOCAL_SERVICE_ORDER=(
+  "master-node|services/master-node|services/master-node/target/master-node-*.jar|MASTER_NODE_PORT|8082|spring"
+  "auth-service|services/auth-service/spring|services/auth-service/spring/target/auth-service-spring-*.jar|AUTH_SERVICE_PORT|8081|spring"
+  "org-service|services/org-service|services/org-service/target/org-service-*.jar|ORG_SERVICE_PORT|8083|spring"
+  "hr-service|services/hr-service|services/hr-service/target/hr-service-*.jar|HR_SERVICE_PORT|8084|spring"
+  "product-service|services/product-service|services/product-service/target/product-service-*.jar|PRODUCT_SERVICE_PORT|8085|spring"
+  "procurement-service|services/procurement-service|services/procurement-service/target/procurement-service-*.jar|PROCUREMENT_SERVICE_PORT|8086|spring"
+  "sales-service|services/sales-service|services/sales-service/target/sales-service-*.jar|SALES_SERVICE_PORT|8087|spring"
+  "inventory-service|services/inventory-service|services/inventory-service/target/inventory-service-*.jar|INVENTORY_SERVICE_PORT|8088|spring"
+  "payroll-service|services/payroll-service|services/payroll-service/target/payroll-service-*.jar|PAYROLL_SERVICE_PORT|8089|spring"
+  "finance-service|services/finance-service|services/finance-service/target/finance-service-*.jar|FINANCE_SERVICE_PORT|8090|spring"
+  "audit-service|services/audit-service|services/audit-service/target/audit-service-*.jar|AUDIT_SERVICE_PORT|8091|spring"
+  "report-service|services/report-service|services/report-service/target/report-service-*.jar|REPORT_SERVICE_PORT|8092|spring"
+  "gateway|gateway|gateway/target/gateway-*.jar|GATEWAY_PORT|8080|gateway"
+)
+
+FERN_MAVEN_BUILD_MODULES=(
+  gateway
+  services/auth-service/spring
+  services/master-node
+  services/org-service
+  services/hr-service
+  services/product-service
+  services/procurement-service
+  services/sales-service
+  services/inventory-service
+  services/payroll-service
+  services/finance-service
+  services/audit-service
+  services/report-service
+)
+
+FERN_KAFKA_TOPICS=(
+  "fern.auth.user-created|6"
+  "fern.auth.role-updated|6"
+  "fern.org.outlet-created|6"
+  "fern.org.exchange-rate-updated|6"
+  "fern.product.product-recipe-updated|12"
+  "fern.sales.sale-completed|12"
+  "fern.sales.payment-captured|12"
+  "fern.procurement.goods-receipt-posted|12"
+  "fern.procurement.invoice-approved|12"
+  "fern.finance.expense-record-created|6"
+  "fern.inventory.stock-low-threshold|6"
+  "fern.payroll.payroll-approved|6"
+  "fern.auth.user-role-changed|6"
+  "fern.org.outlet-updated|6"
+  "fern.product.product-price-changed|12"
+)

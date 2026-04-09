@@ -1,0 +1,202 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 97%;
+    --foreground: 220 25% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 10%;
+
+    --primary: 220 65% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 15% 93%;
+    --secondary-foreground: 220 25% 20%;
+
+    --muted: 220 15% 95%;
+    --muted-foreground: 220 10% 46%;
+
+    --accent: 220 15% 91%;
+    --accent-foreground: 220 25% 15%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 38 92% 15%;
+
+    --success: 152 60% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --info: 205 80% 50%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 220 15% 90%;
+    --input: 220 15% 88%;
+    --ring: 220 65% 45%;
+
+    --radius: 0.5rem;
+
+    /* Shell-specific tokens */
+    --topbar-bg: 0 0% 100%;
+    --topbar-border: 220 15% 90%;
+    --topbar-height: 3.5rem;
+
+    --sidebar-background: 222 30% 12%;
+    --sidebar-foreground: 220 15% 75%;
+    --sidebar-primary: 220 65% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 25% 18%;
+    --sidebar-accent-foreground: 220 15% 90%;
+    --sidebar-border: 222 20% 20%;
+    --sidebar-ring: 220 65% 55%;
+    --sidebar-muted: 222 15% 40%;
+    --sidebar-width: 16rem;
+    --sidebar-collapsed-width: 3.5rem;
+
+    /* Scope tokens */
+    --scope-system: 220 65% 45%;
+    --scope-region: 262 50% 50%;
+    --scope-outlet: 152 60% 36%;
+
+    /* Surface elevation */
+    --surface-1: 0 0% 100%;
+    --surface-2: 220 20% 98%;
+    --surface-3: 220 15% 96%;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(220 25% 10% / 0.04);
+    --shadow-md: 0 2px 8px -2px hsl(220 25% 10% / 0.08), 0 1px 2px 0 hsl(220 25% 10% / 0.04);
+    --shadow-lg: 0 8px 24px -4px hsl(220 25% 10% / 0.1), 0 2px 8px -2px hsl(220 25% 10% / 0.06);
+    --shadow-xl: 0 16px 48px -8px hsl(220 25% 10% / 0.12), 0 4px 16px -4px hsl(220 25% 10% / 0.08);
+
+    /* Login */
+    --login-panel: 222 30% 12%;
+    --login-panel-foreground: 220 15% 85%;
+    --login-accent: 220 65% 55%;
+  }
+
+  .dark {
+    --background: 222 30% 8%;
+    --foreground: 220 15% 90%;
+    --card: 222 25% 12%;
+    --card-foreground: 220 15% 90%;
+    --popover: 222 25% 12%;
+    --popover-foreground: 220 15% 90%;
+    --primary: 220 65% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 222 20% 18%;
+    --secondary-foreground: 220 15% 85%;
+    --muted: 222 20% 16%;
+    --muted-foreground: 220 10% 55%;
+    --accent: 222 20% 20%;
+    --accent-foreground: 220 15% 90%;
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 20% 20%;
+    --input: 222 20% 20%;
+    --ring: 220 65% 55%;
+    --sidebar-background: 222 35% 8%;
+    --sidebar-foreground: 220 15% 70%;
+    --sidebar-primary: 220 65% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 30% 14%;
+    --sidebar-accent-foreground: 220 15% 90%;
+    --sidebar-border: 222 25% 15%;
+    --sidebar-ring: 220 65% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  .shell-topbar {
+    @apply h-14 border-b flex items-center px-4 gap-3;
+    background: hsl(var(--topbar-bg));
+    border-color: hsl(var(--topbar-border));
+    box-shadow: var(--shadow-sm);
+  }
+
+  .scope-chip {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors;
+  }
+
+  .scope-chip-system {
+    background: hsl(var(--scope-system) / 0.1);
+    color: hsl(var(--scope-system));
+    border: 1px solid hsl(var(--scope-system) / 0.2);
+  }
+
+  .scope-chip-region {
+    background: hsl(var(--scope-region) / 0.1);
+    color: hsl(var(--scope-region));
+    border: 1px solid hsl(var(--scope-region) / 0.2);
+  }
+
+  .scope-chip-outlet {
+    background: hsl(var(--scope-outlet) / 0.1);
+    color: hsl(var(--scope-outlet));
+    border: 1px solid hsl(var(--scope-outlet) / 0.2);
+  }
+
+  .surface-elevated {
+    background: hsl(var(--surface-1));
+    box-shadow: var(--shadow-md);
+    @apply rounded-lg border;
+  }
+
+  .permission-banner {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-sm;
+  }
+
+  .permission-banner-readonly {
+    background: hsl(var(--info) / 0.08);
+    color: hsl(var(--info));
+    border: 1px solid hsl(var(--info) / 0.15);
+  }
+
+  .permission-banner-blocked {
+    background: hsl(var(--warning) / 0.08);
+    color: hsl(var(--warning-foreground));
+    border: 1px solid hsl(var(--warning) / 0.15);
+  }
+
+  .permission-banner-unavailable {
+    background: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
+    border: 1px solid hsl(var(--border));
+  }
+
+  .field-masked {
+    @apply relative select-none;
+    filter: blur(4px);
+    user-select: none;
+    pointer-events: none;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}

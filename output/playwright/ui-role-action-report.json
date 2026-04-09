@@ -1,0 +1,1601 @@
+{
+  "baseUrl": "http://127.0.0.1:5173",
+  "generatedAt": "2026-04-06T11:11:04.309Z",
+  "headless": true,
+  "checkedRoleCount": 5,
+  "checkedRoutesPerRole": 15,
+  "byRole": [
+    {
+      "role": "admin",
+      "username": "admin",
+      "loginUrl": "http://127.0.0.1:5173/dashboard",
+      "loginFailed": false,
+      "routes": [
+        {
+          "route": "/dashboard",
+          "urlBeforeActions": "http://127.0.0.1:5173/dashboard",
+          "urlAfterActions": "http://127.0.0.1:5173/dashboard",
+          "headingsBeforeActions": [
+            "Dashboard",
+            "Outlet Control Center",
+            "GATEWAY",
+            "PRODUCTS"
+          ],
+          "headingsAfterActions": [
+            "Dashboard",
+            "Outlet Control Center",
+            "GATEWAY",
+            "PRODUCTS"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/pos",
+          "urlBeforeActions": "http://127.0.0.1:5173/pos",
+          "urlAfterActions": "http://127.0.0.1:5173/pos",
+          "headingsBeforeActions": [
+            "Point of Sale"
+          ],
+          "headingsAfterActions": [
+            "Point of Sale"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/catalog",
+          "urlBeforeActions": "http://127.0.0.1:5173/catalog",
+          "urlAfterActions": "http://127.0.0.1:5173/catalog",
+          "headingsBeforeActions": [
+            "Catalog",
+            "Catalog controls",
+            "Products"
+          ],
+          "headingsAfterActions": [
+            "Catalog",
+            "Catalog controls",
+            "Products"
+          ],
+          "actions": [
+            "select:0",
+            "table:first-row"
+          ],
+          "rowClicked": true,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/inventory",
+          "urlBeforeActions": "http://127.0.0.1:5173/inventory",
+          "urlAfterActions": "http://127.0.0.1:5173/inventory",
+          "headingsBeforeActions": [
+            "Inventory"
+          ],
+          "headingsAfterActions": [
+            "Inventory"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/procurement",
+          "urlBeforeActions": "http://127.0.0.1:5173/procurement",
+          "urlAfterActions": "http://127.0.0.1:5173/procurement",
+          "headingsBeforeActions": [
+            "Procurement"
+          ],
+          "headingsAfterActions": [
+            "Procurement"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/reports",
+          "urlBeforeActions": "http://127.0.0.1:5173/reports",
+          "urlAfterActions": "http://127.0.0.1:5173/reports",
+          "headingsBeforeActions": [
+            "Reports"
+          ],
+          "headingsAfterActions": [
+            "Reports"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/audit",
+          "urlBeforeActions": "http://127.0.0.1:5173/audit",
+          "urlAfterActions": "http://127.0.0.1:5173/audit",
+          "headingsBeforeActions": [
+            "Audit Trail",
+            "Audit trail",
+            "Audit filters",
+            "Audit rows"
+          ],
+          "headingsAfterActions": [
+            "Audit Trail",
+            "Audit trail",
+            "Audit filters",
+            "Audit rows"
+          ],
+          "actions": [
+            "table:first-row"
+          ],
+          "rowClicked": true,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/iam",
+          "urlBeforeActions": "http://127.0.0.1:5173/iam",
+          "urlAfterActions": "http://127.0.0.1:5173/iam",
+          "headingsBeforeActions": [
+            "Access Management",
+            "Access Management",
+            "Current user",
+            "Known sessions"
+          ],
+          "headingsAfterActions": [
+            "Access Management",
+            "Access Management",
+            "Current user",
+            "Known sessions"
+          ],
+          "actions": [
+            "table:first-row"
+          ],
+          "rowClicked": true,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/finance",
+          "urlBeforeActions": "http://127.0.0.1:5173/finance",
+          "urlAfterActions": "http://127.0.0.1:5173/finance",
+          "headingsBeforeActions": [
+            "Finance",
+            "Finance",
+            "Expense filters",
+            "Expenses"
+          ],
+          "headingsAfterActions": [
+            "Finance",
+            "Finance",
+            "Expense filters",
+            "Expenses"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/hr",
+          "urlBeforeActions": "http://127.0.0.1:5173/hr",
+          "urlAfterActions": "http://127.0.0.1:5173/hr",
+          "headingsBeforeActions": [
+            "Human Resources",
+            "Work shifts by outlet/date"
+          ],
+          "headingsAfterActions": [
+            "Human Resources",
+            "Work shifts by outlet/date"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/settings",
+          "urlBeforeActions": "http://127.0.0.1:5173/settings",
+          "urlAfterActions": "http://127.0.0.1:5173/settings",
+          "headingsBeforeActions": [
+            "Settings",
+            "Visible regions",
+            "Visible outlets",
+            "Current scope"
+          ],
+          "headingsAfterActions": [
+            "Settings",
+            "Visible regions",
+            "Visible outlets",
+            "Current scope"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/crm",
+          "urlBeforeActions": "http://127.0.0.1:5173/crm",
+          "urlAfterActions": "http://127.0.0.1:5173/crm",
+          "headingsBeforeActions": [
+            "CRM"
+          ],
+          "headingsAfterActions": [
+            "CRM"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/promotions",
+          "urlBeforeActions": "http://127.0.0.1:5173/promotions",
+          "urlAfterActions": "http://127.0.0.1:5173/promotions",
+          "headingsBeforeActions": [
+            "Promotions"
+          ],
+          "headingsAfterActions": [
+            "Promotions"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/scheduling",
+          "urlBeforeActions": "http://127.0.0.1:5173/scheduling",
+          "urlAfterActions": "http://127.0.0.1:5173/scheduling",
+          "headingsBeforeActions": [
+            "Scheduling"
+          ],
+          "headingsAfterActions": [
+            "Scheduling"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/workforce",
+          "urlBeforeActions": "http://127.0.0.1:5173/workforce",
+          "urlAfterActions": "http://127.0.0.1:5173/workforce",
+          "headingsBeforeActions": [
+            "Workforce"
+          ],
+          "headingsAfterActions": [
+            "Workforce"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [
+            "O OpsCenter CORE Dashboard POS OPERATIONS Catalog Inventory Procurement Promotions FINANCE & PEOPLE Finance HR Workforce Scheduling ORGANIZATION Settings CRM INSIGHTS Reports Audit ADMINISTRATION IAM People / Workforce / Workforce Search… ⌘K United States RA Root Admin active Workforce Dedicated workforce attendance/overtime APIs are not yet exposed as an independent gateway surface."
+          ],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        }
+      ],
+      "consoleErrors": [],
+      "requestFailures": []
+    },
+    {
+      "role": "workflow.admin",
+      "username": "workflow.admin",
+      "loginUrl": "http://127.0.0.1:5173/dashboard",
+      "loginFailed": false,
+      "routes": [
+        {
+          "route": "/dashboard",
+          "urlBeforeActions": "http://127.0.0.1:5173/dashboard",
+          "urlAfterActions": "http://127.0.0.1:5173/dashboard",
+          "headingsBeforeActions": [
+            "Dashboard",
+            "Outlet Control Center",
+            "GATEWAY",
+            "PRODUCTS"
+          ],
+          "headingsAfterActions": [
+            "Dashboard",
+            "Outlet Control Center",
+            "GATEWAY",
+            "PRODUCTS"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/pos",
+          "urlBeforeActions": "http://127.0.0.1:5173/pos",
+          "urlAfterActions": "http://127.0.0.1:5173/pos",
+          "headingsBeforeActions": [
+            "Point of Sale"
+          ],
+          "headingsAfterActions": [
+            "Point of Sale"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/catalog",
+          "urlBeforeActions": "http://127.0.0.1:5173/catalog",
+          "urlAfterActions": "http://127.0.0.1:5173/catalog",
+          "headingsBeforeActions": [
+            "Catalog",
+            "Catalog controls",
+            "Products"
+          ],
+          "headingsAfterActions": [
+            "Catalog",
+            "Catalog controls",
+            "Products"
+          ],
+          "actions": [
+            "select:0",
+            "table:first-row"
+          ],
+          "rowClicked": true,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/inventory",
+          "urlBeforeActions": "http://127.0.0.1:5173/inventory",
+          "urlAfterActions": "http://127.0.0.1:5173/inventory",
+          "headingsBeforeActions": [
+            "Inventory"
+          ],
+          "headingsAfterActions": [
+            "Inventory"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/procurement",
+          "urlBeforeActions": "http://127.0.0.1:5173/procurement",
+          "urlAfterActions": "http://127.0.0.1:5173/procurement",
+          "headingsBeforeActions": [
+            "Procurement"
+          ],
+          "headingsAfterActions": [
+            "Procurement"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/reports",
+          "urlBeforeActions": "http://127.0.0.1:5173/reports",
+          "urlAfterActions": "http://127.0.0.1:5173/reports",
+          "headingsBeforeActions": [
+            "Reports"
+          ],
+          "headingsAfterActions": [
+            "Reports"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/audit",
+          "urlBeforeActions": "http://127.0.0.1:5173/audit",
+          "urlAfterActions": "http://127.0.0.1:5173/audit",
+          "headingsBeforeActions": [
+            "Audit Trail",
+            "Audit trail",
+            "Audit filters",
+            "Audit rows"
+          ],
+          "headingsAfterActions": [
+            "Audit Trail",
+            "Audit trail",
+            "Audit filters",
+            "Audit rows"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 1,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/iam",
+          "urlBeforeActions": "http://127.0.0.1:5173/iam",
+          "urlAfterActions": "http://127.0.0.1:5173/iam",
+          "headingsBeforeActions": [
+            "Access Management",
+            "Access Management",
+            "Current user",
+            "Known sessions"
+          ],
+          "headingsAfterActions": [
+            "Access Management",
+            "Access Management",
+            "Current user",
+            "Known sessions"
+          ],
+          "actions": [
+            "table:first-row"
+          ],
+          "rowClicked": true,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 1,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/finance",
+          "urlBeforeActions": "http://127.0.0.1:5173/finance",
+          "urlAfterActions": "http://127.0.0.1:5173/finance",
+          "headingsBeforeActions": [
+            "Finance",
+            "Finance",
+            "Expense filters",
+            "Expenses"
+          ],
+          "headingsAfterActions": [
+            "Finance",
+            "Finance",
+            "Expense filters",
+            "Expenses"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/hr",
+          "urlBeforeActions": "http://127.0.0.1:5173/hr",
+          "urlAfterActions": "http://127.0.0.1:5173/hr",
+          "headingsBeforeActions": [
+            "Human Resources",
+            "Work shifts by outlet/date"
+          ],
+          "headingsAfterActions": [
+            "Human Resources",
+            "Work shifts by outlet/date"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/settings",
+          "urlBeforeActions": "http://127.0.0.1:5173/settings",
+          "urlAfterActions": "http://127.0.0.1:5173/settings",
+          "headingsBeforeActions": [
+            "Settings",
+            "Visible regions",
+            "Visible outlets",
+            "Current scope"
+          ],
+          "headingsAfterActions": [
+            "Settings",
+            "Visible regions",
+            "Visible outlets",
+            "Current scope"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/crm",
+          "urlBeforeActions": "http://127.0.0.1:5173/crm",
+          "urlAfterActions": "http://127.0.0.1:5173/crm",
+          "headingsBeforeActions": [
+            "CRM"
+          ],
+          "headingsAfterActions": [
+            "CRM"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/promotions",
+          "urlBeforeActions": "http://127.0.0.1:5173/promotions",
+          "urlAfterActions": "http://127.0.0.1:5173/promotions",
+          "headingsBeforeActions": [
+            "Promotions"
+          ],
+          "headingsAfterActions": [
+            "Promotions"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/scheduling",
+          "urlBeforeActions": "http://127.0.0.1:5173/scheduling",
+          "urlAfterActions": "http://127.0.0.1:5173/scheduling",
+          "headingsBeforeActions": [
+            "Scheduling"
+          ],
+          "headingsAfterActions": [
+            "Scheduling"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/workforce",
+          "urlBeforeActions": "http://127.0.0.1:5173/workforce",
+          "urlAfterActions": "http://127.0.0.1:5173/workforce",
+          "headingsBeforeActions": [
+            "Workforce"
+          ],
+          "headingsAfterActions": [
+            "Workforce"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [
+            "O OpsCenter CORE Dashboard POS OPERATIONS Catalog Inventory Procurement Promotions FINANCE & PEOPLE Finance HR Workforce Scheduling ORGANIZATION Settings CRM INSIGHTS Reports Audit ADMINISTRATION IAM People / Workforce / Workforce Search… ⌘K System WA Workflow Admin active Workforce Dedicated workforce attendance/overtime APIs are not yet exposed as an independent gateway surface."
+          ],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+        "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+      ],
+      "requestFailures": []
+    },
+    {
+      "role": "workflow.hcm.manager",
+      "username": "workflow.hcm.manager",
+      "loginUrl": "http://127.0.0.1:5173/dashboard",
+      "loginFailed": false,
+      "routes": [
+        {
+          "route": "/dashboard",
+          "urlBeforeActions": "http://127.0.0.1:5173/dashboard",
+          "urlAfterActions": "http://127.0.0.1:5173/dashboard",
+          "headingsBeforeActions": [
+            "Dashboard",
+            "Outlet Control Center",
+            "GATEWAY",
+            "PRODUCTS"
+          ],
+          "headingsAfterActions": [
+            "Dashboard",
+            "Outlet Control Center",
+            "GATEWAY",
+            "PRODUCTS"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/pos",
+          "urlBeforeActions": "http://127.0.0.1:5173/pos",
+          "urlAfterActions": "http://127.0.0.1:5173/pos",
+          "headingsBeforeActions": [
+            "Point of Sale"
+          ],
+          "headingsAfterActions": [
+            "Point of Sale"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/catalog",
+          "urlBeforeActions": "http://127.0.0.1:5173/catalog",
+          "urlAfterActions": "http://127.0.0.1:5173/catalog",
+          "headingsBeforeActions": [
+            "Catalog",
+            "Catalog controls",
+            "Products"
+          ],
+          "headingsAfterActions": [
+            "Catalog",
+            "Catalog controls",
+            "Products"
+          ],
+          "actions": [
+            "select:0",
+            "table:first-row"
+          ],
+          "rowClicked": true,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/inventory",
+          "urlBeforeActions": "http://127.0.0.1:5173/inventory",
+          "urlAfterActions": "http://127.0.0.1:5173/inventory",
+          "headingsBeforeActions": [
+            "Inventory"
+          ],
+          "headingsAfterActions": [
+            "Inventory"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/procurement",
+          "urlBeforeActions": "http://127.0.0.1:5173/procurement",
+          "urlAfterActions": "http://127.0.0.1:5173/procurement",
+          "headingsBeforeActions": [
+            "Procurement"
+          ],
+          "headingsAfterActions": [
+            "Procurement"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/reports",
+          "urlBeforeActions": "http://127.0.0.1:5173/reports",
+          "urlAfterActions": "http://127.0.0.1:5173/reports",
+          "headingsBeforeActions": [
+            "Reports"
+          ],
+          "headingsAfterActions": [
+            "Reports"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/audit",
+          "urlBeforeActions": "http://127.0.0.1:5173/audit",
+          "urlAfterActions": "http://127.0.0.1:5173/audit",
+          "headingsBeforeActions": [
+            "Audit Trail",
+            "Audit trail",
+            "Audit filters",
+            "Audit rows"
+          ],
+          "headingsAfterActions": [
+            "Audit Trail",
+            "Audit trail",
+            "Audit filters",
+            "Audit rows"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 1,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/iam",
+          "urlBeforeActions": "http://127.0.0.1:5173/iam",
+          "urlAfterActions": "http://127.0.0.1:5173/iam",
+          "headingsBeforeActions": [
+            "Access Management",
+            "Access Management",
+            "Current user",
+            "Known sessions"
+          ],
+          "headingsAfterActions": [
+            "Access Management",
+            "Access Management",
+            "Current user",
+            "Known sessions"
+          ],
+          "actions": [
+            "table:first-row"
+          ],
+          "rowClicked": true,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 1,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/finance",
+          "urlBeforeActions": "http://127.0.0.1:5173/finance",
+          "urlAfterActions": "http://127.0.0.1:5173/finance",
+          "headingsBeforeActions": [
+            "Finance",
+            "Finance",
+            "Expense filters",
+            "Expenses"
+          ],
+          "headingsAfterActions": [
+            "Finance",
+            "Finance",
+            "Expense filters",
+            "Expenses"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/hr",
+          "urlBeforeActions": "http://127.0.0.1:5173/hr",
+          "urlAfterActions": "http://127.0.0.1:5173/hr",
+          "headingsBeforeActions": [
+            "Human Resources",
+            "Work shifts by outlet/date"
+          ],
+          "headingsAfterActions": [
+            "Human Resources",
+            "Work shifts by outlet/date"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/settings",
+          "urlBeforeActions": "http://127.0.0.1:5173/settings",
+          "urlAfterActions": "http://127.0.0.1:5173/settings",
+          "headingsBeforeActions": [
+            "Settings",
+            "Visible regions",
+            "Visible outlets",
+            "Current scope"
+          ],
+          "headingsAfterActions": [
+            "Settings",
+            "Visible regions",
+            "Visible outlets",
+            "Current scope"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/crm",
+          "urlBeforeActions": "http://127.0.0.1:5173/crm",
+          "urlAfterActions": "http://127.0.0.1:5173/crm",
+          "headingsBeforeActions": [
+            "CRM"
+          ],
+          "headingsAfterActions": [
+            "CRM"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/promotions",
+          "urlBeforeActions": "http://127.0.0.1:5173/promotions",
+          "urlAfterActions": "http://127.0.0.1:5173/promotions",
+          "headingsBeforeActions": [
+            "Promotions"
+          ],
+          "headingsAfterActions": [
+            "Promotions"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/scheduling",
+          "urlBeforeActions": "http://127.0.0.1:5173/scheduling",
+          "urlAfterActions": "http://127.0.0.1:5173/scheduling",
+          "headingsBeforeActions": [
+            "Scheduling"
+          ],
+          "headingsAfterActions": [
+            "Scheduling"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/workforce",
+          "urlBeforeActions": "http://127.0.0.1:5173/workforce",
+          "urlAfterActions": "http://127.0.0.1:5173/workforce",
+          "headingsBeforeActions": [
+            "Workforce"
+          ],
+          "headingsAfterActions": [
+            "Workforce"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [
+            "O OpsCenter CORE Dashboard POS OPERATIONS Catalog Inventory Procurement Promotions FINANCE & PEOPLE Finance HR Workforce Scheduling ORGANIZATION Settings CRM INSIGHTS Reports Audit ADMINISTRATION IAM People / Workforce / Workforce Search… ⌘K System WH Workflow HCM Manager active Workforce Dedicated workforce attendance/overtime APIs are not yet exposed as an independent gateway surface."
+          ],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+        "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+      ],
+      "requestFailures": []
+    },
+    {
+      "role": "workflow.us.manager",
+      "username": "workflow.us.manager",
+      "loginUrl": "http://127.0.0.1:5173/dashboard",
+      "loginFailed": false,
+      "routes": [
+        {
+          "route": "/dashboard",
+          "urlBeforeActions": "http://127.0.0.1:5173/dashboard",
+          "urlAfterActions": "http://127.0.0.1:5173/dashboard",
+          "headingsBeforeActions": [
+            "Dashboard",
+            "Outlet Control Center",
+            "GATEWAY",
+            "PRODUCTS"
+          ],
+          "headingsAfterActions": [
+            "Dashboard",
+            "Outlet Control Center",
+            "GATEWAY",
+            "PRODUCTS"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/pos",
+          "urlBeforeActions": "http://127.0.0.1:5173/pos",
+          "urlAfterActions": "http://127.0.0.1:5173/pos",
+          "headingsBeforeActions": [
+            "Point of Sale"
+          ],
+          "headingsAfterActions": [
+            "Point of Sale"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/catalog",
+          "urlBeforeActions": "http://127.0.0.1:5173/catalog",
+          "urlAfterActions": "http://127.0.0.1:5173/catalog",
+          "headingsBeforeActions": [
+            "Catalog",
+            "Catalog controls",
+            "Products"
+          ],
+          "headingsAfterActions": [
+            "Catalog",
+            "Catalog controls",
+            "Products"
+          ],
+          "actions": [
+            "select:0",
+            "table:first-row"
+          ],
+          "rowClicked": true,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/inventory",
+          "urlBeforeActions": "http://127.0.0.1:5173/inventory",
+          "urlAfterActions": "http://127.0.0.1:5173/inventory",
+          "headingsBeforeActions": [
+            "Inventory"
+          ],
+          "headingsAfterActions": [
+            "Inventory"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/procurement",
+          "urlBeforeActions": "http://127.0.0.1:5173/procurement",
+          "urlAfterActions": "http://127.0.0.1:5173/procurement",
+          "headingsBeforeActions": [
+            "Procurement"
+          ],
+          "headingsAfterActions": [
+            "Procurement"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/reports",
+          "urlBeforeActions": "http://127.0.0.1:5173/reports",
+          "urlAfterActions": "http://127.0.0.1:5173/reports",
+          "headingsBeforeActions": [
+            "Reports"
+          ],
+          "headingsAfterActions": [
+            "Reports"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/audit",
+          "urlBeforeActions": "http://127.0.0.1:5173/audit",
+          "urlAfterActions": "http://127.0.0.1:5173/audit",
+          "headingsBeforeActions": [
+            "Audit Trail",
+            "Audit trail",
+            "Audit filters",
+            "Audit rows"
+          ],
+          "headingsAfterActions": [
+            "Audit Trail",
+            "Audit trail",
+            "Audit filters",
+            "Audit rows"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 1,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/iam",
+          "urlBeforeActions": "http://127.0.0.1:5173/iam",
+          "urlAfterActions": "http://127.0.0.1:5173/iam",
+          "headingsBeforeActions": [
+            "Access Management",
+            "Access Management",
+            "Current user",
+            "Known sessions"
+          ],
+          "headingsAfterActions": [
+            "Access Management",
+            "Access Management",
+            "Current user",
+            "Known sessions"
+          ],
+          "actions": [
+            "table:first-row"
+          ],
+          "rowClicked": true,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 1,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/finance",
+          "urlBeforeActions": "http://127.0.0.1:5173/finance",
+          "urlAfterActions": "http://127.0.0.1:5173/finance",
+          "headingsBeforeActions": [
+            "Finance",
+            "Finance",
+            "Expense filters",
+            "Expenses"
+          ],
+          "headingsAfterActions": [
+            "Finance",
+            "Finance",
+            "Expense filters",
+            "Expenses"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/hr",
+          "urlBeforeActions": "http://127.0.0.1:5173/hr",
+          "urlAfterActions": "http://127.0.0.1:5173/hr",
+          "headingsBeforeActions": [
+            "Human Resources",
+            "Work shifts by outlet/date"
+          ],
+          "headingsAfterActions": [
+            "Human Resources",
+            "Work shifts by outlet/date"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/settings",
+          "urlBeforeActions": "http://127.0.0.1:5173/settings",
+          "urlAfterActions": "http://127.0.0.1:5173/settings",
+          "headingsBeforeActions": [
+            "Settings",
+            "Visible regions",
+            "Visible outlets",
+            "Current scope"
+          ],
+          "headingsAfterActions": [
+            "Settings",
+            "Visible regions",
+            "Visible outlets",
+            "Current scope"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/crm",
+          "urlBeforeActions": "http://127.0.0.1:5173/crm",
+          "urlAfterActions": "http://127.0.0.1:5173/crm",
+          "headingsBeforeActions": [
+            "CRM"
+          ],
+          "headingsAfterActions": [
+            "CRM"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/promotions",
+          "urlBeforeActions": "http://127.0.0.1:5173/promotions",
+          "urlAfterActions": "http://127.0.0.1:5173/promotions",
+          "headingsBeforeActions": [
+            "Promotions"
+          ],
+          "headingsAfterActions": [
+            "Promotions"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/scheduling",
+          "urlBeforeActions": "http://127.0.0.1:5173/scheduling",
+          "urlAfterActions": "http://127.0.0.1:5173/scheduling",
+          "headingsBeforeActions": [
+            "Scheduling"
+          ],
+          "headingsAfterActions": [
+            "Scheduling"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/workforce",
+          "urlBeforeActions": "http://127.0.0.1:5173/workforce",
+          "urlAfterActions": "http://127.0.0.1:5173/workforce",
+          "headingsBeforeActions": [
+            "Workforce"
+          ],
+          "headingsAfterActions": [
+            "Workforce"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [
+            "O OpsCenter CORE Dashboard POS OPERATIONS Catalog Inventory Procurement Promotions FINANCE & PEOPLE Finance HR Workforce Scheduling ORGANIZATION Settings CRM INSIGHTS Reports Audit ADMINISTRATION IAM People / Workforce / Workforce Search… ⌘K System WU Workflow US Manager active Workforce Dedicated workforce attendance/overtime APIs are not yet exposed as an independent gateway surface."
+          ],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+        "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+      ],
+      "requestFailures": []
+    },
+    {
+      "role": "workflow.hcm.cashier",
+      "username": "workflow.hcm.cashier",
+      "loginUrl": "http://127.0.0.1:5173/dashboard",
+      "loginFailed": false,
+      "routes": [
+        {
+          "route": "/dashboard",
+          "urlBeforeActions": "http://127.0.0.1:5173/dashboard",
+          "urlAfterActions": "http://127.0.0.1:5173/dashboard",
+          "headingsBeforeActions": [
+            "Dashboard",
+            "Outlet Control Center",
+            "GATEWAY",
+            "PRODUCTS"
+          ],
+          "headingsAfterActions": [
+            "Dashboard",
+            "Outlet Control Center",
+            "GATEWAY",
+            "PRODUCTS"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/pos",
+          "urlBeforeActions": "http://127.0.0.1:5173/pos",
+          "urlAfterActions": "http://127.0.0.1:5173/pos",
+          "headingsBeforeActions": [
+            "Point of Sale"
+          ],
+          "headingsAfterActions": [
+            "Point of Sale"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/catalog",
+          "urlBeforeActions": "http://127.0.0.1:5173/catalog",
+          "urlAfterActions": "http://127.0.0.1:5173/catalog",
+          "headingsBeforeActions": [
+            "Catalog",
+            "Catalog controls",
+            "Products"
+          ],
+          "headingsAfterActions": [
+            "Catalog",
+            "Catalog controls",
+            "Products"
+          ],
+          "actions": [
+            "select:0",
+            "table:first-row"
+          ],
+          "rowClicked": true,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/inventory",
+          "urlBeforeActions": "http://127.0.0.1:5173/inventory",
+          "urlAfterActions": "http://127.0.0.1:5173/inventory",
+          "headingsBeforeActions": [
+            "Inventory"
+          ],
+          "headingsAfterActions": [
+            "Inventory"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/procurement",
+          "urlBeforeActions": "http://127.0.0.1:5173/procurement",
+          "urlAfterActions": "http://127.0.0.1:5173/procurement",
+          "headingsBeforeActions": [
+            "Procurement"
+          ],
+          "headingsAfterActions": [
+            "Procurement"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/reports",
+          "urlBeforeActions": "http://127.0.0.1:5173/reports",
+          "urlAfterActions": "http://127.0.0.1:5173/reports",
+          "headingsBeforeActions": [
+            "Reports"
+          ],
+          "headingsAfterActions": [
+            "Reports"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 0,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/audit",
+          "urlBeforeActions": "http://127.0.0.1:5173/audit",
+          "urlAfterActions": "http://127.0.0.1:5173/audit",
+          "headingsBeforeActions": [
+            "Audit Trail",
+            "Audit trail",
+            "Audit filters",
+            "Audit rows"
+          ],
+          "headingsAfterActions": [
+            "Audit Trail",
+            "Audit trail",
+            "Audit filters",
+            "Audit rows"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 1,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/iam",
+          "urlBeforeActions": "http://127.0.0.1:5173/iam",
+          "urlAfterActions": "http://127.0.0.1:5173/iam",
+          "headingsBeforeActions": [
+            "Access Management",
+            "Access Management",
+            "Current user",
+            "Known sessions"
+          ],
+          "headingsAfterActions": [
+            "Access Management",
+            "Access Management",
+            "Current user",
+            "Known sessions"
+          ],
+          "actions": [
+            "table:first-row"
+          ],
+          "rowClicked": true,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 1,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/finance",
+          "urlBeforeActions": "http://127.0.0.1:5173/finance",
+          "urlAfterActions": "http://127.0.0.1:5173/finance",
+          "headingsBeforeActions": [
+            "Finance",
+            "Finance",
+            "Expense filters",
+            "Expenses"
+          ],
+          "headingsAfterActions": [
+            "Finance",
+            "Finance",
+            "Expense filters",
+            "Expenses"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": true,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/hr",
+          "urlBeforeActions": "http://127.0.0.1:5173/hr",
+          "urlAfterActions": "http://127.0.0.1:5173/hr",
+          "headingsBeforeActions": [
+            "Human Resources",
+            "Work shifts by outlet/date"
+          ],
+          "headingsAfterActions": [
+            "Human Resources",
+            "Work shifts by outlet/date"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/settings",
+          "urlBeforeActions": "http://127.0.0.1:5173/settings",
+          "urlAfterActions": "http://127.0.0.1:5173/settings",
+          "headingsBeforeActions": [
+            "Settings",
+            "Visible regions",
+            "Visible outlets",
+            "Current scope"
+          ],
+          "headingsAfterActions": [
+            "Settings",
+            "Visible regions",
+            "Visible outlets",
+            "Current scope"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/crm",
+          "urlBeforeActions": "http://127.0.0.1:5173/crm",
+          "urlAfterActions": "http://127.0.0.1:5173/crm",
+          "headingsBeforeActions": [
+            "CRM"
+          ],
+          "headingsAfterActions": [
+            "CRM"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/promotions",
+          "urlBeforeActions": "http://127.0.0.1:5173/promotions",
+          "urlAfterActions": "http://127.0.0.1:5173/promotions",
+          "headingsBeforeActions": [
+            "Promotions"
+          ],
+          "headingsAfterActions": [
+            "Promotions"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/scheduling",
+          "urlBeforeActions": "http://127.0.0.1:5173/scheduling",
+          "urlAfterActions": "http://127.0.0.1:5173/scheduling",
+          "headingsBeforeActions": [
+            "Scheduling"
+          ],
+          "headingsAfterActions": [
+            "Scheduling"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        },
+        {
+          "route": "/workforce",
+          "urlBeforeActions": "http://127.0.0.1:5173/workforce",
+          "urlAfterActions": "http://127.0.0.1:5173/workforce",
+          "headingsBeforeActions": [
+            "Workforce"
+          ],
+          "headingsAfterActions": [
+            "Workforce"
+          ],
+          "actions": [],
+          "rowClicked": false,
+          "unavailableLines": [
+            "O OpsCenter CORE Dashboard POS OPERATIONS Catalog Inventory Procurement Promotions FINANCE & PEOPLE Finance HR Workforce Scheduling ORGANIZATION Settings CRM INSIGHTS Reports Audit ADMINISTRATION IAM People / Workforce / Workforce Search… ⌘K System WH Workflow HCM Cashier active Workforce Dedicated workforce attendance/overtime APIs are not yet exposed as an independent gateway surface."
+          ],
+          "hasNoDataText": false,
+          "consoleErrorCount": 2,
+          "requestFailureCount": 0
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+        "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+      ],
+      "requestFailures": []
+    }
+  ],
+  "publicRoutes": [
+    {
+      "route": "/login",
+      "url": "http://127.0.0.1:5173/login",
+      "headings": [
+        "Sign in to your account"
+      ],
+      "unavailable": false,
+      "hasLoginForm": true
+    },
+    {
+      "route": "/order/demo-table",
+      "url": "http://127.0.0.1:5173/order/demo-table",
+      "headings": [
+        "404"
+      ],
+      "unavailable": true,
+      "hasLoginForm": false
+    },
+    {
+      "route": "/order",
+      "url": "http://127.0.0.1:5173/order",
+      "headings": [
+        "404"
+      ],
+      "unavailable": true,
+      "hasLoginForm": false
+    },
+    {
+      "route": "/dashboard",
+      "url": "http://127.0.0.1:5173/login",
+      "headings": [
+        "Sign in to your account"
+      ],
+      "unavailable": false,
+      "hasLoginForm": true
+    }
+  ]
+}

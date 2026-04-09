@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+POSTGRES_REPLICATION_SLOT="${POSTGRES_REPLICATION_SLOT:-fern_replica_slot}"
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<SQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${POSTGRES_REPLICATION_USER}') THEN
+    CREATE ROLE ${POSTGRES_REPLICATION_USER} WITH REPLICATION LOGIN PASSWORD '${POSTGRES_REPLICATION_PASSWORD}';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '${POSTGRES_REPLICATION_SLOT}') THEN
+    PERFORM pg_create_physical_replication_slot('${POSTGRES_REPLICATION_SLOT}');
+  END IF;
+END
+\$\$;
+SQL
