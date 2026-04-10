@@ -12,11 +12,16 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
+  authApi,
   hrApi,
+  orgApi,
   payrollApi,
+  type AuthUserListItem,
   type ContractView,
   type PayrollRunView,
   type PayrollTimesheetView,
+  type ScopeOutlet,
+  type ShiftView,
   type WorkShiftView,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
@@ -25,6 +30,17 @@ import { EmptyState, ServiceUnavailablePage } from '@/components/shell/Permissio
 import { useListQueryState } from '@/hooks/use-list-query-state';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
+import {
+  approvalBadgeClass,
+  attendanceBadgeClass,
+  contractBadgeClass,
+  formatHrEnumLabel,
+  getHrOutletDisplay,
+  getHrShiftDisplay,
+  getHrUserDisplay,
+  payrollBadgeClass,
+  shortHrRef,
+} from '@/components/hr/hr-display';
 
 type HRTab = 'attendance' | 'payroll' | 'contracts';
 
@@ -33,22 +49,6 @@ const TABS: { key: HRTab; label: string; icon: React.ElementType }[] = [
   { key: 'payroll', label: 'Payroll & Timesheets', icon: DollarSign },
   { key: 'contracts', label: 'Contracts', icon: FileText },
 ];
-
-const ATTENDANCE_BADGE: Record<string, string> = {
-  present: 'bg-success/10 text-success',
-  late: 'bg-warning/10 text-warning',
-  absent: 'bg-destructive/10 text-destructive',
-  leave: 'bg-muted text-muted-foreground',
-  checked_in: 'bg-info/10 text-info',
-  checked_out: 'bg-success/10 text-success',
-};
-
-const APPROVAL_BADGE: Record<string, string> = {
-  approved: 'bg-success/10 text-success',
-  pending_review: 'bg-warning/10 text-warning',
-  flagged: 'bg-destructive/10 text-destructive',
-  rejected: 'bg-destructive/10 text-destructive',
-};
 
 function normalizeNumeric(value: string | undefined) {
   const trimmed = String(value ?? '').trim();
@@ -69,6 +69,27 @@ function formatCurrency(value: unknown, currency = 'USD') {
   }).format(toNumber(value));
 }
 
+function formatDate(value: string | null | undefined) {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString();
+}
+
+function formatTime(value: string | null | undefined) {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatPeriodLabel(name?: string | null, startDate?: string | null, endDate?: string | null, fallbackId?: string | null) {
+  const label = String(name ?? '').trim();
+  if (label) return label;
+  if (startDate && endDate) return `${startDate} → ${endDate}`;
+  return String(fallbackId || '—');
+}
+
 export function HRModule() {
   const { token, scope } = useShellRuntime();
   const outletId = normalizeNumeric(scope.outletId);
@@ -76,6 +97,9 @@ export function HRModule() {
   const [activeTab, setActiveTab] = useState<HRTab>('attendance');
   const [dateFilter, setDateFilter] = useState(new Date().toISOString().slice(0, 10));
   const [busyKey, setBusyKey] = useState('');
+  const [users, setUsers] = useState<AuthUserListItem[]>([]);
+  const [outlets, setOutlets] = useState<ScopeOutlet[]>([]);
+  const [shifts, setShifts] = useState<ShiftView[]>([]);
 
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [attendanceError, setAttendanceError] = useState('');
@@ -105,7 +129,8 @@ export function HRModule() {
     outletId?: string;
     startDate?: string;
     endDate?: string;
-    status?: string;
+    attendanceStatus?: string;
+    approvalStatus?: string;
   }>({
     initialLimit: 20,
     initialSortBy: 'workDate',
@@ -114,18 +139,19 @@ export function HRModule() {
       outletId: outletId || undefined,
       startDate: dateFilter,
       endDate: dateFilter,
-      status: undefined,
+      attendanceStatus: undefined,
+      approvalStatus: undefined,
     },
   });
   const runsQuery = useListQueryState<{ outletId?: string; status?: string }>({
     initialLimit: 20,
-    initialSortBy: 'id',
+    initialSortBy: 'createdAt',
     initialSortDir: 'desc',
     initialFilters: { outletId: outletId || undefined, status: undefined },
   });
   const timesheetsQuery = useListQueryState<{ outletId?: string }>({
     initialLimit: 20,
-    initialSortBy: 'id',
+    initialSortBy: 'payrollPeriodEndDate',
     initialSortDir: 'desc',
     initialFilters: { outletId: outletId || undefined },
   });
@@ -139,6 +165,9 @@ export function HRModule() {
   const patchRunsFilters = runsQuery.patchFilters;
   const patchTimesheetsFilters = timesheetsQuery.patchFilters;
   const patchContractsFilters = contractsQuery.patchFilters;
+  const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
+  const outletsById = useMemo(() => new Map(outlets.map((outlet) => [outlet.id, outlet])), [outlets]);
+  const shiftsById = useMemo(() => new Map(shifts.map((shift) => [shift.id, shift])), [shifts]);
 
   const loadAttendance = useCallback(async () => {
     if (!token) return;
@@ -150,7 +179,8 @@ export function HRModule() {
         outletId: outletId || undefined,
         startDate: dateFilter,
         endDate: dateFilter,
-        status: attendanceQuery.filters.status,
+        attendanceStatus: attendanceQuery.filters.attendanceStatus,
+        approvalStatus: attendanceQuery.filters.approvalStatus,
       });
       setWorkShifts(page.items || []);
       setAttendanceTotal(page.total || page.totalCount || 0);
@@ -164,7 +194,14 @@ export function HRModule() {
     } finally {
       setAttendanceLoading(false);
     }
-  }, [attendanceQuery.filters.status, attendanceQuery.query, dateFilter, outletId, token]);
+  }, [
+    attendanceQuery.filters.approvalStatus,
+    attendanceQuery.filters.attendanceStatus,
+    attendanceQuery.query,
+    dateFilter,
+    outletId,
+    token,
+  ]);
 
   const loadRuns = useCallback(async () => {
     if (!token) return;
@@ -249,6 +286,38 @@ export function HRModule() {
   }, [dateFilter, outletId, patchAttendanceFilters, patchContractsFilters, patchRunsFilters, patchTimesheetsFilters]);
 
   useEffect(() => {
+    if (!token) return;
+    let active = true;
+    void Promise.allSettled([
+      orgApi.hierarchy(token),
+      authApi.users(token, {
+        outletId: outletId || undefined,
+        limit: 500,
+        offset: 0,
+        sortBy: 'username',
+        sortDir: 'asc',
+      }),
+      hrApi.shifts(token, outletId || undefined),
+    ]).then(([hierarchyResult, usersResult, shiftsResult]) => {
+      if (!active) return;
+      if (hierarchyResult.status === 'fulfilled') {
+        setOutlets(hierarchyResult.value.outlets || []);
+      }
+      if (usersResult.status === 'fulfilled') {
+        setUsers(usersResult.value.items || []);
+      }
+      if (shiftsResult.status === 'fulfilled') {
+        setShifts(shiftsResult.value || []);
+      }
+    }).catch((error: unknown) => {
+      console.error('HR support data load failed', error);
+    });
+    return () => {
+      active = false;
+    };
+  }, [outletId, token]);
+
+  useEffect(() => {
     if (activeTab !== 'attendance') return;
     void loadAttendance();
   }, [activeTab, loadAttendance]);
@@ -264,18 +333,18 @@ export function HRModule() {
   }, [activeTab, loadContracts]);
 
   const attendanceStats = useMemo(() => {
-    const pendingReview = workShifts.filter((row) => String(row.approvalStatus || '').toLowerCase() === 'pending_review').length;
-    const flagged = workShifts.filter((row) => String(row.approvalStatus || '').toLowerCase() === 'flagged').length;
-    const present = workShifts.filter((row) => ['present', 'late', 'checked_in', 'checked_out'].includes(String(row.attendanceStatus || '').toLowerCase())).length;
+    const pendingReview = workShifts.filter((row) => String(row.approvalStatus || '').toLowerCase() === 'pending').length;
+    const approved = workShifts.filter((row) => String(row.approvalStatus || '').toLowerCase() === 'approved').length;
+    const late = workShifts.filter((row) => String(row.attendanceStatus || '').toLowerCase() === 'late').length;
     const absent = workShifts.filter((row) => String(row.attendanceStatus || '').toLowerCase() === 'absent').length;
-    return { pendingReview, flagged, present, absent };
+    return { pendingReview, approved, late, absent };
   }, [workShifts]);
 
   const payrollStats = useMemo(() => {
-    const pendingRuns = payrollRuns.filter((row) => String(row.status || '').toLowerCase() !== 'approved').length;
+    const draftRuns = payrollRuns.filter((row) => String(row.status || '').toLowerCase() === 'draft').length;
     const approvedRuns = payrollRuns.filter((row) => String(row.status || '').toLowerCase() === 'approved').length;
     const overtimeHours = timesheets.reduce((sum, row) => sum + toNumber(row.overtimeHours), 0);
-    return { pendingRuns, approvedRuns, overtimeHours };
+    return { draftRuns, approvedRuns, overtimeHours };
   }, [payrollRuns, timesheets]);
 
   const contractStats = useMemo(() => {
@@ -283,23 +352,38 @@ export function HRModule() {
     const terminated = contracts.filter((row) => String(row.status || '').toLowerCase() === 'terminated').length;
     const expiring = contracts.filter((row) => {
       const status = String(row.status || '').toLowerCase();
-      return status === 'expiring' || status === 'expiring_soon';
+      if (status !== 'active' || !row.endDate) return false;
+      const today = new Date();
+      const endDate = new Date(String(row.endDate));
+      const diffDays = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      return diffDays >= 0 && diffDays <= 30;
     }).length;
     return { active, terminated, expiring };
   }, [contracts]);
 
-  const updateAttendance = async (workShiftId: string, attendanceStatus: string) => {
+  const approveAttendance = async (workShiftId: string) => {
     if (!token) return;
-    setBusyKey(`attendance:${workShiftId}:${attendanceStatus}`);
+    setBusyKey(`attendance:approve:${workShiftId}`);
     try {
-      await hrApi.updateAttendance(token, workShiftId, {
-        attendanceStatus,
-        note: 'Updated from HR attendance review',
-      });
-      toast.success('Attendance updated');
+      await hrApi.approveWorkShift(token, workShiftId);
+      toast.success('Attendance record approved');
       await loadAttendance();
     } catch (error: unknown) {
-      toast.error(getErrorMessage(error, 'Failed to update attendance'));
+      toast.error(getErrorMessage(error, 'Failed to approve attendance record'));
+    } finally {
+      setBusyKey('');
+    }
+  };
+
+  const rejectAttendance = async (workShiftId: string) => {
+    if (!token) return;
+    setBusyKey(`attendance:reject:${workShiftId}`);
+    try {
+      await hrApi.rejectWorkShift(token, workShiftId, { reason: 'Rejected from HR attendance review' });
+      toast.success('Attendance record rejected');
+      await loadAttendance();
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, 'Failed to reject attendance record'));
     } finally {
       setBusyKey('');
     }
@@ -361,22 +445,44 @@ export function HRModule() {
                 <input
                   value={attendanceQuery.searchInput}
                   onChange={(event) => attendanceQuery.setSearchInput(event.target.value)}
-                  placeholder="Filter by user/shift/status"
+                  placeholder="Search employee, shift, note"
                   className="h-8 w-full rounded-md border border-input bg-background pl-9 pr-3 text-xs"
                 />
               </div>
               <select
-                value={attendanceQuery.filters.status || 'all'}
-                onChange={(event) => attendanceQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
+                value={attendanceQuery.filters.attendanceStatus || 'all'}
+                onChange={(event) => attendanceQuery.setFilter('attendanceStatus', event.target.value === 'all' ? undefined : event.target.value)}
                 className="h-8 rounded-md border border-input bg-background px-3 text-xs"
               >
-                <option value="all">All statuses</option>
-                <option value="pending_review">Pending review</option>
-                <option value="flagged">Flagged</option>
+                <option value="all">All attendance</option>
+                <option value="pending">Pending</option>
                 <option value="present">Present</option>
                 <option value="late">Late</option>
                 <option value="absent">Absent</option>
+                <option value="leave">Leave</option>
+              </select>
+              <select
+                value={attendanceQuery.filters.approvalStatus || 'all'}
+                onChange={(event) => attendanceQuery.setFilter('approvalStatus', event.target.value === 'all' ? undefined : event.target.value)}
+                className="h-8 rounded-md border border-input bg-background px-3 text-xs"
+              >
+                <option value="all">All review states</option>
+                <option value="pending">Pending review</option>
                 <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+              <select
+                value={`${attendanceQuery.sortBy || 'workDate'}:${attendanceQuery.sortDir}`}
+                onChange={(event) => {
+                  const [field, direction] = event.target.value.split(':');
+                  attendanceQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
+                }}
+                className="h-8 rounded-md border border-input bg-background px-3 text-xs"
+              >
+                <option value="workDate:desc">Latest work date</option>
+                <option value="approvalStatus:asc">Pending first</option>
+                <option value="userId:asc">Employee A-Z</option>
+                <option value="createdAt:desc">Last updated</option>
               </select>
               <button
                 onClick={() => void loadAttendance()}
@@ -390,8 +496,8 @@ export function HRModule() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
                 { label: 'Pending Review', value: attendanceStats.pendingReview, icon: Clock },
-                { label: 'Flagged', value: attendanceStats.flagged, icon: AlertTriangle },
-                { label: 'Present', value: attendanceStats.present, icon: CheckCircle2 },
+                { label: 'Approved', value: attendanceStats.approved, icon: CheckCircle2 },
+                { label: 'Late', value: attendanceStats.late, icon: AlertTriangle },
                 { label: 'Absent', value: attendanceStats.absent, icon: AlertTriangle },
               ].map((kpi) => (
                 <div key={kpi.label} className="surface-elevated p-4">
@@ -406,11 +512,17 @@ export function HRModule() {
 
             <div className="surface-elevated p-4 space-y-3">
               {attendanceError ? <p className="text-xs text-destructive">{attendanceError}</p> : null}
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold">Attendance Review ({attendanceTotal})</h3>
+                  <p className="text-xs text-muted-foreground">Review shift records by attendance outcome and approval state for the selected business date.</p>
+                </div>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b bg-muted/30">
-                      {['Work Shift', 'User', 'Shift', 'Attendance', 'Approval', 'Clock In', 'Clock Out', 'Actions'].map((header) => (
+                      {['Shift Record', 'Employee', 'Shift', 'Attendance', 'Review', 'Clock', 'Note', 'Actions'].map((header) => (
                         <th key={header} className="text-left text-[11px] px-4 py-2.5">{header}</th>
                       ))}
                     </tr>
@@ -424,38 +536,68 @@ export function HRModule() {
                       const attendanceStatus = String(row.attendanceStatus || 'unknown').toLowerCase();
                       const approvalStatus = String(row.approvalStatus || 'unknown').toLowerCase();
                       const workShiftId = String(row.id);
+                      const canReview = approvalStatus === 'pending';
+                      const userDisplay = getHrUserDisplay(usersById, row.userId);
+                      const shiftDisplay = getHrShiftDisplay(shiftsById, row.shiftId);
+                      const outletDisplay = getHrOutletDisplay(outletsById, row.outletId);
                       return (
                         <tr key={workShiftId} className="border-b last:border-0">
-                          <td className="px-4 py-2.5 text-xs font-mono">{workShiftId}</td>
-                          <td className="px-4 py-2.5 text-xs">{String(row.userId || '—')}</td>
-                          <td className="px-4 py-2.5 text-xs">{String(row.shiftId || '—')}</td>
                           <td className="px-4 py-2.5">
-                            <span className={cn('text-[10px] px-2 py-0.5 rounded-full font-medium', ATTENDANCE_BADGE[attendanceStatus] || 'bg-muted text-muted-foreground')}>
-                              {attendanceStatus}
+                            <div className="flex flex-col">
+                              <span className="text-xs font-medium">{shortHrRef(workShiftId)}</span>
+                              <span className="text-[11px] text-muted-foreground">{formatDate(row.workDate)}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-medium">{userDisplay.primary}</span>
+                              {userDisplay.secondary ? (
+                                <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-medium">{shiftDisplay.primary}</span>
+                              <span className="text-[11px] text-muted-foreground">
+                                {[shiftDisplay.secondary, outletDisplay.primary].filter(Boolean).join(' · ') || '—'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium', attendanceBadgeClass(attendanceStatus))}>
+                              {formatHrEnumLabel(attendanceStatus)}
                             </span>
                           </td>
                           <td className="px-4 py-2.5">
-                            <span className={cn('text-[10px] px-2 py-0.5 rounded-full font-medium', APPROVAL_BADGE[approvalStatus] || 'bg-muted text-muted-foreground')}>
-                              {approvalStatus}
+                            <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium', approvalBadgeClass(approvalStatus))}>
+                              {formatHrEnumLabel(approvalStatus)}
                             </span>
                           </td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{row.actualStartTime ? new Date(String(row.actualStartTime)).toLocaleTimeString() : '—'}</td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{row.actualEndTime ? new Date(String(row.actualEndTime)).toLocaleTimeString() : '—'}</td>
-                          <td className="px-4 py-2.5 space-x-2">
-                            <button
-                              onClick={() => void updateAttendance(workShiftId, 'checked_in')}
-                              disabled={busyKey === `attendance:${workShiftId}:checked_in`}
-                              className="h-7 px-2 rounded border text-[10px] hover:bg-accent disabled:opacity-50"
-                            >
-                              Check in
-                            </button>
-                            <button
-                              onClick={() => void updateAttendance(workShiftId, 'checked_out')}
-                              disabled={busyKey === `attendance:${workShiftId}:checked_out`}
-                              className="h-7 px-2 rounded border text-[10px] hover:bg-accent disabled:opacity-50"
-                            >
-                              Check out
-                            </button>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                            <div className="flex flex-col">
+                              <span>In {formatTime(row.actualStartTime)}</span>
+                              <span>Out {formatTime(row.actualEndTime)}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(row.note || '—')}</td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => void approveAttendance(workShiftId)}
+                                disabled={!canReview || busyKey === `attendance:approve:${workShiftId}`}
+                                className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent disabled:opacity-50"
+                              >
+                                {busyKey === `attendance:approve:${workShiftId}` ? 'Approving...' : 'Approve'}
+                              </button>
+                              <button
+                                onClick={() => void rejectAttendance(workShiftId)}
+                                disabled={!canReview || busyKey === `attendance:reject:${workShiftId}`}
+                                className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent disabled:opacity-50"
+                              >
+                                {busyKey === `attendance:reject:${workShiftId}` ? 'Rejecting...' : 'Reject'}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -480,7 +622,7 @@ export function HRModule() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {[
-                { label: 'Pending Runs', value: payrollStats.pendingRuns, icon: AlertTriangle },
+                { label: 'Draft Runs', value: payrollStats.draftRuns, icon: AlertTriangle },
                 { label: 'Approved Runs', value: payrollStats.approvedRuns, icon: CheckCircle2 },
                 { label: 'Timesheet Overtime Hours', value: payrollStats.overtimeHours.toFixed(2), icon: Clock },
               ].map((kpi) => (
@@ -496,7 +638,10 @@ export function HRModule() {
 
             <div className="surface-elevated p-4 space-y-3">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <h3 className="text-sm font-semibold">Payroll Runs ({runsTotal})</h3>
+                <div>
+                  <h3 className="text-sm font-semibold">Payroll Runs ({runsTotal})</h3>
+                  <p className="text-xs text-muted-foreground">Generated payroll rows can be approved from draft after timesheets are finalized.</p>
+                </div>
                 <div className="flex items-center gap-2">
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -515,6 +660,22 @@ export function HRModule() {
                     <option value="all">All statuses</option>
                     <option value="draft">Draft</option>
                     <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="paid">Paid</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                    value={`${runsQuery.sortBy || 'createdAt'}:${runsQuery.sortDir}`}
+                    onChange={(event) => {
+                      const [field, direction] = event.target.value.split(':');
+                      runsQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
+                    }}
+                  >
+                    <option value="createdAt:desc">Newest first</option>
+                    <option value="approvedAt:desc">Last approved</option>
+                    <option value="netSalary:desc">Net salary ↓</option>
+                    <option value="netSalary:asc">Net salary ↑</option>
                   </select>
                   <button
                     onClick={() => void loadRuns()}
@@ -545,18 +706,49 @@ export function HRModule() {
                     ) : payrollRuns.map((run) => {
                       const runId = String(run.id);
                       const status = String(run.status || '').toLowerCase();
+                      const userDisplay = getHrUserDisplay(usersById, run.userId);
+                      const outletDisplay = getHrOutletDisplay(outletsById, run.outletId);
                       return (
                         <tr key={runId} className="border-b last:border-0">
-                          <td className="px-4 py-2.5 text-xs font-mono">{runId}</td>
-                          <td className="px-4 py-2.5 text-xs">{String(run.payrollPeriodName || run.payrollPeriodId || '—')}</td>
-                          <td className="px-4 py-2.5 text-xs">{String(run.userId || '—')}</td>
-                          <td className="px-4 py-2.5 text-xs">{String(run.outletId || '—')}</td>
-                          <td className="px-4 py-2.5 text-xs">{String(run.status || '—')}</td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-medium">{shortHrRef(runId)}</span>
+                              <span className="text-[11px] text-muted-foreground">{formatDate(run.createdAt)}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs">
+                            <div className="flex flex-col">
+                              <span className="font-medium text-foreground">
+                                {formatPeriodLabel(run.payrollPeriodName, undefined, undefined, run.payrollPeriodId)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-medium">{userDisplay.primary}</span>
+                              {userDisplay.secondary ? (
+                                <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-medium">{outletDisplay.primary}</span>
+                              {outletDisplay.secondary ? (
+                                <span className="text-[11px] font-mono text-muted-foreground">{outletDisplay.secondary}</span>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs">
+                            <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium', payrollBadgeClass(status))}>
+                              {formatHrEnumLabel(status)}
+                            </span>
+                          </td>
                           <td className="px-4 py-2.5 text-right text-sm font-mono">{formatCurrency(run.netSalary, String(run.currencyCode || 'USD'))}</td>
                           <td className="px-4 py-2.5">
                             <button
                               onClick={() => void approveRun(runId)}
-                              disabled={status === 'approved' || busyKey === `approve:${runId}`}
+                              disabled={status !== 'draft' || busyKey === `approve:${runId}`}
                               className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent disabled:opacity-50"
                             >
                               {busyKey === `approve:${runId}` ? 'Approving...' : 'Approve'}
@@ -581,7 +773,10 @@ export function HRModule() {
 
             <div className="surface-elevated p-4 space-y-3">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <h3 className="text-sm font-semibold">Timesheets ({timesheetsTotal})</h3>
+                <div>
+                  <h3 className="text-sm font-semibold">Timesheets ({timesheetsTotal})</h3>
+                  <p className="text-xs text-muted-foreground">Timesheets summarize payroll period work days, work hours, overtime, lateness, and absence per employee.</p>
+                </div>
                 <div className="flex items-center gap-2">
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -592,6 +787,19 @@ export function HRModule() {
                       onChange={(event) => timesheetsQuery.setSearchInput(event.target.value)}
                     />
                   </div>
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                    value={`${timesheetsQuery.sortBy || 'payrollPeriodEndDate'}:${timesheetsQuery.sortDir}`}
+                    onChange={(event) => {
+                      const [field, direction] = event.target.value.split(':');
+                      timesheetsQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
+                    }}
+                  >
+                    <option value="payrollPeriodEndDate:desc">Latest period</option>
+                    <option value="updatedAt:desc">Last updated</option>
+                    <option value="overtimeHours:desc">Overtime ↓</option>
+                    <option value="workHours:desc">Work hours ↓</option>
+                  </select>
                   <button
                     onClick={() => void loadTimesheets()}
                     disabled={timesheetsLoading}
@@ -606,7 +814,7 @@ export function HRModule() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b bg-muted/30">
-                      {['Timesheet', 'Period', 'User', 'Work Days', 'Work Hours', 'Overtime', 'Late Count', 'Absent'].map((header) => (
+                      {['Timesheet', 'Period', 'Employee', 'Outlet', 'Work Days', 'Work Hours', 'Overtime', 'Late Count', 'Absent'].map((header) => (
                         <th key={header} className={cn('text-[11px] px-4 py-2.5', ['Work Days', 'Work Hours', 'Overtime', 'Late Count', 'Absent'].includes(header) ? 'text-right' : 'text-left')}>
                           {header}
                         </th>
@@ -615,21 +823,51 @@ export function HRModule() {
                   </thead>
                   <tbody>
                     {timesheetsLoading && timesheets.length === 0 ? (
-                      <ListTableSkeleton columns={8} rows={6} />
+                      <ListTableSkeleton columns={9} rows={6} />
                     ) : timesheets.length === 0 ? (
-                      <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">No timesheets found</td></tr>
-                    ) : timesheets.map((timesheet) => (
+                      <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">No timesheets found</td></tr>
+                    ) : timesheets.map((timesheet) => {
+                      const userDisplay = getHrUserDisplay(usersById, timesheet.userId);
+                      const outletDisplay = getHrOutletDisplay(outletsById, timesheet.outletId);
+                      return (
                       <tr key={String(timesheet.id)} className="border-b last:border-0">
-                        <td className="px-4 py-2.5 text-xs font-mono">{String(timesheet.id)}</td>
-                        <td className="px-4 py-2.5 text-xs">{String(timesheet.payrollPeriodName || timesheet.payrollPeriodId || '—')}</td>
-                        <td className="px-4 py-2.5 text-xs">{String(timesheet.userId || '—')}</td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-medium">{shortHrRef(timesheet.id)}</span>
+                            <span className="text-[11px] text-muted-foreground">{formatDate(timesheet.updatedAt || timesheet.createdAt)}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 text-xs">
+                          {formatPeriodLabel(
+                            timesheet.payrollPeriodName,
+                            timesheet.payrollPeriodStartDate,
+                            timesheet.payrollPeriodEndDate,
+                            timesheet.payrollPeriodId,
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-medium">{userDisplay.primary}</span>
+                            {userDisplay.secondary ? (
+                              <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-medium">{outletDisplay.primary}</span>
+                            {outletDisplay.secondary ? (
+                              <span className="text-[11px] font-mono text-muted-foreground">{outletDisplay.secondary}</span>
+                            ) : null}
+                          </div>
+                        </td>
                         <td className="px-4 py-2.5 text-right text-xs font-mono">{toNumber(timesheet.workDays).toFixed(2)}</td>
                         <td className="px-4 py-2.5 text-right text-xs font-mono">{toNumber(timesheet.workHours).toFixed(2)}</td>
                         <td className="px-4 py-2.5 text-right text-xs font-mono">{toNumber(timesheet.overtimeHours).toFixed(2)}</td>
                         <td className="px-4 py-2.5 text-right text-xs font-mono">{toNumber(timesheet.lateCount)}</td>
                         <td className="px-4 py-2.5 text-right text-xs font-mono">{toNumber(timesheet.absentDays).toFixed(2)}</td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               </div>
@@ -666,7 +904,10 @@ export function HRModule() {
 
             <div className="surface-elevated p-4 space-y-3">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <h3 className="text-sm font-semibold">Contracts ({contractsTotal})</h3>
+                <div>
+                  <h3 className="text-sm font-semibold">Contracts ({contractsTotal})</h3>
+                  <p className="text-xs text-muted-foreground">Track employment terms, salary basis, and expiry risk from the active contract register.</p>
+                </div>
                 <div className="flex items-center gap-2">
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -683,9 +924,23 @@ export function HRModule() {
                     onChange={(event) => contractsQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
                   >
                     <option value="all">All statuses</option>
+                    <option value="draft">Draft</option>
                     <option value="active">Active</option>
+                    <option value="expired">Expired</option>
                     <option value="terminated">Terminated</option>
-                    <option value="expiring">Expiring</option>
+                  </select>
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                    value={`${contractsQuery.sortBy || 'startDate'}:${contractsQuery.sortDir}`}
+                    onChange={(event) => {
+                      const [field, direction] = event.target.value.split(':');
+                      contractsQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
+                    }}
+                  >
+                    <option value="startDate:desc">Latest start date</option>
+                    <option value="endDate:asc">Ending soon</option>
+                    <option value="status:asc">Status A-Z</option>
+                    <option value="createdAt:desc">Last created</option>
                   </select>
                   <button
                     onClick={() => void loadContracts()}
@@ -721,18 +976,31 @@ export function HRModule() {
                         <ListTableSkeleton columns={8} rows={6} />
                       ) : contracts.map((contract) => {
                         const status = String(contract.status || 'unknown').toLowerCase();
+                        const userDisplay = getHrUserDisplay(usersById, contract.userId);
                         return (
                           <tr key={String(contract.id)} className="border-b last:border-0">
-                            <td className="px-4 py-2.5 text-xs font-mono">{String(contract.id)}</td>
-                            <td className="px-4 py-2.5 text-xs">{String(contract.userId || '—')}</td>
-                            <td className="px-4 py-2.5 text-xs">{String(contract.employmentType || '—')}</td>
-                            <td className="px-4 py-2.5 text-xs">{String(contract.salaryType || '—')}</td>
+                            <td className="px-4 py-2.5">
+                              <div className="flex flex-col">
+                                <span className="text-xs font-medium">{shortHrRef(contract.id)}</span>
+                                <span className="text-[11px] text-muted-foreground">{String(contract.regionCode || '—')}</span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <div className="flex flex-col">
+                                <span className="text-xs font-medium">{userDisplay.primary}</span>
+                                {userDisplay.secondary ? (
+                                  <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="px-4 py-2.5 text-xs">{formatHrEnumLabel(contract.employmentType)}</td>
+                            <td className="px-4 py-2.5 text-xs">{formatHrEnumLabel(contract.salaryType)}</td>
                             <td className="px-4 py-2.5 text-right text-sm font-mono">{formatCurrency(contract.baseSalary, String(contract.currencyCode || 'USD'))}</td>
-                            <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(contract.startDate || '—')}</td>
-                            <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(contract.endDate || '—')}</td>
+                            <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDate(contract.startDate)}</td>
+                            <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDate(contract.endDate)}</td>
                             <td className="px-4 py-2.5 text-xs">
-                              <span className={cn('text-[10px] px-2 py-0.5 rounded-full font-medium', APPROVAL_BADGE[status] || 'bg-muted text-muted-foreground')}>
-                                {status}
+                              <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium', contractBadgeClass(status))}>
+                                {formatHrEnumLabel(status)}
                               </span>
                             </td>
                           </tr>

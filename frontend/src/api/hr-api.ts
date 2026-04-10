@@ -8,16 +8,29 @@ export interface ShiftView {
   code?: string | null;
   name?: string | null;
   status?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  breakMinutes?: number | null;
   [key: string]: unknown;
 }
 
 export interface WorkShiftView {
   id: string;
   outletId?: string | null;
+  shiftId?: string | null;
   userId?: string | null;
-  status?: string | null;
+  scheduleStatus?: string | null;
+  attendanceStatus?: string | null;
+  approvalStatus?: string | null;
   workDate?: string | null;
   totalHours?: number | null;
+  actualStartTime?: string | null;
+  actualEndTime?: string | null;
+  assignedByUserId?: string | null;
+  approvedByUserId?: string | null;
+  note?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   [key: string]: unknown;
 }
 
@@ -49,7 +62,9 @@ export interface WorkShiftsQuery {
   outletId?: string;
   startDate?: string;
   endDate?: string;
-  status?: string;
+  scheduleStatus?: string;
+  attendanceStatus?: string;
+  approvalStatus?: string;
   q?: string;
   sortBy?: string;
   sortDir?: 'asc' | 'desc';
@@ -81,6 +96,9 @@ function decodeShift(value: unknown): ShiftView {
     code: asNullableString(record.code),
     name: asNullableString(record.name),
     status: asNullableString(record.status),
+    startTime: asNullableString(record.startTime),
+    endTime: asNullableString(record.endTime),
+    breakMinutes: asNullableNumber(record.breakMinutes),
   };
 }
 
@@ -90,10 +108,20 @@ function decodeWorkShift(value: unknown): WorkShiftView {
     ...record,
     id: asId(record.id),
     outletId: asNullableString(record.outletId),
+    shiftId: asNullableString(record.shiftId),
     userId: asNullableString(record.userId),
-    status: asNullableString(record.status),
+    scheduleStatus: asNullableString(record.scheduleStatus),
+    attendanceStatus: asNullableString(record.attendanceStatus),
+    approvalStatus: asNullableString(record.approvalStatus),
     workDate: asDateOnly(record.workDate),
     totalHours: asNullableNumber(record.totalHours),
+    actualStartTime: asNullableString(record.actualStartTime),
+    actualEndTime: asNullableString(record.actualEndTime),
+    assignedByUserId: asNullableString(record.assignedByUserId),
+    approvedByUserId: asNullableString(record.approvedByUserId),
+    note: asNullableString(record.note),
+    createdAt: asNullableString(record.createdAt),
+    updatedAt: asNullableString(record.updatedAt),
   };
 }
 
@@ -136,4 +164,8 @@ export const hrApi = {
     apiRequest('/api/v1/hr/shifts', { method: 'POST', token, body: payload }),
   updateAttendance: async (token: string, workShiftId: string, payload: unknown): Promise<unknown> =>
     apiRequest(`/api/v1/hr/work-shifts/${workShiftId}/attendance`, { method: 'PUT', token, body: payload }),
+  approveWorkShift: async (token: string, workShiftId: string): Promise<unknown> =>
+    apiRequest(`/api/v1/hr/work-shifts/${workShiftId}/approve`, { method: 'POST', token }),
+  rejectWorkShift: async (token: string, workShiftId: string, payload?: { reason?: string | null }): Promise<unknown> =>
+    apiRequest(`/api/v1/hr/work-shifts/${workShiftId}/reject`, { method: 'POST', token, body: payload ?? {} }),
 };
