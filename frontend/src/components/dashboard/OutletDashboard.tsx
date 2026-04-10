@@ -105,6 +105,11 @@ export function OutletDashboard({ scope }: OutletDashboardProps) {
   const { kpis, recentOrders, lowStock, loading, error, refresh } = useDashboardData();
   const [sessionActive, setSessionActive] = useState(true);
   const outletName = scope.outletName || 'All Outlets';
+  const hasLiveData = kpis.totalOrders > 0
+    || kpis.activeSessions > 0
+    || kpis.trackedItemsCount > 0
+    || recentOrders.length > 0
+    || lowStock.length > 0;
 
   if (loading) {
     return (
@@ -145,7 +150,7 @@ export function OutletDashboard({ scope }: OutletDashboardProps) {
         <div className="permission-banner permission-banner-unavailable animate-fade-in">
           <AlertTriangle className="h-4 w-4 flex-shrink-0" />
           <div>
-            <p className="font-medium text-sm">Live dashboard unavailable</p>
+            <p className="font-medium text-sm">{hasLiveData ? 'Some live widgets are unavailable' : 'Live dashboard unavailable'}</p>
             <p className="text-xs mt-0.5 opacity-80">{error}</p>
           </div>
         </div>
@@ -189,7 +194,7 @@ export function OutletDashboard({ scope }: OutletDashboardProps) {
         <KpiCard label="Completed" value={String(kpis.completedOrders)} icon={CheckCircle2} accent="success" />
         <KpiCard label="Pending / Preparing" value={String(kpis.pendingOrders)} icon={Clock} accent={kpis.pendingOrders > 0 ? 'warning' : 'default'} />
         <KpiCard label="Out of Stock" value={String(kpis.outOfStockCount)} icon={XCircle} accent={kpis.outOfStockCount > 0 ? 'destructive' : 'default'} />
-        <KpiCard label="Stock Items Tracked" value={String(lowStock.length + (kpis.totalOrders > 0 ? 10 : 0))} icon={ClipboardCheck} />
+        <KpiCard label="Stock Items Tracked" value={String(kpis.trackedItemsCount)} icon={ClipboardCheck} />
       </div>
 
       {/* Main Grid */}

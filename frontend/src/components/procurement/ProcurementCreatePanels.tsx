@@ -11,6 +11,15 @@ import {
   type SupplierView,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
+import {
+  formatProcurementAmount,
+  formatProcurementStatusLabel,
+} from '@/components/procurement/formatters';
+import {
+  canCreateGoodsReceiptFromPurchaseOrder,
+  canCreateInvoiceFromGoodsReceipt,
+  canCreatePaymentFromInvoice,
+} from '@/components/procurement/status-flow';
 
 type PurchaseOrderDraftLine = {
   key: string;
@@ -68,8 +77,8 @@ function parseNonNegativeNumber(value: string) {
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
 }
 
-function formatMoney(value: number) {
-  return Number(value || 0).toFixed(2);
+function formatMoney(value: number, currencyCode?: string | null) {
+  return formatProcurementAmount(value, currencyCode);
 }
 
 function formatDate(value: string | null | undefined) {
@@ -278,9 +287,9 @@ export function PurchaseOrderCreatePanel({
       <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
         <div>
           <h3 className="text-sm font-semibold">Create Purchase Order</h3>
-          <HeaderNote>Start a PO directly in the current outlet scope, then approve it from the live table below.</HeaderNote>
+          <HeaderNote>Create a draft PO in the current outlet scope, then approve it from the live table before receiving goods.</HeaderNote>
         </div>
-        <div className="text-xs font-mono text-muted-foreground">Expected total {formatMoney(total)} {form.currencyCode || 'USD'}</div>
+        <div className="text-xs font-mono text-muted-foreground">Expected total {formatMoney(total, form.currencyCode)} {form.currencyCode || 'USD'}</div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
@@ -472,7 +481,7 @@ export function GoodsReceiptCreatePanel({
     [suppliers],
   );
   const availablePurchaseOrders = useMemo(
-    () => purchaseOrders.filter((row) => !['completed', 'closed', 'cancelled'].includes(String(row.status || '').toLowerCase())),
+    () => purchaseOrders.filter((row) => canCreateGoodsReceiptFromPurchaseOrder(row.status)),
     [purchaseOrders],
   );
 
@@ -602,9 +611,9 @@ export function GoodsReceiptCreatePanel({
       <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
         <div>
           <h3 className="text-sm font-semibold">Create Goods Receipt</h3>
-          <HeaderNote>Select an open purchase order to preload its remaining lines, then capture what actually arrived.</HeaderNote>
+          <HeaderNote>Select an approved, ordered, or partially received purchase order to preload its remaining lines, then capture what actually arrived.</HeaderNote>
         </div>
-        <div className="text-xs font-mono text-muted-foreground">Receipt total {formatMoney(total)} {form.currencyCode || 'USD'}</div>
+        <div className="text-xs font-mono text-muted-foreground">Receipt total {formatMoney(total, form.currencyCode)} {form.currencyCode || 'USD'}</div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
@@ -618,7 +627,7 @@ export function GoodsReceiptCreatePanel({
             <option value="">Select PO</option>
             {availablePurchaseOrders.map((purchaseOrder) => (
               <option key={String(purchaseOrder.id)} value={String(purchaseOrder.id)}>
-                {`${shortRef('PO', String(purchaseOrder.id))} · ${supplierNameById.get(String(purchaseOrder.supplierId || '')) || 'Supplier'} · ${formatMoney(Number(purchaseOrder.expectedTotal || purchaseOrder.totalAmount || 0))} ${String(purchaseOrder.currencyCode || 'USD')} · ${String(purchaseOrder.status || 'draft')}`}
+                {`${shortRef('PO', String(purchaseOrder.id))} · ${supplierNameById.get(String(purchaseOrder.supplierId || '')) || 'Supplier'} · ${formatMoney(Number(purchaseOrder.expectedTotal || purchaseOrder.totalAmount || 0), purchaseOrder.currencyCode)} ${String(purchaseOrder.currencyCode || 'USD')} · ${formatProcurementStatusLabel(purchaseOrder.status)}`}
               </option>
             ))}
           </select>
@@ -676,7 +685,7 @@ export function GoodsReceiptCreatePanel({
         />
         <SummaryCell
           label="PO Total"
-          value={selectedPurchaseOrder ? `${formatMoney(Number(selectedPurchaseOrder.expectedTotal || selectedPurchaseOrder.totalAmount || 0))} ${String(selectedPurchaseOrder.currencyCode || 'USD')}` : '—'}
+          value={selectedPurchaseOrder ? `${formatMoney(Number(selectedPurchaseOrder.expectedTotal || selectedPurchaseOrder.totalAmount || 0), selectedPurchaseOrder.currencyCode)} ${String(selectedPurchaseOrder.currencyCode || 'USD')}` : '—'}
         />
       </div>
 
@@ -809,7 +818,7 @@ export function InvoiceCreatePanel({
     [suppliers],
   );
   const availableGoodsReceipts = useMemo(
-    () => goodsReceipts.filter((receipt) => ['posted', 'received', 'draft'].includes(String(receipt.status || '').toLowerCase())),
+    () => goodsReceipts.filter((receipt) => canCreateInvoiceFromGoodsReceipt(receipt.status)),
     [goodsReceipts],
   );
 
@@ -943,9 +952,9 @@ export function InvoiceCreatePanel({
       <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
         <div>
           <h3 className="text-sm font-semibold">Create Supplier Invoice</h3>
-          <HeaderNote>Select a posted goods receipt to preload invoice lines, then submit the invoice directly from this screen.</HeaderNote>
+          <HeaderNote>Select a posted goods receipt to preload invoice lines, then create the draft invoice directly from this screen.</HeaderNote>
         </div>
-        <div className="text-xs font-mono text-muted-foreground">Invoice total {formatMoney(subtotal + taxAmount)} {selectedReceipt?.currencyCode || selectedPurchaseOrder?.currencyCode || 'USD'}</div>
+        <div className="text-xs font-mono text-muted-foreground">Invoice total {formatMoney(subtotal + taxAmount, selectedReceipt?.currencyCode || selectedPurchaseOrder?.currencyCode)} {selectedReceipt?.currencyCode || selectedPurchaseOrder?.currencyCode || 'USD'}</div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
@@ -959,7 +968,7 @@ export function InvoiceCreatePanel({
             <option value="">Select goods receipt</option>
             {availableGoodsReceipts.map((receipt) => (
               <option key={String(receipt.id)} value={String(receipt.id)}>
-                {`${shortRef('GR', String(receipt.id))} · ${formatDate(receipt.businessDate)} · ${formatMoney(Number(receipt.totalPrice || 0))} ${String(receipt.currencyCode || 'USD')} · ${String(receipt.status || 'draft')}`}
+                {`${shortRef('GR', String(receipt.id))} · ${formatDate(receipt.businessDate)} · ${formatMoney(Number(receipt.totalPrice || 0), receipt.currencyCode)} ${String(receipt.currencyCode || 'USD')} · ${formatProcurementStatusLabel(receipt.status)}`}
               </option>
             ))}
           </select>
@@ -1009,7 +1018,7 @@ export function InvoiceCreatePanel({
         />
         <SummaryCell
           label="Receipt Status"
-          value={loadingReceipt ? 'Loading...' : String(selectedReceipt?.status || '—')}
+          value={loadingReceipt ? 'Loading...' : selectedReceipt ? formatProcurementStatusLabel(selectedReceipt.status) : '—'}
         />
       </div>
 
@@ -1095,7 +1104,7 @@ export function InvoiceCreatePanel({
 
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div className="text-xs text-muted-foreground">
-          Subtotal {formatMoney(subtotal)} · Tax {formatMoney(taxAmount)} · Total {formatMoney(subtotal + taxAmount)}
+          Subtotal {formatMoney(subtotal, selectedReceipt?.currencyCode || selectedPurchaseOrder?.currencyCode)} · Tax {formatMoney(taxAmount, selectedReceipt?.currencyCode || selectedPurchaseOrder?.currencyCode)} · Total {formatMoney(subtotal + taxAmount, selectedReceipt?.currencyCode || selectedPurchaseOrder?.currencyCode)}
         </div>
         <button
           onClick={() => void handleCreate()}
@@ -1134,7 +1143,7 @@ export function PaymentCreatePanel({
     [suppliers],
   );
   const availableInvoices = useMemo(
-    () => invoices.filter((invoice) => !['cancelled', 'paid'].includes(String(invoice.status || '').toLowerCase())),
+    () => invoices.filter((invoice) => canCreatePaymentFromInvoice(invoice.status)),
     [invoices],
   );
   const selectedInvoice = useMemo(
@@ -1205,9 +1214,9 @@ export function PaymentCreatePanel({
       <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
         <div>
           <h3 className="text-sm font-semibold">Create Payment</h3>
-          <HeaderNote>Choose an invoice, confirm the payable amount, then create the supplier payment directly from this tab.</HeaderNote>
+          <HeaderNote>Choose an approved or posted invoice, confirm the payable amount, then create the supplier payment directly from this tab.</HeaderNote>
         </div>
-        <div className="text-xs font-mono text-muted-foreground">Payment amount {formatMoney(parsePositiveNumber(form.allocatedAmount))} {selectedInvoice?.currencyCode || 'USD'}</div>
+        <div className="text-xs font-mono text-muted-foreground">Payment amount {formatMoney(parsePositiveNumber(form.allocatedAmount), selectedInvoice?.currencyCode)} {selectedInvoice?.currencyCode || 'USD'}</div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
@@ -1221,7 +1230,7 @@ export function PaymentCreatePanel({
             <option value="">Select invoice</option>
             {availableInvoices.map((invoice) => (
               <option key={String(invoice.id)} value={String(invoice.id)}>
-                {`${String(invoice.invoiceNumber || shortRef('INV', String(invoice.id)))} · ${supplierNameById.get(String(invoice.supplierId || '')) || 'Supplier'} · ${formatMoney(Number(invoice.totalAmount || 0))} ${String(invoice.currencyCode || 'USD')} · ${String(invoice.status || 'draft')}`}
+                {`${String(invoice.invoiceNumber || shortRef('INV', String(invoice.id)))} · ${supplierNameById.get(String(invoice.supplierId || '')) || 'Supplier'} · ${formatMoney(Number(invoice.totalAmount || 0), invoice.currencyCode)} ${String(invoice.currencyCode || 'USD')} · ${formatProcurementStatusLabel(invoice.status)}`}
               </option>
             ))}
           </select>
@@ -1278,7 +1287,7 @@ export function PaymentCreatePanel({
         />
         <SummaryCell
           label="Invoice Status"
-          value={selectedInvoice ? String(selectedInvoice.status || '—') : '—'}
+          value={selectedInvoice ? formatProcurementStatusLabel(selectedInvoice.status) : '—'}
         />
       </div>
 

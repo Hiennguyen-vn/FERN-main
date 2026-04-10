@@ -62,9 +62,11 @@ button,input,select{font:inherit}
 .preset-card small{display:block;color:var(--muted);line-height:1.4}
 .preset-card.active{border-color:rgba(43,210,168,.6);background:linear-gradient(180deg,rgba(16,44,47,.98),rgba(11,30,38,.98));transform:translateY(-1px);box-shadow:0 0 0 1px rgba(43,210,168,.18),0 16px 34px rgba(43,210,168,.1)}
 .config-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.config-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .kv{padding:12px;border-radius:14px;background:rgba(17,36,50,.9);border:1px solid rgba(90,184,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
 .kv span{display:block;font-size:.76rem;color:var(--soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em}
 .kv strong{font-size:.98rem}
+.kv small{display:block;margin-top:6px;color:var(--muted);font-size:.82rem;line-height:1.4}
 .check-row{display:flex;align-items:center;gap:10px;padding:12px 0;color:var(--muted)}
 .check-row input{accent-color:var(--accent);width:16px;height:16px}
 .btn-stack{display:grid;gap:10px}
@@ -132,8 +134,16 @@ button,input,select{font:inherit}
 .scope-btn.active{background:var(--accent-soft);border-color:var(--accent);color:#8bf0d1}
 .cleanup-grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:18px}
 .field{display:grid;gap:8px}
+.field span{display:block;font-size:.76rem;color:var(--soft);text-transform:uppercase;letter-spacing:.08em}
 .field input,.field select{width:100%;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(7,17,25,.94);color:var(--ink)}
+.field input:disabled,.field select:disabled{opacity:.7;cursor:not-allowed}
 .field small{color:var(--muted)}
+.config-note{margin-top:12px;padding:14px;border-radius:16px;border:1px solid rgba(90,184,255,.16);background:rgba(17,36,50,.88);display:grid;gap:6px}
+.config-note strong{font-size:.92rem}
+.config-note[data-tone="warn"]{border-color:rgba(255,180,84,.28);background:rgba(255,180,84,.1)}
+.config-note[data-tone="warn"] strong{color:#ffd28a}
+.config-note[data-tone="danger"]{border-color:rgba(255,107,107,.3);background:rgba(255,107,107,.1)}
+.config-note[data-tone="danger"] strong{color:#ffb3b3}
 .preview-list{display:grid;gap:12px;max-height:420px;overflow:auto}
 .preview-card{padding:14px;border-radius:16px;background:rgba(17,36,50,.88);border:1px solid rgba(90,184,255,.1)}
 .preview-card h4{margin:0 0 10px;font-size:1rem}
@@ -154,7 +164,7 @@ button,input,select{font:inherit}
 @media (max-width:1200px){
   .app{grid-template-columns:1fr}
   .sidebar{border-right:none;border-bottom:1px solid rgba(90,184,255,.14)}
-  .cards,.incident-grid,.chart-grid,.wide-grid,.cleanup-grid{grid-template-columns:1fr}
+  .cards,.incident-grid,.chart-grid,.wide-grid,.cleanup-grid,.config-grid,.config-form-grid{grid-template-columns:1fr}
 }
 </style>
 </head>
@@ -177,15 +187,53 @@ button,input,select{font:inherit}
 
     <section class="panel">
       <div class="section-kicker">Configuration</div>
-      <div class="config-grid">
+      <div class="config-form-grid">
+        <label class="field">
+          <span>Namespace</span>
+          <input type="text" id="cfgNamespaceInput" placeholder="SIM-SMALL" oninput="handleConfigInput('namespace', this.value)">
+          <small>Use a new namespace if you want to preserve earlier simulator-owned rows.</small>
+        </label>
+        <label class="field">
+          <span>Seed</span>
+          <input type="number" id="cfgSeedInput" min="1" step="1" oninput="handleConfigInput('seed', this.value)">
+          <small>Deterministic seed. Same preset, period, and seed will replay the same chronology.</small>
+        </label>
+        <label class="field">
+          <span>Starting Region</span>
+          <select id="cfgRegionInput" onchange="handleConfigInput('startingRegion', this.value)"></select>
+          <small id="cfgRegionMeta">Choose the launch market. Currency and timezone follow this selection.</small>
+        </label>
+        <div class="kv">
+          <span>Preset Base</span>
+          <strong id="cfgPresetLabel">Small</strong>
+          <small id="cfgPresetSummary">1 year template, no default outlets</small>
+        </div>
+        <label class="field">
+          <span>Start Date</span>
+          <input type="date" id="cfgStartDateInput" onchange="handleConfigInput('startDate', this.value)">
+        </label>
+        <label class="field">
+          <span>End Date</span>
+          <input type="date" id="cfgEndDateInput" onchange="handleConfigInput('endDate', this.value)">
+        </label>
+      </div>
+      <div class="config-grid" style="margin-top:12px">
         <div class="kv"><span>Namespace</span><strong id="cfgNamespace">SIM-SMALL</strong></div>
         <div class="kv"><span>Seed</span><strong id="cfgSeed">42</strong></div>
         <div class="kv"><span>Window</span><strong id="cfgDays">366 days</strong></div>
-        <div class="kv"><span>Region</span><strong id="cfgRegion">VN-HCM</strong></div>
+        <div class="kv"><span>Market</span><strong id="cfgRegion">VN-HCM</strong><small id="cfgCurrencyMeta">Currency: VND</small></div>
+        <div class="kv"><span>Currency</span><strong id="cfgCurrency">VND</strong></div>
+        <div class="kv"><span>Period</span><strong id="cfgPeriod">2024-01-01 → 2024-12-31</strong></div>
       </div>
-      <div class="kv" style="margin-top:12px"><span>Period</span><strong id="cfgPeriod">2024-01-01 → 2024-12-31</strong></div>
+      <div class="config-note" id="cfgNote" data-tone="info">
+        <strong id="cfgNoteTitle">Draft ready</strong>
+        <span class="muted" id="cfgNoteBody">Preset small is ready to simulate without additional changes.</span>
+      </div>
       <div class="kv" style="margin-top:12px"><span>Growth Model</span><strong id="cfgGrowth">1 outlet start, 90-day maturity ramp, scheduled procurement</strong></div>
       <label class="check-row"><input type="checkbox" id="chkDryRun"> Dry run only. Validate chronology and metrics without database writes.</label>
+      <div class="inline-actions">
+        <button class="btn btn-secondary" id="btnResetConfig" onclick="resetConfigDraft()">Reset to preset</button>
+      </div>
       <div class="btn-stack">
         <button class="btn btn-primary" id="btnStart" onclick="startSim()">Start simulation</button>
         <button class="btn btn-secondary" id="btnStop" onclick="stopSim()" disabled>Stop active run</button>
@@ -435,6 +483,10 @@ const state = {
   currentPreset: 'small',
   currentNamespace: 'SIM-SMALL',
   simStatus: 'idle',
+  presets: [],
+  presetConfig: null,
+  configDraft: null,
+  configValidation: { valid: true, tone: 'info', title: 'Draft ready', message: 'Preset small is ready to simulate without additional changes.' },
   cleanupStatus: { status: 'idle' },
   dbExportStatus: { status: 'idle' },
   diagnostics: {},
@@ -473,6 +525,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadPresets() {
   const res = await fetch('/api/presets');
   const presets = await res.json();
+  state.presets = presets;
   const group = document.getElementById('presetGroup');
   group.innerHTML = presets.map(p => `
     <button class="preset-card ${p.name === state.currentPreset ? 'active' : ''}" onclick="selectPreset('${p.name}')">
@@ -480,6 +533,9 @@ async function loadPresets() {
       <small>${p.description}</small>
     </button>
   `).join('');
+  if (state.configDraft) {
+    renderConfigSummary();
+  }
 }
 
 async function selectPreset(name) {
@@ -488,19 +544,167 @@ async function selectPreset(name) {
   await loadPresets();
 }
 
+function presetMeta(name) {
+  return state.presets.find(preset => preset.name === name) || {
+    name,
+    label: name ? `${name.charAt(0).toUpperCase()}${name.slice(1)}` : 'Preset',
+    description: 'Preset configuration'
+  };
+}
+
+function cloneConfigDraft(cfg) {
+  return {
+    namespace: cfg.namespace || '',
+    seed: cfg.seed != null ? String(cfg.seed) : '',
+    startDate: cfg.startDate || '',
+    endDate: cfg.endDate || '',
+    startingRegion: cfg.startingRegion || ''
+  };
+}
+
+function getRegionOption(code) {
+  return (state.presetConfig?.regionOptions || []).find(option => option.code === code) || null;
+}
+
+function renderConfigDraftInputs() {
+  if (!state.configDraft) return;
+  const draft = state.configDraft;
+  document.getElementById('cfgNamespaceInput').value = draft.namespace || '';
+  document.getElementById('cfgSeedInput').value = draft.seed || '';
+  document.getElementById('cfgStartDateInput').value = draft.startDate || '';
+  document.getElementById('cfgEndDateInput').value = draft.endDate || '';
+
+  const regionSelect = document.getElementById('cfgRegionInput');
+  const regionOptions = state.presetConfig?.regionOptions || [];
+  regionSelect.innerHTML = regionOptions.map(option => `
+    <option value="${option.code}">${option.code} · ${option.name} · ${option.currency}</option>
+  `).join('');
+  if (regionOptions.some(option => option.code === draft.startingRegion)) {
+    regionSelect.value = draft.startingRegion;
+  } else if (regionOptions.length) {
+    draft.startingRegion = regionOptions[0].code;
+    regionSelect.value = draft.startingRegion;
+  }
+}
+
+function parseIsoDateValue(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  return Date.UTC(year, month - 1, day);
+}
+
+function calculateWindowDays(startDate, endDate) {
+  const start = parseIsoDateValue(startDate);
+  const end = parseIsoDateValue(endDate);
+  if (start === null || end === null) return null;
+  return Math.round((end - start) / 86400000) + 1;
+}
+
+function validateConfigDraft() {
+  const draft = state.configDraft;
+  if (!draft) {
+    return { valid: false, tone: 'danger', title: 'Configuration is unavailable', message: 'Load a preset before starting the simulator.' };
+  }
+  const namespace = (draft.namespace || '').trim();
+  if (!namespace) {
+    return { valid: false, tone: 'danger', title: 'Namespace is required', message: 'Set a namespace before starting the simulator.' };
+  }
+  const seedText = String(draft.seed || '').trim();
+  if (!seedText || !/^\d+$/.test(seedText)) {
+    return { valid: false, tone: 'danger', title: 'Seed must be a positive integer', message: 'Use a deterministic whole number so the run can be reproduced.' };
+  }
+  const seed = Number(seedText);
+  if (!Number.isSafeInteger(seed) || seed <= 0) {
+    return { valid: false, tone: 'danger', title: 'Seed must be a positive integer', message: 'Use a deterministic whole number so the run can be reproduced.' };
+  }
+  const startDate = draft.startDate || '';
+  const endDate = draft.endDate || '';
+  const totalDays = calculateWindowDays(startDate, endDate);
+  if (totalDays == null) {
+    return { valid: false, tone: 'danger', title: 'Complete the simulation window', message: 'Start date and end date must both use the YYYY-MM-DD format.' };
+  }
+  if (totalDays <= 0) {
+    return { valid: false, tone: 'danger', title: 'End date must follow start date', message: 'Choose an end date that is on or after the start date.' };
+  }
+  const region = getRegionOption(draft.startingRegion);
+  if (!region) {
+    return { valid: false, tone: 'danger', title: 'Starting region is required', message: 'Pick a valid launch market before running the simulator.' };
+  }
+  const presetNamespace = state.presetConfig?.namespace || '';
+  const usingCustomNamespace = namespace !== presetNamespace;
+  return {
+    valid: true,
+    tone: usingCustomNamespace ? 'warn' : 'info',
+    title: usingCustomNamespace ? 'Custom namespace will isolate this run' : 'Draft ready to execute',
+    message: usingCustomNamespace
+      ? `${namespace} will keep this run separate from preset-owned rows while simulating ${totalDays} days in ${region.name} (${region.currency}).`
+      : `${totalDays} simulated days will start in ${region.name} (${region.currency}). Reusing the preset namespace will replace that namespace on the next committed run.`,
+    totalDays,
+    region
+  };
+}
+
+function renderConfigSummary() {
+  if (!state.configDraft) return;
+  const draft = state.configDraft;
+  const validation = validateConfigDraft();
+  state.configValidation = validation;
+  const namespace = (draft.namespace || '').trim() || '—';
+  const region = validation.region || getRegionOption(draft.startingRegion);
+  const totalDays = validation.totalDays || calculateWindowDays(draft.startDate, draft.endDate);
+  const preset = presetMeta(state.currentPreset);
+
+  document.getElementById('cfgNamespace').textContent = namespace;
+  document.getElementById('cfgSeed').textContent = draft.seed || '—';
+  document.getElementById('cfgDays').textContent = totalDays && totalDays > 0 ? `${totalDays} days` : '—';
+  document.getElementById('cfgRegion').textContent = region ? `${region.code} · ${region.name}` : 'Select a launch market';
+  document.getElementById('cfgCurrency').textContent = region ? region.currency : '—';
+  document.getElementById('cfgCurrencyMeta').textContent = region
+    ? `Currency ${region.currency} • ${region.timezone}`
+    : 'Currency and timezone follow the selected starting region';
+  document.getElementById('cfgRegionMeta').textContent = region
+    ? `${region.parentRegion} market • ${region.currency} • ${region.timezone}`
+    : 'Choose the launch market. Currency and timezone follow this selection.';
+  document.getElementById('cfgPeriod').textContent = draft.startDate && draft.endDate
+    ? `${draft.startDate} → ${draft.endDate}`
+    : 'Choose a valid simulation window';
+  document.getElementById('cfgPresetLabel').textContent = preset.label;
+  document.getElementById('cfgPresetSummary').textContent = preset.description;
+  document.getElementById('cfgNote').dataset.tone = validation.tone || 'info';
+  document.getElementById('cfgNoteTitle').textContent = validation.title;
+  document.getElementById('cfgNoteBody').textContent = validation.message;
+
+  if (namespace !== '—') {
+    state.currentNamespace = namespace;
+  }
+  document.getElementById('runNamespacePill').textContent = `Namespace: ${namespace}`;
+  applyStatus();
+}
+
+function handleConfigInput(field, value) {
+  if (!state.configDraft) return;
+  state.configDraft[field] = value;
+  renderConfigSummary();
+}
+
+function resetConfigDraft() {
+  if (!state.presetConfig) return;
+  state.configDraft = cloneConfigDraft(state.presetConfig);
+  renderConfigDraftInputs();
+  renderConfigSummary();
+}
+
 async function loadPresetConfig(preset) {
   const res = await fetch(`/api/config/${preset}`);
   const cfg = await res.json();
+  state.presetConfig = cfg;
   state.currentNamespace = cfg.namespace;
-  document.getElementById('cfgNamespace').textContent = cfg.namespace;
-  document.getElementById('cfgSeed').textContent = cfg.seed;
-  document.getElementById('cfgDays').textContent = `${cfg.totalDays} days`;
-  document.getElementById('cfgRegion').textContent = cfg.startingRegion;
-  document.getElementById('cfgPeriod').textContent = `${cfg.startDate} → ${cfg.endDate}`;
+  state.configDraft = cloneConfigDraft(cfg);
+  renderConfigDraftInputs();
+  renderConfigSummary();
   document.getElementById('cfgGrowth').textContent = cfg.growth.initialOutlets > 0
     ? `${cfg.growth.initialOutlets} outlet start, ${cfg.growth.rampDays}-day maturity ramp, lead time ${cfg.growth.reorderLeadTimeDays.join('/')}, stockout carryover ${cfg.realism.carryoverDays}d, late delivery ${(cfg.realism.lateDeliveryChance * 100).toFixed(0)}%`
     : `No outlet bootstrap by default, ${cfg.growth.rampDays}-day maturity ramp ready if a custom config enables outlets, lead time ${cfg.growth.reorderLeadTimeDays.join('/')}, stockout carryover ${cfg.realism.carryoverDays}d, late delivery ${(cfg.realism.lateDeliveryChance * 100).toFixed(0)}%`;
-  document.getElementById('runNamespacePill').textContent = `Namespace: ${cfg.namespace}`;
 }
 
 async function checkDbStatus() {
@@ -736,16 +940,36 @@ function connectEvents() {
 }
 
 async function startSim() {
+  const validation = validateConfigDraft();
+  state.configValidation = validation;
+  renderConfigSummary();
+  if (!validation.valid) {
+    addLog('error', validation.message || 'Configuration is incomplete.');
+    return;
+  }
+  const draft = state.configDraft;
+  const overrides = {
+    namespace: draft.namespace.trim(),
+    seed: Number.parseInt(String(draft.seed).trim(), 10),
+    startDate: draft.startDate,
+    endDate: draft.endDate,
+    startingRegion: draft.startingRegion
+  };
   const res = await fetch('/api/simulate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ preset: state.currentPreset, dryRun: document.getElementById('chkDryRun').checked })
+    body: JSON.stringify({
+      preset: state.currentPreset,
+      dryRun: document.getElementById('chkDryRun').checked,
+      overrides
+    })
   });
   const data = await res.json();
   if (!res.ok) {
     addLog('error', data.error || 'Failed to start simulation.');
     return;
   }
+  state.currentNamespace = overrides.namespace;
   resetRunVisuals();
   state.simStatus = 'running';
   applyStatus();
@@ -765,10 +989,17 @@ function applyStatus() {
   const running = state.simStatus === 'running';
   const cleanupRunning = state.cleanupStatus.status === 'running';
   const exportRunning = state.dbExportStatus.status === 'running';
+  const formBusy = running || cleanupRunning || exportRunning;
+  const configReady = state.configValidation?.valid !== false;
   const latestRunVisible = !running && !cleanupRunning && !exportRunning && state.operationalScope === 'run' && state.monthSeries.length > 0;
   refreshProgressLabels();
-  document.getElementById('btnStart').disabled = running || cleanupRunning || exportRunning;
+  document.getElementById('btnStart').disabled = formBusy || !configReady;
   document.getElementById('btnStop').disabled = !running;
+  document.getElementById('btnResetConfig').disabled = formBusy || !state.presetConfig;
+  ['cfgNamespaceInput', 'cfgSeedInput', 'cfgRegionInput', 'cfgStartDateInput', 'cfgEndDateInput'].forEach(id => {
+    const field = document.getElementById(id);
+    if (field) field.disabled = formBusy;
+  });
   updateDbExportButtonState();
   document.getElementById('opDot').className = `pill-dot ${running ? 'ok' : (cleanupRunning || exportRunning) ? 'warn' : state.simStatus === 'error' ? 'danger' : 'ok'}`;
   document.getElementById('opLabel').textContent = running ? 'Simulation running' : cleanupRunning ? 'Cleanup running' : exportRunning ? 'DB export running' : state.simStatus === 'complete' ? 'Run complete' : state.simStatus === 'error' ? 'Run error' : 'Idle';

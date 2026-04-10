@@ -84,3 +84,81 @@ describe('salesApi promotions', () => {
     });
   });
 });
+
+describe('salesApi POS payloads', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('preserves bigint-safe string ids when opening a POS session', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: '3477604000000000000' }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await salesApi.openPosSession('token', {
+      sessionCode: 'POS-20260410-123',
+      outletId: '3477603326876991488',
+      currencyCode: 'USD',
+      managerId: '3477603326876991499',
+      businessDate: '2026-04-10',
+      note: null,
+    });
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(options?.body))).toEqual({
+      sessionCode: 'POS-20260410-123',
+      outletId: '3477603326876991488',
+      currencyCode: 'USD',
+      managerId: '3477603326876991499',
+      businessDate: '2026-04-10',
+      note: null,
+    });
+  });
+
+  it('preserves bigint-safe string ids when creating a POS order', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: '3477605000000000000' }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await salesApi.createOrder('token', {
+      outletId: '3477603326876991488',
+      posSessionId: '3477606000000000001',
+      currencyCode: 'USD',
+      orderType: 'takeaway',
+      note: null,
+      items: [{
+        productId: '3477607000000000002',
+        quantity: 1,
+        discountAmount: 0,
+        taxAmount: 0,
+        note: null,
+        promotionIds: ['3477608000000000003'],
+      }],
+    });
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(options?.body))).toEqual({
+      outletId: '3477603326876991488',
+      posSessionId: '3477606000000000001',
+      currencyCode: 'USD',
+      orderType: 'takeaway',
+      note: null,
+      items: [{
+        productId: '3477607000000000002',
+        quantity: 1,
+        discountAmount: 0,
+        taxAmount: 0,
+        note: null,
+        promotionIds: ['3477608000000000003'],
+      }],
+    });
+  });
+});

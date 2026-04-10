@@ -31,6 +31,10 @@ import { useListQueryState } from '@/hooks/use-list-query-state';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
 import { PayrollPeriodsWorkspace } from '@/components/finance/PayrollPeriodsWorkspace';
+import {
+  formatFinanceExpenseTypeLabel,
+  getFinanceOutletDisplay,
+} from '@/components/finance/finance-display';
 import { resolveScopeCurrencyCode } from '@/lib/org-currency';
 
 type FinanceTab = 'expenses' | 'periods' | 'timesheets' | 'runs' | 'config';
@@ -132,6 +136,10 @@ export function FinanceModule() {
         outletId,
       }),
     [outletId, outlets, regionId, regions],
+  );
+  const outletsById = useMemo(
+    () => new Map(outlets.map((outlet) => [outlet.id, outlet])),
+    [outlets],
   );
   const expenseCurrencyContext = useMemo(() => {
     if (outletId) {
@@ -515,8 +523,20 @@ export function FinanceModule() {
                       <tr key={String(expense.id)} className="border-b last:border-0">
                         <td className="px-4 py-2.5 text-xs font-mono">{String(expense.id)}</td>
                         <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(expense.businessDate || '—')}</td>
-                        <td className="px-4 py-2.5 text-xs">{String(expense.outletId || '—')}</td>
-                        <td className="px-4 py-2.5 text-xs">{String(expense.sourceType || '—')}</td>
+                        <td className="px-4 py-2.5">
+                          {(() => {
+                            const outletDisplay = getFinanceOutletDisplay(outletsById, expense.outletId);
+                            return (
+                              <div className="flex flex-col">
+                                <span className="text-xs font-medium">{outletDisplay.primary}</span>
+                                {outletDisplay.secondary ? (
+                                  <span className="text-[11px] font-mono text-muted-foreground">{outletDisplay.secondary}</span>
+                                ) : null}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-4 py-2.5 text-xs">{formatFinanceExpenseTypeLabel(expense.subtype, expense.sourceType)}</td>
                         <td className="px-4 py-2.5 text-sm">{String(expense.description || '—')}</td>
                         <td className="px-4 py-2.5 text-right text-sm font-mono">
                           {formatCurrency(expense.amount, String(expense.currencyCode || 'USD'))}
@@ -611,7 +631,19 @@ export function FinanceModule() {
                       <td className="px-4 py-2.5 text-xs font-mono">{String(timesheet.id)}</td>
                       <td className="px-4 py-2.5 text-xs">{String(timesheet.payrollPeriodName || timesheet.payrollPeriodId || '—')}</td>
                       <td className="px-4 py-2.5 text-xs">{String(timesheet.userId || '—')}</td>
-                      <td className="px-4 py-2.5 text-xs">{String(timesheet.outletId || '—')}</td>
+                      <td className="px-4 py-2.5">
+                        {(() => {
+                          const outletDisplay = getFinanceOutletDisplay(outletsById, timesheet.outletId);
+                          return (
+                            <div className="flex flex-col">
+                              <span className="text-xs font-medium">{outletDisplay.primary}</span>
+                              {outletDisplay.secondary ? (
+                                <span className="text-[11px] font-mono text-muted-foreground">{outletDisplay.secondary}</span>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td className="px-4 py-2.5 text-right text-xs font-mono">{toNumber(timesheet.workHours).toFixed(2)}</td>
                       <td className="px-4 py-2.5 text-right text-xs font-mono">{toNumber(timesheet.overtimeHours).toFixed(2)}</td>
                       <td className="px-4 py-2.5 text-right text-xs font-mono">{toNumber(timesheet.lateCount)}</td>
@@ -706,7 +738,19 @@ export function FinanceModule() {
                         <td className="px-4 py-2.5 text-xs font-mono">{id}</td>
                         <td className="px-4 py-2.5 text-xs">{String(run.payrollPeriodName || run.payrollPeriodId || '—')}</td>
                         <td className="px-4 py-2.5 text-xs">{String(run.userId || '—')}</td>
-                        <td className="px-4 py-2.5 text-xs">{String(run.outletId || '—')}</td>
+                        <td className="px-4 py-2.5">
+                          {(() => {
+                            const outletDisplay = getFinanceOutletDisplay(outletsById, run.outletId);
+                            return (
+                              <div className="flex flex-col">
+                                <span className="text-xs font-medium">{outletDisplay.primary}</span>
+                                {outletDisplay.secondary ? (
+                                  <span className="text-[11px] font-mono text-muted-foreground">{outletDisplay.secondary}</span>
+                                ) : null}
+                              </div>
+                            );
+                          })()}
+                        </td>
                         <td className="px-4 py-2.5 text-xs">{String(run.status || '—')}</td>
                         <td className="px-4 py-2.5 text-right text-sm font-mono">
                           {formatCurrency(run.netSalary, String(run.currencyCode || 'USD'))}

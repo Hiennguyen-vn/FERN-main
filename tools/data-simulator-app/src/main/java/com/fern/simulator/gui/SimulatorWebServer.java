@@ -190,30 +190,7 @@ public class SimulatorWebServer {
         String preset = pathParam(ex, "/api/config/");
         try {
             SimulationConfig config = ConfigLoader.load(null, preset);
-            sendJson(ex, 200, Map.of(
-                    "namespace", config.namespace(),
-                    "startDate", config.startDate().toString(),
-                    "endDate", config.endDate().toString(),
-                    "seed", config.seed(),
-                    "startingRegion", config.startingRegion(),
-                    "totalDays", config.totalDays(),
-                    "growth", Map.of(
-                            "initialOutlets", config.expansion().initialOutlets(),
-                            "rampDays", config.probability().demandRampDays(),
-                            "baseDailySalesPerOutlet", config.probability().baseDailySalesPerOutlet(),
-                            "monthlyTurnoverRate", config.probability().monthlyTurnoverRate(),
-                            "reorderLeadTimeDays", config.probability().reorderLeadTimeDays()
-                    ),
-                    "realism", Map.of(
-                            "carryoverDays", config.realism().stockoutCarryoverDays(),
-                            "lateDeliveryChance", config.realism().lateDeliveryChance(),
-                            "partialDeliveryChance", config.realism().partialDeliveryChance(),
-                            "absenceChanceWeekday", config.realism().weekdayAbsenceChance(),
-                            "absenceChanceWeekend", config.realism().weekendAbsenceChance(),
-                            "lateChance", config.realism().lateChance(),
-                            "topWasteProfiles", config.realism().categoryProfiles()
-                    )
-            ));
+            sendJson(ex, 200, configPayload(config));
         } catch (Exception e) {
             sendJson(ex, 400, Map.of("error", e.getMessage()));
         }
@@ -234,7 +211,13 @@ public class SimulatorWebServer {
         String preset = (String) body.getOrDefault("preset", "small");
         boolean dryRun = Boolean.TRUE.equals(body.get("dryRun"));
 
-        SimulationConfig config = ConfigLoader.load(null, preset);
+        SimulationConfig config;
+        try {
+            config = applyOverrides(ConfigLoader.load(null, preset), body);
+        } catch (IllegalArgumentException e) {
+            sendJson(ex, 400, Map.of("error", e.getMessage()));
+            return;
+        }
         DatabaseTarget target = databaseTarget();
 
         try {
@@ -271,6 +254,171 @@ public class SimulatorWebServer {
                 "startDate", config.startDate().toString(),
                 "endDate", config.endDate().toString()
         ));
+    }
+
+    private Map<String, Object> configPayload(SimulationConfig config) {
+        LinkedHashMap<String, Object> payload = new LinkedHashMap<>();
+        payload.put("namespace", config.namespace());
+        payload.put("startDate", config.startDate().toString());
+        payload.put("endDate", config.endDate().toString());
+        payload.put("seed", config.seed());
+        payload.put("startingRegion", config.startingRegion());
+        payload.put("totalDays", config.totalDays());
+        payload.put("regionOptions", buildRegionOptions(config.regions()));
+        payload.put("growth", Map.of(
+                "initialOutlets", config.expansion().initialOutlets(),
+                "rampDays", config.probability().demandRampDays(),
+                "baseDailySalesPerOutlet", config.probability().baseDailySalesPerOutlet(),
+                "monthlyTurnoverRate", config.probability().monthlyTurnoverRate(),
+                "reorderLeadTimeDays", config.probability().reorderLeadTimeDays()
+        ));
+        payload.put("realism", Map.of(
+                "carryoverDays", config.realism().stockoutCarryoverDays(),
+                "lateDeliveryChance", config.realism().lateDeliveryChance(),
+                "partialDeliveryChance", config.realism().partialDeliveryChance(),
+                "absenceChanceWeekday", config.realism().weekdayAbsenceChance(),
+                "absenceChanceWeekend", config.realism().weekendAbsenceChance(),
+                "lateChance", config.realism().lateChance(),
+                "topWasteProfiles", config.realism().categoryProfiles()
+        ));
+        return payload;
+    }
+
+    @SuppressWarnings("unchecked")
+    private SimulationConfig applyOverrides(SimulationConfig baseConfig, Map<String, Object> body) {
+        Map<String, Object> overrides = body.get("overrides") instanceof Map<?, ?> raw
+                ? (Map<String, Object>) raw
+                : Map.of();
+
+        String namespace = readStringOverride(overrides, "namespace", baseConfig.namespace());
+        LocalDate startDate = readDateOverride(overrides, "startDate", baseConfig.startDate());
+        LocalDate endDate = readDateOverride(overrides, "endDate", baseConfig.endDate());
+        long seed = readLongOverride(overrides, "seed", baseConfig.seed());
+        String startingRegion = readStringOverride(overrides, "startingRegion", baseConfig.startingRegion());
+
+        validateSimulationConfig(namespace, startDate, endDate, seed, startingRegion, baseConfig.regions());
+
+        return new SimulationConfig(
+                namespace,
+                startDate,
+                endDate,
+                seed,
+                startingRegion,
+                baseConfig.database(),
+                baseConfig.expansion(),
+                baseConfig.regions(),
+                baseConfig.probability(),
+                baseConfig.realism()
+        );
+    }
+
+    private List<Map<String, Object>> buildRegionOptions(List<SimulationConfig.RegionConfig> regions) {
+        List<Map<String, Object>> options = new ArrayList<>();
+        if (regions == null) {
+            return options;
+        }
+        for (SimulationConfig.RegionConfig region : regions) {
+            if (region.subregions() == null || region.subregions().isEmpty()) {
+                options.add(Map.of(
+                        "code", region.code(),
+                        "name", region.code(),
+                        "parentRegion", region.code(),
+                        "currency", region.currency(),
+                        "timezone", region.timezone()
+                ));
+                continue;
+            }
+            for (SimulationConfig.RegionConfig.SubregionConfig subregion : region.subregions()) {
+                LinkedHashMap<String, Object> option = new LinkedHashMap<>();
+                option.put("code", subregion.code());
+                option.put("name", subregion.name());
+                option.put("parentRegion", region.code());
+                option.put("currency", region.currency());
+                option.put("timezone", region.timezone());
+                options.add(option);
+            }
+        }
+        return options;
+    }
+
+    private void validateSimulationConfig(String namespace, LocalDate startDate, LocalDate endDate,
+                                          long seed, String startingRegion,
+                                          List<SimulationConfig.RegionConfig> regions) {
+        if (namespace == null || namespace.isBlank()) {
+            throw new IllegalArgumentException("namespace is required");
+        }
+        if (startDate == null || endDate == null) {
+            throw new IllegalArgumentException("startDate and endDate are required");
+        }
+        if (endDate.isBefore(startDate)) {
+            throw new IllegalArgumentException("endDate must be on or after startDate");
+        }
+        if (seed <= 0) {
+            throw new IllegalArgumentException("seed must be a positive integer");
+        }
+        List<Map<String, Object>> regionOptions = buildRegionOptions(regions);
+        boolean regionExists = regionOptions.stream()
+                .map(option -> String.valueOf(option.get("code")))
+                .anyMatch(startingRegion::equals);
+        if (!regionExists) {
+            throw new IllegalArgumentException("Unknown startingRegion: " + startingRegion);
+        }
+    }
+
+    private String readStringOverride(Map<String, Object> overrides, String key, String fallback) {
+        if (!overrides.containsKey(key)) {
+            return fallback;
+        }
+        Object raw = overrides.get(key);
+        if (raw == null) {
+            throw new IllegalArgumentException(key + " is required");
+        }
+        String value = raw.toString().trim();
+        if (value.isEmpty()) {
+            throw new IllegalArgumentException(key + " is required");
+        }
+        return value;
+    }
+
+    private long readLongOverride(Map<String, Object> overrides, String key, long fallback) {
+        if (!overrides.containsKey(key)) {
+            return fallback;
+        }
+        Object raw = overrides.get(key);
+        if (raw == null) {
+            throw new IllegalArgumentException(key + " is required");
+        }
+        if (raw instanceof Number number) {
+            return number.longValue();
+        }
+        String value = raw.toString().trim();
+        if (value.isEmpty()) {
+            throw new IllegalArgumentException(key + " is required");
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(key + " must be a whole number");
+        }
+    }
+
+    private LocalDate readDateOverride(Map<String, Object> overrides, String key, LocalDate fallback) {
+        if (!overrides.containsKey(key)) {
+            return fallback;
+        }
+        Object raw = overrides.get(key);
+        if (raw == null) {
+            throw new IllegalArgumentException(key + " is required");
+        }
+        String value = raw.toString().trim();
+        if (value.isEmpty()) {
+            throw new IllegalArgumentException(key + " is required");
+        }
+        try {
+            return LocalDate.parse(value);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(key + " must use YYYY-MM-DD");
+        }
     }
 
     private void stopSimulation(HttpExchange ex) throws IOException {

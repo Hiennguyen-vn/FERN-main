@@ -19,6 +19,7 @@ export interface DashboardKPIs {
   lowStockCount: number;
   outOfStockCount: number;
   pendingOrders: number;
+  trackedItemsCount: number;
 }
 
 export interface RecentOrder {
@@ -96,11 +97,28 @@ async function fetchLowBalances(token: string, outletId: string) {
   return merged;
 }
 
+async function fetchTrackedItemCount(token: string, outletId: string) {
+  const response = await inventoryApi.balancesPage(token, {
+    outletId,
+    limit: 1,
+    offset: 0,
+    sortBy: 'itemId',
+    sortDir: 'asc',
+  });
+  return Number(response.total || response.totalCount || response.items?.length || 0);
+}
+
+function describeDashboardDataIssues(failedSources: string[], hasAnyData: boolean) {
+  if (failedSources.length === 0) return null;
+  if (!hasAnyData) return 'Dashboard data is currently unavailable from backend.';
+  return `Some live widgets are unavailable: ${failedSources.join(', ')}.`;
+}
+
 export function useDashboardData() {
   const { token, scope } = useShellRuntime();
   const [kpis, setKpis] = useState<DashboardKPIs>({
     totalRevenue: 0, totalOrders: 0, completedOrders: 0, avgOrderValue: 0,
-    activeSessions: 0, lowStockCount: 0, outOfStockCount: 0, pendingOrders: 0,
+    activeSessions: 0, lowStockCount: 0, outOfStockCount: 0, pendingOrders: 0, trackedItemsCount: 0,
   });
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
   const [lowStock, setLowStock] = useState<LowStockAlert[]>([]);
@@ -116,26 +134,41 @@ export function useDashboardData() {
     setLoading(true);
     setError(null);
     try {
-      const outlets = await orgApi.outlets(token);
       const scopedOutletId = normalizeNumericOutletId(scope.outletId);
+      const outletResult = await Promise.allSettled([orgApi.outlets(token)]);
+      const outlets = outletResult[0]?.status === 'fulfilled' ? outletResult[0].value : [];
       const selectedOutletId = scopedOutletId || outlets[0]?.id || '';
-      const selectedOutletName = outlets.find((outlet) => outlet.id === selectedOutletId)?.name || 'Unknown';
+      const selectedOutletName = outlets.find((outlet) => outlet.id === selectedOutletId)?.name || scope.outletName || 'Unknown';
 
-      const [ordersPage, sessionsPage, items] = await Promise.all([
+      const sourceFailures: string[] = [];
+      if (outletResult[0]?.status === 'rejected') {
+        sourceFailures.push('outlet scope');
+      }
+
+      const [ordersResult, sessionsResult, itemsResult, lowBalancesResult, trackedCountResult] = await Promise.allSettled([
         salesApi.orders(token, { outletId: selectedOutletId || undefined, limit: 100, offset: 0 }),
         salesApi.posSessions(token, { outletId: selectedOutletId || undefined, limit: 100, offset: 0 }),
         productApi.items(token),
+        selectedOutletId ? fetchLowBalances(token, selectedOutletId) : Promise.resolve([] as StockBalanceView[]),
+        selectedOutletId ? fetchTrackedItemCount(token, selectedOutletId) : Promise.resolve(0),
       ]);
 
-      const allOrders = ordersPage.items || [];
+      if (ordersResult.status === 'rejected') sourceFailures.push('sales orders');
+      if (sessionsResult.status === 'rejected') sourceFailures.push('POS sessions');
+      if (itemsResult.status === 'rejected') sourceFailures.push('item catalog');
+      if (lowBalancesResult.status === 'rejected') sourceFailures.push('inventory balances');
+      if (trackedCountResult.status === 'rejected') sourceFailures.push('tracked item totals');
+
+      const allOrders = ordersResult.status === 'fulfilled' ? (ordersResult.value.items || []) : [];
       const completed = allOrders.filter((order) => isCompletedStatus(String(order.status ?? '')));
       const totalRevenue = completed.reduce((sum, order) => sum + toNumber(order.totalAmount), 0);
       const pendingOrders = allOrders.filter((order) => isPendingStatus(String(order.status ?? ''))).length;
-      const activeSessions = (sessionsPage.items || []).filter((session) => String(session.status) === 'open').length;
+      const activeSessions = (sessionsResult.status === 'fulfilled' ? (sessionsResult.value.items || []) : [])
+        .filter((session) => String(session.status) === 'open').length;
 
-      const balances = selectedOutletId ? await fetchLowBalances(token, selectedOutletId) : [];
+      const balances = lowBalancesResult.status === 'fulfilled' ? lowBalancesResult.value : [];
       const itemMap = new Map(
-        (Array.isArray(items) ? items : [])
+        (itemsResult.status === 'fulfilled' && Array.isArray(itemsResult.value) ? itemsResult.value : [])
           .map((item) => toRecord(item))
           .filter((item): item is ApiRecord => item !== null)
           .map((item) => [String(item.id ?? ''), item] as const),
@@ -175,6 +208,7 @@ export function useDashboardData() {
         lowStockCount,
         outOfStockCount,
         pendingOrders,
+        trackedItemsCount: trackedCountResult.status === 'fulfilled' ? trackedCountResult.value : 0,
       });
 
       setRecentOrders(
@@ -196,6 +230,7 @@ export function useDashboardData() {
       );
 
       setLowStock(alerts.sort((a, b) => a.quantity - b.quantity).slice(0, 10));
+      setError(describeDashboardDataIssues(sourceFailures, allOrders.length > 0 || activeSessions > 0 || alerts.length > 0 || (trackedCountResult.status === 'fulfilled' ? trackedCountResult.value > 0 : false)));
     } catch (error) {
       console.error('Dashboard fetch error:', error);
       setError('Dashboard data is currently unavailable from backend.');

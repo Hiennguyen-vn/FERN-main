@@ -33,6 +33,24 @@ import {
   PaymentCreatePanel,
   PurchaseOrderCreatePanel,
 } from '@/components/procurement/ProcurementCreatePanels';
+import {
+  formatProcurementAmount,
+  formatProcurementStatusLabel,
+  procurementStatusTone,
+} from '@/components/procurement/formatters';
+import {
+  canApproveGoodsReceipt,
+  canApprovePurchaseOrder,
+  canApproveSupplierInvoice,
+  canCancelSupplierPayment,
+  canPostGoodsReceipt,
+  canPostSupplierPayment,
+  canReverseSupplierPayment,
+  GOODS_RECEIPT_STATUSES,
+  PURCHASE_ORDER_STATUSES,
+  SUPPLIER_INVOICE_STATUSES,
+  SUPPLIER_PAYMENT_STATUSES,
+} from '@/components/procurement/status-flow';
 
 type ProcTab = 'suppliers' | 'purchase-orders' | 'goods-receipts' | 'invoices' | 'payments';
 type ProcurementDetailKind = 'purchase-order' | 'goods-receipt';
@@ -101,23 +119,14 @@ function TinyAction({
 
 function StatusBadge({ status }: { status: string | null | undefined }) {
   const text = String(status || 'unknown');
-  const tone = text.toLowerCase();
   return (
     <span
       className={cn(
         'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize',
-        tone === 'posted' || tone === 'completed'
-          ? 'border-emerald-200 bg-emerald-500/10 text-emerald-700'
-          : tone === 'approved' || tone === 'received' || tone === 'active'
-            ? 'border-blue-200 bg-blue-500/10 text-blue-700'
-            : tone === 'draft' || tone === 'pending'
-              ? 'border-amber-200 bg-amber-500/10 text-amber-700'
-              : tone === 'cancelled' || tone === 'reversed' || tone === 'inactive'
-                ? 'border-rose-200 bg-rose-500/10 text-rose-700'
-                : 'border-border bg-muted text-muted-foreground',
+        procurementStatusTone(text),
       )}
     >
-      {text}
+      {formatProcurementStatusLabel(text)}
     </span>
   );
 }
@@ -608,7 +617,7 @@ export function ProcurementModule() {
           <DetailField label="PO reference" value={String(detail.poNumber || shortRef('PO', detail.id))} />
           <DetailField label="Supplier" value={supplierName} />
           <DetailField label="Status" value={<StatusBadge status={detail.status} />} />
-          <DetailField label="Total" value={`${Number(detail.totalAmount || detail.expectedTotal || 0).toFixed(2)} ${currencyCode}`} />
+          <DetailField label="Total" value={`${formatProcurementAmount(detail.totalAmount || detail.expectedTotal || 0, currencyCode)} ${currencyCode}`} />
           <DetailField label="Order date" value={formatDateLabel(detail.orderDate)} />
           <DetailField label="Expected delivery" value={formatDateLabel(detail.expectedDeliveryDate)} />
           <DetailField label="Approved at" value={formatDateTimeLabel(detail.approvedAt)} />
@@ -658,8 +667,8 @@ export function ProcurementModule() {
                       <td className="px-4 py-3 text-right text-sm font-mono">{orderedQty.toFixed(2)}</td>
                       <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.qtyReceived || 0).toFixed(2)}</td>
                       <td className="px-4 py-3 text-sm">{String(line.uomCode || item?.baseUomCode || item?.unitCode || '—')}</td>
-                      <td className="px-4 py-3 text-right text-sm font-mono">{unitPrice.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-sm font-mono">{(orderedQty * unitPrice).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(unitPrice, currencyCode)}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(orderedQty * unitPrice, currencyCode)}</td>
                       <td className="px-4 py-3 text-sm text-muted-foreground">{String(line.note || '—')}</td>
                     </tr>
                   );
@@ -691,7 +700,7 @@ export function ProcurementModule() {
           <DetailField label="Business date" value={formatDateLabel(detail.businessDate)} />
           <DetailField label="Receipt time" value={formatDateTimeLabel(detail.receiptTime)} />
           <DetailField label="Supplier lot" value={String(detail.supplierLotNumber || 'No supplier lot')} />
-          <DetailField label="Total" value={`${Number(detail.totalPrice || 0).toFixed(2)} ${currencyCode}`} />
+          <DetailField label="Total" value={`${formatProcurementAmount(detail.totalPrice || 0, currencyCode)} ${currencyCode}`} />
           <DetailField label="Approved at" value={formatDateTimeLabel(detail.approvedAt)} />
           <DetailField label="Full ID" value={detail.id} mono />
         </div>
@@ -924,9 +933,11 @@ export function ProcurementModule() {
                     onChange={(event) => poQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
                   >
                     <option value="all">All statuses</option>
-                    <option value="draft">Draft</option>
-                    <option value="approved">Approved</option>
-                    <option value="posted">Posted</option>
+                    {PURCHASE_ORDER_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {formatProcurementStatusLabel(status)}
+                      </option>
+                    ))}
                   </select>
                   <button
                     onClick={() => void loadPurchaseOrders()}
@@ -975,7 +986,7 @@ export function ProcurementModule() {
                           </td>
                           <td className="px-4 py-2.5 text-xs"><StatusBadge status={row.status} /></td>
                           <td className="px-4 py-2.5 text-right">
-                            <div className="text-sm font-mono">{Number(row.totalAmount || row.expectedTotal || 0).toFixed(2)}</div>
+                            <div className="text-sm font-mono">{formatProcurementAmount(row.totalAmount || row.expectedTotal || 0, row.currencyCode)}</div>
                             <div className="text-[11px] text-muted-foreground">{String(row.currencyCode || 'USD')}</div>
                           </td>
                           <td className="px-4 py-2.5 text-right">
@@ -988,7 +999,7 @@ export function ProcurementModule() {
                               <TinyAction
                                 label="Approve"
                                 busy={actionKey === `po:${id}`}
-                                disabled={status !== 'draft'}
+                                disabled={!canApprovePurchaseOrder(status)}
                                 onClick={() => void runAction(`po:${id}`, () => procurementApi.approvePurchaseOrder(token, id), 'Purchase order approved')}
                               />
                             </div>
@@ -1045,9 +1056,11 @@ export function ProcurementModule() {
                     onChange={(event) => grQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
                   >
                     <option value="all">All statuses</option>
-                    <option value="draft">Draft</option>
-                    <option value="received">Received</option>
-                    <option value="posted">Posted</option>
+                    {GOODS_RECEIPT_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {formatProcurementStatusLabel(status)}
+                      </option>
+                    ))}
                   </select>
                   <button
                     onClick={() => void loadGoodsReceipts()}
@@ -1083,7 +1096,7 @@ export function ProcurementModule() {
                           <td className="px-4 py-2.5">
                             <div>
                               <p className="text-sm font-medium">{shortRef('GR', id)}</p>
-                              <p className="text-[11px] text-muted-foreground">{formatDateLabel(row.businessDate)} · {Number(row.totalPrice || 0).toFixed(2)} {String(row.currencyCode || 'USD')}</p>
+                              <p className="text-[11px] text-muted-foreground">{formatDateLabel(row.businessDate)} · {formatProcurementAmount(row.totalPrice || 0, row.currencyCode)} {String(row.currencyCode || 'USD')}</p>
                               <p className="text-[10px] font-mono text-muted-foreground">{id}</p>
                             </div>
                           </td>
@@ -1102,9 +1115,15 @@ export function ProcurementModule() {
                                 onClick={() => void openGoodsReceiptDetail(id)}
                               />
                               <TinyAction
+                                label="Approve"
+                                busy={actionKey === `gr-approve:${id}`}
+                                disabled={!canApproveGoodsReceipt(status)}
+                                onClick={() => void runAction(`gr-approve:${id}`, () => procurementApi.approveGoodsReceipt(token, id), 'Goods receipt approved')}
+                              />
+                              <TinyAction
                                 label="Post"
                                 busy={actionKey === `gr-post:${id}`}
-                                disabled={status === 'posted' || status === 'cancelled'}
+                                disabled={!canPostGoodsReceipt(status)}
                                 onClick={() => void runAction(`gr-post:${id}`, () => procurementApi.postGoodsReceipt(token, id), 'Goods receipt posted')}
                               />
                             </div>
@@ -1161,9 +1180,11 @@ export function ProcurementModule() {
                     onChange={(event) => invoiceQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
                   >
                     <option value="all">All statuses</option>
-                    <option value="draft">Draft</option>
-                    <option value="approved">Approved</option>
-                    <option value="posted">Posted</option>
+                    {SUPPLIER_INVOICE_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {formatProcurementStatusLabel(status)}
+                      </option>
+                    ))}
                   </select>
                   <button
                     onClick={() => void loadInvoices()}
@@ -1210,16 +1231,16 @@ export function ProcurementModule() {
                               <p className="text-[11px] text-muted-foreground">{String(row.note || 'No note')}</p>
                             </div>
                           </td>
-                          <td className="px-4 py-2.5 text-xs">{String(row.status || '—')}</td>
+                          <td className="px-4 py-2.5 text-xs"><StatusBadge status={row.status} /></td>
                           <td className="px-4 py-2.5 text-right">
-                            <div className="text-sm font-mono">{Number(row.totalAmount || 0).toFixed(2)}</div>
+                            <div className="text-sm font-mono">{formatProcurementAmount(row.totalAmount || 0, row.currencyCode)}</div>
                             <div className="text-[11px] text-muted-foreground">{String(row.currencyCode || 'USD')}</div>
                           </td>
                           <td className="px-4 py-2.5 text-right">
                             <TinyAction
                               label="Approve"
                               busy={actionKey === `inv:${id}`}
-                              disabled={status === 'approved' || status === 'posted'}
+                              disabled={!canApproveSupplierInvoice(status)}
                               onClick={() => void runAction(`inv:${id}`, () => procurementApi.approveInvoice(token, id), 'Invoice approved')}
                             />
                           </td>
@@ -1274,9 +1295,11 @@ export function ProcurementModule() {
                     onChange={(event) => paymentQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
                   >
                     <option value="all">All statuses</option>
-                    <option value="draft">Draft</option>
-                    <option value="posted">Posted</option>
-                    <option value="cancelled">Cancelled</option>
+                    {SUPPLIER_PAYMENT_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {formatProcurementStatusLabel(status)}
+                      </option>
+                    ))}
                   </select>
                   <button
                     onClick={() => void loadPayments()}
@@ -1316,27 +1339,28 @@ export function ProcurementModule() {
                               <p className="text-[10px] font-mono text-muted-foreground">{id}</p>
                             </div>
                           </td>
-                          <td className="px-4 py-2.5 text-xs">{String(row.status || '—')}</td>
+                          <td className="px-4 py-2.5 text-xs"><StatusBadge status={row.status} /></td>
                           <td className="px-4 py-2.5 text-right">
-                            <div className="text-sm font-mono">{Number(row.amount || row.totalAmount || 0).toFixed(2)}</div>
+                            <div className="text-sm font-mono">{formatProcurementAmount(row.amount || row.totalAmount || 0, row.currencyCode)}</div>
                             <div className="text-[11px] text-muted-foreground">{String(row.currencyCode || 'USD')}</div>
                           </td>
                           <td className="px-4 py-2.5 text-right space-x-2">
                             <TinyAction
                               label="Post"
                               busy={actionKey === `pay-post:${id}`}
-                              disabled={status === 'posted'}
+                              disabled={!canPostSupplierPayment(status)}
                               onClick={() => void runAction(`pay-post:${id}`, () => procurementApi.postPayment(token, id), 'Payment posted')}
                             />
                             <TinyAction
                               label="Cancel"
                               busy={actionKey === `pay-cancel:${id}`}
-                              disabled={status === 'cancelled'}
+                              disabled={!canCancelSupplierPayment(status)}
                               onClick={() => void runAction(`pay-cancel:${id}`, () => procurementApi.cancelPayment(token, id), 'Payment cancelled')}
                             />
                             <TinyAction
                               label="Reverse"
                               busy={actionKey === `pay-reverse:${id}`}
+                              disabled={!canReverseSupplierPayment(status)}
                               onClick={() => void runAction(`pay-reverse:${id}`, () => procurementApi.reversePayment(token, id), 'Payment reversed')}
                             />
                           </td>

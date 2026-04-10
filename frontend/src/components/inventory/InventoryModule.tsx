@@ -15,7 +15,22 @@ import {
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
-import { EmptyState, ServiceUnavailablePage } from '@/components/shell/PermissionStates';
+import {
+  buildStockCountPayloadLines,
+  createStockCountDraftLine,
+  type StockCountDraftLine,
+} from '@/components/inventory/stock-count-draft';
+import {
+  STOCK_COUNT_STATUSES,
+  canPostStockCountSession,
+  formatStockCountStatus,
+  stockCountStatusBadgeClass,
+} from '@/components/inventory/stock-count-status';
+import {
+  formatLedgerTxnType,
+  ledgerTxnTypeBadgeClass,
+} from '@/components/inventory/ledger-formatters';
+import { ServiceUnavailablePage } from '@/components/shell/PermissionStates';
 import { useListQueryState } from '@/hooks/use-list-query-state';
 import {
   Dialog,
@@ -57,17 +72,6 @@ function sessionShortLabel(sessionId: string) {
   const normalized = String(sessionId ?? '').trim();
   if (!normalized) return 'Session';
   return normalized.length > 8 ? `#${normalized.slice(-8)}` : `#${normalized}`;
-}
-
-function statusBadgeClass(status: string) {
-  switch (status.toLowerCase()) {
-    case 'posted':
-      return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-    case 'draft':
-      return 'bg-amber-50 text-amber-700 border-amber-200';
-    default:
-      return 'bg-muted text-muted-foreground border-border';
-  }
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -151,11 +155,10 @@ export function InventoryModule() {
     businessDate: new Date().toISOString().slice(0, 10),
   });
   const [countForm, setCountForm] = useState({
-    itemId: '',
-    actualQty: '0',
-    note: '',
     countDate: new Date().toISOString().slice(0, 10),
+    note: '',
   });
+  const [countLines, setCountLines] = useState<StockCountDraftLine[]>(() => [createStockCountDraftLine()]);
 
   const outletId = normalizeNumeric(scope.outletId);
   const itemNameById = useMemo(
@@ -166,6 +169,10 @@ export function InventoryModule() {
     () => (selectedCountSessionId ? (countDetailsById[selectedCountSessionId] || counts.find((row) => row.id === selectedCountSessionId) || null) : null),
     [countDetailsById, counts, selectedCountSessionId],
   );
+  const selectedCountItemIds = useMemo(
+    () => new Set(countLines.map((line) => String(line.itemId || '')).filter(Boolean)),
+    [countLines],
+  );
   const wasteSummary = useMemo(() => {
     const totalQuantity = wasteRecords.reduce((sum, row) => sum + Math.abs(Number(row.qtyChange ?? 0)), 0);
     const latest = wasteRecords[0];
@@ -174,12 +181,17 @@ export function InventoryModule() {
       latestAt: latest?.txnTime || latest?.createdAt || null,
     };
   }, [wasteRecords]);
+  const resolveItemName = useCallback((itemId: unknown, fallbackName?: unknown) => {
+    const normalizedItemId = String(itemId ?? '').trim();
+    const normalizedFallback = String(fallbackName ?? '').trim();
+    return itemNameById.get(normalizedItemId) || normalizedFallback || `Item ${normalizedItemId || 'unknown'}`;
+  }, [itemNameById]);
 
-  const balancesQuery = useListQueryState<{ outletId?: string; status?: string }>({
+  const balancesQuery = useListQueryState<{ outletId?: string; lowOnly?: boolean }>({
     initialLimit: 20,
     initialSortBy: 'itemId',
     initialSortDir: 'asc',
-    initialFilters: { outletId: outletId || undefined, status: undefined },
+    initialFilters: { outletId: outletId || undefined, lowOnly: undefined },
   });
   const ledgerQuery = useListQueryState<{ outletId?: string; txnType?: string }>({
     initialLimit: 20,
@@ -236,7 +248,7 @@ export function InventoryModule() {
       const page = await inventoryApi.balancesPage(token, {
         ...balancesQuery.query,
         outletId,
-        status: balancesQuery.filters.status,
+        lowOnly: balancesQuery.filters.lowOnly,
       });
       setBalances(page.items || []);
       setBalancesTotal(page.total || page.totalCount || 0);
@@ -250,7 +262,7 @@ export function InventoryModule() {
     } finally {
       setBalancesLoading(false);
     }
-  }, [balancesQuery.filters.status, balancesQuery.query, outletId, token]);
+  }, [balancesQuery.filters.lowOnly, balancesQuery.query, outletId, token]);
 
   const loadLedger = useCallback(async () => {
     if (!token || !outletId) {
@@ -408,6 +420,18 @@ export function InventoryModule() {
     };
   }, [activeTab, countDetailsById, counts, token]);
 
+  const updateCountLine = (key: string, patch: Partial<StockCountDraftLine>) => {
+    setCountLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+  };
+
+  const addCountLine = () => {
+    setCountLines((current) => [...current, createStockCountDraftLine()]);
+  };
+
+  const removeCountLine = (key: string) => {
+    setCountLines((current) => (current.length === 1 ? current : current.filter((line) => line.key !== key)));
+  };
+
   const createWaste = async () => {
     if (!token || !outletId) return;
     if (!wasteForm.itemId || Number(wasteForm.quantity) <= 0 || !wasteForm.reason.trim()) {
@@ -436,8 +460,9 @@ export function InventoryModule() {
 
   const createCount = async () => {
     if (!token || !outletId) return;
-    if (!countForm.itemId) {
-      toast.error('Please select an item to count');
+    const payloadLines = buildStockCountPayloadLines(countLines);
+    if ('error' in payloadLines) {
+      toast.error(payloadLines.error);
       return;
     }
     setCreatingCount(true);
@@ -446,10 +471,11 @@ export function InventoryModule() {
         outletId,
         countDate: countForm.countDate,
         note: countForm.note || null,
-        lines: [{ itemId: countForm.itemId, actualQty: Number(countForm.actualQty), note: countForm.note || null }],
+        lines: payloadLines.lines,
       });
       toast.success('Stock count session created');
-      setCountForm((prev) => ({ ...prev, actualQty: '0', note: '' }));
+      setCountForm((prev) => ({ ...prev, note: '' }));
+      setCountLines([createStockCountDraftLine()]);
       await Promise.all([loadCounts(), loadBalances()]);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, 'Failed to create stock count session'));
@@ -526,20 +552,18 @@ export function InventoryModule() {
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                   <input
                     className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
-                    placeholder="Search item or id"
+                    placeholder="Search item code or name"
                     value={balancesQuery.searchInput}
                     onChange={(event) => balancesQuery.setSearchInput(event.target.value)}
                   />
                 </div>
                 <select
                   className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  value={balancesQuery.filters.status || 'all'}
-                  onChange={(event) => balancesQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
+                  value={balancesQuery.filters.lowOnly ? 'low_only' : 'all'}
+                  onChange={(event) => balancesQuery.setFilter('lowOnly', event.target.value === 'low_only' ? true : undefined)}
                 >
-                  <option value="all">All statuses</option>
-                  <option value="ok">OK</option>
-                  <option value="low">Low</option>
-                  <option value="out_of_stock">Out of stock</option>
+                  <option value="all">All items</option>
+                  <option value="low_only">Low stock only</option>
                 </select>
                 <select
                   className="h-8 rounded-md border border-input bg-background px-2 text-xs"
@@ -586,7 +610,7 @@ export function InventoryModule() {
                     <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">No stock balances found</td></tr>
                   ) : balances.map((row) => (
                     <tr key={`${row.outletId}-${row.itemId}`} className="border-b last:border-0">
-                      <td className="px-4 py-2.5 text-sm">{itemNameById.get(String(row.itemId)) || `Item ${row.itemId}`}</td>
+                      <td className="px-4 py-2.5 text-sm">{resolveItemName(row.itemId, row.itemName)}</td>
                       <td className="px-4 py-2.5 text-right text-sm"><NumberCell value={row.qtyOnHand} /></td>
                       <td className="px-4 py-2.5 text-right text-sm"><NumberCell value={row.unitCost} /></td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground">{row.lastCountDate ? String(row.lastCountDate) : '—'}</td>
@@ -628,9 +652,14 @@ export function InventoryModule() {
                   onChange={(event) => ledgerQuery.setFilter('txnType', event.target.value === 'all' ? undefined : event.target.value)}
                 >
                   <option value="all">All types</option>
-                  <option value="stock_count">Stock count</option>
-                  <option value="waste_out">Waste</option>
-                  <option value="goods_receipt">Goods receipt</option>
+                  <option value="stock_adjustment">Stock adjustments</option>
+                  <option value="stock_adjustment_in">Stock adjustment in</option>
+                  <option value="stock_adjustment_out">Stock adjustment out</option>
+                  <option value="purchase_in">Purchase in</option>
+                  <option value="sale_usage">Sale usage</option>
+                  <option value="waste_out">Waste out</option>
+                  <option value="manufacture_in">Manufacture in</option>
+                  <option value="manufacture_out">Manufacture out</option>
                 </select>
                 <select
                   className="h-8 rounded-md border border-input bg-background px-2 text-xs"
@@ -676,10 +705,24 @@ export function InventoryModule() {
                     <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">No inventory transactions found</td></tr>
                   ) : transactions.map((row) => (
                     <tr key={String(row.id)} className="border-b last:border-0">
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{row.txnTime || row.createdAt || '—'}</td>
-                      <td className="px-4 py-2.5 text-sm">{itemNameById.get(String(row.itemId)) || `Item ${row.itemId}`}</td>
-                      <td className="px-4 py-2.5 text-xs">{String(row.txnType || 'unknown')}</td>
-                      <td className="px-4 py-2.5 text-right text-sm"><NumberCell value={row.qtyChange} /></td>
+                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDateTime(row.txnTime || row.createdAt)}</td>
+                      <td className="px-4 py-2.5 text-sm">{resolveItemName(row.itemId, row.itemName)}</td>
+                      <td className="px-4 py-2.5 text-xs">
+                        <span className={cn(
+                          'inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                          ledgerTxnTypeBadgeClass(row.txnType),
+                        )}
+                        >
+                          {formatLedgerTxnType(row.txnType)}
+                        </span>
+                      </td>
+                      <td className={cn(
+                        'px-4 py-2.5 text-right text-sm font-mono',
+                        Number(row.qtyChange ?? 0) > 0 ? 'text-emerald-700' : Number(row.qtyChange ?? 0) < 0 ? 'text-rose-700' : 'text-foreground',
+                      )}
+                      >
+                        {formatQuantity(row.qtyChange)}
+                      </td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground">{row.note || '—'}</td>
                     </tr>
                   ))}
@@ -701,46 +744,135 @@ export function InventoryModule() {
 
         {activeTab === 'counts' && (
           <div className="space-y-4">
-            <div className="surface-elevated p-4 grid grid-cols-1 md:grid-cols-5 gap-3">
-              <div className="md:col-span-2">
-                <label className="text-xs text-muted-foreground">Item</label>
-                <select
-                  className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  value={countForm.itemId}
-                  onChange={(e) => setCountForm((prev) => ({ ...prev, itemId: e.target.value }))}
-                >
-                  <option value="">Select item</option>
-                  {items.map((item) => (
-                    <option key={String(item.id)} value={String(item.id)}>{String(item.name || item.code || item.id)}</option>
-                  ))}
-                </select>
+            <div className="surface-elevated p-4 space-y-4">
+              <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold">Create Stock Count</h3>
+                  <p className="text-xs text-muted-foreground">Count multiple items in one session, then review and post the resulting variance.</p>
+                </div>
+                <div className="text-xs font-mono text-muted-foreground">
+                  {selectedCountItemIds.size} item{selectedCountItemIds.size === 1 ? '' : 's'} in this session
+                </div>
               </div>
-              <div>
-                <label className="text-xs text-muted-foreground">Actual Qty</label>
-                <input
-                  type="number"
-                  className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  value={countForm.actualQty}
-                  onChange={(e) => setCountForm((prev) => ({ ...prev, actualQty: e.target.value }))}
-                />
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+                <div>
+                  <label className="text-xs text-muted-foreground">Count Date</label>
+                  <input
+                    type="date"
+                    className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    value={countForm.countDate}
+                    onChange={(e) => setCountForm((prev) => ({ ...prev, countDate: e.target.value }))}
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <label className="text-xs text-muted-foreground">Session Note</label>
+                  <input
+                    type="text"
+                    className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    value={countForm.note}
+                    onChange={(e) => setCountForm((prev) => ({ ...prev, note: e.target.value }))}
+                    placeholder="Optional context for this count session"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    onClick={() => void createCount()}
+                    disabled={creatingCount || itemsLoading}
+                    className="h-9 w-full rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-60"
+                  >
+                    {creatingCount ? 'Creating...' : 'Create Count'}
+                  </button>
+                </div>
               </div>
-              <div>
-                <label className="text-xs text-muted-foreground">Count Date</label>
-                <input
-                  type="date"
-                  className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  value={countForm.countDate}
-                  onChange={(e) => setCountForm((prev) => ({ ...prev, countDate: e.target.value }))}
-                />
+
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full min-w-[760px]">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      <th className="px-3 py-2 text-left text-[11px]">Item</th>
+                      <th className="px-3 py-2 text-right text-[11px]">Actual Qty</th>
+                      <th className="px-3 py-2 text-left text-[11px]">Line Note</th>
+                      <th className="px-3 py-2 text-right text-[11px]">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {countLines.map((line) => {
+                      const blockedItemIds = new Set(
+                        countLines
+                          .filter((row) => row.key !== line.key)
+                          .map((row) => String(row.itemId || ''))
+                          .filter(Boolean),
+                      );
+
+                      return (
+                        <tr key={line.key} className="border-b last:border-0">
+                          <td className="px-3 py-2">
+                            <select
+                              className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                              value={line.itemId}
+                              onChange={(e) => updateCountLine(line.key, { itemId: e.target.value })}
+                              disabled={itemsLoading}
+                            >
+                              <option value="">Select item</option>
+                              {items
+                                .filter((item) => {
+                                  const itemId = String(item.id);
+                                  return itemId === line.itemId || !blockedItemIds.has(itemId);
+                                })
+                                .map((item) => (
+                                  <option key={String(item.id)} value={String(item.id)}>
+                                    {String(item.name || item.code || item.id)}
+                                  </option>
+                                ))}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.0001"
+                              className="h-8 w-full rounded-md border border-input bg-background px-2 text-right text-xs"
+                              value={line.actualQty}
+                              onChange={(e) => updateCountLine(line.key, { actualQty: e.target.value })}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="text"
+                              className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                              value={line.note}
+                              onChange={(e) => updateCountLine(line.key, { note: e.target.value })}
+                              placeholder="Optional line note"
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              onClick={() => removeCountLine(line.key)}
+                              disabled={countLines.length === 1}
+                              className="h-8 rounded-md border px-2.5 text-[11px] hover:bg-accent disabled:opacity-50"
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-              <div className="flex items-end">
+
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <button
-                  onClick={() => void createCount()}
-                  disabled={creatingCount || itemsLoading}
-                  className="h-9 w-full rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-60"
+                  onClick={addCountLine}
+                  disabled={itemsLoading}
+                  className="h-9 rounded-md border px-3 text-xs font-medium hover:bg-accent disabled:opacity-50"
                 >
-                  {creatingCount ? 'Creating...' : 'Create Count'}
+                  Add Item
                 </button>
+                <p className="text-xs text-muted-foreground">
+                  One stock count session can contain many items, but each item can only appear once.
+                </p>
               </div>
             </div>
 
@@ -763,8 +895,9 @@ export function InventoryModule() {
                     onChange={(event) => countsQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
                   >
                     <option value="all">All statuses</option>
-                    <option value="draft">Draft</option>
-                    <option value="posted">Posted</option>
+                    {STOCK_COUNT_STATUSES.map((status) => (
+                      <option key={status} value={status}>{formatStockCountStatus(status)}</option>
+                    ))}
                   </select>
                   <select
                     className="h-8 rounded-md border border-input bg-background px-2 text-xs"
@@ -834,11 +967,11 @@ export function InventoryModule() {
                         <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(row.countDate || '—')}</td>
                         <td className="px-4 py-2.5">
                           <span className={cn(
-                            'inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize',
-                            statusBadgeClass(String(row.status || 'unknown')),
+                            'inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                            stockCountStatusBadgeClass(row.status),
                           )}
                           >
-                            {String(row.status || '—')}
+                            {formatStockCountStatus(row.status)}
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-right">
@@ -847,7 +980,7 @@ export function InventoryModule() {
                             disabled={countReviewLoading && selectedCountSessionId === String(row.id)}
                             className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent disabled:opacity-50"
                           >
-                            {String(row.status || '').toLowerCase() === 'posted' ? 'View' : 'Review & Post'}
+                            {canPostStockCountSession(row.status) ? 'Review & Post' : 'View'}
                           </button>
                         </td>
                       </tr>
@@ -870,10 +1003,46 @@ export function InventoryModule() {
         )}
 
         {activeTab === 'adjustments' && (
-          <EmptyState
-            title="Stock adjustments are not exposed"
-            description="The current backend contracts do not provide a dedicated stock adjustment endpoint."
-          />
+          <div className="surface-elevated max-w-3xl p-5 space-y-4">
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold">Adjustments follow posted stock counts</h3>
+              <p className="text-sm text-muted-foreground">
+                The current backend does not expose manual adjustment create or edit flows. Inventory changes come from goods receipts,
+                sales usage, waste records, and posted stock counts.
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-lg border bg-muted/20 p-4">
+                <div className="text-xs font-medium">Use Stock Counts to reconcile</div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Create a count session, review the variance, then post it to generate the adjustment transactions.
+                </p>
+              </div>
+              <div className="rounded-lg border bg-muted/20 p-4">
+                <div className="text-xs font-medium">Use Ledger to audit the result</div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Posted stock counts write `stock_adjustment_in` or `stock_adjustment_out` entries into the inventory ledger.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setActiveTab('counts')}
+                className="h-9 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground"
+              >
+                Open Stock Counts
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab('ledger');
+                  ledgerQuery.setFilter('txnType', 'stock_adjustment');
+                }}
+                className="h-9 rounded-md border px-3 text-xs font-medium hover:bg-accent"
+              >
+                Open Ledger
+              </button>
+            </div>
+          </div>
         )}
 
         {activeTab === 'waste' && (
@@ -946,7 +1115,7 @@ export function InventoryModule() {
                 <div className="mt-1 text-2xl font-semibold">{wasteTotal}</div>
               </div>
               <div className="surface-elevated p-4">
-                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Total Waste Qty</div>
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Visible Waste Qty</div>
                 <div className="mt-1 text-2xl font-semibold">{wasteSummary.totalQuantity.toFixed(2)}</div>
               </div>
               <div className="surface-elevated p-4">
@@ -1022,7 +1191,7 @@ export function InventoryModule() {
                         <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDateTime(row.txnTime || row.createdAt)}</td>
                         <td className="px-4 py-2.5">
                           <div className="flex flex-col">
-                            <span className="text-sm font-medium">{itemNameById.get(String(row.itemId)) || `Item ${row.itemId}`}</span>
+                            <span className="text-sm font-medium">{resolveItemName(row.itemId, row.itemName)}</span>
                             <span className="text-[11px] text-muted-foreground capitalize">{formatWasteTxnType(row.txnType)}</span>
                           </div>
                         </td>
@@ -1085,7 +1254,15 @@ export function InventoryModule() {
                 </div>
                 <div>
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Status</div>
-                  <div className="mt-1 text-sm font-medium capitalize">{selectedCountSession.status || 'unknown'}</div>
+                  <div className="mt-1">
+                    <span className={cn(
+                      'inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                      stockCountStatusBadgeClass(selectedCountSession.status),
+                    )}
+                    >
+                      {formatStockCountStatus(selectedCountSession.status)}
+                    </span>
+                  </div>
                 </div>
                 <div>
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Count Date</div>
@@ -1102,6 +1279,10 @@ export function InventoryModule() {
                   <span className="font-medium">Note:</span> {selectedCountSession.note}
                 </div>
               ) : null}
+
+              <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                Posting writes one ledger entry per non-zero variance and moves the session to <span className="font-medium text-foreground">Posted</span>.
+              </div>
 
               <div className="overflow-x-auto rounded-lg border">
                 <table className="w-full min-w-[640px]">
@@ -1125,7 +1306,7 @@ export function InventoryModule() {
                       (selectedCountSession.lines || []).map((line: StockCountLineView, index) => (
                         <tr key={`${selectedCountSession.id}-${line.id || index}`} className="border-b last:border-0">
                           <td className="px-4 py-2.5 text-sm">
-                            {itemNameById.get(String(line.itemId ?? '')) || `Item ${line.itemId ?? 'unknown'}`}
+                            {resolveItemName(line.itemId)}
                           </td>
                           <td className="px-4 py-2.5 text-right text-sm font-mono">{formatQuantity(line.systemQty)}</td>
                           <td className="px-4 py-2.5 text-right text-sm font-mono">{formatQuantity(line.actualQty)}</td>
@@ -1156,7 +1337,7 @@ export function InventoryModule() {
             >
               Close
             </button>
-            {selectedCountSession && String(selectedCountSession.status || '').toLowerCase() !== 'posted' ? (
+            {selectedCountSession && canPostStockCountSession(selectedCountSession.status) ? (
               <button
                 type="button"
                 onClick={() => void postCount(selectedCountSession.id)}

@@ -68,9 +68,6 @@ export interface StockCountLineView {
 export interface InventoryBalancesQuery {
   outletId: string;
   lowOnly?: boolean;
-  itemId?: string;
-  categoryCode?: string;
-  status?: string;
   sortBy?: string;
   sortDir?: 'asc' | 'desc';
   q?: string;
@@ -81,7 +78,6 @@ export interface InventoryBalancesQuery {
 export interface InventoryTransactionsQuery {
   outletId: string;
   itemId?: string;
-  status?: string;
   dateFrom?: string;
   dateTo?: string;
   txnType?: string;

@@ -166,12 +166,12 @@ export interface CreateSalePayload {
   orderType: string;
   note?: string | null;
   items: Array<{
-    productId: number;
+    productId: string | number;
     quantity: number;
     discountAmount: number;
     taxAmount: number;
     note: null;
-    promotionIds: number[];
+    promotionIds: Array<string | number>;
   }>;
 }
 
@@ -186,7 +186,7 @@ export interface OpenPosSessionPayload {
   sessionCode: string;
   outletId: string | number;
   currencyCode: string;
-  managerId: number;
+  managerId: string | number;
   businessDate: string;
   note?: string | null;
 }

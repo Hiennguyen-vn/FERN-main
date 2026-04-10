@@ -48,12 +48,6 @@ function mapPosSession(apiSession: PosSessionView, outletNameById: Map<string, s
   };
 }
 
-function toLong(value: unknown): number | null {
-  const text = String(value ?? '').trim();
-  if (!/^\d+$/.test(text)) return null;
-  return Number(text);
-}
-
 export function usePOSSessions() {
   const { token, scope } = useShellRuntime();
   const { session: authSession } = useAuth();
@@ -101,8 +95,8 @@ export function usePOSSessions() {
       return null;
     }
 
-    const managerId = toLong(normalizeNumericId(authSession?.user.id));
-    const scopedOutletId = toLong(normalizeNumericId(outletId));
+    const managerId = normalizeNumericId(authSession?.user.id);
+    const scopedOutletId = normalizeNumericId(outletId);
     if (!managerId || !scopedOutletId) {
       toast.error('Unable to open session: invalid manager/outlet identifiers');
       return null;
@@ -129,7 +123,7 @@ export function usePOSSessions() {
       return { id: String(created.id) };
     } catch (error) {
       console.error('Create session failed:', error);
-      toast.error('Unable to open POS session');
+      toast.error(getErrorMessage(error, 'Unable to open POS session'));
       return null;
     }
   };

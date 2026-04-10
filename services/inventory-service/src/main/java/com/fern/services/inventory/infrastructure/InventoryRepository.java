@@ -163,10 +163,7 @@ public class InventoryRepository extends BaseRepository {
         sql.append(" AND it.business_date <= ?");
         params.add(Date.valueOf(dateTo));
       }
-      if (txnType != null && !txnType.isBlank()) {
-        sql.append(" AND it.txn_type = ?::inventory_txn_type_enum");
-        params.add(txnType.trim());
-      }
+      appendTransactionTypeFilter(sql, params, txnType);
       if (q != null && !q.isBlank()) {
         sql.append(" AND (i.code ILIKE ? OR i.name ILIKE ? OR COALESCE(it.note, '') ILIKE ? OR COALESCE(wr.reason, '') ILIKE ?)");
         String pattern = "%" + q + "%";
@@ -862,6 +859,26 @@ public class InventoryRepository extends BaseRepository {
       case "txnType" -> "it.txn_type " + direction + ", it.txn_time DESC, it.id DESC";
       default -> throw ServiceException.badRequest("Unsupported sortBy for /inventory/transactions");
     };
+  }
+
+  private void appendTransactionTypeFilter(StringBuilder sql, List<Object> params, String txnType) {
+    if (txnType == null || txnType.isBlank()) {
+      return;
+    }
+
+    String normalized = txnType.trim();
+    if ("stock_count".equals(normalized) || "stock_adjustment".equals(normalized)) {
+      sql.append(" AND it.txn_type IN (?::inventory_txn_type_enum, ?::inventory_txn_type_enum)");
+      params.add("stock_adjustment_in");
+      params.add("stock_adjustment_out");
+      return;
+    }
+    if ("goods_receipt".equals(normalized)) {
+      normalized = "purchase_in";
+    }
+
+    sql.append(" AND it.txn_type = ?::inventory_txn_type_enum");
+    params.add(normalized);
   }
 
   private String resolveStockCountSessionSortClause(String sortBy, String sortDir) {

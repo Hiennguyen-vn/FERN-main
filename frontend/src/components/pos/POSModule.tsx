@@ -58,12 +58,6 @@ function toNumber(value: unknown) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
-function toLong(value: unknown): number | null {
-  const text = String(value ?? '').trim();
-  if (!/^\d+$/.test(text)) return null;
-  return Number(text);
-}
-
 function toRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
 }
@@ -470,12 +464,12 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
         : 'USD';
 
     type DraftSaleLine = {
-      productId: number | null;
+      productId: string | null;
       quantity: number;
       discountAmount: number;
       taxAmount: number;
       note: null;
-      promotionIds: number[];
+      promotionIds: string[];
     };
 
     const distributedTax = distributeAmountAcrossItems(items, taxAmount);
@@ -483,7 +477,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
 
     const saleLines = items
       .map((item, index): DraftSaleLine => {
-        const productId = toLong(normalizeNumericId(item.productId));
+        const productId = normalizeNumericId(item.productId);
         return {
           productId,
           quantity: item.quantity,
@@ -491,18 +485,18 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
           taxAmount: distributedTax[index] || 0,
           note: null,
           promotionIds: (() => {
-            const promoId = toLong(normalizeNumericId(promo ?? ''));
+            const promoId = normalizeNumericId(promo ?? '');
             return promoId ? [promoId] : [];
           })(),
         };
       })
       .filter((line): line is {
-        productId: number;
+        productId: string;
         quantity: number;
         discountAmount: number;
         taxAmount: number;
         note: null;
-        promotionIds: number[];
+        promotionIds: string[];
       } => line.productId !== null);
 
     if (saleLines.length === 0) {
