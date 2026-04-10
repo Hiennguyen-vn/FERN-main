@@ -1,6 +1,6 @@
 import { apiRequest, type PagedResponse } from '@/api/client';
 import { decodeArray, decodePaged } from '@/api/decoders';
-import { asDateOnly, asId, asNullableNumber, asNullableString, asRecord } from '@/api/records';
+import { asDateOnly, asId, asNullableNumber, asNullableString, asRecord, asString } from '@/api/records';
 
 export interface ShiftView {
   id: string;
@@ -25,6 +25,11 @@ export interface ContractView {
   id: string;
   userId?: string | null;
   outletId?: string | null;
+  employmentType?: string | null;
+  salaryType?: string | null;
+  baseSalary?: number | null;
+  currencyCode?: string | null;
+  regionCode?: string | null;
   status?: string | null;
   startDate?: string | null;
   endDate?: string | null;
@@ -99,6 +104,11 @@ function decodeContract(value: unknown): ContractView {
     id: asId(record.id),
     userId: asNullableString(record.userId),
     outletId: asNullableString(record.outletId),
+    employmentType: asNullableString(record.employmentType),
+    salaryType: asNullableString(record.salaryType),
+    baseSalary: asNullableNumber(record.baseSalary),
+    currencyCode: asNullableString(record.currencyCode ? asString(record.currencyCode).toUpperCase() : null),
+    regionCode: asNullableString(record.regionCode),
     status: asNullableString(record.status),
     startDate: asDateOnly(record.startDate),
     endDate: asDateOnly(record.endDate),

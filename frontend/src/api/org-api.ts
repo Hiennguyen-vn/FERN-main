@@ -14,6 +14,8 @@ export interface ScopeOutlet {
 export interface ScopeRegion {
   id: string;
   code: string;
+  parentRegionId?: string | null;
+  currencyCode?: string | null;
   name: string;
   [key: string]: unknown;
 }
@@ -44,6 +46,8 @@ function decodeRegion(value: unknown): ScopeRegion {
     ...record,
     id: asId(record.id),
     code: asString(record.code),
+    parentRegionId: asNullableString(record.parentRegionId),
+    currencyCode: asNullableString(record.currencyCode),
     name: asString(record.name),
   };
 }

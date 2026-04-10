@@ -50,6 +50,23 @@ class PayrollServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     ));
+    when(payrollRepository.findTimesheet(70L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetRecord(
+            70L,
+            11L,
+            3012L,
+            2001L,
+            BigDecimal.ONE,
+            new BigDecimal("8.0"),
+            BigDecimal.ZERO,
+            new BigDecimal("1.5"),
+            0,
+            BigDecimal.ZERO,
+            null,
+            Instant.now(),
+            Instant.now()
+        )
+    ));
     when(payrollRepository.findPayrollByTimesheetId(70L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollRecord(
             1L,
@@ -69,9 +86,133 @@ class PayrollServiceTest {
 
     PayrollService service = new PayrollService(payrollRepository, idGenerator, eventPublisher, clock);
 
-    assertThrows(ServiceException.class, () -> service.generatePayroll(
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.generatePayroll(
         new PayrollDtos.GeneratePayrollRequest(70L, "USD", BigDecimal.TEN, BigDecimal.TEN, null)
     ));
+
+    assertEquals(409, exception.getStatusCode());
+  }
+
+  @Test
+  void createTimesheetRejectsDuplicateUserInPayrollPeriod() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
+    ));
+    when(payrollRepository.findPeriodScope(70L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollPeriodScopeRecord(70L, 1002L, "US")
+    ));
+    when(payrollRepository.findTimesheetByPeriodAndUser(70L, 3012L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetRecord(
+            500L,
+            70L,
+            3012L,
+            2001L,
+            BigDecimal.ONE,
+            BigDecimal.ONE,
+            BigDecimal.ZERO,
+            new BigDecimal("1.5"),
+            0,
+            BigDecimal.ZERO,
+            null,
+            Instant.now(),
+            Instant.now()
+        )
+    ));
+
+    PayrollService service = new PayrollService(payrollRepository, idGenerator, eventPublisher, clock);
+
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.createTimesheet(
+        new PayrollDtos.CreatePayrollTimesheetRequest(
+            70L,
+            3012L,
+            2001L,
+            BigDecimal.ONE,
+            new BigDecimal("8.0"),
+            BigDecimal.ZERO,
+            new BigDecimal("1.5"),
+            0,
+            BigDecimal.ZERO
+        )
+    ));
+
+    assertEquals(409, exception.getStatusCode());
+  }
+
+  @Test
+  void createTimesheetRejectsOutletOutsidePayrollRegionScope() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
+    ));
+    when(payrollRepository.findPeriodScope(70L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollPeriodScopeRecord(70L, 1002L, "US")
+    ));
+    when(payrollRepository.findTimesheetByPeriodAndUser(70L, 3012L)).thenReturn(Optional.empty());
+    when(payrollRepository.outletBelongsToRegionScope(2000L, 1002L)).thenReturn(false);
+
+    PayrollService service = new PayrollService(payrollRepository, idGenerator, eventPublisher, clock);
+
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.createTimesheet(
+        new PayrollDtos.CreatePayrollTimesheetRequest(
+            70L,
+            3012L,
+            2000L,
+            BigDecimal.ONE,
+            new BigDecimal("8.0"),
+            BigDecimal.ZERO,
+            new BigDecimal("1.5"),
+            0,
+            BigDecimal.ZERO
+        )
+    ));
+
+    assertEquals(400, exception.getStatusCode());
+  }
+
+  @Test
+  void createTimesheetRejectsUserWithoutOutletScope() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
+    ));
+    when(payrollRepository.findPeriodScope(70L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollPeriodScopeRecord(70L, 1002L, "US")
+    ));
+    when(payrollRepository.findTimesheetByPeriodAndUser(70L, 3012L)).thenReturn(Optional.empty());
+    when(payrollRepository.outletBelongsToRegionScope(2001L, 1002L)).thenReturn(true);
+    when(payrollRepository.userHasOutletScope(3012L, 2001L)).thenReturn(false);
+
+    PayrollService service = new PayrollService(payrollRepository, idGenerator, eventPublisher, clock);
+
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.createTimesheet(
+        new PayrollDtos.CreatePayrollTimesheetRequest(
+            70L,
+            3012L,
+            2001L,
+            BigDecimal.ONE,
+            new BigDecimal("8.0"),
+            BigDecimal.ZERO,
+            new BigDecimal("1.5"),
+            0,
+            BigDecimal.ZERO
+        )
+    ));
+
+    assertEquals(400, exception.getStatusCode());
+  }
+
+  @Test
+  void generatePayrollRejectsMissingTimesheet() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
+    ));
+    when(payrollRepository.findTimesheet(70L)).thenReturn(Optional.empty());
+
+    PayrollService service = new PayrollService(payrollRepository, idGenerator, eventPublisher, clock);
+
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.generatePayroll(
+        new PayrollDtos.GeneratePayrollRequest(70L, "USD", BigDecimal.TEN, BigDecimal.TEN, null)
+    ));
+
+    assertEquals(404, exception.getStatusCode());
   }
 
   @Test
@@ -124,6 +265,43 @@ class PayrollServiceTest {
         LocalDate.parse("2026-03-30"),
         null
     )));
+  }
+
+  @Test
+  void createPeriodRejectsDuplicateRegionWindow() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
+    ));
+    when(payrollRepository.findPeriodByRegionAndWindow(
+        1002L,
+        LocalDate.parse("2026-04-01"),
+        LocalDate.parse("2026-04-30")
+    )).thenReturn(Optional.of(new PayrollRepository.PayrollPeriodRecord(
+        55L,
+        1002L,
+        "Existing payroll",
+        LocalDate.parse("2026-04-01"),
+        LocalDate.parse("2026-04-30"),
+        LocalDate.parse("2026-05-05"),
+        null,
+        Instant.now(),
+        Instant.now()
+    )));
+
+    PayrollService service = new PayrollService(payrollRepository, idGenerator, eventPublisher, clock);
+
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.createPeriod(
+        new PayrollDtos.CreatePayrollPeriodRequest(
+            1002L,
+            "Duplicate payroll",
+            LocalDate.parse("2026-04-01"),
+            LocalDate.parse("2026-04-30"),
+            LocalDate.parse("2026-05-05"),
+            null
+        )
+    ));
+
+    assertEquals(409, exception.getStatusCode());
   }
 
   @Test

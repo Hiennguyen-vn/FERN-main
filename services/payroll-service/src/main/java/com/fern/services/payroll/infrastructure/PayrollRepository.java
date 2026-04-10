@@ -51,6 +51,13 @@ public class PayrollRepository extends BaseRepository {
   ) {
   }
 
+  public record PayrollPeriodScopeRecord(
+      long id,
+      long regionId,
+      String regionCode
+  ) {
+  }
+
   public record PayrollTimesheetRecord(
       long id,
       long payrollPeriodId,
@@ -168,6 +175,33 @@ public class PayrollRepository extends BaseRepository {
     );
   }
 
+  public Optional<PayrollPeriodRecord> findPeriodByRegionAndWindow(long regionId, LocalDate startDate, LocalDate endDate) {
+    return queryOne(
+        """
+        SELECT id, region_id, name, start_date, end_date, pay_date, note, created_at, updated_at
+        FROM core.payroll_period
+        WHERE region_id = ? AND start_date = ? AND end_date = ?
+        """,
+        this::mapPeriod,
+        regionId,
+        Date.valueOf(startDate),
+        Date.valueOf(endDate)
+    );
+  }
+
+  public Optional<PayrollPeriodScopeRecord> findPeriodScope(long periodId) {
+    return queryOne(
+        """
+        SELECT pp.id, pp.region_id, r.code AS region_code
+        FROM core.payroll_period pp
+        JOIN core.region r ON r.id = pp.region_id
+        WHERE pp.id = ?
+        """,
+        this::mapPeriodScope,
+        periodId
+    );
+  }
+
   public PagedResult<PayrollPeriodRecord> listPeriods(
       Long regionId,
       LocalDate startDate,
@@ -273,6 +307,66 @@ public class PayrollRepository extends BaseRepository {
         this::mapTimesheet,
         timesheetId
     );
+  }
+
+  public Optional<PayrollTimesheetRecord> findTimesheetByPeriodAndUser(long payrollPeriodId, long userId) {
+    return queryOne(
+        """
+        SELECT id, payroll_period_id, user_id, outlet_id, work_days, work_hours, overtime_hours,
+               overtime_rate, late_count, absent_days, approved_by_user_id, created_at, updated_at
+        FROM core.payroll_timesheet
+        WHERE payroll_period_id = ? AND user_id = ?
+        """,
+        this::mapTimesheet,
+        payrollPeriodId,
+        userId
+    );
+  }
+
+  public boolean outletBelongsToRegionScope(long outletId, long regionId) {
+    return queryOne(
+        """
+        WITH RECURSIVE region_scope AS (
+          SELECT id
+          FROM core.region
+          WHERE id = ?
+          UNION ALL
+          SELECT child.id
+          FROM core.region child
+          JOIN region_scope scope ON child.parent_region_id = scope.id
+        )
+        SELECT EXISTS(
+          SELECT 1
+          FROM core.outlet o
+          JOIN region_scope scope ON scope.id = o.region_id
+          WHERE o.id = ? AND o.deleted_at IS NULL
+        ) AS allowed
+        """,
+        rs -> mapBoolean(rs, "allowed", "Unable to map payroll outlet scope check"),
+        regionId,
+        outletId
+    ).orElse(false);
+  }
+
+  public boolean userHasOutletScope(long userId, long outletId) {
+    return queryOne(
+        """
+        SELECT EXISTS(
+          SELECT 1
+          FROM core.user_role
+          WHERE user_id = ? AND outlet_id = ?
+          UNION
+          SELECT 1
+          FROM core.user_permission
+          WHERE user_id = ? AND outlet_id = ?
+        ) AS allowed
+        """,
+        rs -> mapBoolean(rs, "allowed", "Unable to map payroll user scope check"),
+        userId,
+        outletId,
+        userId,
+        outletId
+    ).orElse(false);
   }
 
   public PagedResult<PayrollTimesheetListItemRecord> listTimesheets(
@@ -548,6 +642,18 @@ public class PayrollRepository extends BaseRepository {
     }
   }
 
+  private PayrollPeriodScopeRecord mapPeriodScope(ResultSet rs) {
+    try {
+      return new PayrollPeriodScopeRecord(
+          rs.getLong("id"),
+          rs.getLong("region_id"),
+          rs.getString("region_code")
+      );
+    } catch (SQLException e) {
+      throw new IllegalStateException("Unable to map payroll period scope", e);
+    }
+  }
+
   private PayrollTimesheetRecord mapTimesheet(ResultSet rs) {
     try {
       return new PayrollTimesheetRecord(
@@ -640,6 +746,14 @@ public class PayrollRepository extends BaseRepository {
       );
     } catch (SQLException e) {
       throw new IllegalStateException("Unable to map payroll list item", e);
+    }
+  }
+
+  private boolean mapBoolean(ResultSet rs, String columnName, String errorMessage) {
+    try {
+      return rs.getBoolean(columnName);
+    } catch (SQLException e) {
+      throw new IllegalStateException(errorMessage, e);
     }
   }
 

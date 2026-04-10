@@ -1,5 +1,5 @@
 import { apiRequest, type PagedResponse } from '@/api/client';
-import { decodeArray, decodePaged } from '@/api/decoders';
+import { decodeArrayFromPageOrArray, decodePaged } from '@/api/decoders';
 import { asDateOnly, asId, asNullableNumber, asNullableString, asRecord, asString } from '@/api/records';
 
 export interface PurchaseOrderItemView {
@@ -110,9 +110,15 @@ export interface SupplierPaymentView {
   id: string;
   paymentNumber?: string | null;
   supplierId?: string | null;
+  outletId?: string | null;
+  paymentMethod?: string | null;
   status?: string | null;
   totalAmount?: number | null;
+  amount?: number | null;
   currencyCode?: string | null;
+  paymentTime?: string | null;
+  transactionRef?: string | null;
+  note?: string | null;
   createdAt?: string | null;
   [key: string]: unknown;
 }
@@ -275,21 +281,28 @@ function decodeSupplierInvoiceItem(value: unknown): SupplierInvoiceItemView {
 
 function decodeSupplierPayment(value: unknown): SupplierPaymentView {
   const record = asRecord(value) ?? {};
+  const amount = asNullableNumber(record.amount ?? record.totalAmount);
   return {
     ...record,
     id: asId(record.id),
-    paymentNumber: asNullableString(record.paymentNumber),
+    paymentNumber: asNullableString(record.paymentNumber ?? record.transactionRef),
     supplierId: asNullableString(record.supplierId),
+    outletId: asNullableString(record.outletId),
+    paymentMethod: asNullableString(record.paymentMethod),
     status: asNullableString(record.status),
-    totalAmount: asNullableNumber(record.totalAmount),
+    totalAmount: amount,
+    amount,
     currencyCode: asNullableString(record.currencyCode),
+    paymentTime: asNullableString(record.paymentTime),
+    transactionRef: asNullableString(record.transactionRef),
+    note: asNullableString(record.note),
     createdAt: asNullableString(record.createdAt),
   };
 }
 
 export const procurementApi = {
   suppliers: async (token: string): Promise<SupplierView[]> =>
-    decodeArray(await apiRequest('/api/v1/procurement/suppliers', { token }), decodeSupplier),
+    decodeArrayFromPageOrArray(await apiRequest('/api/v1/procurement/suppliers', { token }), decodeSupplier),
   suppliersPaged: async (token: string, query: SuppliersQuery): Promise<PagedResponse<SupplierView>> =>
     decodePaged(await apiRequest('/api/v1/procurement/suppliers', { token, query }), decodeSupplier),
   purchaseOrders: async (token: string, query: ProcurementListQuery): Promise<PagedResponse<PurchaseOrderView>> =>

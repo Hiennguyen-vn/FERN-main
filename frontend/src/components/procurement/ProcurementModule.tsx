@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Building2, FileText, Truck, Receipt, CreditCard, Search, RefreshCw,
 } from 'lucide-react';
@@ -7,10 +7,12 @@ import { cn } from '@/lib/utils';
 import {
   procurementApi,
   type GoodsReceiptView,
+  type ItemView,
   type PurchaseOrderView,
   type SupplierInvoiceView,
   type SupplierPaymentView,
   type SupplierView,
+  productApi,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
@@ -18,8 +20,22 @@ import { EmptyState, ServiceUnavailablePage } from '@/components/shell/Permissio
 import { useListQueryState } from '@/hooks/use-list-query-state';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  GoodsReceiptCreatePanel,
+  InvoiceCreatePanel,
+  PaymentCreatePanel,
+  PurchaseOrderCreatePanel,
+} from '@/components/procurement/ProcurementCreatePanels';
 
 type ProcTab = 'suppliers' | 'purchase-orders' | 'goods-receipts' | 'invoices' | 'payments';
+type ProcurementDetailKind = 'purchase-order' | 'goods-receipt';
 
 const TABS: { key: ProcTab; label: string; icon: React.ElementType }[] = [
   { key: 'suppliers', label: 'Suppliers', icon: Building2 },
@@ -32,6 +48,33 @@ const TABS: { key: ProcTab; label: string; icon: React.ElementType }[] = [
 function normalizeNumeric(value: string | undefined) {
   const trimmed = String(value ?? '').trim();
   return /^\d+$/.test(trimmed) ? trimmed : '';
+}
+
+function shortRef(prefix: string, id: string | null | undefined) {
+  const text = String(id ?? '').trim();
+  if (!text) return prefix;
+  return `${prefix}-${text.slice(-6)}`;
+}
+
+function formatDateLabel(value: string | null | undefined) {
+  const text = String(value ?? '').trim();
+  return text || '—';
+}
+
+function formatDateTimeLabel(value: string | null | undefined) {
+  const text = String(value ?? '').trim();
+  if (!text) return '—';
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(text));
+  } catch {
+    return text;
+  }
 }
 
 function TinyAction({
@@ -56,12 +99,56 @@ function TinyAction({
   );
 }
 
+function StatusBadge({ status }: { status: string | null | undefined }) {
+  const text = String(status || 'unknown');
+  const tone = text.toLowerCase();
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize',
+        tone === 'posted' || tone === 'completed'
+          ? 'border-emerald-200 bg-emerald-500/10 text-emerald-700'
+          : tone === 'approved' || tone === 'received' || tone === 'active'
+            ? 'border-blue-200 bg-blue-500/10 text-blue-700'
+            : tone === 'draft' || tone === 'pending'
+              ? 'border-amber-200 bg-amber-500/10 text-amber-700'
+              : tone === 'cancelled' || tone === 'reversed' || tone === 'inactive'
+                ? 'border-rose-200 bg-rose-500/10 text-rose-700'
+                : 'border-border bg-muted text-muted-foreground',
+      )}
+    >
+      {text}
+    </span>
+  );
+}
+
+function DetailField({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <div className={cn('mt-1 text-sm font-medium text-foreground break-words', mono && 'font-mono text-xs')}>{value}</div>
+    </div>
+  );
+}
+
 export function ProcurementModule() {
   const { token, scope } = useShellRuntime();
   const outletId = normalizeNumeric(scope.outletId);
   const [activeTab, setActiveTab] = useState<ProcTab>('suppliers');
 
   const [supplierDirectory, setSupplierDirectory] = useState<SupplierView[]>([]);
+  const [itemDirectory, setItemDirectory] = useState<ItemView[]>([]);
+  const [purchaseOrderDirectory, setPurchaseOrderDirectory] = useState<PurchaseOrderView[]>([]);
+  const [goodsReceiptDirectory, setGoodsReceiptDirectory] = useState<GoodsReceiptView[]>([]);
+  const [invoiceDirectory, setInvoiceDirectory] = useState<SupplierInvoiceView[]>([]);
 
   const [suppliersLoading, setSuppliersLoading] = useState(false);
   const [suppliersError, setSuppliersError] = useState('');
@@ -94,6 +181,13 @@ export function ProcurementModule() {
   const [paymentHasMore, setPaymentHasMore] = useState(false);
 
   const [actionKey, setActionKey] = useState('');
+  const [detailKey, setDetailKey] = useState('');
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailKind, setDetailKind] = useState<ProcurementDetailKind | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const [selectedPurchaseOrder, setSelectedPurchaseOrder] = useState<PurchaseOrderView | null>(null);
+  const [selectedGoodsReceipt, setSelectedGoodsReceipt] = useState<GoodsReceiptView | null>(null);
 
   const [supplierForm, setSupplierForm] = useState({
     supplierCode: '',
@@ -112,25 +206,25 @@ export function ProcurementModule() {
   });
   const poQuery = useListQueryState<{ outletId?: string; status?: string }>({
     initialLimit: 20,
-    initialSortBy: 'createdAt',
+    initialSortBy: 'orderDate',
     initialSortDir: 'desc',
     initialFilters: { outletId: outletId || undefined, status: undefined },
   });
   const grQuery = useListQueryState<{ outletId?: string; status?: string }>({
     initialLimit: 20,
-    initialSortBy: 'createdAt',
+    initialSortBy: 'receiptTime',
     initialSortDir: 'desc',
     initialFilters: { outletId: outletId || undefined, status: undefined },
   });
   const invoiceQuery = useListQueryState<{ outletId?: string; status?: string }>({
     initialLimit: 20,
-    initialSortBy: 'createdAt',
+    initialSortBy: 'invoiceDate',
     initialSortDir: 'desc',
     initialFilters: { outletId: outletId || undefined, status: undefined },
   });
   const paymentQuery = useListQueryState<{ outletId?: string; status?: string }>({
     initialLimit: 20,
-    initialSortBy: 'createdAt',
+    initialSortBy: 'paymentTime',
     initialSortDir: 'desc',
     initialFilters: { outletId: outletId || undefined, status: undefined },
   });
@@ -151,6 +245,76 @@ export function ProcurementModule() {
       setSupplierDirectory([]);
     }
   }, [token]);
+
+  const loadItemDirectory = useCallback(async () => {
+    if (!token) {
+      setItemDirectory([]);
+      return;
+    }
+    try {
+      const rows = await productApi.items(token);
+      setItemDirectory(Array.isArray(rows) ? rows : []);
+    } catch {
+      setItemDirectory([]);
+    }
+  }, [token]);
+
+  const loadPurchaseOrderDirectory = useCallback(async () => {
+    if (!token) {
+      setPurchaseOrderDirectory([]);
+      return;
+    }
+    try {
+      const page = await procurementApi.purchaseOrders(token, {
+        outletId: outletId || undefined,
+        limit: 100,
+        offset: 0,
+        sortBy: 'orderDate',
+        sortDir: 'desc',
+      });
+      setPurchaseOrderDirectory(page.items || []);
+    } catch {
+      setPurchaseOrderDirectory([]);
+    }
+  }, [outletId, token]);
+
+  const loadGoodsReceiptDirectory = useCallback(async () => {
+    if (!token) {
+      setGoodsReceiptDirectory([]);
+      return;
+    }
+    try {
+      const page = await procurementApi.goodsReceipts(token, {
+        outletId: outletId || undefined,
+        limit: 100,
+        offset: 0,
+        sortBy: 'receiptTime',
+        sortDir: 'desc',
+      });
+      setGoodsReceiptDirectory(page.items || []);
+    } catch {
+      setGoodsReceiptDirectory([]);
+    }
+  }, [outletId, token]);
+
+  const loadInvoiceDirectory = useCallback(async () => {
+    if (!token) {
+      setInvoiceDirectory([]);
+      return;
+    }
+    try {
+      const page = await procurementApi.invoices(token, {
+        outletId: outletId || undefined,
+        limit: 100,
+        offset: 0,
+        sortBy: 'invoiceDate',
+        sortDir: 'desc',
+      });
+      setInvoiceDirectory(page.items || []);
+    } catch {
+      setInvoiceDirectory([]);
+    }
+  }, [outletId, token]);
 
   const loadSuppliers = useCallback(async () => {
     if (!token) return;
@@ -279,6 +443,16 @@ export function ProcurementModule() {
     if (activeTab === 'payments') await loadPayments();
   }, [activeTab, loadGoodsReceipts, loadInvoices, loadPayments, loadPurchaseOrders, loadSuppliers]);
 
+  const reloadLookups = useCallback(async () => {
+    await Promise.all([
+      loadSupplierDirectory(),
+      loadItemDirectory(),
+      loadPurchaseOrderDirectory(),
+      loadGoodsReceiptDirectory(),
+      loadInvoiceDirectory(),
+    ]);
+  }, [loadGoodsReceiptDirectory, loadInvoiceDirectory, loadItemDirectory, loadPurchaseOrderDirectory, loadSupplierDirectory]);
+
   useEffect(() => {
     patchPoFilters({ outletId: outletId || undefined });
     patchGrFilters({ outletId: outletId || undefined });
@@ -287,8 +461,8 @@ export function ProcurementModule() {
   }, [outletId, patchGrFilters, patchInvoiceFilters, patchPaymentFilters, patchPoFilters]);
 
   useEffect(() => {
-    void loadSupplierDirectory();
-  }, [loadSupplierDirectory]);
+    void reloadLookups();
+  }, [reloadLookups]);
 
   useEffect(() => {
     if (activeTab !== 'suppliers') return;
@@ -319,20 +493,76 @@ export function ProcurementModule() {
     () => new Map(supplierDirectory.map((supplier) => [String(supplier.id), String(supplier.name || supplier.supplierCode || `Supplier ${supplier.id}`)])),
     [supplierDirectory],
   );
+  const itemById = useMemo(
+    () => new Map(itemDirectory.map((item) => [String(item.id), item])),
+    [itemDirectory],
+  );
+  const purchaseOrderById = useMemo(
+    () => new Map(purchaseOrderDirectory.map((purchaseOrder) => [String(purchaseOrder.id), purchaseOrder])),
+    [purchaseOrderDirectory],
+  );
 
-  const runAction = async (key: string, action: () => Promise<unknown>, successMessage: string) => {
+  const closeDetail = useCallback(() => {
+    setDetailOpen(false);
+    setDetailKind(null);
+    setDetailError('');
+    setDetailLoading(false);
+    setSelectedPurchaseOrder(null);
+    setSelectedGoodsReceipt(null);
+    setDetailKey('');
+  }, []);
+
+  const openPurchaseOrderDetail = useCallback(async (purchaseOrderId: string) => {
+    setDetailKey(`po-view:${purchaseOrderId}`);
+    setDetailKind('purchase-order');
+    setDetailOpen(true);
+    setDetailError('');
+    setDetailLoading(true);
+    setSelectedPurchaseOrder(null);
+    setSelectedGoodsReceipt(null);
+    try {
+      const detail = await procurementApi.purchaseOrder(token, purchaseOrderId);
+      setSelectedPurchaseOrder(detail);
+    } catch (error: unknown) {
+      setDetailError(getErrorMessage(error, 'Unable to load purchase order detail'));
+    } finally {
+      setDetailLoading(false);
+      setDetailKey('');
+    }
+  }, [token]);
+
+  const openGoodsReceiptDetail = useCallback(async (goodsReceiptId: string) => {
+    setDetailKey(`gr-view:${goodsReceiptId}`);
+    setDetailKind('goods-receipt');
+    setDetailOpen(true);
+    setDetailError('');
+    setDetailLoading(true);
+    setSelectedPurchaseOrder(null);
+    setSelectedGoodsReceipt(null);
+    try {
+      const detail = await procurementApi.goodsReceipt(token, goodsReceiptId);
+      setSelectedGoodsReceipt(detail);
+    } catch (error: unknown) {
+      setDetailError(getErrorMessage(error, 'Unable to load goods receipt detail'));
+    } finally {
+      setDetailLoading(false);
+      setDetailKey('');
+    }
+  }, [token]);
+
+  const runAction = useCallback(async (key: string, action: () => Promise<unknown>, successMessage: string) => {
     setActionKey(key);
     try {
       await action();
       toast.success(successMessage);
       await reloadActiveTab();
-      await loadSupplierDirectory();
+      await reloadLookups();
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, 'Action failed'));
     } finally {
       setActionKey('');
     }
-  };
+  }, [reloadActiveTab, reloadLookups]);
 
   const createSupplier = async () => {
     if (!token) return;
@@ -364,6 +594,164 @@ export function ProcurementModule() {
   if (!token) {
     return <ServiceUnavailablePage state="service_unavailable" moduleName="Procurement" />;
   }
+
+  const renderPurchaseOrderDetail = () => {
+    if (!selectedPurchaseOrder) return null;
+    const detail = selectedPurchaseOrder;
+    const currencyCode = String(detail.currencyCode || 'USD');
+    const supplierName = supplierById.get(String(detail.supplierId || '')) || `Supplier ${detail.supplierId || '—'}`;
+    const lines = Array.isArray(detail.items) ? detail.items : [];
+
+    return (
+      <div className="space-y-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <DetailField label="PO reference" value={String(detail.poNumber || shortRef('PO', detail.id))} />
+          <DetailField label="Supplier" value={supplierName} />
+          <DetailField label="Status" value={<StatusBadge status={detail.status} />} />
+          <DetailField label="Total" value={`${Number(detail.totalAmount || detail.expectedTotal || 0).toFixed(2)} ${currencyCode}`} />
+          <DetailField label="Order date" value={formatDateLabel(detail.orderDate)} />
+          <DetailField label="Expected delivery" value={formatDateLabel(detail.expectedDeliveryDate)} />
+          <DetailField label="Approved at" value={formatDateTimeLabel(detail.approvedAt)} />
+          <DetailField label="Full ID" value={detail.id} mono />
+        </div>
+
+        <div className="rounded-lg border bg-muted/20 p-4">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Note</p>
+          <p className="mt-1 text-sm text-foreground">{String(detail.note || 'No note')}</p>
+        </div>
+
+        <div className="rounded-xl border overflow-hidden">
+          <div className="border-b bg-muted/30 px-4 py-3">
+            <h4 className="text-sm font-semibold">Ordered Items</h4>
+            <p className="text-xs text-muted-foreground">Review exactly what this purchase order asked the supplier to deliver.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px]">
+              <thead>
+                <tr className="border-b bg-muted/20">
+                  <th className="px-4 py-2.5 text-left text-[11px]">Item</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Ordered</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Received</th>
+                  <th className="px-4 py-2.5 text-left text-[11px]">UOM</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Unit Price</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Line Total</th>
+                  <th className="px-4 py-2.5 text-left text-[11px]">Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">This purchase order has no line items.</td>
+                  </tr>
+                ) : lines.map((line, index) => {
+                  const item = itemById.get(String(line.itemId || ''));
+                  const orderedQty = Number(line.qtyOrdered || 0);
+                  const unitPrice = Number(line.expectedUnitPrice || 0);
+                  return (
+                    <tr key={`${detail.id}-line-${line.itemId || index}`} className="border-b last:border-0">
+                      <td className="px-4 py-3">
+                        <div>
+                          <p className="text-sm font-medium">{String(item?.name || item?.code || `Item ${line.itemId || index + 1}`)}</p>
+                          <p className="text-[11px] text-muted-foreground">{String(item?.code || line.itemId || 'No item code')}</p>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{orderedQty.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.qtyReceived || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-sm">{String(line.uomCode || item?.baseUomCode || item?.unitCode || '—')}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{unitPrice.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{(orderedQty * unitPrice).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-sm text-muted-foreground">{String(line.note || '—')}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderGoodsReceiptDetail = () => {
+    if (!selectedGoodsReceipt) return null;
+    const detail = selectedGoodsReceipt;
+    const linkedPurchaseOrder = purchaseOrderById.get(String(detail.poId || ''));
+    const supplierId = String(detail.supplierId || linkedPurchaseOrder?.supplierId || '');
+    const supplierName = supplierById.get(supplierId) || `Supplier ${supplierId || '—'}`;
+    const currencyCode = String(detail.currencyCode || linkedPurchaseOrder?.currencyCode || 'USD');
+    const lines = Array.isArray(detail.items) ? detail.items : [];
+
+    return (
+      <div className="space-y-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <DetailField label="GR reference" value={String(detail.receiptNumber || shortRef('GR', detail.id))} />
+          <DetailField label="Purchase order" value={String(linkedPurchaseOrder?.poNumber || shortRef('PO', String(detail.poId || '')))} />
+          <DetailField label="Supplier" value={supplierName} />
+          <DetailField label="Status" value={<StatusBadge status={detail.status} />} />
+          <DetailField label="Business date" value={formatDateLabel(detail.businessDate)} />
+          <DetailField label="Receipt time" value={formatDateTimeLabel(detail.receiptTime)} />
+          <DetailField label="Supplier lot" value={String(detail.supplierLotNumber || 'No supplier lot')} />
+          <DetailField label="Total" value={`${Number(detail.totalPrice || 0).toFixed(2)} ${currencyCode}`} />
+          <DetailField label="Approved at" value={formatDateTimeLabel(detail.approvedAt)} />
+          <DetailField label="Full ID" value={detail.id} mono />
+        </div>
+
+        <div className="rounded-lg border bg-muted/20 p-4">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Note</p>
+          <p className="mt-1 text-sm text-foreground">{String(detail.note || 'No note')}</p>
+        </div>
+
+        <div className="rounded-xl border overflow-hidden">
+          <div className="border-b bg-muted/30 px-4 py-3">
+            <h4 className="text-sm font-semibold">Received Items</h4>
+            <p className="text-xs text-muted-foreground">These are the exact goods recorded into stock for this receipt.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px]">
+              <thead>
+                <tr className="border-b bg-muted/20">
+                  <th className="px-4 py-2.5 text-left text-[11px]">Item</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Received</th>
+                  <th className="px-4 py-2.5 text-left text-[11px]">UOM</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Unit Cost</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Line Total</th>
+                  <th className="px-4 py-2.5 text-left text-[11px]">Mfg</th>
+                  <th className="px-4 py-2.5 text-left text-[11px]">Expiry</th>
+                  <th className="px-4 py-2.5 text-left text-[11px]">Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">This goods receipt has no received lines.</td>
+                  </tr>
+                ) : lines.map((line, index) => {
+                  const item = itemById.get(String(line.itemId || ''));
+                  return (
+                    <tr key={`${detail.id}-line-${line.id || index}`} className="border-b last:border-0">
+                      <td className="px-4 py-3">
+                        <div>
+                          <p className="text-sm font-medium">{String(item?.name || item?.code || `Item ${line.itemId || index + 1}`)}</p>
+                          <p className="text-[11px] text-muted-foreground">{String(item?.code || line.itemId || 'No item code')}</p>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.qtyReceived || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-sm">{String(line.uomCode || item?.baseUomCode || item?.unitCode || '—')}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.unitCost || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.lineTotal || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-sm">{formatDateLabel(line.manufactureDate)}</td>
+                      <td className="px-4 py-3 text-sm">{formatDateLabel(line.expiryDate)}</td>
+                      <td className="px-4 py-3 text-sm text-muted-foreground">{String(line.note || '—')}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="flex flex-col h-full animate-fade-in">
@@ -505,359 +893,469 @@ export function ProcurementModule() {
         )}
 
         {activeTab === 'purchase-orders' && (
-          <div className="surface-elevated p-4 space-y-3">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <h3 className="text-sm font-semibold">Purchase Orders ({poTotal})</h3>
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <input
-                    className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
-                    placeholder="Search purchase orders"
-                    value={poQuery.searchInput}
-                    onChange={(event) => poQuery.setSearchInput(event.target.value)}
-                  />
-                </div>
-                <select
-                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  value={poQuery.filters.status || 'all'}
-                  onChange={(event) => poQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
-                >
-                  <option value="all">All statuses</option>
-                  <option value="draft">Draft</option>
-                  <option value="approved">Approved</option>
-                  <option value="posted">Posted</option>
-                </select>
-                <button
-                  onClick={() => void loadPurchaseOrders()}
-                  disabled={poLoading}
-                  className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
-                >
-                  <RefreshCw className={cn('h-3.5 w-3.5', poLoading ? 'animate-spin' : '')} />
-                  Refresh
-                </button>
-              </div>
-            </div>
-            {poError ? <p className="text-xs text-destructive">{poError}</p> : null}
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    <th className="text-left text-[11px] px-4 py-2.5">PO</th>
-                    <th className="text-left text-[11px] px-4 py-2.5">Supplier</th>
-                    <th className="text-left text-[11px] px-4 py-2.5">Status</th>
-                    <th className="text-right text-[11px] px-4 py-2.5">Amount</th>
-                    <th className="text-right text-[11px] px-4 py-2.5">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {poLoading && purchaseOrders.length === 0 ? (
-                    <ListTableSkeleton columns={5} rows={7} />
-                  ) : purchaseOrders.length === 0 ? (
-                    <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">No purchase orders found</td></tr>
-                  ) : purchaseOrders.map((row) => {
-                    const id = String(row.id);
-                    const status = String(row.status || '').toLowerCase();
-                    return (
-                      <tr key={id} className="border-b last:border-0">
-                        <td className="px-4 py-2.5 text-xs font-mono">{String(row.poNumber || id)}</td>
-                        <td className="px-4 py-2.5 text-sm">{supplierById.get(String(row.supplierId)) || `Supplier ${row.supplierId || '—'}`}</td>
-                        <td className="px-4 py-2.5 text-xs">{String(row.status || '—')}</td>
-                        <td className="px-4 py-2.5 text-right text-sm font-mono">{Number(row.totalAmount || 0).toFixed(2)}</td>
-                        <td className="px-4 py-2.5 text-right">
-                          <TinyAction
-                            label="Approve"
-                            busy={actionKey === `po:${id}`}
-                            disabled={status === 'approved'}
-                            onClick={() => void runAction(`po:${id}`, () => procurementApi.approvePurchaseOrder(token, id), 'Purchase order approved')}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <ListPaginationControls
-              total={poTotal}
-              limit={poQuery.limit}
-              offset={poQuery.offset}
-              hasMore={poHasMore}
-              disabled={poLoading}
-              onPageChange={poQuery.setPage}
-              onLimitChange={poQuery.setPageSize}
+          <div className="space-y-4">
+            <PurchaseOrderCreatePanel
+              token={token}
+              outletId={outletId}
+              suppliers={supplierDirectory}
+              items={itemDirectory}
+              onCreated={async () => {
+                await reloadLookups();
+                await loadPurchaseOrders();
+              }}
             />
+
+            <div className="surface-elevated p-4 space-y-3">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <h3 className="text-sm font-semibold">Purchase Orders ({poTotal})</h3>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <input
+                      className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
+                      placeholder="Search purchase orders"
+                      value={poQuery.searchInput}
+                      onChange={(event) => poQuery.setSearchInput(event.target.value)}
+                    />
+                  </div>
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                    value={poQuery.filters.status || 'all'}
+                    onChange={(event) => poQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="draft">Draft</option>
+                    <option value="approved">Approved</option>
+                    <option value="posted">Posted</option>
+                  </select>
+                  <button
+                    onClick={() => void loadPurchaseOrders()}
+                    disabled={poLoading}
+                    className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
+                  >
+                    <RefreshCw className={cn('h-3.5 w-3.5', poLoading ? 'animate-spin' : '')} />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              {poError ? <p className="text-xs text-destructive">{poError}</p> : null}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      <th className="text-left text-[11px] px-4 py-2.5">PO</th>
+                      <th className="text-left text-[11px] px-4 py-2.5">Supplier</th>
+                      <th className="text-left text-[11px] px-4 py-2.5">Status</th>
+                      <th className="text-right text-[11px] px-4 py-2.5">Amount</th>
+                      <th className="text-right text-[11px] px-4 py-2.5">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {poLoading && purchaseOrders.length === 0 ? (
+                      <ListTableSkeleton columns={5} rows={7} />
+                    ) : purchaseOrders.length === 0 ? (
+                      <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">No purchase orders found</td></tr>
+                    ) : purchaseOrders.map((row) => {
+                      const id = String(row.id);
+                      const status = String(row.status || '').toLowerCase();
+                      return (
+                        <tr key={id} className="border-b last:border-0">
+                          <td className="px-4 py-2.5">
+                            <div>
+                              <p className="text-sm font-medium">{shortRef('PO', id)}</p>
+                              <p className="text-[11px] text-muted-foreground">{formatDateLabel(row.orderDate)} · delivery {formatDateLabel(row.expectedDeliveryDate)}</p>
+                              <p className="text-[10px] font-mono text-muted-foreground">{id}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div>
+                              <p className="text-sm">{supplierById.get(String(row.supplierId)) || `Supplier ${row.supplierId || '—'}`}</p>
+                              <p className="text-[11px] text-muted-foreground">{String(row.note || 'No note')}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs"><StatusBadge status={row.status} /></td>
+                          <td className="px-4 py-2.5 text-right">
+                            <div className="text-sm font-mono">{Number(row.totalAmount || row.expectedTotal || 0).toFixed(2)}</div>
+                            <div className="text-[11px] text-muted-foreground">{String(row.currencyCode || 'USD')}</div>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <TinyAction
+                                label="View"
+                                busy={detailKey === `po-view:${id}`}
+                                onClick={() => void openPurchaseOrderDetail(id)}
+                              />
+                              <TinyAction
+                                label="Approve"
+                                busy={actionKey === `po:${id}`}
+                                disabled={status !== 'draft'}
+                                onClick={() => void runAction(`po:${id}`, () => procurementApi.approvePurchaseOrder(token, id), 'Purchase order approved')}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <ListPaginationControls
+                total={poTotal}
+                limit={poQuery.limit}
+                offset={poQuery.offset}
+                hasMore={poHasMore}
+                disabled={poLoading}
+                onPageChange={poQuery.setPage}
+                onLimitChange={poQuery.setPageSize}
+              />
+            </div>
           </div>
         )}
 
         {activeTab === 'goods-receipts' && (
-          <div className="surface-elevated p-4 space-y-3">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <h3 className="text-sm font-semibold">Goods Receipts ({grTotal})</h3>
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <input
-                    className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
-                    placeholder="Search goods receipts"
-                    value={grQuery.searchInput}
-                    onChange={(event) => grQuery.setSearchInput(event.target.value)}
-                  />
-                </div>
-                <select
-                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  value={grQuery.filters.status || 'all'}
-                  onChange={(event) => grQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
-                >
-                  <option value="all">All statuses</option>
-                  <option value="draft">Draft</option>
-                  <option value="approved">Approved</option>
-                  <option value="posted">Posted</option>
-                </select>
-                <button
-                  onClick={() => void loadGoodsReceipts()}
-                  disabled={grLoading}
-                  className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
-                >
-                  <RefreshCw className={cn('h-3.5 w-3.5', grLoading ? 'animate-spin' : '')} />
-                  Refresh
-                </button>
-              </div>
-            </div>
-            {grError ? <p className="text-xs text-destructive">{grError}</p> : null}
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    <th className="text-left text-[11px] px-4 py-2.5">GR</th>
-                    <th className="text-left text-[11px] px-4 py-2.5">PO</th>
-                    <th className="text-left text-[11px] px-4 py-2.5">Status</th>
-                    <th className="text-right text-[11px] px-4 py-2.5">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {grLoading && goodsReceipts.length === 0 ? (
-                    <ListTableSkeleton columns={4} rows={7} />
-                  ) : goodsReceipts.length === 0 ? (
-                    <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">No goods receipts found</td></tr>
-                  ) : goodsReceipts.map((row) => {
-                    const id = String(row.id);
-                    const status = String(row.status || '').toLowerCase();
-                    return (
-                      <tr key={id} className="border-b last:border-0">
-                        <td className="px-4 py-2.5 text-xs font-mono">{String(row.grNumber || row.receiptNumber || id)}</td>
-                        <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(row.poNumber || row.poId || '—')}</td>
-                        <td className="px-4 py-2.5 text-xs">{String(row.status || '—')}</td>
-                        <td className="px-4 py-2.5 text-right space-x-2">
-                          <TinyAction
-                            label="Approve"
-                            busy={actionKey === `gr-approve:${id}`}
-                            disabled={status === 'approved' || status === 'posted'}
-                            onClick={() => void runAction(`gr-approve:${id}`, () => procurementApi.approveGoodsReceipt(token, id), 'Goods receipt approved')}
-                          />
-                          <TinyAction
-                            label="Post"
-                            busy={actionKey === `gr-post:${id}`}
-                            disabled={status === 'posted'}
-                            onClick={() => void runAction(`gr-post:${id}`, () => procurementApi.postGoodsReceipt(token, id), 'Goods receipt posted')}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <ListPaginationControls
-              total={grTotal}
-              limit={grQuery.limit}
-              offset={grQuery.offset}
-              hasMore={grHasMore}
-              disabled={grLoading}
-              onPageChange={grQuery.setPage}
-              onLimitChange={grQuery.setPageSize}
+          <div className="space-y-4">
+            <GoodsReceiptCreatePanel
+              token={token}
+              outletId={outletId}
+              suppliers={supplierDirectory}
+              items={itemDirectory}
+              purchaseOrders={purchaseOrderDirectory}
+              onCreated={async () => {
+                await reloadLookups();
+                await loadGoodsReceipts();
+              }}
             />
+
+            <div className="surface-elevated p-4 space-y-3">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <h3 className="text-sm font-semibold">Goods Receipts ({grTotal})</h3>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <input
+                      className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
+                      placeholder="Search goods receipts"
+                      value={grQuery.searchInput}
+                      onChange={(event) => grQuery.setSearchInput(event.target.value)}
+                    />
+                  </div>
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                    value={grQuery.filters.status || 'all'}
+                    onChange={(event) => grQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="draft">Draft</option>
+                    <option value="received">Received</option>
+                    <option value="posted">Posted</option>
+                  </select>
+                  <button
+                    onClick={() => void loadGoodsReceipts()}
+                    disabled={grLoading}
+                    className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
+                  >
+                    <RefreshCw className={cn('h-3.5 w-3.5', grLoading ? 'animate-spin' : '')} />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              {grError ? <p className="text-xs text-destructive">{grError}</p> : null}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      <th className="text-left text-[11px] px-4 py-2.5">GR</th>
+                      <th className="text-left text-[11px] px-4 py-2.5">PO</th>
+                      <th className="text-left text-[11px] px-4 py-2.5">Status</th>
+                      <th className="text-right text-[11px] px-4 py-2.5">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {grLoading && goodsReceipts.length === 0 ? (
+                      <ListTableSkeleton columns={4} rows={7} />
+                    ) : goodsReceipts.length === 0 ? (
+                      <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">No goods receipts found</td></tr>
+                    ) : goodsReceipts.map((row) => {
+                      const id = String(row.id);
+                      const status = String(row.status || '').toLowerCase();
+                      return (
+                        <tr key={id} className="border-b last:border-0">
+                          <td className="px-4 py-2.5">
+                            <div>
+                              <p className="text-sm font-medium">{shortRef('GR', id)}</p>
+                              <p className="text-[11px] text-muted-foreground">{formatDateLabel(row.businessDate)} · {Number(row.totalPrice || 0).toFixed(2)} {String(row.currencyCode || 'USD')}</p>
+                              <p className="text-[10px] font-mono text-muted-foreground">{id}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div>
+                              <p className="text-sm">{shortRef('PO', String(row.poId || ''))}</p>
+                              <p className="text-[11px] text-muted-foreground">{String(row.supplierLotNumber || 'No supplier lot')}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs"><StatusBadge status={row.status} /></td>
+                          <td className="px-4 py-2.5 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <TinyAction
+                                label="View"
+                                busy={detailKey === `gr-view:${id}`}
+                                onClick={() => void openGoodsReceiptDetail(id)}
+                              />
+                              <TinyAction
+                                label="Post"
+                                busy={actionKey === `gr-post:${id}`}
+                                disabled={status === 'posted' || status === 'cancelled'}
+                                onClick={() => void runAction(`gr-post:${id}`, () => procurementApi.postGoodsReceipt(token, id), 'Goods receipt posted')}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <ListPaginationControls
+                total={grTotal}
+                limit={grQuery.limit}
+                offset={grQuery.offset}
+                hasMore={grHasMore}
+                disabled={grLoading}
+                onPageChange={grQuery.setPage}
+                onLimitChange={grQuery.setPageSize}
+              />
+            </div>
           </div>
         )}
 
         {activeTab === 'invoices' && (
-          <div className="surface-elevated p-4 space-y-3">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <h3 className="text-sm font-semibold">Invoices ({invoiceTotal})</h3>
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <input
-                    className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
-                    placeholder="Search invoices"
-                    value={invoiceQuery.searchInput}
-                    onChange={(event) => invoiceQuery.setSearchInput(event.target.value)}
-                  />
-                </div>
-                <select
-                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  value={invoiceQuery.filters.status || 'all'}
-                  onChange={(event) => invoiceQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
-                >
-                  <option value="all">All statuses</option>
-                  <option value="draft">Draft</option>
-                  <option value="approved">Approved</option>
-                  <option value="posted">Posted</option>
-                </select>
-                <button
-                  onClick={() => void loadInvoices()}
-                  disabled={invoiceLoading}
-                  className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
-                >
-                  <RefreshCw className={cn('h-3.5 w-3.5', invoiceLoading ? 'animate-spin' : '')} />
-                  Refresh
-                </button>
-              </div>
-            </div>
-            {invoiceError ? <p className="text-xs text-destructive">{invoiceError}</p> : null}
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    <th className="text-left text-[11px] px-4 py-2.5">Invoice</th>
-                    <th className="text-left text-[11px] px-4 py-2.5">Supplier</th>
-                    <th className="text-left text-[11px] px-4 py-2.5">Status</th>
-                    <th className="text-right text-[11px] px-4 py-2.5">Amount</th>
-                    <th className="text-right text-[11px] px-4 py-2.5">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoiceLoading && invoices.length === 0 ? (
-                    <ListTableSkeleton columns={5} rows={7} />
-                  ) : invoices.length === 0 ? (
-                    <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">No invoices found</td></tr>
-                  ) : invoices.map((row) => {
-                    const id = String(row.id);
-                    const status = String(row.status || '').toLowerCase();
-                    return (
-                      <tr key={id} className="border-b last:border-0">
-                        <td className="px-4 py-2.5 text-xs font-mono">{String(row.invoiceNumber || id)}</td>
-                        <td className="px-4 py-2.5 text-sm">{supplierById.get(String(row.supplierId)) || `Supplier ${row.supplierId || '—'}`}</td>
-                        <td className="px-4 py-2.5 text-xs">{String(row.status || '—')}</td>
-                        <td className="px-4 py-2.5 text-right text-sm font-mono">{Number(row.totalAmount || 0).toFixed(2)}</td>
-                        <td className="px-4 py-2.5 text-right">
-                          <TinyAction
-                            label="Approve"
-                            busy={actionKey === `inv:${id}`}
-                            disabled={status === 'approved' || status === 'posted'}
-                            onClick={() => void runAction(`inv:${id}`, () => procurementApi.approveInvoice(token, id), 'Invoice approved')}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <ListPaginationControls
-              total={invoiceTotal}
-              limit={invoiceQuery.limit}
-              offset={invoiceQuery.offset}
-              hasMore={invoiceHasMore}
-              disabled={invoiceLoading}
-              onPageChange={invoiceQuery.setPage}
-              onLimitChange={invoiceQuery.setPageSize}
+          <div className="space-y-4">
+            <InvoiceCreatePanel
+              token={token}
+              outletId={outletId}
+              suppliers={supplierDirectory}
+              items={itemDirectory}
+              goodsReceipts={goodsReceiptDirectory}
+              onCreated={async () => {
+                await reloadLookups();
+                await loadInvoices();
+              }}
             />
+
+            <div className="surface-elevated p-4 space-y-3">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <h3 className="text-sm font-semibold">Invoices ({invoiceTotal})</h3>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <input
+                      className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
+                      placeholder="Search invoices"
+                      value={invoiceQuery.searchInput}
+                      onChange={(event) => invoiceQuery.setSearchInput(event.target.value)}
+                    />
+                  </div>
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                    value={invoiceQuery.filters.status || 'all'}
+                    onChange={(event) => invoiceQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="draft">Draft</option>
+                    <option value="approved">Approved</option>
+                    <option value="posted">Posted</option>
+                  </select>
+                  <button
+                    onClick={() => void loadInvoices()}
+                    disabled={invoiceLoading}
+                    className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
+                  >
+                    <RefreshCw className={cn('h-3.5 w-3.5', invoiceLoading ? 'animate-spin' : '')} />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              {invoiceError ? <p className="text-xs text-destructive">{invoiceError}</p> : null}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      <th className="text-left text-[11px] px-4 py-2.5">Invoice</th>
+                      <th className="text-left text-[11px] px-4 py-2.5">Supplier</th>
+                      <th className="text-left text-[11px] px-4 py-2.5">Status</th>
+                      <th className="text-right text-[11px] px-4 py-2.5">Amount</th>
+                      <th className="text-right text-[11px] px-4 py-2.5">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invoiceLoading && invoices.length === 0 ? (
+                      <ListTableSkeleton columns={5} rows={7} />
+                    ) : invoices.length === 0 ? (
+                      <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">No invoices found</td></tr>
+                    ) : invoices.map((row) => {
+                      const id = String(row.id);
+                      const status = String(row.status || '').toLowerCase();
+                      return (
+                        <tr key={id} className="border-b last:border-0">
+                          <td className="px-4 py-2.5">
+                            <div>
+                              <p className="text-sm font-medium">{String(row.invoiceNumber || shortRef('INV', id))}</p>
+                              <p className="text-[11px] text-muted-foreground">{formatDateLabel(row.invoiceDate)} · due {formatDateLabel(row.dueDate)}</p>
+                              <p className="text-[10px] font-mono text-muted-foreground">{id}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div>
+                              <p className="text-sm">{supplierById.get(String(row.supplierId)) || `Supplier ${row.supplierId || '—'}`}</p>
+                              <p className="text-[11px] text-muted-foreground">{String(row.note || 'No note')}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs">{String(row.status || '—')}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            <div className="text-sm font-mono">{Number(row.totalAmount || 0).toFixed(2)}</div>
+                            <div className="text-[11px] text-muted-foreground">{String(row.currencyCode || 'USD')}</div>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <TinyAction
+                              label="Approve"
+                              busy={actionKey === `inv:${id}`}
+                              disabled={status === 'approved' || status === 'posted'}
+                              onClick={() => void runAction(`inv:${id}`, () => procurementApi.approveInvoice(token, id), 'Invoice approved')}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <ListPaginationControls
+                total={invoiceTotal}
+                limit={invoiceQuery.limit}
+                offset={invoiceQuery.offset}
+                hasMore={invoiceHasMore}
+                disabled={invoiceLoading}
+                onPageChange={invoiceQuery.setPage}
+                onLimitChange={invoiceQuery.setPageSize}
+              />
+            </div>
           </div>
         )}
 
         {activeTab === 'payments' && (
-          <div className="surface-elevated p-4 space-y-3">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <h3 className="text-sm font-semibold">Payments ({paymentTotal})</h3>
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <input
-                    className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
-                    placeholder="Search payments"
-                    value={paymentQuery.searchInput}
-                    onChange={(event) => paymentQuery.setSearchInput(event.target.value)}
-                  />
-                </div>
-                <select
-                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  value={paymentQuery.filters.status || 'all'}
-                  onChange={(event) => paymentQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
-                >
-                  <option value="all">All statuses</option>
-                  <option value="draft">Draft</option>
-                  <option value="posted">Posted</option>
-                  <option value="cancelled">Cancelled</option>
-                </select>
-                <button
-                  onClick={() => void loadPayments()}
-                  disabled={paymentLoading}
-                  className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
-                >
-                  <RefreshCw className={cn('h-3.5 w-3.5', paymentLoading ? 'animate-spin' : '')} />
-                  Refresh
-                </button>
-              </div>
-            </div>
-            {paymentError ? <p className="text-xs text-destructive">{paymentError}</p> : null}
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    <th className="text-left text-[11px] px-4 py-2.5">Payment</th>
-                    <th className="text-left text-[11px] px-4 py-2.5">Status</th>
-                    <th className="text-right text-[11px] px-4 py-2.5">Amount</th>
-                    <th className="text-right text-[11px] px-4 py-2.5">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paymentLoading && payments.length === 0 ? (
-                    <ListTableSkeleton columns={4} rows={7} />
-                  ) : payments.length === 0 ? (
-                    <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">No payments found</td></tr>
-                  ) : payments.map((row) => {
-                    const id = String(row.id);
-                    const status = String(row.status || '').toLowerCase();
-                    return (
-                      <tr key={id} className="border-b last:border-0">
-                        <td className="px-4 py-2.5 text-xs font-mono">{String(row.paymentRef || id)}</td>
-                        <td className="px-4 py-2.5 text-xs">{String(row.status || '—')}</td>
-                        <td className="px-4 py-2.5 text-right text-sm font-mono">{Number(row.amount || 0).toFixed(2)}</td>
-                        <td className="px-4 py-2.5 text-right space-x-2">
-                          <TinyAction
-                            label="Post"
-                            busy={actionKey === `pay-post:${id}`}
-                            disabled={status === 'posted'}
-                            onClick={() => void runAction(`pay-post:${id}`, () => procurementApi.postPayment(token, id), 'Payment posted')}
-                          />
-                          <TinyAction
-                            label="Cancel"
-                            busy={actionKey === `pay-cancel:${id}`}
-                            disabled={status === 'cancelled'}
-                            onClick={() => void runAction(`pay-cancel:${id}`, () => procurementApi.cancelPayment(token, id), 'Payment cancelled')}
-                          />
-                          <TinyAction
-                            label="Reverse"
-                            busy={actionKey === `pay-reverse:${id}`}
-                            onClick={() => void runAction(`pay-reverse:${id}`, () => procurementApi.reversePayment(token, id), 'Payment reversed')}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <ListPaginationControls
-              total={paymentTotal}
-              limit={paymentQuery.limit}
-              offset={paymentQuery.offset}
-              hasMore={paymentHasMore}
-              disabled={paymentLoading}
-              onPageChange={paymentQuery.setPage}
-              onLimitChange={paymentQuery.setPageSize}
+          <div className="space-y-4">
+            <PaymentCreatePanel
+              token={token}
+              outletId={outletId}
+              suppliers={supplierDirectory}
+              invoices={invoiceDirectory}
+              onCreated={async () => {
+                await reloadLookups();
+                await loadPayments();
+              }}
             />
+
+            <div className="surface-elevated p-4 space-y-3">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <h3 className="text-sm font-semibold">Payments ({paymentTotal})</h3>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <input
+                      className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
+                      placeholder="Search payments"
+                      value={paymentQuery.searchInput}
+                      onChange={(event) => paymentQuery.setSearchInput(event.target.value)}
+                    />
+                  </div>
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                    value={paymentQuery.filters.status || 'all'}
+                    onChange={(event) => paymentQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="draft">Draft</option>
+                    <option value="posted">Posted</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                  <button
+                    onClick={() => void loadPayments()}
+                    disabled={paymentLoading}
+                    className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
+                  >
+                    <RefreshCw className={cn('h-3.5 w-3.5', paymentLoading ? 'animate-spin' : '')} />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              {paymentError ? <p className="text-xs text-destructive">{paymentError}</p> : null}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      <th className="text-left text-[11px] px-4 py-2.5">Payment</th>
+                      <th className="text-left text-[11px] px-4 py-2.5">Status</th>
+                      <th className="text-right text-[11px] px-4 py-2.5">Amount</th>
+                      <th className="text-right text-[11px] px-4 py-2.5">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paymentLoading && payments.length === 0 ? (
+                      <ListTableSkeleton columns={4} rows={7} />
+                    ) : payments.length === 0 ? (
+                      <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">No payments found</td></tr>
+                    ) : payments.map((row) => {
+                      const id = String(row.id);
+                      const status = String(row.status || '').toLowerCase();
+                      return (
+                        <tr key={id} className="border-b last:border-0">
+                          <td className="px-4 py-2.5">
+                            <div>
+                              <p className="text-sm font-medium">{String(row.transactionRef || row.paymentNumber || shortRef('PAY', id))}</p>
+                              <p className="text-[11px] text-muted-foreground">{supplierById.get(String(row.supplierId || '')) || `Supplier ${row.supplierId || '—'}`} · {formatDateTimeLabel(row.paymentTime)}</p>
+                              <p className="text-[10px] font-mono text-muted-foreground">{id}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs">{String(row.status || '—')}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            <div className="text-sm font-mono">{Number(row.amount || row.totalAmount || 0).toFixed(2)}</div>
+                            <div className="text-[11px] text-muted-foreground">{String(row.currencyCode || 'USD')}</div>
+                          </td>
+                          <td className="px-4 py-2.5 text-right space-x-2">
+                            <TinyAction
+                              label="Post"
+                              busy={actionKey === `pay-post:${id}`}
+                              disabled={status === 'posted'}
+                              onClick={() => void runAction(`pay-post:${id}`, () => procurementApi.postPayment(token, id), 'Payment posted')}
+                            />
+                            <TinyAction
+                              label="Cancel"
+                              busy={actionKey === `pay-cancel:${id}`}
+                              disabled={status === 'cancelled'}
+                              onClick={() => void runAction(`pay-cancel:${id}`, () => procurementApi.cancelPayment(token, id), 'Payment cancelled')}
+                            />
+                            <TinyAction
+                              label="Reverse"
+                              busy={actionKey === `pay-reverse:${id}`}
+                              onClick={() => void runAction(`pay-reverse:${id}`, () => procurementApi.reversePayment(token, id), 'Payment reversed')}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <ListPaginationControls
+                total={paymentTotal}
+                limit={paymentQuery.limit}
+                offset={paymentQuery.offset}
+                hasMore={paymentHasMore}
+                disabled={paymentLoading}
+                onPageChange={paymentQuery.setPage}
+                onLimitChange={paymentQuery.setPageSize}
+              />
+            </div>
           </div>
         )}
 
@@ -870,6 +1368,35 @@ export function ProcurementModule() {
           </div>
         )}
       </div>
+
+      <Dialog open={detailOpen} onOpenChange={(open) => { if (!open) closeDetail(); }}>
+        <DialogContent className="max-w-5xl p-0">
+          <div className="border-b px-6 py-5">
+            <DialogHeader className="space-y-1 text-left">
+              <DialogTitle className="text-base">
+                {detailKind === 'goods-receipt' ? 'Goods Receipt Detail' : 'Purchase Order Detail'}
+              </DialogTitle>
+              <DialogDescription>
+                {detailKind === 'goods-receipt'
+                  ? 'Review the linked purchase order and the exact items received into stock.'
+                  : 'Review supplier, timeline, and ordered items before moving this purchase order forward.'}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+
+          <div className="max-h-[75vh] overflow-y-auto px-6 py-5">
+            {detailLoading ? (
+              <div className="py-16 text-center text-sm text-muted-foreground">Loading detail…</div>
+            ) : detailError ? (
+              <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{detailError}</div>
+            ) : detailKind === 'goods-receipt' ? (
+              renderGoodsReceiptDetail()
+            ) : (
+              renderPurchaseOrderDetail()
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

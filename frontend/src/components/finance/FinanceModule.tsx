@@ -15,12 +15,14 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   financeApi,
+  orgApi,
   payrollApi,
   type CreateExpensePayload,
   type ExpenseView,
-  type PayrollPeriodView,
   type PayrollRunView,
   type PayrollTimesheetView,
+  type ScopeOutlet,
+  type ScopeRegion,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
@@ -28,6 +30,8 @@ import { EmptyState, ServiceUnavailablePage } from '@/components/shell/Permissio
 import { useListQueryState } from '@/hooks/use-list-query-state';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
+import { PayrollPeriodsWorkspace } from '@/components/finance/PayrollPeriodsWorkspace';
+import { resolveScopeCurrencyCode } from '@/lib/org-currency';
 
 type FinanceTab = 'expenses' | 'periods' | 'timesheets' | 'runs' | 'config';
 
@@ -60,21 +64,18 @@ function formatCurrency(value: unknown, currency = 'USD') {
 
 export function FinanceModule() {
   const { token, scope } = useShellRuntime();
+  const regionId = normalizeNumeric(scope.regionId);
   const outletId = normalizeNumeric(scope.outletId);
 
   const [activeTab, setActiveTab] = useState<FinanceTab>('expenses');
+  const [regions, setRegions] = useState<ScopeRegion[]>([]);
+  const [outlets, setOutlets] = useState<ScopeOutlet[]>([]);
 
   const [expensesLoading, setExpensesLoading] = useState(false);
   const [expensesError, setExpensesError] = useState('');
   const [expenses, setExpenses] = useState<ExpenseView[]>([]);
   const [expensesTotal, setExpensesTotal] = useState(0);
   const [expensesHasMore, setExpensesHasMore] = useState(false);
-
-  const [periodsLoading, setPeriodsLoading] = useState(false);
-  const [periodsError, setPeriodsError] = useState('');
-  const [periods, setPeriods] = useState<PayrollPeriodView[]>([]);
-  const [periodsTotal, setPeriodsTotal] = useState(0);
-  const [periodsHasMore, setPeriodsHasMore] = useState(false);
 
   const [timesheetsLoading, setTimesheetsLoading] = useState(false);
   const [timesheetsError, setTimesheetsError] = useState('');
@@ -103,26 +104,46 @@ export function FinanceModule() {
     initialSortDir: 'desc',
     initialFilters: { outletId: outletId || undefined, sourceType: undefined },
   });
-  const periodsQuery = useListQueryState({
-    initialLimit: 20,
-    initialSortBy: 'startDate',
-    initialSortDir: 'desc',
-  });
   const timesheetsQuery = useListQueryState<{ outletId?: string }>({
     initialLimit: 20,
-    initialSortBy: 'id',
+    initialSortBy: 'createdAt',
     initialSortDir: 'desc',
     initialFilters: { outletId: outletId || undefined },
   });
   const runsQuery = useListQueryState<{ outletId?: string; status?: string }>({
     initialLimit: 20,
-    initialSortBy: 'id',
+    initialSortBy: 'createdAt',
     initialSortDir: 'desc',
     initialFilters: { outletId: outletId || undefined, status: undefined },
   });
   const patchExpensesFilters = expensesQuery.patchFilters;
   const patchTimesheetsFilters = timesheetsQuery.patchFilters;
   const patchRunsFilters = runsQuery.patchFilters;
+  const applyTimesheetSort = timesheetsQuery.applySort;
+  const applyRunSort = runsQuery.applySort;
+  const timesheetSortBy = timesheetsQuery.sortBy;
+  const runSortBy = runsQuery.sortBy;
+  const expenseCurrencyCode = useMemo(
+    () =>
+      resolveScopeCurrencyCode({
+        regions,
+        outlets,
+        regionId,
+        outletId,
+      }),
+    [outletId, outlets, regionId, regions],
+  );
+  const expenseCurrencyContext = useMemo(() => {
+    if (outletId) {
+      const outlet = outlets.find((candidate) => candidate.id === outletId);
+      const outletRegion = outlet ? regions.find((candidate) => candidate.id === outlet.regionId) : undefined;
+      return outlet && outletRegion ? `${outlet.code} · ${outletRegion.name}` : 'selected outlet';
+    }
+    if (regionId) {
+      return regions.find((candidate) => candidate.id === regionId)?.name || 'selected region';
+    }
+    return 'current scope';
+  }, [outletId, outlets, regionId, regions]);
 
   const loadExpenses = useCallback(async () => {
     if (!token) return;
@@ -147,26 +168,6 @@ export function FinanceModule() {
       setExpensesLoading(false);
     }
   }, [expensesQuery.filters.sourceType, expensesQuery.query, outletId, token]);
-
-  const loadPeriods = useCallback(async () => {
-    if (!token) return;
-    setPeriodsLoading(true);
-    setPeriodsError('');
-    try {
-      const page = await payrollApi.periods(token, periodsQuery.query);
-      setPeriods(page.items || []);
-      setPeriodsTotal(page.total || page.totalCount || 0);
-      setPeriodsHasMore(page.hasMore || page.hasNextPage || false);
-    } catch (error: unknown) {
-      console.error('Finance payroll periods load failed', error);
-      setPeriods([]);
-      setPeriodsTotal(0);
-      setPeriodsHasMore(false);
-      setPeriodsError(getErrorMessage(error, 'Unable to load payroll periods'));
-    } finally {
-      setPeriodsLoading(false);
-    }
-  }, [periodsQuery.query, token]);
 
   const loadTimesheets = useCallback(async () => {
     if (!token) return;
@@ -216,20 +217,52 @@ export function FinanceModule() {
   }, [outletId, runsQuery.filters.status, runsQuery.query, token]);
 
   useEffect(() => {
+    if (!token) return;
+    let active = true;
+    void orgApi.hierarchy(token)
+      .then((hierarchy) => {
+        if (!active) return;
+        setRegions(hierarchy.regions || []);
+        setOutlets(hierarchy.outlets || []);
+      })
+      .catch((error: unknown) => {
+        console.error('Finance org hierarchy load failed', error);
+      });
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  useEffect(() => {
     patchExpensesFilters({ outletId: outletId || undefined });
     patchTimesheetsFilters({ outletId: outletId || undefined });
     patchRunsFilters({ outletId: outletId || undefined });
   }, [outletId, patchExpensesFilters, patchRunsFilters, patchTimesheetsFilters]);
 
   useEffect(() => {
+    if (!timesheetSortBy || timesheetSortBy === 'id') {
+      applyTimesheetSort('createdAt', 'desc');
+    }
+  }, [applyTimesheetSort, timesheetSortBy]);
+
+  useEffect(() => {
+    if (!runSortBy || runSortBy === 'id') {
+      applyRunSort('createdAt', 'desc');
+    }
+  }, [applyRunSort, runSortBy]);
+
+  useEffect(() => {
+    setExpenseForm((current) =>
+      current.currencyCode === expenseCurrencyCode
+        ? current
+        : { ...current, currencyCode: expenseCurrencyCode },
+    );
+  }, [expenseCurrencyCode]);
+
+  useEffect(() => {
     if (activeTab !== 'expenses') return;
     void loadExpenses();
   }, [activeTab, loadExpenses]);
-
-  useEffect(() => {
-    if (activeTab !== 'periods') return;
-    void loadPeriods();
-  }, [activeTab, loadPeriods]);
 
   useEffect(() => {
     if (activeTab !== 'timesheets') return;
@@ -336,7 +369,7 @@ export function FinanceModule() {
       <div className="flex-1 overflow-y-auto p-6 space-y-5">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: 'Total Expenses', value: formatCurrency(stats.totalExpense), icon: DollarSign },
+            { label: 'Total Expenses', value: formatCurrency(stats.totalExpense, expenseCurrencyCode), icon: DollarSign },
             { label: 'Pending Payroll Runs', value: String(stats.pendingRuns), icon: AlertTriangle },
             { label: 'Approved Payroll Runs', value: String(stats.approvedRuns), icon: CheckCircle2 },
             { label: 'Overtime Hours', value: stats.overtimeHours.toFixed(2), icon: Clock },
@@ -377,10 +410,13 @@ export function FinanceModule() {
               <div>
                 <label className="text-xs text-muted-foreground">Currency</label>
                 <input
-                  className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  readOnly
+                  aria-readonly="true"
+                  title={`Auto-set from ${expenseCurrencyContext}`}
+                  className="mt-1 h-9 w-full rounded-md border border-input bg-muted/40 px-3 text-sm text-foreground"
                   value={expenseForm.currencyCode}
-                  onChange={(event) => setExpenseForm((prev) => ({ ...prev, currencyCode: event.target.value.toUpperCase() }))}
                 />
+                <p className="mt-1 text-[11px] text-muted-foreground">Auto from {expenseCurrencyContext}</p>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">Amount</label>
@@ -505,80 +541,13 @@ export function FinanceModule() {
         ) : null}
 
         {activeTab === 'periods' ? (
-          <div className="surface-elevated p-4 space-y-3">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <h3 className="text-sm font-semibold">Payroll Periods ({periodsTotal})</h3>
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <input
-                    className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
-                    placeholder="Search periods"
-                    value={periodsQuery.searchInput}
-                    onChange={(event) => periodsQuery.setSearchInput(event.target.value)}
-                  />
-                </div>
-                <select
-                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  value={`${periodsQuery.sortBy || 'startDate'}:${periodsQuery.sortDir}`}
-                  onChange={(event) => {
-                    const [field, direction] = event.target.value.split(':');
-                    periodsQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
-                  }}
-                >
-                  <option value="startDate:desc">Start Date ↓</option>
-                  <option value="startDate:asc">Start Date ↑</option>
-                  <option value="payDate:desc">Pay Date ↓</option>
-                  <option value="payDate:asc">Pay Date ↑</option>
-                </select>
-                <button
-                  onClick={() => void loadPeriods()}
-                  disabled={periodsLoading}
-                  className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
-                >
-                  <RefreshCw className={cn('h-3.5 w-3.5', periodsLoading ? 'animate-spin' : '')} />
-                  Refresh
-                </button>
-              </div>
-            </div>
-            {periodsError ? <p className="text-xs text-destructive">{periodsError}</p> : null}
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    {['ID', 'Name', 'Start', 'End', 'Pay Date', 'Region'].map((header) => (
-                      <th key={header} className="text-left text-[11px] px-4 py-2.5">{header}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {periodsLoading && periods.length === 0 ? (
-                    <ListTableSkeleton columns={6} rows={6} />
-                  ) : periods.length === 0 ? (
-                    <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">No payroll periods found</td></tr>
-                  ) : periods.map((period) => (
-                    <tr key={String(period.id)} className="border-b last:border-0">
-                      <td className="px-4 py-2.5 text-xs font-mono">{String(period.id)}</td>
-                      <td className="px-4 py-2.5 text-sm">{String(period.name || '—')}</td>
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(period.startDate || '—')}</td>
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(period.endDate || '—')}</td>
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(period.payDate || '—')}</td>
-                      <td className="px-4 py-2.5 text-xs">{String(period.regionId || '—')}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <ListPaginationControls
-              total={periodsTotal}
-              limit={periodsQuery.limit}
-              offset={periodsQuery.offset}
-              hasMore={periodsHasMore}
-              disabled={periodsLoading}
-              onPageChange={periodsQuery.setPage}
-              onLimitChange={periodsQuery.setPageSize}
-            />
-          </div>
+          <PayrollPeriodsWorkspace
+            token={token}
+            scopeRegionId={normalizeNumeric(scope.regionId)}
+            scopeOutletId={outletId || undefined}
+            onRunsChanged={loadRuns}
+            onTimesheetsChanged={loadTimesheets}
+          />
         ) : null}
 
         {activeTab === 'timesheets' ? (
@@ -597,14 +566,16 @@ export function FinanceModule() {
                 </div>
                 <select
                   className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  value={`${timesheetsQuery.sortBy || 'id'}:${timesheetsQuery.sortDir}`}
+                  value={`${timesheetsQuery.sortBy || 'createdAt'}:${timesheetsQuery.sortDir}`}
                   onChange={(event) => {
                     const [field, direction] = event.target.value.split(':');
                     timesheetsQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
                   }}
                 >
-                  <option value="id:desc">Newest First</option>
-                  <option value="id:asc">Oldest First</option>
+                  <option value="createdAt:desc">Newest First</option>
+                  <option value="createdAt:asc">Oldest First</option>
+                  <option value="workHours:desc">Work Hours ↓</option>
+                  <option value="workHours:asc">Work Hours ↑</option>
                   <option value="overtimeHours:desc">Overtime ↓</option>
                   <option value="overtimeHours:asc">Overtime ↑</option>
                 </select>
@@ -685,6 +656,21 @@ export function FinanceModule() {
                   <option value="draft">Draft</option>
                   <option value="approved">Approved</option>
                 </select>
+                <select
+                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                  value={`${runsQuery.sortBy || 'createdAt'}:${runsQuery.sortDir}`}
+                  onChange={(event) => {
+                    const [field, direction] = event.target.value.split(':');
+                    runsQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
+                  }}
+                >
+                  <option value="createdAt:desc">Newest First</option>
+                  <option value="createdAt:asc">Oldest First</option>
+                  <option value="approvedAt:desc">Approved ↓</option>
+                  <option value="approvedAt:asc">Approved ↑</option>
+                  <option value="netSalary:desc">Net Salary ↓</option>
+                  <option value="netSalary:asc">Net Salary ↑</option>
+                </select>
                 <button
                   onClick={() => void loadRuns()}
                   disabled={runsLoading}
@@ -759,7 +745,7 @@ export function FinanceModule() {
           />
         ) : null}
 
-        {(expensesLoading || periodsLoading || timesheetsLoading || runsLoading) && activeTab !== 'config' ? (
+        {(expensesLoading || timesheetsLoading || runsLoading) && activeTab !== 'config' ? (
           <div className="hidden">
             <Loader2 className="h-4 w-4 animate-spin" />
           </div>

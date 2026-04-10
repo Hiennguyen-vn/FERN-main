@@ -38,6 +38,12 @@ public class PayrollService {
   public PayrollDtos.PayrollPeriodView createPeriod(PayrollDtos.CreatePayrollPeriodRequest request) {
     requirePayrollAdmin();
     validatePeriodDates(request.startDate(), request.endDate(), request.payDate());
+    if (payrollRepository.findPeriodByRegionAndWindow(request.regionId(), request.startDate(), request.endDate()).isPresent()) {
+      throw ServiceException.conflict(
+          "Payroll period already exists for region " + request.regionId()
+              + " between " + request.startDate() + " and " + request.endDate()
+      );
+    }
     long periodId = idGenerator.generateId();
     payrollRepository.insertPeriod(
         periodId,
@@ -83,6 +89,25 @@ public class PayrollService {
 
   public PayrollDtos.PayrollTimesheetView createTimesheet(PayrollDtos.CreatePayrollTimesheetRequest request) {
     requirePayrollAdmin();
+    PayrollRepository.PayrollPeriodScopeRecord period = payrollRepository.findPeriodScope(request.payrollPeriodId())
+        .orElseThrow(() -> ServiceException.notFound("Payroll period not found: " + request.payrollPeriodId()));
+    if (payrollRepository.findTimesheetByPeriodAndUser(request.payrollPeriodId(), request.userId()).isPresent()) {
+      throw ServiceException.conflict(
+          "Timesheet already exists for user " + request.userId() + " in payroll period " + request.payrollPeriodId()
+      );
+    }
+    if (request.outletId() != null) {
+      if (!payrollRepository.outletBelongsToRegionScope(request.outletId(), period.regionId())) {
+        throw ServiceException.badRequest(
+            "Selected outlet " + request.outletId() + " is outside payroll period scope " + period.regionCode()
+        );
+      }
+      if (!payrollRepository.userHasOutletScope(request.userId(), request.outletId())) {
+        throw ServiceException.badRequest(
+            "User " + request.userId() + " is not assigned to outlet " + request.outletId()
+        );
+      }
+    }
     long timesheetId = idGenerator.generateId();
     payrollRepository.insertTimesheet(
         timesheetId,
@@ -132,6 +157,9 @@ public class PayrollService {
 
   public PayrollDtos.PayrollView generatePayroll(PayrollDtos.GeneratePayrollRequest request) {
     requirePayrollAdmin();
+    if (payrollRepository.findTimesheet(request.payrollTimesheetId()).isEmpty()) {
+      throw ServiceException.notFound("Payroll timesheet not found: " + request.payrollTimesheetId());
+    }
     if (payrollRepository.findPayrollByTimesheetId(request.payrollTimesheetId()).isPresent()) {
       throw ServiceException.conflict("Payroll already exists for timesheet " + request.payrollTimesheetId());
     }
