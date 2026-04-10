@@ -87,6 +87,29 @@ export interface ContractsQuery {
   offset?: number;
 }
 
+export interface CreateWorkShiftPayload {
+  shiftId: string;
+  userId: string;
+  workDate: string;
+  note?: string | null;
+  scheduleStatus?: string | null;
+  attendanceStatus?: string | null;
+  approvalStatus?: string | null;
+}
+
+export interface TimeOffQuery {
+  userId?: string;
+  outletId?: string;
+  approvalStatus?: string;
+  startDate?: string;
+  endDate?: string;
+  q?: string;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
 function decodeShift(value: unknown): ShiftView {
   const record = asRecord(value) ?? {};
   return {
@@ -154,6 +177,8 @@ export const hrApi = {
     decodePaged(await apiRequest('/api/v1/hr/work-shifts', { token, query }), decodeWorkShift),
   workShiftsByOutletDate: async (token: string, outletId: string, date: string): Promise<WorkShiftView[]> =>
     decodeArray(await apiRequest(`/api/v1/hr/work-shifts/outlet/${outletId}/date/${date}`, { token }), decodeWorkShift),
+  timeOffPaged: async (token: string, query: TimeOffQuery): Promise<PagedResponse<WorkShiftView>> =>
+    decodePaged(await apiRequest('/api/v1/hr/time-off', { token, query }), decodeWorkShift),
   contracts: async (token: string, query: ContractsQuery): Promise<ContractView[]> =>
     decodeArray(await apiRequest('/api/v1/hr/contracts', { token, query }), decodeContract),
   contractsPaged: async (token: string, query: ContractsQuery): Promise<PagedResponse<ContractView>> =>
@@ -162,6 +187,22 @@ export const hrApi = {
     decodeArray(await apiRequest('/api/v1/hr/contracts/active', { token }), decodeContract),
   createShift: async (token: string, payload: unknown): Promise<unknown> =>
     apiRequest('/api/v1/hr/shifts', { method: 'POST', token, body: payload }),
+  createWorkShift: async (token: string, payload: CreateWorkShiftPayload): Promise<WorkShiftView> =>
+    decodeWorkShift(
+      await apiRequest('/api/v1/hr/work-shifts', {
+        method: 'POST',
+        token,
+        body: {
+          shiftId: Number(payload.shiftId),
+          userId: Number(payload.userId),
+          workDate: payload.workDate,
+          scheduleStatus: payload.scheduleStatus ?? null,
+          attendanceStatus: payload.attendanceStatus ?? null,
+          approvalStatus: payload.approvalStatus ?? null,
+          note: payload.note ?? null,
+        },
+      }),
+    ),
   updateAttendance: async (token: string, workShiftId: string, payload: unknown): Promise<unknown> =>
     apiRequest(`/api/v1/hr/work-shifts/${workShiftId}/attendance`, { method: 'PUT', token, body: payload }),
   approveWorkShift: async (token: string, workShiftId: string): Promise<unknown> =>

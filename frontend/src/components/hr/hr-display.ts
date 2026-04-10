@@ -125,6 +125,19 @@ export function attendanceBadgeClass(value: string | null | undefined) {
   }
 }
 
+export function scheduleBadgeClass(value: string | null | undefined) {
+  switch (normalizeValue(value).toLowerCase()) {
+    case 'scheduled':
+      return 'bg-blue-50 text-blue-700 border-blue-200';
+    case 'confirmed':
+      return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    case 'cancelled':
+      return 'bg-rose-50 text-rose-700 border-rose-200';
+    default:
+      return 'bg-muted text-muted-foreground border-border';
+  }
+}
+
 export function approvalBadgeClass(value: string | null | undefined) {
   switch (normalizeValue(value).toLowerCase()) {
     case 'approved':
