@@ -155,15 +155,17 @@ export function SchedulingModule() {
 
   const stats = useMemo(() => {
     const scheduled = workShifts.filter((row) => String(row.scheduleStatus || '').toLowerCase() === 'scheduled').length;
-    const checkedIn = workShifts.filter((row) => String(row.attendanceStatus || '').toLowerCase() === 'checked_in').length;
-    const checkedOut = workShifts.filter((row) => String(row.attendanceStatus || '').toLowerCase() === 'checked_out').length;
+    const present = workShifts.filter((row) => String(row.attendanceStatus || '').toLowerCase() === 'present').length;
+    const late = workShifts.filter((row) => String(row.attendanceStatus || '').toLowerCase() === 'late').length;
+    const absent = workShifts.filter((row) => String(row.attendanceStatus || '').toLowerCase() === 'absent').length;
 
     return {
       shiftCount: shiftsTotal,
       assignmentCount: assignmentsTotal,
       scheduled,
-      checkedIn,
-      checkedOut,
+      present,
+      late,
+      absent,
     };
   }, [shiftsTotal, assignmentsTotal, workShifts]);
 
@@ -293,13 +295,14 @@ export function SchedulingModule() {
           ) : null}
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           {[
             { label: 'Shifts', value: stats.shiftCount, icon: CalendarClock },
             { label: 'Assignments', value: stats.assignmentCount, icon: Users },
             { label: 'Scheduled', value: stats.scheduled, icon: Clock },
-            { label: 'Checked In', value: stats.checkedIn, icon: Clock },
-            { label: 'Checked Out', value: stats.checkedOut, icon: Clock },
+            { label: 'Present', value: stats.present, icon: Clock },
+            { label: 'Late', value: stats.late, icon: Clock },
+            { label: 'Absent', value: stats.absent, icon: Clock },
           ].map((kpi) => (
             <div key={kpi.label} className="surface-elevated p-4">
               <div className="flex items-center gap-1.5 mb-2">
@@ -431,18 +434,25 @@ export function SchedulingModule() {
                         <td className="px-4 py-2.5 text-xs">{String(assignment.approvalStatus || '—')}</td>
                         <td className="px-4 py-2.5 space-x-2">
                           <button
-                            onClick={() => void updateAttendance(id, 'checked_in')}
-                            disabled={busyKey === `attendance:${id}:checked_in`}
+                            onClick={() => void updateAttendance(id, 'present')}
+                            disabled={busyKey === `attendance:${id}:present`}
                             className="h-7 px-2 rounded border text-[10px] hover:bg-accent disabled:opacity-50"
                           >
-                            Check in
+                            Mark present
                           </button>
                           <button
-                            onClick={() => void updateAttendance(id, 'checked_out')}
-                            disabled={busyKey === `attendance:${id}:checked_out`}
+                            onClick={() => void updateAttendance(id, 'late')}
+                            disabled={busyKey === `attendance:${id}:late`}
                             className="h-7 px-2 rounded border text-[10px] hover:bg-accent disabled:opacity-50"
                           >
-                            Check out
+                            Mark late
+                          </button>
+                          <button
+                            onClick={() => void updateAttendance(id, 'absent')}
+                            disabled={busyKey === `attendance:${id}:absent`}
+                            className="h-7 px-2 rounded border text-[10px] hover:bg-accent disabled:opacity-50"
+                          >
+                            Mark absent
                           </button>
                         </td>
                       </tr>

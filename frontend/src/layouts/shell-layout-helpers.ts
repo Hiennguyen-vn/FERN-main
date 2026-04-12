@@ -33,6 +33,7 @@ export const FAMILY_TO_PATH: Record<ModuleFamily, string> = {
 export const PATH_TO_FAMILY: Record<string, string> = Object.fromEntries(
   Object.entries(FAMILY_TO_PATH).map(([family, path]) => [path, family]),
 );
+PATH_TO_FAMILY['/order'] = 'pos';
 
 export const ROUTE_FAMILIES = Object.keys(FAMILY_TO_PATH) as ModuleFamily[];
 

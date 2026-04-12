@@ -116,7 +116,7 @@ class FinanceServiceTest {
         LocalDate.parse("2026-03-27"),
         "USD",
         new BigDecimal("20.00"),
-        "operating_expense",
+        "other",
         "misc",
         null,
         Instant.parse("2026-03-27T00:00:00Z"),
@@ -141,6 +141,7 @@ class FinanceServiceTest {
         eq("finance.expense-record-created"),
         any(ExpenseRecordCreatedEvent.class)
     );
+    assertEquals("other", result.sourceType());
     assertEquals("other", result.subtype());
   }
 

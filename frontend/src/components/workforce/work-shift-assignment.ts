@@ -7,11 +7,25 @@ export interface WorkShiftAssignmentBatchDraft {
   userIds: string[];
 }
 
+export interface ExistingWorkShiftAssignment {
+  shiftId: string;
+  userId: string;
+  workDate: string;
+}
+
+export interface WorkShiftAssignmentPlan {
+  payloads: CreateWorkShiftPayload[];
+  duplicateUserIds: string[];
+}
+
 function normalizeUserIds(userIds: string[]) {
   return Array.from(new Set(userIds.map((value) => String(value || '').trim()).filter(Boolean)));
 }
 
-export function buildWorkShiftAssignmentPayloads(draft: WorkShiftAssignmentBatchDraft): CreateWorkShiftPayload[] {
+export function planWorkShiftAssignments(
+  draft: WorkShiftAssignmentBatchDraft,
+  existingAssignments: ExistingWorkShiftAssignment[] = [],
+): WorkShiftAssignmentPlan {
   const shiftId = String(draft.shiftId || '').trim();
   const workDate = String(draft.workDate || '').trim();
   const userIds = normalizeUserIds(draft.userIds || []);
@@ -27,10 +41,32 @@ export function buildWorkShiftAssignmentPayloads(draft: WorkShiftAssignmentBatch
     throw new Error('Select at least one employee before assigning');
   }
 
-  return userIds.map((userId) => ({
-    userId,
-    shiftId,
-    workDate,
-    note: note || null,
-  }));
+  const existingKeys = new Set(
+    existingAssignments.map((assignment) => [
+      String(assignment.shiftId || '').trim(),
+      String(assignment.userId || '').trim(),
+      String(assignment.workDate || '').trim(),
+    ].join(':')),
+  );
+
+  const duplicateUserIds: string[] = [];
+  const payloads = userIds.flatMap((userId) => {
+    const key = [shiftId, userId, workDate].join(':');
+    if (existingKeys.has(key)) {
+      duplicateUserIds.push(userId);
+      return [];
+    }
+    return [{
+      userId,
+      shiftId,
+      workDate,
+      note: note || null,
+    }];
+  });
+
+  return { payloads, duplicateUserIds };
+}
+
+export function buildWorkShiftAssignmentPayloads(draft: WorkShiftAssignmentBatchDraft): CreateWorkShiftPayload[] {
+  return planWorkShiftAssignments(draft).payloads;
 }

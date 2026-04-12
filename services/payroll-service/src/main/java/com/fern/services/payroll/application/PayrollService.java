@@ -8,28 +8,34 @@ import com.dorabets.common.spring.web.PagedResult;
 import com.dorabets.common.spring.web.QueryConventions;
 import com.fern.events.payroll.PayrollApprovedEvent;
 import com.fern.services.payroll.api.PayrollDtos;
+import com.fern.services.payroll.infrastructure.HrServiceClient;
 import com.fern.services.payroll.infrastructure.PayrollRepository;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
-import java.util.List;
 import org.springframework.stereotype.Service;
 
 @Service
 public class PayrollService {
 
   private final PayrollRepository payrollRepository;
+  private final HrServiceClient hrServiceClient;
   private final SnowflakeIdGenerator idGenerator;
   private final TypedKafkaEventPublisher eventPublisher;
   private final Clock clock;
 
   public PayrollService(
       PayrollRepository payrollRepository,
+      HrServiceClient hrServiceClient,
       SnowflakeIdGenerator idGenerator,
       TypedKafkaEventPublisher eventPublisher,
       Clock clock
   ) {
     this.payrollRepository = payrollRepository;
+    this.hrServiceClient = hrServiceClient;
     this.idGenerator = idGenerator;
     this.eventPublisher = eventPublisher;
     this.clock = clock;
@@ -125,6 +131,132 @@ public class PayrollService {
     return getTimesheet(timesheetId);
   }
 
+  /**
+   * Fetches approved work shifts for the employee from hr-service, aggregates attendance data,
+   * and creates the payroll_timesheet record — all in one server-side operation.
+   *
+   * <p>Aggregation rules (mirrors what payroll clerks would do manually):
+   * <ul>
+   *   <li>workDays  = number of shifts where attendanceStatus != 'absent'</li>
+   *   <li>workHours = sum of (actualEndTime - actualStartTime) in hours for present shifts;
+   *                   falls back to 0 h for shifts without clock-in/out data</li>
+   *   <li>lateCount = count of shifts where attendanceStatus == 'late'</li>
+   *   <li>absentDays = count of shifts where attendanceStatus == 'absent'</li>
+   *   <li>overtimeHours = 0 by default (OT is rarely captured in basic shift records)</li>
+   * </ul>
+   */
+  public PayrollDtos.PayrollTimesheetView importFromAttendance(
+      PayrollDtos.ImportFromAttendanceRequest request
+  ) {
+    requirePayrollAdmin();
+
+    PayrollRepository.PayrollPeriodRecord period = payrollRepository
+        .findPeriod(request.payrollPeriodId())
+        .orElseThrow(() -> ServiceException.notFound(
+            "Payroll period not found: " + request.payrollPeriodId()));
+
+    PayrollRepository.PayrollPeriodScopeRecord periodScope = payrollRepository
+        .findPeriodScope(request.payrollPeriodId())
+        .orElseThrow(() -> ServiceException.notFound(
+            "Payroll period scope not found: " + request.payrollPeriodId()));
+
+    if (payrollRepository.findTimesheetByPeriodAndUser(
+        request.payrollPeriodId(), request.userId()).isPresent()) {
+      throw ServiceException.conflict(
+          "Timesheet already exists for user " + request.userId()
+              + " in payroll period " + request.payrollPeriodId());
+    }
+
+    if (request.outletId() != null) {
+      if (!payrollRepository.outletBelongsToRegionScope(request.outletId(), periodScope.regionId())) {
+        throw ServiceException.badRequest(
+            "Outlet " + request.outletId()
+                + " is outside payroll period scope " + periodScope.regionCode());
+      }
+      if (!payrollRepository.userHasOutletScope(request.userId(), request.outletId())) {
+        throw ServiceException.badRequest(
+            "User " + request.userId()
+                + " is not assigned to outlet " + request.outletId());
+      }
+    }
+
+    // Fetch approved shifts from hr-service (internal call — no permission gate)
+    java.util.List<PayrollDtos.WorkShiftSummaryItem> shifts = hrServiceClient.fetchApprovedShifts(
+        request.userId(),
+        request.outletId(),
+        period.startDate(),
+        period.endDate()
+    );
+
+    if (shifts.isEmpty()) {
+      throw ServiceException.badRequest(
+          "No approved work shifts found for user " + request.userId()
+              + " between " + period.startDate() + " and " + period.endDate());
+    }
+
+    // Aggregate attendance metrics
+    int workDaysCount = 0;
+    double workHoursSum = 0.0;
+    int lateCountSum = 0;
+    int absentDaysCount = 0;
+
+    for (PayrollDtos.WorkShiftSummaryItem shift : shifts) {
+      String status = shift.attendanceStatus() == null
+          ? "" : shift.attendanceStatus().toLowerCase().trim();
+
+      if ("absent".equals(status)) {
+        absentDaysCount++;
+        continue;
+      }
+
+      workDaysCount++;
+      if ("late".equals(status)) {
+        lateCountSum++;
+      }
+
+      // Hours: prefer explicit totalHours field, then derive from clock-in/out timestamps
+      if (shift.totalHours() != null && shift.totalHours() > 0) {
+        workHoursSum += shift.totalHours();
+      } else if (shift.actualStartTime() != null && shift.actualEndTime() != null) {
+        try {
+          Instant start = Instant.parse(shift.actualStartTime());
+          Instant end = Instant.parse(shift.actualEndTime());
+          double hours = Duration.between(start, end).toSeconds() / 3600.0;
+          if (hours > 0) {
+            workHoursSum += hours;
+          }
+        } catch (Exception ignored) {
+          // malformed timestamp — skip hours for this shift, count the day
+        }
+      }
+    }
+
+    // Round to 2 decimal places for cleaner DB storage
+    BigDecimal workDays = BigDecimal.valueOf(workDaysCount);
+    BigDecimal workHours = BigDecimal.valueOf(Math.round(workHoursSum * 100) / 100.0);
+    BigDecimal overtimeHours = BigDecimal.ZERO;
+    BigDecimal overtimeRate = request.overtimeRate() != null
+        ? request.overtimeRate() : new BigDecimal("1.50");
+    BigDecimal absentDays = BigDecimal.valueOf(absentDaysCount);
+
+    long timesheetId = idGenerator.generateId();
+    payrollRepository.insertTimesheet(
+        timesheetId,
+        request.payrollPeriodId(),
+        request.userId(),
+        request.outletId(),
+        workDays,
+        workHours,
+        overtimeHours,
+        overtimeRate,
+        lateCountSum,
+        absentDays,
+        RequestUserContextHolder.get().userId()
+    );
+
+    return getTimesheet(timesheetId);
+  }
+
   public PayrollDtos.PayrollTimesheetView getTimesheet(long timesheetId) {
     requirePayrollAdmin();
     return payrollRepository.findTimesheet(timesheetId)
@@ -209,6 +341,11 @@ public class PayrollService {
 
   public PayrollDtos.PayrollView approvePayroll(long payrollId) {
     requirePayrollAdmin();
+    PayrollRepository.PayrollRecord existing = payrollRepository.findPayroll(payrollId)
+        .orElseThrow(() -> ServiceException.notFound("Payroll not found: " + payrollId));
+    if (!"draft".equalsIgnoreCase(existing.status())) {
+      throw ServiceException.conflict("Only draft payroll runs can be approved");
+    }
     PayrollRepository.PayrollApprovalProjection projection = payrollRepository.approvePayroll(
         payrollId,
         RequestUserContextHolder.get().userId()
@@ -228,6 +365,21 @@ public class PayrollService {
         )
     );
     return toDto(projection.payroll());
+  }
+
+  public PayrollDtos.PayrollView rejectPayroll(long payrollId, String reason) {
+    requirePayrollAdmin();
+    PayrollRepository.PayrollRecord existing = payrollRepository.findPayroll(payrollId)
+        .orElseThrow(() -> ServiceException.notFound("Payroll not found: " + payrollId));
+    if (!"draft".equalsIgnoreCase(existing.status())) {
+      throw ServiceException.conflict("Only draft payroll runs can be rejected");
+    }
+    PayrollRepository.PayrollRecord rejected = payrollRepository.rejectPayroll(
+        payrollId,
+        RequestUserContextHolder.get().userId(),
+        trimToNull(reason)
+    );
+    return toDto(rejected);
   }
 
   private void requirePayrollAdmin() {

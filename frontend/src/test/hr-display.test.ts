@@ -54,6 +54,13 @@ describe('hr display helpers', () => {
     });
   });
 
+  it('falls back cleanly when a shift cannot be resolved from the catalog', () => {
+    expect(getHrShiftDisplay(new Map(), '9999')).toEqual({
+      primary: 'Shift unavailable',
+      secondary: 'ID 9999',
+    });
+  });
+
   it('humanizes backend hr enums for the UI', () => {
     expect(formatHrEnumLabel('part_time')).toBe('Part time');
     expect(formatHrEnumLabel('pending')).toBe('Pending');

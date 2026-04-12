@@ -12,6 +12,8 @@ import NotFound from "./pages/NotFound";
 
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const POSPage = lazy(() => import("./pages/POSPage"));
+const CustomerOrdersPage = lazy(() => import("./pages/CustomerOrdersPage"));
+const PublicOrderPage = lazy(() => import("./pages/PublicOrderPage"));
 const InventoryModule = lazy(() => import("@/components/inventory/InventoryModule").then((m) => ({ default: m.InventoryModule })));
 const ProcurementModule = lazy(() => import("@/components/procurement/ProcurementModule").then((m) => ({ default: m.ProcurementModule })));
 const CatalogModule = lazy(() => import("@/components/catalog/CatalogModule").then((m) => ({ default: m.CatalogModule })));
@@ -75,10 +77,12 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
+            <Route path="/order/:tableToken" element={<LazyRoute><PublicOrderPage /></LazyRoute>} />
 
             <Route element={<ProtectedShell />}>
               <Route path="/dashboard" element={<LazyRoute><DashboardPage /></LazyRoute>} />
               <Route path="/pos" element={<LazyRoute><POSPage /></LazyRoute>} />
+              <Route path="/order" element={<LazyRoute><CustomerOrdersPage /></LazyRoute>} />
               <Route path="/inventory" element={<LazyRoute><InventoryModule /></LazyRoute>} />
               <Route path="/procurement" element={<LazyRoute><ProcurementModule /></LazyRoute>} />
               <Route path="/catalog" element={<LazyRoute><CatalogModule /></LazyRoute>} />

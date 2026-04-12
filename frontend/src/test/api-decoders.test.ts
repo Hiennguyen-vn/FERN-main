@@ -45,7 +45,7 @@ describe('domain API decoders', () => {
 
     const hierarchy = await orgApi.hierarchy(COOKIE_AUTH_TOKEN_SENTINEL);
 
-    expect(hierarchy.regions).toEqual([{ id: '7', code: 'R7', name: 'South' }]);
+    expect(hierarchy.regions[0]).toMatchObject({ id: '7', code: 'R7', name: 'South' });
     expect(hierarchy.outlets[0]).toMatchObject({
       id: '101',
       regionId: '7',

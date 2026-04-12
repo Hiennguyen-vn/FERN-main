@@ -162,3 +162,198 @@ describe('salesApi POS payloads', () => {
     });
   });
 });
+
+describe('salesApi public ordering endpoints', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('decodes public table and menu responses for the customer route', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          tableToken: 'tbl_hcm1_u7k29q',
+          tableCode: 'T1',
+          tableName: 'Table 1',
+          status: 'active',
+          outletCode: 'VN-HCM-001',
+          outletName: 'Saigon Central Outlet',
+          currencyCode: 'VND',
+          timezoneName: 'Asia/Ho_Chi_Minh',
+          businessDate: '2026-04-11',
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([
+          {
+            productId: '5000',
+            code: 'LATTE',
+            name: 'Cafe Latte',
+            categoryCode: 'beverage',
+            description: null,
+            imageUrl: null,
+            priceValue: 65000.00,
+            currencyCode: 'VND',
+          },
+        ]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const table = await salesApi.getPublicTable('tbl_hcm1_u7k29q');
+    const menu = await salesApi.listPublicMenu('tbl_hcm1_u7k29q');
+
+    expect(table).toMatchObject({
+      tableToken: 'tbl_hcm1_u7k29q',
+      tableCode: 'T1',
+      tableName: 'Table 1',
+      outletCode: 'VN-HCM-001',
+      outletName: 'Saigon Central Outlet',
+      currencyCode: 'VND',
+      businessDate: '2026-04-11',
+    });
+    expect(menu).toEqual([
+      expect.objectContaining({
+        productId: '5000',
+        code: 'LATTE',
+        name: 'Cafe Latte',
+        categoryCode: 'beverage',
+        priceValue: 65000,
+        currencyCode: 'VND',
+      }),
+    ]);
+  });
+
+  it('preserves public order payload shape and decodes the receipt', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        orderToken: 'ord_public_123',
+        tableCode: 'T1',
+        tableName: 'Table 1',
+        outletCode: 'VN-HCM-001',
+        outletName: 'Saigon Central Outlet',
+        currencyCode: 'VND',
+        orderStatus: 'order_created',
+        paymentStatus: 'pending',
+        totalAmount: 130000,
+        note: 'no sugar',
+        createdAt: '2026-04-11T12:34:00Z',
+        items: [{
+          productId: '5000',
+          productCode: 'LATTE',
+          productName: 'Cafe Latte',
+          quantity: 2,
+          unitPrice: 65000,
+          lineTotal: 130000,
+          note: 'less ice',
+        }],
+      }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const receipt = await salesApi.createPublicOrder('tbl_hcm1_u7k29q', {
+      note: 'no sugar',
+      items: [{ productId: '5000', quantity: 2, note: 'less ice' }],
+    });
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(options?.body))).toEqual({
+      note: 'no sugar',
+      items: [{ productId: '5000', quantity: 2, note: 'less ice' }],
+    });
+    expect(receipt).toMatchObject({
+      orderToken: 'ord_public_123',
+      orderStatus: 'order_created',
+      paymentStatus: 'pending',
+      totalAmount: 130000,
+      items: [{
+        productId: '5000',
+        productCode: 'LATTE',
+        productName: 'Cafe Latte',
+        quantity: 2,
+        unitPrice: 65000,
+        lineTotal: 130000,
+        note: 'less ice',
+      }],
+    });
+  });
+});
+
+describe('salesApi staff customer order list', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('decodes public order metadata from the staff order queue', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        items: [{
+          id: '3478000000000000001',
+          outletId: '3477603326876991488',
+          posSessionId: null,
+          publicOrderToken: 'pub_ord_token_123',
+          status: 'order_created',
+          paymentStatus: 'pending',
+          orderType: 'dine_in',
+          orderingTableCode: 'T1',
+          orderingTableName: 'Table 1',
+          currencyCode: 'VND',
+          subtotal: 120000,
+          discount: 0,
+          taxAmount: 0,
+          totalAmount: 120000,
+          note: 'No sugar',
+          createdAt: '2026-04-11T12:34:00Z',
+          items: [{
+            productId: '5000',
+            quantity: 2,
+            unitPrice: 60000,
+            discountAmount: 0,
+            taxAmount: 0,
+            lineTotal: 120000,
+            note: 'Less ice',
+          }],
+        }],
+        limit: 20,
+        offset: 0,
+        total: 1,
+        hasMore: false,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const page = await salesApi.orders('token', {
+      outletId: '3477603326876991488',
+      publicOrderOnly: true,
+      limit: 20,
+      offset: 0,
+    });
+
+    expect(page.items[0]).toMatchObject({
+      id: '3478000000000000001',
+      publicOrderToken: 'pub_ord_token_123',
+      orderingTableCode: 'T1',
+      orderingTableName: 'Table 1',
+      currencyCode: 'VND',
+      note: 'No sugar',
+      items: [{
+        productId: '5000',
+        quantity: 2,
+        unitPrice: 60000,
+        lineTotal: 120000,
+        note: 'Less ice',
+      }],
+    });
+  });
+});

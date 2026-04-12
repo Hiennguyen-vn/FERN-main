@@ -108,4 +108,26 @@ public class PayrollController {
   public PayrollDtos.PayrollView approvePayroll(@PathVariable long payrollId) {
     return payrollService.approvePayroll(payrollId);
   }
+
+  @PostMapping("/{payrollId}/reject")
+  public PayrollDtos.PayrollView rejectPayroll(
+      @PathVariable long payrollId,
+      @RequestBody(required = false) PayrollDtos.PayrollDecisionRequest request
+  ) {
+    return payrollService.rejectPayroll(payrollId, request == null ? null : request.reason());
+  }
+
+  /**
+   * Imports attendance data from hr-service and creates a payroll timesheet in one call.
+   * payroll-service fetches approved work shifts via the internal service token,
+   * aggregates workDays / workHours / lateCount / absentDays, then inserts the timesheet record.
+   * The frontend never needs to touch raw shift data.
+   */
+  @PostMapping("/timesheets/import-from-attendance")
+  public ResponseEntity<PayrollDtos.PayrollTimesheetView> importTimesheetFromAttendance(
+      @Valid @RequestBody PayrollDtos.ImportFromAttendanceRequest request
+  ) {
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(payrollService.importFromAttendance(request));
+  }
 }

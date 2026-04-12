@@ -24,6 +24,7 @@ interface Props {
   onReconcile: (session: POSSession) => void;
   onEditSession?: (session: POSSession) => void;
   onDeleteSession?: (session: POSSession) => void;
+  onCustomerOrders?: () => void;
   onCustomers?: () => void;
   onOutletStats?: () => void;
   onTables?: () => void;
@@ -31,7 +32,7 @@ interface Props {
 
 export function POSSessionList({
   sessions, onOpenSession, onViewSession, onCloseSession, onReconcile,
-  onEditSession, onDeleteSession, onCustomers, onOutletStats, onTables,
+  onEditSession, onDeleteSession, onCustomerOrders, onCustomers, onOutletStats, onTables,
 }: Props) {
   const [statusFilter, setStatusFilter] = useState<POSSessionStatus | 'all'>('all');
   const [search, setSearch] = useState('');
@@ -62,6 +63,11 @@ export function POSSessionList({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {onCustomerOrders && (
+            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={onCustomerOrders}>
+              <Clock className="h-3 w-3" /> Customer Orders
+            </Button>
+          )}
           {onCustomers && (
             <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={onCustomers}>
               <Users className="h-3 w-3" /> Customers

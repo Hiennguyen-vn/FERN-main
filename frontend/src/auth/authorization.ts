@@ -20,20 +20,61 @@ function hasAnyValue(values: Set<string>, candidates: string[]) {
   return candidates.some((candidate) => values.has(candidate));
 }
 
+function getAccessState(session: AuthSession | null) {
+  const roles = collectValues(session?.rolesByOutlet);
+  const permissions = collectValues(session?.permissionsByOutlet);
+  const outletScope = new Set([
+    ...Object.keys(session?.rolesByOutlet ?? {}),
+    ...Object.keys(session?.permissionsByOutlet ?? {}),
+  ].filter(Boolean));
+
+  return {
+    roles,
+    permissions,
+    outletScope,
+    isAdmin: hasAnyValue(roles, [...ADMIN_ROLES]),
+    hasOutletScope: outletScope.size > 0,
+  };
+}
+
+export function isAdminSession(session: AuthSession | null) {
+  return getAccessState(session).isAdmin;
+}
+
+export function hasFinanceWorkspaceAccess(session: AuthSession | null) {
+  return getAccessState(session).isAdmin;
+}
+
+export function hasHrOperationsAccess(session: AuthSession | null) {
+  if (!session) {
+    return false;
+  }
+
+  const { isAdmin, permissions, roles, hasOutletScope } = getAccessState(session);
+  return isAdmin
+    || hasAnyValue(permissions, ['hr.schedule', 'hr.contract.write', 'hr.contract.read', 'payroll.write', 'payroll.read'])
+    || hasAnyValue(roles, ['outlet_manager', 'regional_manager', 'hr_manager'])
+    || hasOutletScope;
+}
+
+export function hasHrCompensationAccess(session: AuthSession | null) {
+  return getAccessState(session).isAdmin;
+}
+
+export function hasSalesOrderQueueAccess(session: AuthSession | null) {
+  if (!session) {
+    return false;
+  }
+  const { isAdmin, permissions } = getAccessState(session);
+  return isAdmin || hasAnyValue(permissions, ['sales.order.write']);
+}
+
 export function hasModuleAccess(session: AuthSession | null, family: ModuleFamily) {
   if (!session) {
     return false;
   }
 
-  const roles = collectValues(session.rolesByOutlet);
-  const permissions = collectValues(session.permissionsByOutlet);
-  const outletScope = new Set([
-    ...Object.keys(session.rolesByOutlet ?? {}),
-    ...Object.keys(session.permissionsByOutlet ?? {}),
-  ].filter(Boolean));
-
-  const isAdmin = hasAnyValue(roles, [...ADMIN_ROLES]);
-  const hasOutletScope = outletScope.size > 0;
+  const { roles, permissions, isAdmin, hasOutletScope } = getAccessState(session);
 
   switch (family) {
     case 'home':
@@ -49,12 +90,14 @@ export function hasModuleAccess(session: AuthSession | null, family: ModuleFamil
     case 'procurement':
       return isAdmin || hasAnyValue(permissions, ['purchase.write', 'purchase.approve']) || hasAnyValue(roles, ['outlet_manager']) || hasOutletScope;
     case 'finance':
+      return hasFinanceWorkspaceAccess(session);
     case 'audit':
-      return isAdmin;
+      return isAdmin || hasAnyValue(permissions, ['audit.read']) || hasAnyValue(roles, ['accountant', 'finance_manager']);
     case 'hr':
+      return hasHrOperationsAccess(session);
     case 'workforce':
     case 'scheduling':
-      return isAdmin || hasAnyValue(permissions, ['hr.schedule']) || hasAnyValue(roles, ['outlet_manager']) || hasOutletScope;
+      return hasHrOperationsAccess(session);
     case 'iam':
       return isAdmin || hasAnyValue(permissions, ['auth.user.write', 'auth.role.write']);
     case 'org':

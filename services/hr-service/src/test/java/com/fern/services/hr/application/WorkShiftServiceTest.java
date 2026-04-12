@@ -174,4 +174,50 @@ class WorkShiftServiceTest {
         )
     ));
   }
+
+  @Test
+  void updateAttendanceRejectsUnsupportedAttendanceStatus() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        200L,
+        "cashier",
+        null,
+        Set.of("cashier"),
+        Set.of(),
+        Set.of(7L),
+        true,
+        false,
+        null
+    ));
+    when(workShiftRepository.findById(501L)).thenReturn(java.util.Optional.of(new WorkShiftRepository.WorkShiftRecord(
+        501L,
+        10L,
+        200L,
+        LocalDate.parse("2026-03-28"),
+        "scheduled",
+        "pending",
+        "pending",
+        null,
+        null,
+        null,
+        null,
+        null,
+        Instant.parse("2026-03-27T00:00:00Z"),
+        Instant.parse("2026-03-27T00:00:00Z"),
+        7L
+    )));
+
+    WorkShiftService service = new WorkShiftService(workShiftRepository, shiftRepository, idGenerator, permissionMatrixService);
+
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.updateAttendance(
+        501L,
+        new WorkShiftDto.AttendanceUpdate(
+            "checked_in",
+            null,
+            null,
+            null
+        )
+    ));
+
+    assertEquals(400, exception.getStatusCode());
+  }
 }

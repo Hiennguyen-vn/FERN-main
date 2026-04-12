@@ -24,12 +24,14 @@ import {
   type CrmCustomerView,
   type OrderingTableView,
   type ProductView,
-  type SaleDetailView,
-  type SaleLineItemView,
   type SaleListItemView,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
 import { normalizeNumericId } from '@/constants/pos';
+import {
+  distributeAmountAcrossItems,
+  mapSaleToUi,
+} from '@/components/pos/sale-order-utils';
 import { toast } from 'sonner';
 
 type POSView =
@@ -51,11 +53,7 @@ interface Props {
   outletName: string;
   operatorName: string;
   outletId?: string;
-}
-
-function toNumber(value: unknown) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : 0;
+  onCustomerOrders?: () => void;
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -67,94 +65,13 @@ type PaymentCompletionResult = {
   errorMessage?: string;
 };
 
-function roundCurrency(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
-function distributeAmountAcrossItems(items: OrderLineItem[], totalAmount: number) {
-  if (items.length === 0) {
-    return [];
-  }
-  const totalLineAmount = items.reduce((sum, item) => sum + item.lineTotal, 0);
-  if (Math.abs(totalAmount) < 0.005 || totalLineAmount <= 0) {
-    return items.map(() => 0);
-  }
-
-  let remaining = roundCurrency(totalAmount);
-  return items.map((item, index) => {
-    if (index === items.length - 1) {
-      return remaining;
-    }
-    const share = roundCurrency((item.lineTotal / totalLineAmount) * totalAmount);
-    remaining = roundCurrency(remaining - share);
-    return share;
-  });
-}
-
 function formatDateTime(value?: string | null) {
   if (!value) return '—';
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
 }
 
-function mapSaleToUi(
-  sale: SaleListItemView,
-  detail: SaleDetailView | null,
-  outletName: string,
-  operatorName: string,
-  sessionCodeById: Map<string, string>,
-  productNameById: Map<string, string>,
-): SaleOrder {
-  const status = String((detail?.status ?? sale?.status ?? '')).toLowerCase();
-  const paymentStatusRaw = String((detail?.paymentStatus ?? sale?.paymentStatus ?? '')).toLowerCase();
-  const sessionId = detail?.posSessionId != null ? String(detail.posSessionId) : sale?.posSessionId != null ? String(sale.posSessionId) : '';
-
-  const lineItems: OrderLineItem[] = Array.isArray(detail?.items)
-    ? detail.items.map((item: SaleLineItemView, index: number) => {
-        const productId = String(item.productId ?? '');
-        return {
-          id: `${sale.id}-li-${index}`,
-          productId,
-          productName: productNameById.get(productId) || `Product ${productId || index + 1}`,
-          category: 'Product',
-          quantity: toNumber(item.quantity),
-          unitPrice: toNumber(item.unitPrice),
-          lineTotal: toNumber(item.lineTotal),
-        };
-      })
-    : [];
-
-  const payments = detail?.payment
-    ? [{
-        id: `${sale.id}-pay-1`,
-        method: String(detail.payment.paymentMethod ?? 'cash') as PaymentMethod,
-        amount: toNumber(detail.payment.amount),
-        capturedAt: String(detail.payment.paymentTime ?? detail.createdAt ?? new Date().toISOString()),
-        reference: detail.payment.transactionRef ? String(detail.payment.transactionRef) : undefined,
-      }]
-    : [];
-
-  return {
-    id: String(sale.id),
-    orderNumber: `SO-${String(sale.id).slice(-6)}`,
-    sessionId,
-    sessionCode: sessionCodeById.get(sessionId) || '—',
-    backendStatus: status,
-    outletName,
-    createdBy: operatorName,
-    createdAt: String(detail?.createdAt ?? sale?.createdAt ?? new Date().toISOString()),
-    status: status === 'cancelled' ? 'cancelled' : (status === 'payment_done' || status === 'completed' ? 'completed' : 'open'),
-    paymentStatus: paymentStatusRaw === 'paid' ? 'paid' : paymentStatusRaw === 'partially_paid' ? 'partial' : 'unpaid',
-    lineItems,
-    subtotal: toNumber(detail?.subtotal ?? sale?.subtotal),
-    taxAmount: toNumber(detail?.taxAmount ?? sale?.taxAmount),
-    total: toNumber(detail?.totalAmount ?? sale?.totalAmount),
-    tableNumber: detail?.orderingTableCode ? String(detail.orderingTableCode) : sale?.orderingTableCode ? String(sale.orderingTableCode) : undefined,
-    payments,
-  };
-}
-
-export function POSModule({ outletName, operatorName, outletId }: Props) {
+export function POSModule({ outletName, operatorName, outletId, onCustomerOrders }: Props) {
   const { token, scope } = useShellRuntime();
   const [view, setView] = useState<POSView>({ screen: 'list' });
   const [orders, setOrders] = useState<SaleOrder[]>([]);
@@ -630,6 +547,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
         onReconcile={(session) => setView({ screen: 'reconcile', sessionId: session.id })}
         onEditSession={(session) => setView({ screen: 'edit-session', sessionId: session.id })}
         onDeleteSession={(session) => handleDeleteSession(session.id)}
+        onCustomerOrders={onCustomerOrders}
         onCustomers={() => setView({ screen: 'customers' })}
         onOutletStats={() => setView({ screen: 'outlet-stats' })}
         onTables={() => setView({ screen: 'tables' })}
@@ -719,6 +637,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     return (
       <PaymentCapture
         orderTotal={view.total}
+        currencyCode={getOrder(view.orderId || '')?.currencyCode || getSession(view.sessionId)?.currencyCode || 'USD'}
         lineItems={view.items}
         promoCode={view.promo}
         promoDiscount={view.promoDiscount}

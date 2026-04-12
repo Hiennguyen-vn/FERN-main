@@ -59,6 +59,7 @@ export interface ShiftsQuery {
 }
 
 export interface WorkShiftsQuery {
+  userId?: string;
   outletId?: string;
   startDate?: string;
   endDate?: string;
@@ -95,6 +96,24 @@ export interface CreateWorkShiftPayload {
   scheduleStatus?: string | null;
   attendanceStatus?: string | null;
   approvalStatus?: string | null;
+}
+
+export interface CreateContractPayload {
+  userId: string;
+  outletId?: string | null;
+  employmentType: string;
+  salaryType: string;
+  baseSalary: number;
+  currencyCode: string;
+  regionCode?: string | null;
+  startDate: string;
+  endDate?: string | null;
+  taxCode?: string | null;
+  bankAccount?: string | null;
+}
+
+export interface TerminateContractPayload {
+  endDate?: string | null;
 }
 
 export interface TimeOffQuery {
@@ -168,11 +187,23 @@ function decodeContract(value: unknown): ContractView {
 
 export const hrApi = {
   shifts: async (token: string, outletId?: string): Promise<ShiftView[]> =>
-    decodeArray(await apiRequest('/api/v1/hr/shifts', { token, query: { outletId } }), decodeShift),
+    decodePaged(
+      await apiRequest('/api/v1/hr/shifts', {
+        token,
+        query: {
+          outletId,
+          sortBy: 'startTime',
+          sortDir: 'asc',
+          limit: 200,
+          offset: 0,
+        },
+      }),
+      decodeShift,
+    ).items,
   shiftsPaged: async (token: string, query: ShiftsQuery): Promise<PagedResponse<ShiftView>> =>
     decodePaged(await apiRequest('/api/v1/hr/shifts', { token, query }), decodeShift),
   workShifts: async (token: string, query: WorkShiftsQuery): Promise<WorkShiftView[]> =>
-    decodeArray(await apiRequest('/api/v1/hr/work-shifts', { token, query }), decodeWorkShift),
+    decodePaged(await apiRequest('/api/v1/hr/work-shifts', { token, query }), decodeWorkShift).items,
   workShiftsPaged: async (token: string, query: WorkShiftsQuery): Promise<PagedResponse<WorkShiftView>> =>
     decodePaged(await apiRequest('/api/v1/hr/work-shifts', { token, query }), decodeWorkShift),
   workShiftsByOutletDate: async (token: string, outletId: string, date: string): Promise<WorkShiftView[]> =>
@@ -193,8 +224,8 @@ export const hrApi = {
         method: 'POST',
         token,
         body: {
-          shiftId: Number(payload.shiftId),
-          userId: Number(payload.userId),
+          shiftId: String(payload.shiftId),
+          userId: String(payload.userId),
           workDate: payload.workDate,
           scheduleStatus: payload.scheduleStatus ?? null,
           attendanceStatus: payload.attendanceStatus ?? null,
@@ -209,4 +240,26 @@ export const hrApi = {
     apiRequest(`/api/v1/hr/work-shifts/${workShiftId}/approve`, { method: 'POST', token }),
   rejectWorkShift: async (token: string, workShiftId: string, payload?: { reason?: string | null }): Promise<unknown> =>
     apiRequest(`/api/v1/hr/work-shifts/${workShiftId}/reject`, { method: 'POST', token, body: payload ?? {} }),
+  createContract: async (token: string, payload: CreateContractPayload): Promise<ContractView> =>
+    decodeContract(
+      await apiRequest('/api/v1/hr/contracts', {
+        method: 'POST',
+        token,
+        body: {
+          userId: String(payload.userId),
+          outletId: payload.outletId ? String(payload.outletId) : null,
+          employmentType: payload.employmentType,
+          salaryType: payload.salaryType,
+          baseSalary: payload.baseSalary,
+          currencyCode: payload.currencyCode.toUpperCase(),
+          regionCode: payload.regionCode ?? null,
+          startDate: payload.startDate,
+          endDate: payload.endDate ?? null,
+          taxCode: payload.taxCode ?? null,
+          bankAccount: payload.bankAccount ?? null,
+        },
+      }),
+    ),
+  terminateContract: async (token: string, contractId: string, payload?: TerminateContractPayload): Promise<unknown> =>
+    apiRequest(`/api/v1/hr/contracts/${contractId}/terminate`, { method: 'POST', token, body: payload ?? {} }),
 };

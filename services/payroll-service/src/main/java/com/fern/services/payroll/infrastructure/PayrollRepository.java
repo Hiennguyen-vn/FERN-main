@@ -605,6 +605,39 @@ public class PayrollRepository extends BaseRepository {
     });
   }
 
+  public PayrollRecord rejectPayroll(long payrollId, Long reviewedByUserId, String reason) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          UPDATE core.payroll
+          SET status = 'rejected',
+              approved_by_user_id = ?,
+              approved_at = NULL,
+              note = CASE
+                  WHEN ? IS NULL THEN note
+                  WHEN note IS NULL OR note = '' THEN ?
+                  ELSE note || E'\n\nRejection: ' || ?
+                END,
+              updated_at = NOW()
+          WHERE id = ?
+          """
+      )) {
+        if (reviewedByUserId == null) {
+          ps.setNull(1, java.sql.Types.BIGINT);
+        } else {
+          ps.setLong(1, reviewedByUserId);
+        }
+        ps.setString(2, reason);
+        ps.setString(3, reason == null ? null : "Rejection: " + reason);
+        ps.setString(4, reason);
+        ps.setLong(5, payrollId);
+        ps.executeUpdate();
+      }
+      return findPayrollTransactional(conn, payrollId)
+          .orElseThrow(() -> new IllegalStateException("Payroll not found after rejection: " + payrollId));
+    });
+  }
+
   private Optional<PayrollRecord> findPayrollTransactional(Connection conn, long payrollId) throws Exception {
     try (PreparedStatement ps = conn.prepareStatement(
         """

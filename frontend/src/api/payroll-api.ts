@@ -131,6 +131,13 @@ export interface GeneratePayrollRunPayload {
   note?: string | null;
 }
 
+export interface ImportFromAttendancePayload {
+  payrollPeriodId: string;
+  userId: string;
+  outletId?: string | null;
+  overtimeRate?: number | null;
+}
+
 function decodePayrollPeriod(value: unknown): PayrollPeriodView {
   const record = asRecord(value) ?? {};
   return {
@@ -253,4 +260,22 @@ export const payrollApi = {
     ),
   approveRun: async (token: string, payrollId: string): Promise<unknown> =>
     apiRequest(`/api/v1/payroll/${payrollId}/approve`, { method: 'POST', token }),
+  rejectRun: async (token: string, payrollId: string, payload: { reason: string }): Promise<unknown> =>
+    apiRequest(`/api/v1/payroll/${payrollId}/reject`, { method: 'POST', token, body: payload }),
+  importFromAttendance: async (
+    token: string,
+    payload: ImportFromAttendancePayload,
+  ): Promise<PayrollTimesheetView> =>
+    decodePayrollTimesheet(
+      await apiRequest('/api/v1/payroll/timesheets/import-from-attendance', {
+        method: 'POST',
+        token,
+        body: {
+          payrollPeriodId: asString(payload.payrollPeriodId),
+          userId: asString(payload.userId),
+          outletId: payload.outletId ?? null,
+          overtimeRate: payload.overtimeRate ?? 1.5,
+        },
+      }),
+    ),
 };

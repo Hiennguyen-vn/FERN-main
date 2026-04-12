@@ -106,4 +106,32 @@ class ShiftServiceTest {
         0
     )));
   }
+
+  @Test
+  void listShiftsRequiresOutletScopeForNonAdminUsers() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        9L,
+        "manager",
+        null,
+        Set.of("outlet_manager"),
+        Set.of(),
+        Set.of(10L),
+        true,
+        false,
+        null
+    ));
+
+    ShiftService service = new ShiftService(shiftRepository, idGenerator, permissionMatrixService);
+
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.listShiftsByOutlet(
+        null,
+        null,
+        null,
+        null,
+        20,
+        0
+    ));
+
+    assertEquals(403, exception.getStatusCode());
+  }
 }

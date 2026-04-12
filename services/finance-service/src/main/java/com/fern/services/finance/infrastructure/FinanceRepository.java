@@ -189,7 +189,7 @@ public class FinanceRepository extends BaseRepository {
       String description
   ) {
     return executeInTransaction(conn -> {
-      insertExpenseRecord(conn, expenseId, outletId, businessDate, currencyCode, amount, "operating_expense", note, createdByUserId);
+      insertExpenseRecord(conn, expenseId, outletId, businessDate, currencyCode, amount, "other", note, createdByUserId);
       try (PreparedStatement ps = conn.prepareStatement(
           "INSERT INTO core.expense_other (expense_record_id, description) VALUES (?, ?)"
       )) {

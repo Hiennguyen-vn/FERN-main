@@ -31,6 +31,7 @@ export interface OrderLineItem {
   quantity: number;
   unitPrice: number;
   lineTotal: number;
+  note?: string;
 }
 
 export interface SaleOrder {
@@ -39,6 +40,10 @@ export interface SaleOrder {
   sessionId: string;
   sessionCode: string;
   backendStatus?: string;
+  orderType?: string;
+  currencyCode?: string;
+  sourceLabel?: string;
+  publicOrderToken?: string;
   outletName: string;
   createdBy: string;
   createdAt: string;
@@ -51,6 +56,8 @@ export interface SaleOrder {
   promotionCode?: string;
   promotionDiscount?: number;
   tableNumber?: string;
+  tableName?: string;
+  note?: string;
   cancelReason?: string;
   payments: OrderPayment[];
 }

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { hasModuleAccess } from '@/auth/authorization';
+import {
+  hasHrCompensationAccess,
+  hasModuleAccess,
+  hasSalesOrderQueueAccess,
+} from '@/auth/authorization';
 import { COOKIE_AUTH_TOKEN_SENTINEL } from '@/auth/session';
 import type { AuthSession } from '@/api/fern-api';
 
@@ -20,17 +24,38 @@ function buildSession(overrides: Partial<AuthSession> = {}): AuthSession {
 }
 
 describe('hasModuleAccess', () => {
-  it('shows finance only to admin-grade sessions', () => {
-    const scopedSession = buildSession({
+  it('shows finance only to admin users while backend keeps finance admin-only', () => {
+    const cashierSession = buildSession({
       rolesByOutlet: { '101': ['cashier'] },
       permissionsByOutlet: { '101': ['sales.order.write'] },
     });
     const adminSession = buildSession({
       rolesByOutlet: { '101': ['admin'] },
     });
+    const accountantSession = buildSession({
+      rolesByOutlet: { '101': ['accountant'] },
+    });
+    const payrollSession = buildSession({
+      permissionsByOutlet: { '101': ['payroll.approve'] },
+    });
 
-    expect(hasModuleAccess(scopedSession, 'finance')).toBe(false);
+    expect(hasModuleAccess(cashierSession, 'finance')).toBe(false);
     expect(hasModuleAccess(adminSession, 'finance')).toBe(true);
+    expect(hasModuleAccess(accountantSession, 'finance')).toBe(false);
+    expect(hasModuleAccess(payrollSession, 'finance')).toBe(false);
+  });
+
+  it('keeps HR attendance visible while compensation tabs stay admin-only', () => {
+    const outletManager = buildSession({
+      rolesByOutlet: { '101': ['outlet_manager'] },
+    });
+    const admin = buildSession({
+      rolesByOutlet: { '101': ['admin'] },
+    });
+
+    expect(hasModuleAccess(outletManager, 'hr')).toBe(true);
+    expect(hasHrCompensationAccess(outletManager)).toBe(false);
+    expect(hasHrCompensationAccess(admin)).toBe(true);
   });
 
   it('keeps POS visible for outlet-scoped sales users', () => {
@@ -40,6 +65,20 @@ describe('hasModuleAccess', () => {
 
     expect(hasModuleAccess(salesSession, 'pos')).toBe(true);
     expect(hasModuleAccess(salesSession, 'crm')).toBe(true);
+    expect(hasSalesOrderQueueAccess(salesSession)).toBe(true);
+  });
+
+  it('restricts customer-order queue to staff who can actually process sales', () => {
+    const viewer = buildSession({
+      rolesByOutlet: { '101': ['cashier'] },
+      permissionsByOutlet: { '101': ['inventory.read'] },
+    });
+    const admin = buildSession({
+      rolesByOutlet: { '101': ['admin'] },
+    });
+
+    expect(hasSalesOrderQueueAccess(viewer)).toBe(false);
+    expect(hasSalesOrderQueueAccess(admin)).toBe(true);
   });
 
   it('requires IAM permissions or admin role for IAM surfaces', () => {

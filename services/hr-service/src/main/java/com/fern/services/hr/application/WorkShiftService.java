@@ -13,6 +13,7 @@ import com.fern.services.hr.infrastructure.WorkShiftRepository;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class WorkShiftService {
 
   private static final String HR_SCHEDULE_PERMISSION = "hr.schedule";
+  private static final Set<String> ATTENDANCE_STATUSES = Set.of("pending", "present", "late", "absent", "leave");
 
   private final WorkShiftRepository workShiftRepository;
   private final ShiftRepository shiftRepository;
@@ -156,11 +158,12 @@ public class WorkShiftService {
   public WorkShiftDto updateAttendance(long workShiftId, WorkShiftDto.AttendanceUpdate request) {
     WorkShiftRepository.WorkShiftRecord existing = workShiftRepository.findById(workShiftId)
         .orElseThrow(() -> ServiceException.notFound("Work shift not found: " + workShiftId));
-    requireReadAccess(existing);
+    requireAttendanceMutationAccess(existing);
     if (request.actualStartTime() != null && request.actualEndTime() != null
         && request.actualEndTime().isBefore(request.actualStartTime())) {
       throw ServiceException.badRequest("actualEndTime must be after actualStartTime");
     }
+    validateAttendanceStatus(request.attendanceStatus());
     workShiftRepository.updateAttendance(
         workShiftId,
         trimToNull(request.attendanceStatus()),
@@ -205,6 +208,18 @@ public class WorkShiftService {
     requireScheduleAccess(outletId, true);
   }
 
+  private void requireAttendanceMutationAccess(WorkShiftRepository.WorkShiftRecord record) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+      return;
+    }
+    Long userId = context.userId();
+    if (userId != null && userId == record.userId()) {
+      return;
+    }
+    requireScheduleAccess(record.outletId(), true);
+  }
+
   private void requireScheduleAccess(long outletId, boolean mutation) {
     RequestUserContext context = RequestUserContextHolder.get();
     if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
@@ -226,6 +241,16 @@ public class WorkShiftService {
   private static String defaultEnum(String value, String fallback) {
     String normalized = trimToNull(value);
     return normalized == null ? fallback : normalized;
+  }
+
+  private static void validateAttendanceStatus(String attendanceStatus) {
+    String normalized = trimToNull(attendanceStatus);
+    if (normalized == null) {
+      return;
+    }
+    if (!ATTENDANCE_STATUSES.contains(normalized)) {
+      throw ServiceException.badRequest("Unsupported attendanceStatus: " + normalized);
+    }
   }
 
   private static String trimToNull(String value) {

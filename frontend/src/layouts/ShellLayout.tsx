@@ -29,6 +29,7 @@ const NotificationPanel = lazy(() => import('@/components/shell/NotificationPane
 const ROUTE_META: Record<string, { title: string; breadcrumbs: string[] }> = {
   '/dashboard': { title: 'Outlet Control Center', breadcrumbs: ['Home', 'Dashboard'] },
   '/pos': { title: 'Point of Sale', breadcrumbs: ['POS'] },
+  '/order': { title: 'Customer Order Queue', breadcrumbs: ['POS', 'Customer Orders'] },
   '/inventory': { title: 'Inventory', breadcrumbs: ['Operations', 'Inventory'] },
   '/procurement': { title: 'Procurement', breadcrumbs: ['Operations', 'Procurement'] },
   '/catalog': { title: 'Catalog', breadcrumbs: ['Operations', 'Catalog'] },

@@ -1,22 +1,32 @@
 import {
-  ArrowLeft, Tag, CreditCard, ShoppingBag, CheckCircle2, XCircle,
-  Clock, Info,
+  ArrowLeft, Tag, CreditCard, XCircle, Info,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { SaleOrder } from '@/types/pos';
-import { PAYMENT_METHOD_LABELS } from '@/constants/pos';
 import { cn } from '@/lib/utils';
+import { formatPosCurrency } from '@/components/pos/sale-order-utils';
 
 interface Props {
   order: SaleOrder;
   onBack: () => void;
-  onPay: () => void;
-  onCancel: () => void;
+  onPay?: () => void;
+  onApprove?: () => void;
+  onCancel?: () => void;
+  approvePending?: boolean;
+  paymentPending?: boolean;
 }
 
-export function SaleOrderDetail({ order, onBack, onPay, onCancel }: Props) {
-  const statusIcon = order.status === 'completed' ? CheckCircle2 : order.status === 'cancelled' ? XCircle : Clock;
-  const StatusIcon = statusIcon;
+export function SaleOrderDetail({
+  order,
+  onBack,
+  onPay,
+  onApprove,
+  onCancel,
+  approvePending = false,
+  paymentPending = false,
+}: Props) {
+  const isAwaitingApproval = order.status === 'open' && order.paymentStatus === 'unpaid' && order.backendStatus !== 'order_approved';
+  const isAwaitingPayment = order.status === 'open' && order.paymentStatus === 'unpaid' && order.backendStatus === 'order_approved';
 
   return (
     <div className="p-6 space-y-5 animate-fade-in">
@@ -43,9 +53,15 @@ export function SaleOrderDetail({ order, onBack, onPay, onCancel }: Props) {
               )}>{order.paymentStatus}</span>
             </div>
             <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground flex-wrap">
+              {order.sourceLabel ? <span>{order.sourceLabel}</span> : null}
+              {order.sourceLabel ? <span>·</span> : null}
               <span>{order.outletName}</span>
-              <span>·</span>
-              <span>Session {order.sessionCode}</span>
+              {order.sessionId ? (
+                <>
+                  <span>·</span>
+                  <span>Session {order.sessionCode}</span>
+                </>
+              ) : null}
               <span>·</span>
               <span>{order.createdBy}</span>
               <span>·</span>
@@ -53,12 +69,19 @@ export function SaleOrderDetail({ order, onBack, onPay, onCancel }: Props) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {order.status === 'open' && order.paymentStatus === 'unpaid' && (
+            {isAwaitingApproval && onApprove && (
+              <Button size="sm" className="h-8 text-xs" onClick={onApprove} disabled={approvePending}>
+                {approvePending ? 'Approving…' : 'Approve Order'}
+              </Button>
+            )}
+            {isAwaitingPayment && onPay && (
               <>
-                <Button variant="outline" size="sm" className="h-8 text-xs text-destructive border-destructive/20 hover:bg-destructive/5" onClick={onCancel}>
-                  Cancel Order
-                </Button>
-                <Button size="sm" className="h-8 text-xs" onClick={onPay}>
+                {onCancel ? (
+                  <Button variant="outline" size="sm" className="h-8 text-xs text-destructive border-destructive/20 hover:bg-destructive/5" onClick={onCancel}>
+                    Cancel Order
+                  </Button>
+                ) : null}
+                <Button size="sm" className="h-8 text-xs" onClick={onPay} disabled={paymentPending}>
                   Capture Payment
                 </Button>
               </>
@@ -77,14 +100,29 @@ export function SaleOrderDetail({ order, onBack, onPay, onCancel }: Props) {
           <div className="mt-4 flex items-center gap-2 p-2.5 rounded-lg bg-success/5 border border-success/15">
             <Tag className="h-3.5 w-3.5 text-success" />
             <span className="text-xs font-medium text-success">{order.promotionCode}</span>
-            <span className="text-xs text-success">— ${order.promotionDiscount?.toFixed(2)} discount applied</span>
+            <span className="text-xs text-success">— {formatPosCurrency(order.promotionDiscount || 0, order.currencyCode)} discount applied</span>
           </div>
         )}
 
         {/* Table info */}
-        {order.tableNumber && (
-          <div className="mt-2 text-xs text-muted-foreground">Table: {order.tableNumber}</div>
-        )}
+        {order.tableNumber || order.tableName || order.publicOrderToken ? (
+          <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+            {order.tableName || order.tableNumber ? (
+              <div>Table: {[order.tableName, order.tableNumber].filter(Boolean).join(' · ')}</div>
+            ) : null}
+            {order.publicOrderToken ? <div>Customer token: {order.publicOrderToken}</div> : null}
+          </div>
+        ) : null}
+
+        {order.note ? (
+          <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-info/10 bg-info/5 p-3">
+            <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-info" />
+            <div>
+              <p className="text-xs font-medium text-foreground">Order note</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{order.note}</p>
+            </div>
+          </div>
+        ) : null}
 
         {/* Cancel reason */}
         {order.cancelReason && (
@@ -115,11 +153,16 @@ export function SaleOrderDetail({ order, onBack, onPay, onCancel }: Props) {
             <tbody>
               {order.lineItems.map(item => (
                 <tr key={item.id} className="border-b last:border-0">
-                  <td className="px-5 py-3 text-sm font-medium text-foreground">{item.productName}</td>
+                  <td className="px-5 py-3">
+                    <div className="text-sm font-medium text-foreground">{item.productName}</div>
+                    {item.note ? (
+                      <div className="mt-1 text-[11px] text-muted-foreground">Note: {item.note}</div>
+                    ) : null}
+                  </td>
                   <td className="px-5 py-3 text-xs text-muted-foreground">{item.category}</td>
                   <td className="px-5 py-3 text-sm text-foreground">{item.quantity}</td>
-                  <td className="px-5 py-3 text-sm text-muted-foreground">${item.unitPrice.toFixed(2)}</td>
-                  <td className="px-5 py-3 text-sm font-medium text-foreground">${item.lineTotal.toFixed(2)}</td>
+                  <td className="px-5 py-3 text-sm text-muted-foreground">{formatPosCurrency(item.unitPrice, order.currencyCode)}</td>
+                  <td className="px-5 py-3 text-sm font-medium text-foreground">{formatPosCurrency(item.lineTotal, order.currencyCode)}</td>
                 </tr>
               ))}
             </tbody>
@@ -127,19 +170,19 @@ export function SaleOrderDetail({ order, onBack, onPay, onCancel }: Props) {
         </div>
         <div className="px-5 py-3 border-t bg-muted/20 space-y-1.5">
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span>Subtotal</span><span>${order.subtotal.toFixed(2)}</span>
+            <span>Subtotal</span><span>{formatPosCurrency(order.subtotal, order.currencyCode)}</span>
           </div>
           {order.promotionCode && (
             <div className="flex justify-between text-xs text-success">
               <span>Promotion ({order.promotionCode})</span>
-              <span>−${order.promotionDiscount?.toFixed(2)}</span>
+              <span>−{formatPosCurrency(order.promotionDiscount || 0, order.currencyCode)}</span>
             </div>
           )}
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span>Tax</span><span>${order.taxAmount.toFixed(2)}</span>
+            <span>Tax</span><span>{formatPosCurrency(order.taxAmount, order.currencyCode)}</span>
           </div>
           <div className="flex justify-between text-sm font-semibold text-foreground pt-1 border-t">
-            <span>Total</span><span>${order.total.toFixed(2)}</span>
+            <span>Total</span><span>{formatPosCurrency(order.total, order.currencyCode)}</span>
           </div>
         </div>
       </div>
@@ -158,7 +201,7 @@ export function SaleOrderDetail({ order, onBack, onPay, onCancel }: Props) {
                     {p.reference && <p className="text-[10px] text-muted-foreground">{p.reference}</p>}
                   </div>
                 </div>
-                <p className="text-sm font-semibold text-foreground">${p.amount.toFixed(2)}</p>
+                <p className="text-sm font-semibold text-foreground">{formatPosCurrency(p.amount, order.currencyCode)}</p>
               </div>
             ))}
           </div>

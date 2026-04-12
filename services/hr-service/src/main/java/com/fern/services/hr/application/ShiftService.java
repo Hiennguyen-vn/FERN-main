@@ -69,6 +69,11 @@ public class ShiftService {
       Integer limit,
       Integer offset
   ) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    boolean admin = context.internalService() || context.hasRole("admin") || context.hasRole("superadmin");
+    if (!admin && outletId == null) {
+      throw ServiceException.forbidden("Outlet-scoped HR access is required");
+    }
     if (outletId != null) {
       requireScheduleAccess(outletId, false);
     }

@@ -4,6 +4,7 @@ import { asDateOnly, asId, asNullableNumber, asNullableString, asRecord, asStrin
 
 export interface SaleLineItemView {
   productId?: string | null;
+  note?: string | null;
   quantity?: number | null;
   unitPrice?: number | null;
   discountAmount?: number | null;
@@ -25,15 +26,18 @@ export interface SaleListItemView {
   id: string;
   outletId?: string | null;
   posSessionId?: string | null;
+  publicOrderToken?: string | null;
   status?: string | null;
   paymentStatus?: string | null;
   orderType?: string | null;
   orderingTableCode?: string | null;
+  orderingTableName?: string | null;
   currencyCode?: string | null;
   subtotal?: number | null;
   discount?: number | null;
   taxAmount?: number | null;
   totalAmount?: number | null;
+  note?: string | null;
   createdAt?: string | null;
   items?: SaleLineItemView[];
   payment?: PaymentView | null;
@@ -67,6 +71,67 @@ export interface OrderingTableView {
   outletCode?: string | null;
   outletName?: string | null;
   status?: string | null;
+  [key: string]: unknown;
+}
+
+export interface PublicTableView {
+  tableToken: string;
+  tableCode?: string | null;
+  tableName?: string | null;
+  status?: string | null;
+  outletCode?: string | null;
+  outletName?: string | null;
+  currencyCode?: string | null;
+  timezoneName?: string | null;
+  businessDate?: string | null;
+  [key: string]: unknown;
+}
+
+export interface PublicMenuItemView {
+  productId: string;
+  code?: string | null;
+  name?: string | null;
+  categoryCode?: string | null;
+  description?: string | null;
+  imageUrl?: string | null;
+  priceValue?: number | null;
+  currencyCode?: string | null;
+  [key: string]: unknown;
+}
+
+export interface CreatePublicOrderPayload {
+  items: Array<{
+    productId: string | number;
+    quantity: number;
+    note?: string | null;
+  }>;
+  note?: string | null;
+}
+
+export interface PublicOrderLineView {
+  productId?: string | null;
+  productCode?: string | null;
+  productName?: string | null;
+  quantity?: number | null;
+  unitPrice?: number | null;
+  lineTotal?: number | null;
+  note?: string | null;
+  [key: string]: unknown;
+}
+
+export interface PublicOrderReceiptView {
+  orderToken: string;
+  tableCode?: string | null;
+  tableName?: string | null;
+  outletCode?: string | null;
+  outletName?: string | null;
+  currencyCode?: string | null;
+  orderStatus?: string | null;
+  paymentStatus?: string | null;
+  totalAmount?: number | null;
+  note?: string | null;
+  createdAt?: string | null;
+  items?: PublicOrderLineView[];
   [key: string]: unknown;
 }
 
@@ -196,6 +261,7 @@ function decodeLineItem(value: unknown): SaleLineItemView {
   return {
     ...record,
     productId: asNullableString(record.productId),
+    note: asNullableString(record.note),
     quantity: asNullableNumber(record.quantity),
     unitPrice: asNullableNumber(record.unitPrice),
     discountAmount: asNullableNumber(record.discountAmount),
@@ -224,15 +290,18 @@ function decodeSale(value: unknown): SaleListItemView {
     id: asId(record.id),
     outletId: asNullableString(record.outletId),
     posSessionId: asNullableString(record.posSessionId),
+    publicOrderToken: asNullableString(record.publicOrderToken),
     status: asNullableString(record.status),
     paymentStatus: asNullableString(record.paymentStatus),
     orderType: asNullableString(record.orderType),
     orderingTableCode: asNullableString(record.orderingTableCode),
+    orderingTableName: asNullableString(record.orderingTableName),
     currencyCode: asNullableString(record.currencyCode),
     subtotal: asNullableNumber(record.subtotal),
     discount: asNullableNumber(record.discount),
     taxAmount: asNullableNumber(record.taxAmount),
     totalAmount: asNullableNumber(record.totalAmount),
+    note: asNullableString(record.note),
     createdAt: asNullableString(record.createdAt),
     items: Array.isArray(record.items) ? record.items.map(decodeLineItem) : [],
     payment: decodePayment(record.payment),
@@ -270,6 +339,70 @@ function decodeOrderingTable(value: unknown): OrderingTableView {
     outletCode: asNullableString(record.outletCode),
     outletName: asNullableString(record.outletName),
     status: asNullableString(record.status),
+  };
+}
+
+function decodePublicTable(value: unknown): PublicTableView {
+  const record = asRecord(value) ?? {};
+  return {
+    ...record,
+    tableToken: asId(record.tableToken),
+    tableCode: asNullableString(record.tableCode),
+    tableName: asNullableString(record.tableName),
+    status: asNullableString(record.status),
+    outletCode: asNullableString(record.outletCode),
+    outletName: asNullableString(record.outletName),
+    currencyCode: asNullableString(record.currencyCode),
+    timezoneName: asNullableString(record.timezoneName),
+    businessDate: asDateOnly(record.businessDate),
+  };
+}
+
+function decodePublicMenuItem(value: unknown): PublicMenuItemView {
+  const record = asRecord(value) ?? {};
+  return {
+    ...record,
+    productId: asId(record.productId),
+    code: asNullableString(record.code),
+    name: asNullableString(record.name),
+    categoryCode: asNullableString(record.categoryCode),
+    description: asNullableString(record.description),
+    imageUrl: asNullableString(record.imageUrl),
+    priceValue: asNullableNumber(record.priceValue),
+    currencyCode: asNullableString(record.currencyCode),
+  };
+}
+
+function decodePublicOrderLine(value: unknown): PublicOrderLineView {
+  const record = asRecord(value) ?? {};
+  return {
+    ...record,
+    productId: asNullableString(record.productId),
+    productCode: asNullableString(record.productCode),
+    productName: asNullableString(record.productName),
+    quantity: asNullableNumber(record.quantity),
+    unitPrice: asNullableNumber(record.unitPrice),
+    lineTotal: asNullableNumber(record.lineTotal),
+    note: asNullableString(record.note),
+  };
+}
+
+function decodePublicOrderReceipt(value: unknown): PublicOrderReceiptView {
+  const record = asRecord(value) ?? {};
+  return {
+    ...record,
+    orderToken: asId(record.orderToken),
+    tableCode: asNullableString(record.tableCode),
+    tableName: asNullableString(record.tableName),
+    outletCode: asNullableString(record.outletCode),
+    outletName: asNullableString(record.outletName),
+    currencyCode: asNullableString(record.currencyCode),
+    orderStatus: asNullableString(record.orderStatus),
+    paymentStatus: asNullableString(record.paymentStatus),
+    totalAmount: asNullableNumber(record.totalAmount),
+    note: asNullableString(record.note),
+    createdAt: asNullableString(record.createdAt),
+    items: Array.isArray(record.items) ? record.items.map(decodePublicOrderLine) : [],
   };
 }
 
@@ -323,6 +456,29 @@ function decodePromotion(value: unknown): PromotionView {
 }
 
 export const salesApi = {
+  getPublicTable: async (tableToken: string): Promise<PublicTableView> =>
+    decodePublicTable(await apiRequest(`/api/v1/sales/public/tables/${tableToken}`)),
+  listPublicMenu: async (tableToken: string, onDate?: string): Promise<PublicMenuItemView[]> =>
+    decodeArray(
+      await apiRequest(`/api/v1/sales/public/tables/${tableToken}/menu`, { query: { onDate } }),
+      decodePublicMenuItem,
+    ),
+  createPublicOrder: async (tableToken: string, payload: CreatePublicOrderPayload): Promise<PublicOrderReceiptView> =>
+    decodePublicOrderReceipt(
+      await apiRequest(`/api/v1/sales/public/tables/${tableToken}/orders`, {
+        method: 'POST',
+        body: {
+          note: payload.note ?? null,
+          items: payload.items.map((item) => ({
+            productId: asId(item.productId),
+            quantity: item.quantity,
+            note: item.note ?? null,
+          })),
+        },
+      }),
+    ),
+  getPublicOrder: async (tableToken: string, orderToken: string): Promise<PublicOrderReceiptView> =>
+    decodePublicOrderReceipt(await apiRequest(`/api/v1/sales/public/tables/${tableToken}/orders/${orderToken}`)),
   orders: async (token: string, query: SalesOrdersQuery): Promise<PagedResponse<SaleListItemView>> =>
     decodePaged(await apiRequest('/api/v1/sales/orders', { token, query }), decodeSale),
   orderDetail: async (token: string, saleId: string): Promise<SaleDetailView> =>

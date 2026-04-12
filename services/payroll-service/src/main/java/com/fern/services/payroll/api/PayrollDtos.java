@@ -129,4 +129,50 @@ public final class PayrollDtos {
       String note
   ) {
   }
+
+  public record PayrollDecisionRequest(
+      String reason
+  ) {
+  }
+
+  /**
+   * Minimal projection of a work shift record returned by hr-service.
+   * Only the fields needed for attendance aggregation are mapped.
+   */
+  public record WorkShiftSummaryItem(
+      Long id,
+      Long userId,
+      Long outletId,
+      String workDate,
+      String scheduleStatus,
+      String attendanceStatus,
+      String approvalStatus,
+      String actualStartTime,
+      String actualEndTime,
+      Double totalHours
+  ) {
+  }
+
+  /**
+   * Paged response wrapper used when deserialising hr-service /work-shifts responses.
+   */
+  public record WorkShiftPage(
+      java.util.List<WorkShiftSummaryItem> items,
+      long total,
+      boolean hasMore
+  ) {
+  }
+
+  /**
+   * Request body for POST /timesheets/import-from-attendance.
+   * payroll-service fetches approved shifts from hr-service, aggregates them, and creates the
+   * payroll_timesheet record — the frontend never needs to touch raw shift data.
+   */
+  public record ImportFromAttendanceRequest(
+      @NotNull Long payrollPeriodId,
+      @NotNull Long userId,
+      Long outletId,
+      @NotNull @DecimalMin(value = "0.00") BigDecimal overtimeRate
+  ) {
+  }
 }

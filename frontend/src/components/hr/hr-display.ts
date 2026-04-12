@@ -79,16 +79,17 @@ export function getHrShiftDisplay(
 
   const shift = shiftsById.get(key);
   if (!shift) {
-    return { primary: `Shift ${key}`, secondary: undefined as string | undefined };
+    return { primary: 'Shift unavailable', secondary: `ID ${key}` };
   }
 
   const code = normalizeValue(shift.code);
   const name = normalizeValue(shift.name);
   const startTime = formatTimeValue(shift.startTime);
   const endTime = formatTimeValue(shift.endTime);
+  const timeRange = startTime && endTime ? `${startTime} - ${endTime}` : '';
   return {
     primary: [code, name].filter(Boolean).join(' · ') || `Shift ${key}`,
-    secondary: startTime && endTime ? `${startTime} - ${endTime}` : undefined,
+    secondary: timeRange || `ID ${key}`,
   };
 }
 
