@@ -1,0 +1,72 @@
+' Domain: Auth & IAM
+' Scope: Authentication, session lifecycle, user administration, roles, permissions, scopes, and overrides.
+' Sources: services/auth-service/spring/src/main/java/com/fern/services/auth/spring/api/AuthController.java; docs/frontend-readiness.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - Auth & IAM
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Nhân viên\nStaff" as ACT_STAFF
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+ACT_ADMIN --|> ACT_STAFF
+
+rectangle "FERN ERP Platform\nAuth & IAM" as SYS_AUTH {
+  usecase "UC-AUTH-01\nĐăng nhập\nLogin" as UC_AUTH_01
+  usecase "UC-AUTH-02\nXem phiên hiện tại\nView Current Session" as UC_AUTH_02
+  usecase "UC-AUTH-03\nLàm mới phiên\nRefresh Session" as UC_AUTH_03
+  usecase "UC-AUTH-04\nĐăng xuất\nLogout" as UC_AUTH_04
+  usecase "UC-AUTH-05\nXem danh sách phiên\nList Sessions" as UC_AUTH_05
+  usecase "UC-AUTH-06\nThu hồi phiên\nRevoke Session" as UC_AUTH_06
+  usecase "UC-AUTH-07\nTạo người dùng\nCreate User" as UC_AUTH_07
+  usecase "UC-AUTH-08\nTra cứu người dùng\nList Users" as UC_AUTH_08
+  usecase "UC-AUTH-09\nTra cứu scope truy cập\nList Access Scopes" as UC_AUTH_09
+  usecase "UC-AUTH-10\nTra cứu permission override\nList Permission Overrides" as UC_AUTH_10
+  usecase "UC-AUTH-11\nTra cứu danh mục permission\nList Permission Catalog" as UC_AUTH_11
+  usecase "UC-AUTH-12\nTra cứu danh mục role\nList Role Catalog" as UC_AUTH_12
+  usecase "UC-AUTH-13\nCập nhật permission của role\nUpdate Role Permissions" as UC_AUTH_13
+}
+
+ACT_STAFF --> UC_AUTH_01
+ACT_STAFF --> UC_AUTH_02
+ACT_STAFF --> UC_AUTH_03
+ACT_STAFF --> UC_AUTH_04
+ACT_STAFF --> UC_AUTH_05
+ACT_STAFF --> UC_AUTH_06
+
+ACT_ADMIN --> UC_AUTH_07
+ACT_ADMIN --> UC_AUTH_08
+ACT_ADMIN --> UC_AUTH_09
+ACT_ADMIN --> UC_AUTH_10
+ACT_ADMIN --> UC_AUTH_11
+ACT_ADMIN --> UC_AUTH_12
+ACT_ADMIN --> UC_AUTH_13
+
+note right of SYS_AUTH
+  derived from source code
+  Primary source:
+  - AuthController.java
+  Supporting source:
+  - docs/frontend-readiness.md
+end note
+
+@enduml

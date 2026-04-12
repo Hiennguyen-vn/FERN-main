@@ -1,0 +1,55 @@
+' Domain: Audit
+' Scope: Audit log, security-event, and trace investigation use cases.
+' Sources: services/audit-service/src/main/java/com/fern/services/audit/api/AuditController.java; services/audit-service/src/main/java/com/fern/services/audit/api/AuditReadController.java; docs/frontend-readiness.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - Audit
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Kiểm toán\nAuditor" as ACT_AUDITOR
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+ACT_ADMIN --|> ACT_AUDITOR
+
+rectangle "FERN ERP Platform\nAudit" as SYS_AUD {
+  usecase "UC-AUD-01\nTra cứu audit log\nList Audit Logs" as UC_AUD_01
+  usecase "UC-AUD-02\nXem chi tiết audit log\nGet Audit Log Detail" as UC_AUD_02
+  usecase "UC-AUD-03\nTra cứu sự kiện bảo mật\nList Security Events" as UC_AUD_03
+  usecase "UC-AUD-04\nTra cứu traces\nList Traces" as UC_AUD_04
+}
+
+ACT_AUDITOR --> UC_AUD_01
+ACT_AUDITOR --> UC_AUD_02
+ACT_AUDITOR --> UC_AUD_03
+ACT_AUDITOR --> UC_AUD_04
+
+note right of SYS_AUD
+  derived from source code
+  Primary sources:
+  - AuditController.java
+  - AuditReadController.java
+  Supporting source:
+  - docs/frontend-readiness.md
+  Current frontend screen is admin-only.
+end note
+
+@enduml

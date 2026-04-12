@@ -1,0 +1,118 @@
+' Domain: Sales / POS staff
+' Scope: Staff-facing POS, order workflow, ordering-table management, and promotion lifecycle.
+' Sources: services/sales-service/src/main/java/com/fern/services/sales/api/SalesController.java; docs/frontend-readiness.md; docs/frontend-api-gap-analysis.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - Sales & POS (Staff)
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Thu ngân\nCashier" as ACT_CASHIER
+actor "Quản lý outlet / khu vực\nOutlet / Regional Manager" as ACT_MANAGER
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+
+rectangle "FERN ERP Platform\nSales & POS (Staff)" as SYS_SALES {
+  usecase "UC-SALES-01\nMở POS session\nOpen POS Session" as UC_SALES_01
+  usecase "UC-SALES-02\nĐóng POS session\nClose POS Session" as UC_SALES_02
+  usecase "UC-SALES-03\nĐối soát POS session\nReconcile POS Session" as UC_SALES_03
+  usecase "UC-SALES-04\nTạo đơn bán\nCreate Sale Order" as UC_SALES_04
+  usecase "UC-SALES-05\nTra cứu danh sách đơn bán\nList Sales Orders" as UC_SALES_05
+  usecase "UC-SALES-06\nXem chi tiết đơn bán\nGet Sale Detail" as UC_SALES_06
+  usecase "UC-SALES-07\nDuyệt đơn bán\nApprove Sale" as UC_SALES_07
+  usecase "UC-SALES-08\nXác nhận đơn bán\nConfirm Sale" as UC_SALES_08
+  usecase "UC-SALES-09\nĐánh dấu thanh toán hoàn tất\nMark Payment Done" as UC_SALES_09
+  usecase "UC-SALES-10\nHủy đơn bán\nCancel Sale" as UC_SALES_10
+  usecase "UC-SALES-11\nTra cứu danh sách bàn ordering\nList Ordering Tables" as UC_SALES_11
+  usecase "UC-SALES-12\nXem chi tiết bàn ordering\nGet Ordering Table Detail" as UC_SALES_12
+  usecase "UC-SALES-13\nTạo bàn ordering\nCreate Ordering Table" as UC_SALES_13
+  usecase "UC-SALES-14\nCập nhật bàn ordering\nUpdate Ordering Table" as UC_SALES_14
+  usecase "UC-SALES-15\nTra cứu POS sessions\nList POS Sessions" as UC_SALES_15
+  usecase "UC-SALES-16\nXem chi tiết POS session\nGet POS Session Detail" as UC_SALES_16
+  usecase "UC-SALES-17\nXem thống kê outlet\nGet Outlet Stats" as UC_SALES_17
+  usecase "UC-SALES-18\nTra cứu khuyến mãi\nList Promotions" as UC_SALES_18
+  usecase "UC-SALES-19\nXem chi tiết khuyến mãi\nGet Promotion Detail" as UC_SALES_19
+  usecase "UC-SALES-20\nTạo khuyến mãi\nCreate Promotion" as UC_SALES_20
+  usecase "UC-SALES-21\nNgừng khuyến mãi\nDeactivate Promotion" as UC_SALES_21
+  usecase "UC-SALES-22\nXem hàng đợi đơn khách hàng\nView Public Order Queue" as UC_SALES_22
+}
+
+ACT_CASHIER --> UC_SALES_01
+ACT_CASHIER --> UC_SALES_02
+ACT_CASHIER --> UC_SALES_04
+ACT_CASHIER --> UC_SALES_05
+ACT_CASHIER --> UC_SALES_06
+ACT_CASHIER --> UC_SALES_07
+ACT_CASHIER --> UC_SALES_08
+ACT_CASHIER --> UC_SALES_09
+ACT_CASHIER --> UC_SALES_11
+ACT_CASHIER --> UC_SALES_12
+ACT_CASHIER --> UC_SALES_13
+ACT_CASHIER --> UC_SALES_14
+ACT_CASHIER --> UC_SALES_15
+ACT_CASHIER --> UC_SALES_16
+ACT_CASHIER --> UC_SALES_17
+ACT_CASHIER --> UC_SALES_18
+ACT_CASHIER --> UC_SALES_19
+ACT_CASHIER --> UC_SALES_22
+
+ACT_MANAGER --> UC_SALES_01
+ACT_MANAGER --> UC_SALES_02
+ACT_MANAGER --> UC_SALES_03
+ACT_MANAGER --> UC_SALES_04
+ACT_MANAGER --> UC_SALES_05
+ACT_MANAGER --> UC_SALES_06
+ACT_MANAGER --> UC_SALES_07
+ACT_MANAGER --> UC_SALES_08
+ACT_MANAGER --> UC_SALES_09
+ACT_MANAGER --> UC_SALES_10
+ACT_MANAGER --> UC_SALES_11
+ACT_MANAGER --> UC_SALES_12
+ACT_MANAGER --> UC_SALES_13
+ACT_MANAGER --> UC_SALES_14
+ACT_MANAGER --> UC_SALES_15
+ACT_MANAGER --> UC_SALES_16
+ACT_MANAGER --> UC_SALES_17
+ACT_MANAGER --> UC_SALES_18
+ACT_MANAGER --> UC_SALES_19
+ACT_MANAGER --> UC_SALES_20
+ACT_MANAGER --> UC_SALES_21
+ACT_MANAGER --> UC_SALES_22
+
+ACT_ADMIN --> UC_SALES_03
+ACT_ADMIN --> UC_SALES_07
+ACT_ADMIN --> UC_SALES_09
+ACT_ADMIN --> UC_SALES_10
+ACT_ADMIN --> UC_SALES_20
+ACT_ADMIN --> UC_SALES_21
+
+note right of SYS_SALES
+  derived from source code
+  Primary source:
+  - SalesController.java
+  Supporting sources:
+  - docs/frontend-readiness.md
+  - docs/frontend-api-gap-analysis.md
+  Public-order queue maps to:
+  GET /api/v1/sales/orders?publicOrderOnly=true
+end note
+
+@enduml

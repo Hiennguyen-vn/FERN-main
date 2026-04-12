@@ -1,0 +1,54 @@
+' Domain: Finance
+' Scope: Expense creation and expense ledger query use cases.
+' Sources: services/finance-service/src/main/java/com/fern/services/finance/api/FinanceController.java; docs/frontend-readiness.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - Finance
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Tài chính\nFinance" as ACT_FINANCE
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+ACT_ADMIN --|> ACT_FINANCE
+
+rectangle "FERN ERP Platform\nFinance" as SYS_FIN {
+  usecase "UC-FIN-01\nGhi nhận chi phí vận hành\nCreate Operating Expense" as UC_FIN_01
+  usecase "UC-FIN-02\nGhi nhận chi phí khác\nCreate Other Expense" as UC_FIN_02
+  usecase "UC-FIN-03\nXem chi tiết chi phí\nGet Expense Detail" as UC_FIN_03
+  usecase "UC-FIN-04\nTra cứu chi phí\nList Expenses" as UC_FIN_04
+}
+
+ACT_FINANCE --> UC_FIN_01
+ACT_FINANCE --> UC_FIN_02
+ACT_FINANCE --> UC_FIN_03
+ACT_FINANCE --> UC_FIN_04
+
+note right of SYS_FIN
+  derived from source code
+  Primary source:
+  - FinanceController.java
+  Supporting source:
+  - docs/frontend-readiness.md
+  Current frontend contract is admin-only.
+end note
+
+@enduml

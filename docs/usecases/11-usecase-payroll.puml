@@ -1,0 +1,70 @@
+' Domain: Payroll
+' Scope: Payroll period, timesheet, attendance import, payroll generation, and approval workflow.
+' Sources: services/payroll-service/src/main/java/com/fern/services/payroll/api/PayrollController.java; docs/frontend-readiness.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - Payroll
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Tài chính\nFinance" as ACT_FINANCE
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+ACT_ADMIN --|> ACT_FINANCE
+
+rectangle "FERN ERP Platform\nPayroll" as SYS_PAY {
+  usecase "UC-PAY-01\nTạo kỳ lương\nCreate Payroll Period" as UC_PAY_01
+  usecase "UC-PAY-02\nXem chi tiết kỳ lương\nGet Payroll Period Detail" as UC_PAY_02
+  usecase "UC-PAY-03\nTra cứu kỳ lương\nList Payroll Periods" as UC_PAY_03
+  usecase "UC-PAY-04\nTạo bảng công\nCreate Payroll Timesheet" as UC_PAY_04
+  usecase "UC-PAY-05\nXem chi tiết bảng công\nGet Payroll Timesheet Detail" as UC_PAY_05
+  usecase "UC-PAY-06\nTra cứu bảng công\nList Payroll Timesheets" as UC_PAY_06
+  usecase "UC-PAY-07\nNhập bảng công từ attendance\nImport Timesheet From Attendance" as UC_PAY_07
+  usecase "UC-PAY-08\nSinh bảng lương\nGenerate Payroll" as UC_PAY_08
+  usecase "UC-PAY-09\nXem chi tiết bảng lương\nGet Payroll Detail" as UC_PAY_09
+  usecase "UC-PAY-10\nTra cứu bảng lương\nList Payroll" as UC_PAY_10
+  usecase "UC-PAY-11\nDuyệt bảng lương\nApprove Payroll" as UC_PAY_11
+  usecase "UC-PAY-12\nTừ chối bảng lương\nReject Payroll" as UC_PAY_12
+}
+
+ACT_FINANCE --> UC_PAY_01
+ACT_FINANCE --> UC_PAY_02
+ACT_FINANCE --> UC_PAY_03
+ACT_FINANCE --> UC_PAY_04
+ACT_FINANCE --> UC_PAY_05
+ACT_FINANCE --> UC_PAY_06
+ACT_FINANCE --> UC_PAY_07
+ACT_FINANCE --> UC_PAY_08
+ACT_FINANCE --> UC_PAY_09
+ACT_FINANCE --> UC_PAY_10
+ACT_FINANCE --> UC_PAY_11
+ACT_FINANCE --> UC_PAY_12
+
+note right of SYS_PAY
+  derived from source code
+  Primary source:
+  - PayrollController.java
+  Supporting source:
+  - docs/frontend-readiness.md
+  Current frontend contract is admin-only.
+end note
+
+@enduml

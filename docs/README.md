@@ -10,6 +10,8 @@ This folder explains how the backend is structured, how the frontend integrates 
   - service-by-service source-confirmed frontend readiness, visibility, auth model, and confidence
 - `frontend-api-gap-analysis.md`
   - service-by-service gap matrix covering docs, contract, frontend client/screen coverage, authz, and tests
+- `usecases/README.md`
+  - normalized PlantUML use case catalog with one reusable diagram per file
 - `openapi/frontend-surface.json`
   - machine-readable OpenAPI contract for the current frontend-facing gateway surface
 - `project-structure.md`

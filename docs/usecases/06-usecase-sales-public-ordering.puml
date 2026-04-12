@@ -1,0 +1,53 @@
+' Domain: Sales / Public ordering
+' Scope: Customer-facing QR/table ordering flow only.
+' Sources: services/sales-service/src/main/java/com/fern/services/sales/api/PublicPosController.java; docs/frontend-readiness.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - Sales & POS (Public Ordering)
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Khách hàng\nCustomer" as ACT_CUSTOMER
+
+rectangle "FERN ERP Platform\nPublic Ordering" as SYS_PUBLIC {
+  usecase "UC-PUB-01\nXác thực bàn bằng QR / token\nResolve Table Token" as UC_PUB_01
+  usecase "UC-PUB-02\nXem menu công khai\nBrowse Public Menu" as UC_PUB_02
+  usecase "UC-PUB-03\nGửi yêu cầu đặt món\nSubmit Public Order" as UC_PUB_03
+  usecase "UC-PUB-04\nTheo dõi trạng thái đơn\nView Public Order Status" as UC_PUB_04
+}
+
+ACT_CUSTOMER --> UC_PUB_01
+ACT_CUSTOMER --> UC_PUB_02
+ACT_CUSTOMER --> UC_PUB_03
+ACT_CUSTOMER --> UC_PUB_04
+
+note right of SYS_PUBLIC
+  derived from source code
+  Primary source:
+  - PublicPosController.java
+  Supporting source:
+  - docs/frontend-readiness.md
+  Boundary:
+  public table-token scope only
+end note
+
+@enduml

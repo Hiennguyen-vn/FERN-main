@@ -1,0 +1,119 @@
+' Domain: Procurement
+' Scope: Supplier, purchase order, goods receipt, supplier invoice, and supplier payment workflows.
+' Sources: procurement-service controllers; docs/frontend-readiness.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - Procurement
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Mua hàng\nProcurement" as ACT_PROCUREMENT
+actor "Tài chính\nFinance" as ACT_FINANCE
+actor "Quản lý outlet / khu vực\nOutlet / Regional Manager" as ACT_MANAGER
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+
+rectangle "FERN ERP Platform\nProcurement" as SYS_PROC {
+  usecase "UC-PROC-01\nTạo nhà cung cấp\nCreate Supplier" as UC_PROC_01
+  usecase "UC-PROC-02\nXem chi tiết nhà cung cấp\nGet Supplier Detail" as UC_PROC_02
+  usecase "UC-PROC-03\nTra cứu nhà cung cấp\nList Suppliers" as UC_PROC_03
+  usecase "UC-PROC-04\nCập nhật nhà cung cấp\nUpdate Supplier" as UC_PROC_04
+  usecase "UC-PROC-05\nTạo purchase order\nCreate Purchase Order" as UC_PROC_05
+  usecase "UC-PROC-06\nXem chi tiết purchase order\nGet Purchase Order Detail" as UC_PROC_06
+  usecase "UC-PROC-07\nTra cứu purchase order\nList Purchase Orders" as UC_PROC_07
+  usecase "UC-PROC-08\nDuyệt purchase order\nApprove Purchase Order" as UC_PROC_08
+  usecase "UC-PROC-09\nTạo goods receipt\nCreate Goods Receipt" as UC_PROC_09
+  usecase "UC-PROC-10\nXem chi tiết goods receipt\nGet Goods Receipt Detail" as UC_PROC_10
+  usecase "UC-PROC-11\nTra cứu goods receipt\nList Goods Receipts" as UC_PROC_11
+  usecase "UC-PROC-12\nDuyệt goods receipt\nApprove Goods Receipt" as UC_PROC_12
+  usecase "UC-PROC-13\nGhi sổ goods receipt\nPost Goods Receipt" as UC_PROC_13
+  usecase "UC-PROC-14\nTạo hóa đơn nhà cung cấp\nCreate Supplier Invoice" as UC_PROC_14
+  usecase "UC-PROC-15\nXem chi tiết hóa đơn nhà cung cấp\nGet Supplier Invoice Detail" as UC_PROC_15
+  usecase "UC-PROC-16\nTra cứu hóa đơn nhà cung cấp\nList Supplier Invoices" as UC_PROC_16
+  usecase "UC-PROC-17\nDuyệt hóa đơn nhà cung cấp\nApprove Supplier Invoice" as UC_PROC_17
+  usecase "UC-PROC-18\nTạo thanh toán nhà cung cấp\nCreate Supplier Payment" as UC_PROC_18
+  usecase "UC-PROC-19\nXem chi tiết thanh toán nhà cung cấp\nGet Supplier Payment Detail" as UC_PROC_19
+  usecase "UC-PROC-20\nTra cứu thanh toán nhà cung cấp\nList Supplier Payments" as UC_PROC_20
+  usecase "UC-PROC-21\nGhi sổ thanh toán nhà cung cấp\nPost Supplier Payment" as UC_PROC_21
+  usecase "UC-PROC-22\nHủy thanh toán nhà cung cấp\nCancel Supplier Payment" as UC_PROC_22
+  usecase "UC-PROC-23\nĐảo thanh toán nhà cung cấp\nReverse Supplier Payment" as UC_PROC_23
+}
+
+ACT_PROCUREMENT --> UC_PROC_01
+ACT_PROCUREMENT --> UC_PROC_02
+ACT_PROCUREMENT --> UC_PROC_03
+ACT_PROCUREMENT --> UC_PROC_04
+ACT_PROCUREMENT --> UC_PROC_05
+ACT_PROCUREMENT --> UC_PROC_06
+ACT_PROCUREMENT --> UC_PROC_07
+ACT_PROCUREMENT --> UC_PROC_08
+ACT_PROCUREMENT --> UC_PROC_09
+ACT_PROCUREMENT --> UC_PROC_10
+ACT_PROCUREMENT --> UC_PROC_11
+ACT_PROCUREMENT --> UC_PROC_12
+ACT_PROCUREMENT --> UC_PROC_13
+ACT_PROCUREMENT --> UC_PROC_14
+ACT_PROCUREMENT --> UC_PROC_15
+ACT_PROCUREMENT --> UC_PROC_16
+ACT_PROCUREMENT --> UC_PROC_17
+ACT_PROCUREMENT --> UC_PROC_18
+ACT_PROCUREMENT --> UC_PROC_19
+ACT_PROCUREMENT --> UC_PROC_20
+ACT_PROCUREMENT --> UC_PROC_21
+ACT_PROCUREMENT --> UC_PROC_22
+ACT_PROCUREMENT --> UC_PROC_23
+
+ACT_FINANCE --> UC_PROC_18
+ACT_FINANCE --> UC_PROC_19
+ACT_FINANCE --> UC_PROC_20
+ACT_FINANCE --> UC_PROC_21
+ACT_FINANCE --> UC_PROC_22
+ACT_FINANCE --> UC_PROC_23
+
+ACT_MANAGER --> UC_PROC_08
+ACT_MANAGER --> UC_PROC_12
+ACT_MANAGER --> UC_PROC_13
+ACT_MANAGER --> UC_PROC_17
+ACT_MANAGER --> UC_PROC_21
+ACT_MANAGER --> UC_PROC_22
+ACT_MANAGER --> UC_PROC_23
+
+ACT_ADMIN --> UC_PROC_08
+ACT_ADMIN --> UC_PROC_12
+ACT_ADMIN --> UC_PROC_13
+ACT_ADMIN --> UC_PROC_17
+ACT_ADMIN --> UC_PROC_21
+ACT_ADMIN --> UC_PROC_22
+ACT_ADMIN --> UC_PROC_23
+
+note right of SYS_PROC
+  derived from source code
+  Primary sources:
+  - SupplierController.java
+  - PurchaseOrderController.java
+  - GoodsReceiptController.java
+  - SupplierInvoiceController.java
+  - SupplierPaymentController.java
+  Supporting source:
+  - docs/frontend-readiness.md
+end note
+
+@enduml

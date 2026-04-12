@@ -1,0 +1,118 @@
+' Domain: HR
+' Scope: Shift, work-shift, attendance, time-off review, and contract administration.
+' Sources: services/hr-service/src/main/java/com/fern/services/hr/api/HrController.java; docs/frontend-readiness.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - HR
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Nhân viên\nStaff" as ACT_STAFF
+actor "Nhân sự\nHR" as ACT_HR
+actor "Quản lý outlet / khu vực\nOutlet / Regional Manager" as ACT_MANAGER
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+
+ACT_HR --|> ACT_STAFF
+ACT_MANAGER --|> ACT_STAFF
+ACT_ADMIN --|> ACT_STAFF
+
+rectangle "FERN ERP Platform\nHR" as SYS_HR {
+  usecase "UC-HR-01\nTạo ca làm\nCreate Shift" as UC_HR_01
+  usecase "UC-HR-02\nXem chi tiết ca làm\nGet Shift Detail" as UC_HR_02
+  usecase "UC-HR-03\nTra cứu ca làm\nList Shifts" as UC_HR_03
+  usecase "UC-HR-04\nCập nhật ca làm\nUpdate Shift" as UC_HR_04
+  usecase "UC-HR-05\nXóa ca làm\nDelete Shift" as UC_HR_05
+  usecase "UC-HR-06\nPhân công ca làm\nCreate Work Shift" as UC_HR_06
+  usecase "UC-HR-07\nXem chi tiết lịch làm\nGet Work Shift Detail" as UC_HR_07
+  usecase "UC-HR-08\nTra cứu lịch làm\nList Work Shifts" as UC_HR_08
+  usecase "UC-HR-09\nTra cứu yêu cầu nghỉ / time-off\nList Time-Off Requests" as UC_HR_09
+  usecase "UC-HR-10\nXem lịch theo outlet và ngày\nList Work Shifts By Outlet/Date" as UC_HR_10
+  usecase "UC-HR-11\nCập nhật chấm công\nUpdate Attendance" as UC_HR_11
+  usecase "UC-HR-12\nDuyệt lịch làm / chấm công\nApprove Work Shift" as UC_HR_12
+  usecase "UC-HR-13\nTừ chối lịch làm / chấm công\nReject Work Shift" as UC_HR_13
+  usecase "UC-HR-14\nTạo hợp đồng\nCreate Contract" as UC_HR_14
+  usecase "UC-HR-15\nXem chi tiết hợp đồng\nGet Contract Detail" as UC_HR_15
+  usecase "UC-HR-16\nTra cứu hợp đồng theo nhân sự\nList Contracts By User" as UC_HR_16
+  usecase "UC-HR-17\nTra cứu hợp đồng hiệu lực\nList Active Contracts" as UC_HR_17
+  usecase "UC-HR-18\nTra cứu danh sách hợp đồng\nList Contracts" as UC_HR_18
+  usecase "UC-HR-19\nXem hợp đồng hiệu lực gần nhất\nGet Latest Active Contract" as UC_HR_19
+  usecase "UC-HR-20\nCập nhật hợp đồng\nUpdate Contract" as UC_HR_20
+  usecase "UC-HR-21\nChấm dứt hợp đồng\nTerminate Contract" as UC_HR_21
+}
+
+ACT_STAFF --> UC_HR_07
+ACT_STAFF --> UC_HR_08
+ACT_STAFF --> UC_HR_11
+
+ACT_MANAGER --> UC_HR_01
+ACT_MANAGER --> UC_HR_02
+ACT_MANAGER --> UC_HR_03
+ACT_MANAGER --> UC_HR_04
+ACT_MANAGER --> UC_HR_05
+ACT_MANAGER --> UC_HR_06
+ACT_MANAGER --> UC_HR_09
+ACT_MANAGER --> UC_HR_10
+ACT_MANAGER --> UC_HR_12
+ACT_MANAGER --> UC_HR_13
+
+ACT_HR --> UC_HR_01
+ACT_HR --> UC_HR_02
+ACT_HR --> UC_HR_03
+ACT_HR --> UC_HR_04
+ACT_HR --> UC_HR_05
+ACT_HR --> UC_HR_06
+ACT_HR --> UC_HR_07
+ACT_HR --> UC_HR_08
+ACT_HR --> UC_HR_09
+ACT_HR --> UC_HR_10
+ACT_HR --> UC_HR_11
+ACT_HR --> UC_HR_12
+ACT_HR --> UC_HR_13
+ACT_HR --> UC_HR_14
+ACT_HR --> UC_HR_15
+ACT_HR --> UC_HR_16
+ACT_HR --> UC_HR_17
+ACT_HR --> UC_HR_18
+ACT_HR --> UC_HR_19
+ACT_HR --> UC_HR_20
+ACT_HR --> UC_HR_21
+
+ACT_ADMIN --> UC_HR_14
+ACT_ADMIN --> UC_HR_15
+ACT_ADMIN --> UC_HR_16
+ACT_ADMIN --> UC_HR_17
+ACT_ADMIN --> UC_HR_18
+ACT_ADMIN --> UC_HR_19
+ACT_ADMIN --> UC_HR_20
+ACT_ADMIN --> UC_HR_21
+
+note right of SYS_HR
+  derived from source code
+  Primary source:
+  - HrController.java
+  Supporting source:
+  - docs/frontend-readiness.md
+  Contract administration remains
+  admin / internal in current UI scope.
+end note
+
+@enduml

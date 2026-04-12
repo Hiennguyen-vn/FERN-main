@@ -1,0 +1,62 @@
+' Domain: Organization
+' Scope: Region, outlet, hierarchy, and exchange-rate business use cases.
+' Sources: services/org-service/src/main/java/com/fern/services/org/api/OrgController.java; docs/frontend-readiness.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - Organization
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Nhân viên\nStaff" as ACT_STAFF
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+ACT_ADMIN --|> ACT_STAFF
+
+rectangle "FERN ERP Platform\nOrganization" as SYS_ORG {
+  usecase "UC-ORG-01\nTra cứu danh sách vùng\nList Regions" as UC_ORG_01
+  usecase "UC-ORG-02\nXem chi tiết vùng\nGet Region Detail" as UC_ORG_02
+  usecase "UC-ORG-03\nTra cứu danh sách outlet\nList Outlets" as UC_ORG_03
+  usecase "UC-ORG-04\nXem chi tiết outlet\nGet Outlet Detail" as UC_ORG_04
+  usecase "UC-ORG-05\nXem cây tổ chức\nView Organization Hierarchy" as UC_ORG_05
+  usecase "UC-ORG-06\nTra cứu tỷ giá\nFind Exchange Rate" as UC_ORG_06
+  usecase "UC-ORG-07\nTạo outlet\nCreate Outlet" as UC_ORG_07
+  usecase "UC-ORG-08\nCập nhật tỷ giá\nUpsert Exchange Rate" as UC_ORG_08
+}
+
+ACT_STAFF --> UC_ORG_01
+ACT_STAFF --> UC_ORG_02
+ACT_STAFF --> UC_ORG_03
+ACT_STAFF --> UC_ORG_04
+ACT_STAFF --> UC_ORG_05
+ACT_STAFF --> UC_ORG_06
+
+ACT_ADMIN --> UC_ORG_07
+ACT_ADMIN --> UC_ORG_08
+
+note right of SYS_ORG
+  derived from source code
+  Primary source:
+  - OrgController.java
+  Supporting source:
+  - docs/frontend-readiness.md
+end note
+
+@enduml

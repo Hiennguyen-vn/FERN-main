@@ -1,0 +1,72 @@
+' Domain: Catalog & Pricing
+' Scope: Product, item, price, and recipe use cases confirmed in product-service.
+' Sources: services/product-service/src/main/java/com/fern/services/product/api/ProductController.java; docs/frontend-readiness.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - Catalog & Pricing
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Nhân viên\nStaff" as ACT_STAFF
+actor "Quản lý outlet / khu vực\nOutlet / Regional Manager" as ACT_MANAGER
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+
+ACT_MANAGER --|> ACT_STAFF
+ACT_ADMIN --|> ACT_STAFF
+
+rectangle "FERN ERP Platform\nCatalog & Pricing" as SYS_CAT {
+  usecase "UC-CAT-01\nTra cứu sản phẩm\nList Products" as UC_CAT_01
+  usecase "UC-CAT-02\nTạo sản phẩm\nCreate Product" as UC_CAT_02
+  usecase "UC-CAT-03\nTra cứu item / nguyên liệu\nList Items" as UC_CAT_03
+  usecase "UC-CAT-04\nTạo item / nguyên liệu\nCreate Item" as UC_CAT_04
+  usecase "UC-CAT-05\nTra cứu giá theo sản phẩm\nFind Product Price" as UC_CAT_05
+  usecase "UC-CAT-06\nTra cứu danh sách giá\nList Prices" as UC_CAT_06
+  usecase "UC-CAT-07\nCập nhật giá\nUpsert Price" as UC_CAT_07
+  usecase "UC-CAT-08\nTra cứu công thức\nResolve Recipe" as UC_CAT_08
+  usecase "UC-CAT-09\nCập nhật công thức\nUpsert Recipe" as UC_CAT_09
+}
+
+ACT_STAFF --> UC_CAT_01
+ACT_STAFF --> UC_CAT_03
+ACT_STAFF --> UC_CAT_05
+ACT_STAFF --> UC_CAT_06
+ACT_STAFF --> UC_CAT_08
+
+ACT_MANAGER --> UC_CAT_02
+ACT_MANAGER --> UC_CAT_04
+ACT_MANAGER --> UC_CAT_07
+ACT_MANAGER --> UC_CAT_09
+
+ACT_ADMIN --> UC_CAT_02
+ACT_ADMIN --> UC_CAT_04
+ACT_ADMIN --> UC_CAT_07
+ACT_ADMIN --> UC_CAT_09
+
+note right of SYS_CAT
+  derived from source code
+  Primary source:
+  - ProductController.java
+  Supporting source:
+  - docs/frontend-readiness.md
+end note
+
+@enduml

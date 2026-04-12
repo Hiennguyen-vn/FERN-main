@@ -1,0 +1,108 @@
+' Domain: FERN ERP overview
+' Scope: High-level capability map for source-confirmed business use cases only.
+' Sources: Controller inventory across services plus docs/frontend-readiness.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case Overview
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Khách hàng\nCustomer" as ACT_CUSTOMER
+actor "Nhân viên\nStaff" as ACT_STAFF
+actor "Thu ngân\nCashier" as ACT_CASHIER
+actor "Quản lý outlet / khu vực\nOutlet / Regional Manager" as ACT_MANAGER
+actor "Nhân sự\nHR" as ACT_HR
+actor "Mua hàng\nProcurement" as ACT_PROCUREMENT
+actor "Tài chính\nFinance" as ACT_FINANCE
+actor "Kiểm toán\nAuditor" as ACT_AUDITOR
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+
+ACT_CASHIER --|> ACT_STAFF
+ACT_MANAGER --|> ACT_STAFF
+ACT_HR --|> ACT_STAFF
+ACT_PROCUREMENT --|> ACT_STAFF
+ACT_FINANCE --|> ACT_STAFF
+ACT_AUDITOR --|> ACT_STAFF
+ACT_ADMIN --|> ACT_STAFF
+
+rectangle "FERN ERP Platform" as SYS_OVERVIEW {
+  usecase "Truy cập hệ thống\nAccess & IAM" as OVR_AUTH
+  usecase "Quản lý tổ chức\nOrganization" as OVR_ORG
+  usecase "Quản lý danh mục\nCatalog & Pricing" as OVR_CAT
+  usecase "Bán hàng / POS\nSales & POS" as OVR_SALES
+  usecase "Đặt món công khai\nPublic Ordering" as OVR_PUBLIC
+  usecase "Quản lý tồn kho\nInventory" as OVR_INV
+  usecase "Quy trình mua hàng\nProcurement" as OVR_PROC
+  usecase "Quản lý nhân sự\nHR" as OVR_HR
+  usecase "Tính lương\nPayroll" as OVR_PAY
+  usecase "Quản lý chi phí\nFinance" as OVR_FIN
+  usecase "Kiểm toán\nAudit" as OVR_AUD
+  usecase "Báo cáo vận hành\nReporting" as OVR_RPT
+}
+
+ACT_STAFF --> OVR_AUTH
+ACT_STAFF --> OVR_ORG
+
+ACT_CASHIER --> OVR_SALES
+ACT_CASHIER --> OVR_PUBLIC
+
+ACT_MANAGER --> OVR_CAT
+ACT_MANAGER --> OVR_SALES
+ACT_MANAGER --> OVR_INV
+ACT_MANAGER --> OVR_PROC
+ACT_MANAGER --> OVR_HR
+ACT_MANAGER --> OVR_RPT
+
+ACT_HR --> OVR_HR
+ACT_PROCUREMENT --> OVR_PROC
+ACT_FINANCE --> OVR_PAY
+ACT_FINANCE --> OVR_FIN
+ACT_FINANCE --> OVR_RPT
+ACT_AUDITOR --> OVR_AUD
+ACT_CUSTOMER --> OVR_PUBLIC
+
+ACT_ADMIN --> OVR_AUTH
+ACT_ADMIN --> OVR_ORG
+ACT_ADMIN --> OVR_CAT
+ACT_ADMIN --> OVR_SALES
+ACT_ADMIN --> OVR_INV
+ACT_ADMIN --> OVR_PROC
+ACT_ADMIN --> OVR_HR
+ACT_ADMIN --> OVR_PAY
+ACT_ADMIN --> OVR_FIN
+ACT_ADMIN --> OVR_AUD
+ACT_ADMIN --> OVR_RPT
+
+note right of SYS_OVERVIEW
+  derived from source code
+  Included:
+  - auth, org, catalog, sales, public ordering
+  - inventory, procurement, HR, payroll
+  - finance, audit, reporting
+  Excluded:
+  - gateway internals
+  - master/control-plane
+  - simulator
+  - UI placeholders
+end note
+
+@enduml

@@ -1,0 +1,49 @@
+' Domain: CRM
+' Scope: Customer lookup used by sales-facing workflows.
+' Sources: services/sales-service/src/main/java/com/fern/services/sales/api/CrmController.java; frontend POS flow.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - CRM
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Thu ngân\nCashier" as ACT_CASHIER
+actor "Quản lý outlet / khu vực\nOutlet / Regional Manager" as ACT_MANAGER
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+
+rectangle "FERN ERP Platform\nCRM" as SYS_CRM {
+  usecase "UC-CRM-01\nTra cứu khách hàng\nList / Search Customers" as UC_CRM_01
+}
+
+ACT_CASHIER --> UC_CRM_01
+ACT_MANAGER --> UC_CRM_01
+ACT_ADMIN --> UC_CRM_01
+
+note right of SYS_CRM
+  derived from source code
+  Primary source:
+  - CrmController.java
+  Supporting source:
+  - frontend POS customer lookup flow
+end note
+
+@enduml

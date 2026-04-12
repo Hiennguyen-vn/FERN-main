@@ -1,0 +1,66 @@
+' Domain: Reporting
+' Scope: Dashboard and read-only operational reporting confirmed by report-service and dashboard data flow.
+' Sources: services/report-service/src/main/java/com/fern/services/report/api/ReportController.java; frontend/src/hooks/use-dashboard-data.ts; docs/frontend-readiness.md.
+' Note: derived from source code.
+
+@startuml
+title FERN Use Case - Reporting
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  ArrowColor #425466
+  FontColor #16324F
+}
+skinparam actor {
+  BorderColor #425466
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C28A00
+}
+
+actor "Quản lý outlet / khu vực\nOutlet / Regional Manager" as ACT_MANAGER
+actor "Tài chính\nFinance" as ACT_FINANCE
+actor "Quản trị hệ thống\nAdmin" as ACT_ADMIN
+
+rectangle "FERN ERP Platform\nReporting" as SYS_RPT {
+  usecase "UC-RPT-01\nXem dashboard vận hành\nView Operational Dashboard" as UC_RPT_01
+  usecase "UC-RPT-02\nXem báo cáo doanh số\nView Sales Report" as UC_RPT_02
+  usecase "UC-RPT-03\nXem báo cáo chi phí\nView Expense Report" as UC_RPT_03
+  usecase "UC-RPT-04\nXem báo cáo biến động kho\nView Inventory Movement Report" as UC_RPT_04
+  usecase "UC-RPT-05\nXem cảnh báo tồn thấp\nView Low Stock Report" as UC_RPT_05
+}
+
+ACT_MANAGER --> UC_RPT_01
+ACT_MANAGER --> UC_RPT_02
+ACT_MANAGER --> UC_RPT_04
+ACT_MANAGER --> UC_RPT_05
+
+ACT_FINANCE --> UC_RPT_01
+ACT_FINANCE --> UC_RPT_03
+
+ACT_ADMIN --> UC_RPT_01
+ACT_ADMIN --> UC_RPT_02
+ACT_ADMIN --> UC_RPT_03
+ACT_ADMIN --> UC_RPT_04
+ACT_ADMIN --> UC_RPT_05
+
+note right of SYS_RPT
+  derived from source code
+  Primary source:
+  - ReportController.java
+  Supporting sources:
+  - frontend/src/hooks/use-dashboard-data.ts
+  - docs/frontend-readiness.md
+  Dashboard is modeled as a
+  composite read-only business flow.
+end note
+
+@enduml
