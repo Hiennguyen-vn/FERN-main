@@ -1,6 +1,7 @@
 package com.fern.services.product.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -13,6 +14,7 @@ import com.fern.services.product.api.ProductDtos;
 import com.fern.services.product.infrastructure.ProductRepository;
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.List;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -21,17 +23,20 @@ public class ProductService {
   private final ProductRepository productRepository;
   private final ProductPriceCacheService productPriceCacheService;
   private final TypedKafkaEventPublisher kafkaEventPublisher;
+  private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
 
   public ProductService(
       ProductRepository productRepository,
       ProductPriceCacheService productPriceCacheService,
       TypedKafkaEventPublisher kafkaEventPublisher,
+      AuthorizationPolicyService authorizationPolicyService,
       Clock clock
   ) {
     this.productRepository = productRepository;
     this.productPriceCacheService = productPriceCacheService;
     this.kafkaEventPublisher = kafkaEventPublisher;
+    this.authorizationPolicyService = authorizationPolicyService;
     this.clock = clock;
   }
 
@@ -183,20 +188,14 @@ public class ProductService {
   }
 
   private void requireCatalogMutationAccess(RequestUserContext context) {
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")
-        || context.hasPermission("product.catalog.write")) {
+    if (authorizationPolicyService.canMutateCatalog(context)) {
       return;
     }
-    context.requireUserId();
     throw ServiceException.forbidden("Catalog management permission is required");
   }
 
   private void requireOutletReadAccess(RequestUserContext context, long outletId) {
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
-      return;
-    }
-    context.requireUserId();
-    if (context.outletIds().contains(outletId)) {
+    if (authorizationPolicyService.canReadCatalogForOutlet(context, outletId)) {
       return;
     }
     throw ServiceException.forbidden("Catalog access denied for outlet " + outletId);
@@ -208,6 +207,54 @@ public class ProductService {
 
   private int sanitizeOffset(Integer offset) {
     return QueryConventions.sanitizeOffset(offset);
+  }
+
+  public ProductDtos.ProductView updateProduct(long productId, ProductDtos.UpdateProductRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    requireCatalogMutationAccess(context);
+    return productRepository.updateProduct(productId, request, context.userId());
+  }
+
+  public ProductDtos.ItemView updateItem(long itemId, ProductDtos.UpdateItemRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    requireCatalogMutationAccess(context);
+    return productRepository.updateItem(itemId, request);
+  }
+
+  public List<ProductDtos.AvailabilityView> listAvailability(Long productId, Long outletId) {
+    return productRepository.listAvailability(productId, outletId);
+  }
+
+  public ProductDtos.AvailabilityView setAvailability(ProductDtos.SetAvailabilityRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    requireCatalogMutationAccess(context);
+    return productRepository.setAvailability(request);
+  }
+
+  public List<ProductDtos.CategoryView> listProductCategories() {
+    return productRepository.listProductCategories();
+  }
+
+  public ProductDtos.CategoryView createProductCategory(ProductDtos.CreateCategoryRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    requireCatalogMutationAccess(context);
+    return productRepository.createProductCategory(request);
+  }
+
+  public ProductDtos.CategoryView updateProductCategory(String code, ProductDtos.UpdateCategoryRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    requireCatalogMutationAccess(context);
+    return productRepository.updateProductCategory(code, request);
+  }
+
+  public List<ProductDtos.CategoryView> listItemCategories() {
+    return productRepository.listItemCategories();
+  }
+
+  public ProductDtos.CategoryView createItemCategory(ProductDtos.CreateCategoryRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    requireCatalogMutationAccess(context);
+    return productRepository.createItemCategory(request);
   }
 
   private static String trimToNull(String value) {

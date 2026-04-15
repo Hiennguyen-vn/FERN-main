@@ -22,7 +22,8 @@ import {
   filterActionHub,
 } from '@/layouts/shell-layout-helpers';
 
-const ScopeSelector = lazy(() => import('@/components/shell/ScopeSelector').then((module) => ({ default: module.ScopeSelector })));
+import { ScopeBar } from '@/components/shell/ScopeBar';
+
 const QuickActionsPanel = lazy(() => import('@/components/shell/QuickActionsPanel').then((module) => ({ default: module.QuickActionsPanel })));
 const NotificationPanel = lazy(() => import('@/components/shell/NotificationPanel').then((module) => ({ default: module.NotificationPanel })));
 
@@ -52,7 +53,6 @@ export default function ShellLayout() {
   const [scopeLevel, setScopeLevel] = useState<ScopeLevel>('outlet');
   const [customScope, setCustomScope] = useState<ShellScope | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [scopeOpen, setScopeOpen] = useState(false);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const attemptedScopeRecovery = useRef(false);
@@ -132,6 +132,54 @@ export default function ShellLayout() {
     return [{ id: 'system', name: 'All Regions', level: 'system', children: [] }];
   }, [hierarchyQuery.data]);
 
+  // Auto-select: find first leaf region (one that directly contains outlets)
+  // and auto-select the appropriate scope level.
+  useEffect(() => {
+    if (customScope) return;
+
+    // Walk tree to find leaf regions (regions with outlet children)
+    const leafRegions: ScopeOption[] = [];
+    function walk(nodes: ScopeOption[]) {
+      for (const node of nodes) {
+        if (node.level === 'region' && node.children?.some((c) => c.level === 'outlet')) {
+          leafRegions.push(node);
+        }
+        if (node.children) walk(node.children);
+      }
+    }
+    walk(scopeTree[0]?.children || []);
+
+    const totalOutlets = leafRegions.reduce((sum, r) => sum + (r.children?.length || 0), 0);
+
+    if (totalOutlets === 0) return;
+
+    // Single outlet → auto-select it
+    if (totalOutlets === 1) {
+      const region = leafRegions[0];
+      const outlet = region.children![0];
+      setCustomScope({
+        level: 'outlet',
+        regionId: region.id,
+        regionName: region.name,
+        outletId: outlet.id,
+        outletName: outlet.name,
+      });
+      setScopeLevel('outlet');
+      return;
+    }
+
+    // Multiple outlets → auto-select first leaf region (so outlet chips appear)
+    const firstLeaf = leafRegions[0];
+    if (firstLeaf) {
+      setCustomScope({
+        level: 'region',
+        regionId: firstLeaf.id,
+        regionName: firstLeaf.name,
+      });
+      setScopeLevel('region');
+    }
+  }, [scopeTree, customScope]);
+
   const currentScope = customScope || defaultScope(scopeLevel, scopeTree);
 
   const shellUser = useMemo(() => buildShellUser(session), [session]);
@@ -175,7 +223,7 @@ export default function ShellLayout() {
           user={shellUser}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-          onOpenScope={() => setScopeOpen(true)}
+          onOpenScope={() => {}}
           onOpenQuickActions={() => setQuickActionsOpen(true)}
           onOpenNotifications={() => setNotificationsOpen(true)}
           onLogout={() => {
@@ -184,22 +232,17 @@ export default function ShellLayout() {
           notificationCount={hierarchyQuery.isError ? 1 : 0}
         />
 
+        <ScopeBar
+          currentScope={currentScope}
+          scopeTree={scopeTree}
+          onScopeChange={handleScopeChange}
+        />
+
         <main className="flex-1 overflow-y-auto flex flex-col">
           <Outlet context={{ scope: currentScope, user: shellUser }} />
         </main>
       </div>
 
-      {scopeOpen ? (
-        <Suspense fallback={null}>
-          <ScopeSelector
-            open={scopeOpen}
-            onClose={() => setScopeOpen(false)}
-            currentScope={currentScope}
-            scopeTree={scopeTree}
-            onScopeChange={handleScopeChange}
-          />
-        </Suspense>
-      ) : null}
       {quickActionsOpen ? (
         <Suspense fallback={null}>
           <QuickActionsPanel

@@ -215,6 +215,14 @@ public class SalesController {
     return salesService.createPromotion(request);
   }
 
+  @PutMapping("/promotions/{promotionId}")
+  public SalesDtos.PromotionView updatePromotion(
+      @PathVariable long promotionId,
+      @RequestBody SalesDtos.UpdatePromotionRequest request
+  ) {
+    return salesService.updatePromotion(promotionId, request);
+  }
+
   @PostMapping("/promotions/{promotionId}/deactivate")
   public SalesDtos.PromotionView deactivatePromotion(@PathVariable long promotionId) {
     return salesService.deactivatePromotion(promotionId);

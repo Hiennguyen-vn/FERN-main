@@ -90,15 +90,6 @@ export function TopBar({
         <span className="ml-auto text-[10px] bg-background px-1.5 py-0.5 rounded border">⌘K</span>
       </div>
 
-      {/* Scope selector */}
-      <button
-        onClick={onOpenScope}
-        className="hidden lg:flex items-center gap-2 h-8 px-2.5 rounded-md border hover:bg-accent transition-colors"
-      >
-        <ScopeChips scope={scope} />
-        <ChevronDown className="h-3 w-3 text-muted-foreground" />
-      </button>
-
       {/* Quick actions */}
       <Button variant="ghost" size="icon" onClick={onOpenQuickActions} className="h-8 w-8 text-muted-foreground">
         <Zap className="h-4 w-4" />

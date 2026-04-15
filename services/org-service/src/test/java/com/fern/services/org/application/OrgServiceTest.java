@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -38,6 +39,8 @@ class OrgServiceTest {
   private OrgHierarchyCacheService orgHierarchyCacheService;
   @Mock
   private TypedKafkaEventPublisher kafkaEventPublisher;
+  @Mock
+  private AuthorizationPolicyService authorizationPolicyService;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
 
@@ -51,12 +54,13 @@ class OrgServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null
     ));
+    when(authorizationPolicyService.hasAdministrativeOrgAccess(any())).thenReturn(true);
     OrgDtos.RegionView region = new OrgDtos.RegionView(1L, "VN", null, "VND", "Vietnam", null, "Asia/Ho_Chi_Minh");
     when(orgHierarchyCacheService.getOrLoad(any(), any())).thenReturn(
         new OrgHierarchyCacheService.CachedHierarchy(List.of(region), List.of())
     );
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, clock);
+    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
     List<OrgDtos.RegionView> result = service.listRegions();
 
     assertEquals(1, result.size());
@@ -70,7 +74,7 @@ class OrgServiceTest {
     ));
     when(orgHierarchyCacheService.getOrLoad(any(), any())).thenReturn(sampleHierarchy());
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, clock);
+    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
     List<OrgDtos.OutletView> result = service.listOutlets(null);
 
     assertEquals(1, result.size());
@@ -96,7 +100,7 @@ class OrgServiceTest {
     );
     when(orgRepository.findOutletById(2001L)).thenReturn(Optional.of(outlet));
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, clock);
+    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
 
     assertThrows(ServiceException.class, () -> service.getOutlet(2001L));
   }
@@ -108,7 +112,7 @@ class OrgServiceTest {
     ));
     when(orgHierarchyCacheService.getOrLoad(any(), any())).thenReturn(sampleHierarchy());
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, clock);
+    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
     OrgDtos.OrgHierarchyView result = service.getHierarchy();
 
     assertEquals(Set.of(1L, 10L), result.regions().stream().map(OrgDtos.RegionView::id).collect(java.util.stream.Collectors.toSet()));
@@ -124,7 +128,7 @@ class OrgServiceTest {
     when(orgRepository.findRegionByCode("VN")).thenReturn(Optional.of(sampleHierarchy().regions().getFirst()));
     when(orgRepository.findRegionByCode("US")).thenReturn(Optional.of(sampleHierarchy().regions().get(2)));
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, clock);
+    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
 
     assertEquals("VN", service.getRegion("VN").code());
     assertThrows(ServiceException.class, () -> service.getRegion("US"));
@@ -143,6 +147,7 @@ class OrgServiceTest {
         false,
         null
     ));
+    when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
     OrgDtos.CreateOutletRequest request = new OrgDtos.CreateOutletRequest(
         1L,
         "VN-HCM-001",
@@ -168,7 +173,7 @@ class OrgServiceTest {
     );
     when(orgRepository.createOutlet(request)).thenReturn(outlet);
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, clock);
+    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
     OrgDtos.OutletView result = service.createOutlet(request);
 
     verify(orgHierarchyCacheService).evict();
@@ -186,7 +191,8 @@ class OrgServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null
     ));
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, clock);
+    when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
+    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
 
     assertThrows(ServiceException.class, () -> service.upsertExchangeRate(new OrgDtos.UpdateExchangeRateRequest(
         "USD",
@@ -202,6 +208,7 @@ class OrgServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null
     ));
+    when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
     OrgDtos.UpdateExchangeRateRequest request = new OrgDtos.UpdateExchangeRateRequest(
         "EUR",
         "USD",
@@ -219,7 +226,7 @@ class OrgServiceTest {
     );
     when(orgRepository.upsertExchangeRate(request)).thenReturn(exchangeRate);
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, clock);
+    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
     OrgDtos.ExchangeRateView result = service.upsertExchangeRate(request);
 
     verify(kafkaEventPublisher).publish(

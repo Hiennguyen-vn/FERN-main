@@ -1,8 +1,7 @@
 package com.fern.services.inventory.application;
 
 import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.PermissionMatrix;
-import com.dorabets.common.spring.auth.PermissionMatrixService;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -30,20 +29,20 @@ import org.springframework.transaction.annotation.Transactional;
 public class InventoryService {
 
   private final InventoryRepository inventoryRepository;
-  private final PermissionMatrixService permissionMatrixService;
+  private final AuthorizationPolicyService authorizationPolicyService;
   private final TypedKafkaEventPublisher eventPublisher;
   private final SnowflakeIdGenerator idGenerator;
   private final Clock clock;
 
   public InventoryService(
       InventoryRepository inventoryRepository,
-      PermissionMatrixService permissionMatrixService,
+      AuthorizationPolicyService authorizationPolicyService,
       TypedKafkaEventPublisher eventPublisher,
       SnowflakeIdGenerator idGenerator,
       Clock clock
   ) {
     this.inventoryRepository = inventoryRepository;
-    this.permissionMatrixService = permissionMatrixService;
+    this.authorizationPolicyService = authorizationPolicyService;
     this.eventPublisher = eventPublisher;
     this.idGenerator = idGenerator;
     this.clock = clock;
@@ -237,13 +236,7 @@ public class InventoryService {
 
   private void requireInventoryWrite(long outletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
-      return;
-    }
-    long userId = context.requireUserId();
-    PermissionMatrix matrix = permissionMatrixService.load(userId);
-    if (matrix.rolesForOutlet(outletId).contains("outlet_manager")
-        || matrix.hasPermission(outletId, "inventory.write")) {
+    if (authorizationPolicyService.canWriteInventory(context, outletId)) {
       return;
     }
     throw ServiceException.forbidden("Inventory write access is required for outlet " + outletId);
@@ -255,20 +248,20 @@ public class InventoryService {
 
   private Set<Long> resolveReadableOutletIds(Long requestedOutletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    Set<Long> readable = authorizationPolicyService.resolveInventoryReadableOutletIds(context);
+    if (readable == null) {
       return requestedOutletId == null ? null : Set.of(requestedOutletId);
     }
-    context.requireUserId();
-    if (context.outletIds().isEmpty()) {
+    if (readable.isEmpty()) {
       throw ServiceException.forbidden("Inventory read access requires outlet scope");
     }
     if (requestedOutletId != null) {
-      if (!context.outletIds().contains(requestedOutletId)) {
+      if (!readable.contains(requestedOutletId)) {
         throw ServiceException.forbidden("Inventory read access denied for outlet " + requestedOutletId);
       }
       return Set.of(requestedOutletId);
     }
-    return context.outletIds();
+    return readable;
   }
 
   private int sanitizeLimit(Integer limit) {

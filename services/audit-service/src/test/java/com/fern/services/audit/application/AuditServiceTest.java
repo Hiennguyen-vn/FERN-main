@@ -2,9 +2,11 @@ package com.fern.services.audit.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.middleware.ServiceException;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
@@ -23,6 +25,8 @@ class AuditServiceTest {
 
   @Mock
   private AuditRepository auditRepository;
+  @Mock
+  private AuthorizationPolicyService authorizationPolicyService;
 
   @AfterEach
   void clearContext() {
@@ -34,7 +38,8 @@ class AuditServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         12L, "workflow.hcm.manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
     ));
-    AuditService service = new AuditService(auditRepository);
+    when(authorizationPolicyService.canReadAudit(any())).thenReturn(false);
+    AuditService service = new AuditService(auditRepository, authorizationPolicyService);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.listAuditLogs(
         null,
@@ -58,6 +63,7 @@ class AuditServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         1L, "workflow.admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(2000L), true, false, null
     ));
+    when(authorizationPolicyService.canReadAudit(any())).thenReturn(true);
     when(auditRepository.listLogs(
         "purchase_order",
         "7000",
@@ -72,7 +78,7 @@ class AuditServiceTest {
         5
     )).thenReturn(PagedResult.of(java.util.List.of(), 500, 5, 0));
 
-    AuditService service = new AuditService(auditRepository);
+    AuditService service = new AuditService(auditRepository, authorizationPolicyService);
     service.listAuditLogs(
         "purchase_order",
         "7000",

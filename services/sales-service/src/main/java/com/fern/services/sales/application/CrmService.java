@@ -1,6 +1,7 @@
 package com.fern.services.sales.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.web.PagedResult;
@@ -14,9 +15,11 @@ import org.springframework.stereotype.Service;
 public class CrmService {
 
   private final SalesRepository salesRepository;
+  private final AuthorizationPolicyService authorizationPolicyService;
 
-  public CrmService(SalesRepository salesRepository) {
+  public CrmService(SalesRepository salesRepository, AuthorizationPolicyService authorizationPolicyService) {
     this.salesRepository = salesRepository;
+    this.authorizationPolicyService = authorizationPolicyService;
   }
 
   public PagedResult<CrmDtos.CustomerView> listCustomers(
@@ -42,23 +45,20 @@ public class CrmService {
 
   private Set<Long> resolveReadableOutletIds(Long requestedOutletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    Set<Long> readable = authorizationPolicyService.resolveSalesReadableOutletIds(context);
+    if (readable == null) {
       return requestedOutletId == null ? null : Set.of(requestedOutletId);
     }
-    context.requireUserId();
-    if (!context.hasPermission("sales.order.write")) {
-      throw ServiceException.forbidden("CRM customer read access requires sales scope");
-    }
-    if (context.outletIds().isEmpty()) {
+    if (readable.isEmpty()) {
       throw ServiceException.forbidden("CRM customer read access requires outlet scope");
     }
     if (requestedOutletId != null) {
-      if (!context.outletIds().contains(requestedOutletId)) {
+      if (!readable.contains(requestedOutletId)) {
         throw ServiceException.forbidden("CRM customer read access denied for outlet " + requestedOutletId);
       }
       return Set.of(requestedOutletId);
     }
-    return context.outletIds();
+    return readable;
   }
 
   private int sanitizeLimit(int limit) {

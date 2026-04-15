@@ -516,7 +516,7 @@ export function InventoryModule() {
   if (!outletId) {
     return (
       <ServiceUnavailablePage
-        state="route_unavailable"
+        state="scope_mismatch"
         moduleName="Inventory"
       />
     );

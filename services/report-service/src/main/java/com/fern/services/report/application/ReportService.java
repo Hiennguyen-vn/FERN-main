@@ -1,6 +1,7 @@
 package com.fern.services.report.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.web.PagedResult;
@@ -14,9 +15,11 @@ import org.springframework.stereotype.Service;
 public class ReportService {
 
   private final ReportRepository reportRepository;
+  private final AuthorizationPolicyService authorizationPolicyService;
 
-  public ReportService(ReportRepository reportRepository) {
+  public ReportService(ReportRepository reportRepository, AuthorizationPolicyService authorizationPolicyService) {
     this.reportRepository = reportRepository;
+    this.authorizationPolicyService = authorizationPolicyService;
   }
 
   public PagedResult<ReportDtos.SalesSummary> salesSummary(
@@ -111,13 +114,10 @@ public class ReportService {
 
   private void requireOutletRead(long outletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (authorizationPolicyService.canReadReport(context, outletId)) {
       return;
     }
-    context.requireUserId();
-    if (!context.outletIds().contains(outletId)) {
-      throw ServiceException.forbidden("Report access denied for outlet " + outletId);
-    }
+    throw ServiceException.forbidden("Report access denied for outlet " + outletId);
   }
 
   private static LocalDate defaultStart(LocalDate startDate) {

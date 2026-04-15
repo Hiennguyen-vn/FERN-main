@@ -24,7 +24,7 @@ function buildSession(overrides: Partial<AuthSession> = {}): AuthSession {
 }
 
 describe('hasModuleAccess', () => {
-  it('shows finance only to admin users while backend keeps finance admin-only', () => {
+  it('shows finance to finance/outlet_manager/region_manager roles per business rules §5.6', () => {
     const cashierSession = buildSession({
       rolesByOutlet: { '101': ['cashier'] },
       permissionsByOutlet: { '101': ['sales.order.write'] },
@@ -33,16 +33,22 @@ describe('hasModuleAccess', () => {
       rolesByOutlet: { '101': ['admin'] },
     });
     const accountantSession = buildSession({
-      rolesByOutlet: { '101': ['accountant'] },
+      rolesByOutlet: { '101': ['accountant'] }, // legacy → finance
     });
-    const payrollSession = buildSession({
-      permissionsByOutlet: { '101': ['payroll.approve'] },
+    const outletManagerSession = buildSession({
+      rolesByOutlet: { '101': ['outlet_manager'] },
+    });
+    const regionManagerSession = buildSession({
+      rolesByOutlet: { '101': ['region_manager'] },
     });
 
     expect(hasModuleAccess(cashierSession, 'finance')).toBe(false);
-    expect(hasModuleAccess(adminSession, 'finance')).toBe(true);
-    expect(hasModuleAccess(accountantSession, 'finance')).toBe(false);
-    expect(hasModuleAccess(payrollSession, 'finance')).toBe(false);
+    // admin is governance-only — no business operations (§8.1)
+    expect(hasModuleAccess(adminSession, 'finance')).toBe(false);
+    // accountant → finance (legacy alias), finance role has finance access
+    expect(hasModuleAccess(accountantSession, 'finance')).toBe(true);
+    expect(hasModuleAccess(outletManagerSession, 'finance')).toBe(true);
+    expect(hasModuleAccess(regionManagerSession, 'finance')).toBe(true);
   });
 
   it('keeps HR attendance visible while compensation tabs stay admin-only', () => {
@@ -55,7 +61,8 @@ describe('hasModuleAccess', () => {
 
     expect(hasModuleAccess(outletManager, 'hr')).toBe(true);
     expect(hasHrCompensationAccess(outletManager)).toBe(false);
-    expect(hasHrCompensationAccess(admin)).toBe(true);
+    // admin is governance-only — no payroll/compensation access (§8.1)
+    expect(hasHrCompensationAccess(admin)).toBe(false);
   });
 
   it('keeps POS visible for outlet-scoped sales users', () => {
@@ -68,17 +75,24 @@ describe('hasModuleAccess', () => {
     expect(hasSalesOrderQueueAccess(salesSession)).toBe(true);
   });
 
-  it('restricts customer-order queue to staff who can actually process sales', () => {
-    const viewer = buildSession({
-      rolesByOutlet: { '101': ['cashier'] },
+  it('grants sales order queue to staff (incl. legacy cashier) per §5.3', () => {
+    const cashier = buildSession({
+      rolesByOutlet: { '101': ['cashier'] }, // legacy → staff
       permissionsByOutlet: { '101': ['inventory.read'] },
     });
     const admin = buildSession({
       rolesByOutlet: { '101': ['admin'] },
     });
+    const financeOnly = buildSession({
+      rolesByOutlet: { '101': ['finance'] },
+    });
 
-    expect(hasSalesOrderQueueAccess(viewer)).toBe(false);
-    expect(hasSalesOrderQueueAccess(admin)).toBe(true);
+    // cashier → staff, staff has POS/sales access
+    expect(hasSalesOrderQueueAccess(cashier)).toBe(true);
+    // admin is governance-only, no sales access
+    expect(hasSalesOrderQueueAccess(admin)).toBe(false);
+    // finance has no sales access
+    expect(hasSalesOrderQueueAccess(financeOnly)).toBe(false);
   });
 
   it('requires IAM permissions or admin role for IAM surfaces', () => {

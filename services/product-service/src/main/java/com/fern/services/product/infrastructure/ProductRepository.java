@@ -109,7 +109,7 @@ public class ProductRepository extends BaseRepository {
         ps.setString(2, request.code().trim());
         ps.setString(3, request.name().trim());
         ps.setString(4, trimToNull(request.categoryCode()));
-        ps.setString(5, "active");
+        ps.setString(5, "draft");
         ps.setString(6, trimToNull(request.imageUrl()));
         ps.setString(7, trimToNull(request.description()));
         if (actorUserId == null) {
@@ -456,6 +456,111 @@ public class ProductRepository extends BaseRepository {
     });
   }
 
+  public ProductDtos.ProductView updateProduct(long productId, ProductDtos.UpdateProductRequest request, Long actorUserId) {
+    return executeInTransaction(conn -> {
+      Instant now = clock.instant();
+      StringBuilder sql = new StringBuilder("UPDATE core.product SET updated_at = ?");
+      List<Object> params = new ArrayList<>();
+      params.add(Timestamp.from(now));
+      if (request.name() != null) { sql.append(", name = ?"); params.add(request.name().trim()); }
+      if (request.categoryCode() != null) { sql.append(", category_code = ?"); params.add(trimToNull(request.categoryCode())); }
+      if (request.status() != null) { sql.append(", status = ?::product_status_enum"); params.add(request.status().trim()); }
+      if (request.imageUrl() != null) { sql.append(", image_url = ?"); params.add(trimToNull(request.imageUrl())); }
+      if (request.description() != null) { sql.append(", description = ?"); params.add(trimToNull(request.description())); }
+      if (actorUserId != null) { sql.append(", updated_by_user_id = ?"); params.add(actorUserId); }
+      sql.append(" WHERE id = ? AND deleted_at IS NULL");
+      params.add(productId);
+      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+        bind(ps, params);
+        int updated = ps.executeUpdate();
+        if (updated == 0) {
+          throw ServiceException.notFound("Product not found: " + productId);
+        }
+      } catch (SQLException e) {
+        if ("23503".equals(e.getSQLState())) {
+          throw ServiceException.badRequest("Invalid reference in product update");
+        }
+        throw e;
+      }
+      return findProductById(conn, productId)
+          .orElseThrow(() -> new IllegalStateException("Updated product not found: " + productId));
+    });
+  }
+
+  public ProductDtos.ItemView updateItem(long itemId, ProductDtos.UpdateItemRequest request) {
+    return executeInTransaction(conn -> {
+      Instant now = clock.instant();
+      StringBuilder sql = new StringBuilder("UPDATE core.item SET updated_at = ?");
+      List<Object> params = new ArrayList<>();
+      params.add(Timestamp.from(now));
+      if (request.name() != null) { sql.append(", name = ?"); params.add(request.name().trim()); }
+      if (request.categoryCode() != null) { sql.append(", category_code = ?"); params.add(trimToNull(request.categoryCode())); }
+      if (request.baseUomCode() != null) { sql.append(", base_uom_code = ?"); params.add(request.baseUomCode().trim()); }
+      if (request.minStockLevel() != null) { sql.append(", min_stock_level = ?"); params.add(request.minStockLevel()); }
+      if (request.maxStockLevel() != null) { sql.append(", max_stock_level = ?"); params.add(request.maxStockLevel()); }
+      if (request.status() != null) { sql.append(", status = ?::item_status_enum"); params.add(request.status().trim()); }
+      sql.append(" WHERE id = ? AND deleted_at IS NULL");
+      params.add(itemId);
+      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+        bind(ps, params);
+        int updated = ps.executeUpdate();
+        if (updated == 0) {
+          throw ServiceException.notFound("Item not found: " + itemId);
+        }
+      } catch (SQLException e) {
+        if ("23503".equals(e.getSQLState())) {
+          throw ServiceException.badRequest("Invalid reference in item update");
+        }
+        throw e;
+      }
+      return findItemById(conn, itemId)
+          .orElseThrow(() -> new IllegalStateException("Updated item not found: " + itemId));
+    });
+  }
+
+  public List<ProductDtos.AvailabilityView> listAvailability(Long productId, Long outletId) {
+    StringBuilder sql = new StringBuilder(
+        "SELECT product_id, outlet_id, is_available FROM core.product_outlet_availability WHERE 1 = 1"
+    );
+    List<Object> params = new ArrayList<>();
+    if (productId != null) { sql.append(" AND product_id = ?"); params.add(productId); }
+    if (outletId != null) { sql.append(" AND outlet_id = ?"); params.add(outletId); }
+    sql.append(" ORDER BY product_id, outlet_id");
+    return queryList(sql.toString(), rs -> {
+      try {
+        return new ProductDtos.AvailabilityView(
+            rs.getLong("product_id"),
+            rs.getLong("outlet_id"),
+            rs.getBoolean("is_available")
+        );
+      } catch (Exception e) {
+        throw new IllegalStateException("Unable to map availability", e);
+      }
+    }, params.toArray());
+  }
+
+  public ProductDtos.AvailabilityView setAvailability(ProductDtos.SetAvailabilityRequest request) {
+    return executeInTransaction(conn -> {
+      Instant now = clock.instant();
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.product_outlet_availability (product_id, outlet_id, is_available, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT (product_id, outlet_id)
+          DO UPDATE SET is_available = EXCLUDED.is_available, updated_at = EXCLUDED.updated_at
+          """
+      )) {
+        ps.setLong(1, request.productId());
+        ps.setLong(2, request.outletId());
+        ps.setBoolean(3, request.available());
+        ps.setTimestamp(4, Timestamp.from(now));
+        ps.setTimestamp(5, Timestamp.from(now));
+        ps.executeUpdate();
+      }
+      return new ProductDtos.AvailabilityView(request.productId(), request.outletId(), request.available());
+    });
+  }
+
   private Optional<ProductDtos.RecipeView> findRecipeVersion(long productId, String version) {
     List<ProductDtos.RecipeView> recipes = queryList(
         """
@@ -795,6 +900,142 @@ public class ProductRepository extends BaseRepository {
       return pgException.getServerErrorMessage().getConstraint();
     }
     return null;
+  }
+
+  public List<ProductDtos.CategoryView> listProductCategories() {
+    return queryList(
+        "SELECT code, name, is_active, description FROM core.product_category ORDER BY code",
+        rs -> {
+          try {
+            return new ProductDtos.CategoryView(
+                rs.getString("code"),
+                rs.getString("name"),
+                rs.getBoolean("is_active"),
+                rs.getString("description")
+            );
+          } catch (Exception e) {
+            throw new IllegalStateException("Unable to map product category", e);
+          }
+        }
+    );
+  }
+
+  public ProductDtos.CategoryView createProductCategory(ProductDtos.CreateCategoryRequest request) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.product_category (code, name, is_active, description)
+          VALUES (?, ?, true, ?)
+          """
+      )) {
+        ps.setString(1, request.code().trim());
+        ps.setString(2, request.name().trim());
+        ps.setString(3, trimToNull(request.description()));
+        ps.executeUpdate();
+      } catch (SQLException e) {
+        if ("23505".equals(e.getSQLState())) {
+          throw ServiceException.conflict("Product category code already exists");
+        }
+        throw e;
+      }
+      return findProductCategory(conn, request.code().trim())
+          .orElseThrow(() -> new IllegalStateException("Created product category not found"));
+    });
+  }
+
+  public ProductDtos.CategoryView updateProductCategory(String code, ProductDtos.UpdateCategoryRequest request) {
+    return executeInTransaction(conn -> {
+      StringBuilder sql = new StringBuilder("UPDATE core.product_category SET code = code");
+      List<Object> params = new ArrayList<>();
+      if (request.name() != null) { sql.append(", name = ?"); params.add(request.name().trim()); }
+      if (request.description() != null) { sql.append(", description = ?"); params.add(trimToNull(request.description())); }
+      if (request.isActive() != null) { sql.append(", is_active = ?"); params.add(request.isActive()); }
+      sql.append(" WHERE code = ?");
+      params.add(code);
+      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+        bind(ps, params);
+        int updated = ps.executeUpdate();
+        if (updated == 0) {
+          throw ServiceException.notFound("Product category not found: " + code);
+        }
+      }
+      return findProductCategory(conn, code)
+          .orElseThrow(() -> new IllegalStateException("Updated product category not found: " + code));
+    });
+  }
+
+  private Optional<ProductDtos.CategoryView> findProductCategory(Connection conn, String code) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        "SELECT code, name, is_active, description FROM core.product_category WHERE code = ?"
+    )) {
+      ps.setString(1, code);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) {
+          return Optional.of(new ProductDtos.CategoryView(
+              rs.getString("code"),
+              rs.getString("name"),
+              rs.getBoolean("is_active"),
+              rs.getString("description")
+          ));
+        }
+        return Optional.empty();
+      }
+    }
+  }
+
+  public List<ProductDtos.CategoryView> listItemCategories() {
+    return queryList(
+        "SELECT code, name, is_active, description FROM core.item_category ORDER BY code",
+        rs -> {
+          try {
+            return new ProductDtos.CategoryView(
+                rs.getString("code"),
+                rs.getString("name"),
+                rs.getBoolean("is_active"),
+                rs.getString("description")
+            );
+          } catch (Exception e) {
+            throw new IllegalStateException("Unable to map item category", e);
+          }
+        }
+    );
+  }
+
+  public ProductDtos.CategoryView createItemCategory(ProductDtos.CreateCategoryRequest request) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.item_category (code, name, is_active, description)
+          VALUES (?, ?, true, ?)
+          """
+      )) {
+        ps.setString(1, request.code().trim());
+        ps.setString(2, request.name().trim());
+        ps.setString(3, trimToNull(request.description()));
+        ps.executeUpdate();
+      } catch (SQLException e) {
+        if ("23505".equals(e.getSQLState())) {
+          throw ServiceException.conflict("Item category code already exists");
+        }
+        throw e;
+      }
+      try (PreparedStatement ps = conn.prepareStatement(
+          "SELECT code, name, is_active, description FROM core.item_category WHERE code = ?"
+      )) {
+        ps.setString(1, request.code().trim());
+        try (ResultSet rs = ps.executeQuery()) {
+          if (rs.next()) {
+            return new ProductDtos.CategoryView(
+                rs.getString("code"),
+                rs.getString("name"),
+                rs.getBoolean("is_active"),
+                rs.getString("description")
+            );
+          }
+          throw new IllegalStateException("Created item category not found");
+        }
+      }
+    });
   }
 
   private static String trimToNull(String value) {

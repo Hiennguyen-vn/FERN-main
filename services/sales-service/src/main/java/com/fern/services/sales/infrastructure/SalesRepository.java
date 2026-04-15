@@ -1275,6 +1275,58 @@ public class SalesRepository extends BaseRepository {
     });
   }
 
+  public SalesDtos.PromotionView updatePromotion(long promotionId, SalesDtos.UpdatePromotionRequest request) {
+    return executeInTransaction(conn -> {
+      Instant now = clock.instant();
+      StringBuilder sql = new StringBuilder("UPDATE core.promotion SET updated_at = ?");
+      List<Object> params = new ArrayList<>();
+      params.add(Timestamp.from(now));
+      if (request.name() != null) { sql.append(", name = ?"); params.add(request.name().trim()); }
+      if (request.promoType() != null) { sql.append(", promo_type = ?::promo_type_enum"); params.add(normalizePromotionType(request.promoType())); }
+      if (request.valueAmount() != null) { sql.append(", value_amount = ?"); params.add(request.valueAmount()); }
+      if (request.valuePercent() != null) { sql.append(", value_percent = ?"); params.add(request.valuePercent()); }
+      if (request.minOrderAmount() != null) { sql.append(", min_order_amount = ?"); params.add(request.minOrderAmount()); }
+      if (request.maxDiscountAmount() != null) { sql.append(", max_discount_amount = ?"); params.add(request.maxDiscountAmount()); }
+      if (request.effectiveFrom() != null) { sql.append(", effective_from = ?"); params.add(Timestamp.from(request.effectiveFrom())); }
+      if (request.effectiveTo() != null) { sql.append(", effective_to = ?"); params.add(Timestamp.from(request.effectiveTo())); }
+      if (request.status() != null) { sql.append(", status = ?::promo_status_enum"); params.add(request.status().trim()); }
+      sql.append(" WHERE id = ?");
+      params.add(promotionId);
+      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+        for (int i = 0; i < params.size(); i++) {
+          ps.setObject(i + 1, params.get(i));
+        }
+        int updated = ps.executeUpdate();
+        if (updated == 0) {
+          throw ServiceException.notFound("Promotion not found: " + promotionId);
+        }
+      }
+      if (request.outletIds() != null) {
+        try (PreparedStatement ps = conn.prepareStatement(
+            "DELETE FROM core.promotion_scope WHERE promotion_id = ?"
+        )) {
+          ps.setLong(1, promotionId);
+          ps.executeUpdate();
+        }
+        for (Long outletId : request.outletIds()) {
+          try (PreparedStatement ps = conn.prepareStatement(
+              """
+              INSERT INTO core.promotion_scope (promotion_id, outlet_id, created_at)
+              VALUES (?, ?, ?)
+              """
+          )) {
+            ps.setLong(1, promotionId);
+            ps.setLong(2, outletId);
+            ps.setTimestamp(3, Timestamp.from(now));
+            ps.executeUpdate();
+          }
+        }
+      }
+      return findPromotion(conn, promotionId)
+          .orElseThrow(() -> new IllegalStateException("Promotion not found after update"));
+    });
+  }
+
   private void validatePublicOrderItems(
       Connection conn,
       long outletId,

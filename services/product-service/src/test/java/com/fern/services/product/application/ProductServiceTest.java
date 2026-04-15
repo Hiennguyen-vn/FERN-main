@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.web.PagedResult;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
@@ -39,6 +40,8 @@ class ProductServiceTest {
   private ProductPriceCacheService productPriceCacheService;
   @Mock
   private TypedKafkaEventPublisher kafkaEventPublisher;
+  @Mock
+  private AuthorizationPolicyService authorizationPolicyService;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
 
@@ -52,6 +55,7 @@ class ProductServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         21L, "manager", "sess-21", Set.of("outlet_manager"), Set.of(), Set.of(7L), true, false, null
     ));
+    when(authorizationPolicyService.canReadCatalogForOutlet(any(), eq(7L))).thenReturn(true);
     LocalDate businessDate = LocalDate.parse("2026-03-27");
     List<ProductDtos.PriceView> prices = List.of(new ProductDtos.PriceView(
         11L,
@@ -64,7 +68,7 @@ class ProductServiceTest {
     when(productRepository.listPrices(7L, null, businessDate, null, null, null, 50, 0))
         .thenReturn(PagedResult.of(prices, 50, 0, 1));
 
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, clock);
+    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
     PagedResult<ProductDtos.PriceView> result = service.listPrices(7L, null, businessDate, null, null, null, null, null);
 
     assertEquals(1, result.items().size());
@@ -76,6 +80,7 @@ class ProductServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         10L, "admin", "sess-10", Set.of("admin"), Set.of(), Set.of(), true, false, null
     ));
+    when(authorizationPolicyService.canMutateCatalog(any())).thenReturn(true);
     ProductDtos.CreateProductRequest request = new ProductDtos.CreateProductRequest(
         "CF-01",
         "Cold Brew",
@@ -86,7 +91,7 @@ class ProductServiceTest {
     ProductDtos.ProductView product = new ProductDtos.ProductView(11L, "CF-01", "Cold Brew", "coffee", "draft", null, "Coffee");
     when(productRepository.createProduct(request, 10L)).thenReturn(product);
 
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, clock);
+    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
     ProductDtos.ProductView result = service.createProduct(request);
 
     verify(productRepository).createProduct(request, 10L);
@@ -98,6 +103,7 @@ class ProductServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         21L, "manager", "sess-21", Set.of("outlet_manager"), Set.of(), Set.of(7L), true, false, null
     ));
+    when(authorizationPolicyService.canReadCatalogForOutlet(any(), eq(7L))).thenReturn(true);
     LocalDate businessDate = LocalDate.parse("2026-03-27");
     ProductDtos.PriceView price = new ProductDtos.PriceView(
         11L,
@@ -109,7 +115,7 @@ class ProductServiceTest {
     );
     when(productPriceCacheService.getOrLoad(eq(11L), eq(7L), eq(businessDate), any())).thenReturn(price);
 
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, clock);
+    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
     ProductDtos.PriceView result = service.findPrice(11L, 7L, businessDate);
 
     assertEquals(new BigDecimal("4.50"), result.priceValue());
@@ -120,7 +126,8 @@ class ProductServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         21L, "manager", "sess-21", Set.of("outlet_manager"), Set.of(), Set.of(7L), true, false, null
     ));
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, clock);
+    when(authorizationPolicyService.canReadCatalogForOutlet(any(), eq(9L))).thenReturn(false);
+    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
 
     assertThrows(ServiceException.class, () -> service.findPrice(11L, 9L, LocalDate.parse("2026-03-27")));
   }
@@ -130,6 +137,7 @@ class ProductServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         10L, "admin", "sess-10", Set.of("admin"), Set.of(), Set.of(), true, false, null
     ));
+    when(authorizationPolicyService.canMutateCatalog(any())).thenReturn(true);
     ProductDtos.UpsertPriceRequest request = new ProductDtos.UpsertPriceRequest(
         11L,
         7L,
@@ -147,7 +155,7 @@ class ProductServiceTest {
     when(productRepository.findPrice(11L, 7L, LocalDate.parse("2026-03-27"))).thenReturn(Optional.of(previous));
     when(productRepository.upsertPrice(request, 10L)).thenReturn(saved);
 
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, clock);
+    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
     ProductDtos.PriceView result = service.upsertPrice(request);
 
     verify(productPriceCacheService).evict(11L, 7L, LocalDate.parse("2026-03-27"));
@@ -165,6 +173,7 @@ class ProductServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         10L, "admin", "sess-10", Set.of("admin"), Set.of(), Set.of(), true, false, null
     ));
+    when(authorizationPolicyService.canMutateCatalog(any())).thenReturn(true);
     ProductDtos.UpsertRecipeRequest request = new ProductDtos.UpsertRecipeRequest(
         "v1",
         new BigDecimal("1.0000"),
@@ -182,7 +191,7 @@ class ProductServiceTest {
     );
     when(productRepository.upsertRecipe(11L, request, 10L)).thenReturn(recipe);
 
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, clock);
+    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
     ProductDtos.RecipeView result = service.upsertRecipe(11L, request);
 
     verify(kafkaEventPublisher).publish(
@@ -197,7 +206,7 @@ class ProductServiceTest {
   @Test
   void resolveRecipeThrowsWhenMissing() {
     when(productRepository.findRecipe(11L, null)).thenReturn(Optional.empty());
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, clock);
+    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
 
     assertThrows(ServiceException.class, () -> service.resolveRecipe(11L, null));
   }

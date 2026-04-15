@@ -1,6 +1,7 @@
 package com.fern.services.sales.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -24,15 +25,18 @@ public class SalesService {
 
   private final SalesRepository salesRepository;
   private final TypedKafkaEventPublisher kafkaEventPublisher;
+  private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
 
   public SalesService(
       SalesRepository salesRepository,
       TypedKafkaEventPublisher kafkaEventPublisher,
+      AuthorizationPolicyService authorizationPolicyService,
       Clock clock
   ) {
     this.salesRepository = salesRepository;
     this.kafkaEventPublisher = kafkaEventPublisher;
+    this.authorizationPolicyService = authorizationPolicyService;
     this.clock = clock;
   }
 
@@ -251,6 +255,17 @@ public class SalesService {
     return salesRepository.createPromotion(request);
   }
 
+  public SalesDtos.PromotionView updatePromotion(long promotionId, SalesDtos.UpdatePromotionRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    SalesDtos.PromotionView existing = salesRepository.findPromotion(promotionId)
+        .orElseThrow(() -> ServiceException.notFound("Promotion not found: " + promotionId));
+    requirePromotionWrite(context, existing.outletIds());
+    if (request.outletIds() != null) {
+      requirePromotionWrite(context, request.outletIds());
+    }
+    return salesRepository.updatePromotion(promotionId, request);
+  }
+
   public SalesDtos.PromotionView deactivatePromotion(long promotionId) {
     RequestUserContext context = RequestUserContextHolder.get();
     SalesDtos.PromotionView existing = salesRepository.findPromotion(promotionId)
@@ -266,41 +281,32 @@ public class SalesService {
   }
 
   private void requireSalesWrite(RequestUserContext context) {
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")
-        || context.hasPermission("sales.order.write")) {
+    if (authorizationPolicyService.canWriteSales(context)) {
       return;
     }
-    context.requireUserId();
     throw ServiceException.forbidden("Sales permission is required");
   }
 
   private void requireSalesWriteForOutlet(RequestUserContext context, long outletId) {
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (authorizationPolicyService.canWriteSalesForOutlet(context, outletId)) {
       return;
     }
-    context.requireUserId();
-    if (!context.outletIds().contains(outletId)) {
-      throw ServiceException.forbidden("Sales write access denied for outlet " + outletId);
-    }
-    if (!context.hasPermission("sales.order.write")) {
-      throw ServiceException.forbidden("Sales permission is required");
-    }
+    throw ServiceException.forbidden("Sales write access denied for outlet " + outletId);
   }
 
   private void requirePromotionWrite(RequestUserContext context, Set<Long> requestedOutletIds) {
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (context.internalService()) {
       return;
     }
     context.requireUserId();
-    if (!context.hasPermission("sales.order.write")) {
-      throw ServiceException.forbidden("Sales permission is required");
-    }
     Set<Long> scopedOutlets = requestedOutletIds == null ? Set.of() : Set.copyOf(new LinkedHashSet<>(requestedOutletIds));
     if (scopedOutlets.isEmpty()) {
       throw ServiceException.forbidden("Scoped sales users must provide outletIds for promotions");
     }
-    if (!context.outletIds().containsAll(scopedOutlets)) {
-      throw ServiceException.forbidden("Sales promotion write access denied for one or more requested outlets");
+    for (Long outletId : scopedOutlets) {
+      if (!authorizationPolicyService.canWriteSalesForOutlet(context, outletId)) {
+        throw ServiceException.forbidden("Sales promotion write access denied for one or more requested outlets");
+      }
     }
   }
 
@@ -310,35 +316,40 @@ public class SalesService {
 
   private Set<Long> resolveWritableOutletIds(Long requestedOutletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (context.internalService()) {
       return requestedOutletId == null ? null : Set.of(requestedOutletId);
     }
     context.requireUserId();
-    if (!context.hasPermission("sales.order.write")) {
+    if (!authorizationPolicyService.canWriteSales(context)) {
       throw ServiceException.forbidden("Sales permission is required");
     }
-    if (context.outletIds().isEmpty()) {
+    Set<Long> allWritable = authorizationPolicyService.resolveSalesReadableOutletIds(context);
+    if (allWritable != null && allWritable.isEmpty()) {
       throw ServiceException.forbidden("Sales write access requires outlet scope");
     }
     if (requestedOutletId != null) {
-      if (!context.outletIds().contains(requestedOutletId)) {
+      if (!authorizationPolicyService.canWriteSalesForOutlet(context, requestedOutletId)) {
         throw ServiceException.forbidden("Sales write access denied for outlet " + requestedOutletId);
       }
       return Set.of(requestedOutletId);
     }
-    return context.outletIds();
+    return allWritable;
   }
 
   private void requirePromotionRead(Set<Long> outletIds) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (context.internalService()) {
       return;
     }
     context.requireUserId();
     if (outletIds == null || outletIds.isEmpty()) {
       throw ServiceException.forbidden("Sales promotion read access requires outlet scope");
     }
-    boolean allowed = outletIds.stream().anyMatch(context.outletIds()::contains);
+    Set<Long> readable = authorizationPolicyService.resolveSalesReadableOutletIds(context);
+    if (readable == null) {
+      return;
+    }
+    boolean allowed = outletIds.stream().anyMatch(readable::contains);
     if (!allowed) {
       throw ServiceException.forbidden("Sales promotion read access denied for the current outlet scope");
     }
@@ -346,20 +357,20 @@ public class SalesService {
 
   private Set<Long> resolveReadableOutletIds(Long requestedOutletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    Set<Long> readable = authorizationPolicyService.resolveSalesReadableOutletIds(context);
+    if (readable == null) {
       return requestedOutletId == null ? null : Set.of(requestedOutletId);
     }
-    context.requireUserId();
-    if (context.outletIds().isEmpty()) {
+    if (readable.isEmpty()) {
       throw ServiceException.forbidden("Sales read access requires outlet scope");
     }
     if (requestedOutletId != null) {
-      if (!context.outletIds().contains(requestedOutletId)) {
+      if (!readable.contains(requestedOutletId)) {
         throw ServiceException.forbidden("Sales read access denied for outlet " + requestedOutletId);
       }
       return Set.of(requestedOutletId);
     }
-    return context.outletIds();
+    return readable;
   }
 
   private int sanitizeLimit(Integer limit) {

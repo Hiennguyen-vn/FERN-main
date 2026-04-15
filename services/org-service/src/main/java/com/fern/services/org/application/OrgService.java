@@ -1,6 +1,7 @@
 package com.fern.services.org.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -24,27 +25,31 @@ public class OrgService {
   private final OrgRepository orgRepository;
   private final OrgHierarchyCacheService orgHierarchyCacheService;
   private final TypedKafkaEventPublisher kafkaEventPublisher;
+  private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
 
   public OrgService(
       OrgRepository orgRepository,
       OrgHierarchyCacheService orgHierarchyCacheService,
       TypedKafkaEventPublisher kafkaEventPublisher,
+      AuthorizationPolicyService authorizationPolicyService,
       Clock clock
   ) {
     this.orgRepository = orgRepository;
     this.orgHierarchyCacheService = orgHierarchyCacheService;
     this.kafkaEventPublisher = kafkaEventPublisher;
+    this.authorizationPolicyService = authorizationPolicyService;
     this.clock = clock;
   }
 
   public List<OrgDtos.RegionView> listRegions() {
     OrgHierarchyCacheService.CachedHierarchy hierarchy = cachedHierarchy();
     RequestUserContext context = RequestUserContextHolder.get();
-    if (hasAdministrativeReadAccess(context)) {
+    Set<Long> scopedOutletIds = resolveVisibleOutletIds(context);
+    if (scopedOutletIds == null) {
       return hierarchy.regions();
     }
-    Set<Long> visibleRegionIds = visibleRegionIds(hierarchy, accessibleOutletIds(context));
+    Set<Long> visibleRegionIds = visibleRegionIds(hierarchy, scopedOutletIds);
     return hierarchy.regions().stream()
         .filter(region -> visibleRegionIds.contains(region.id()))
         .toList();
@@ -54,13 +59,11 @@ public class OrgService {
     OrgDtos.RegionView region = orgRepository.findRegionByCode(code)
         .orElseThrow(() -> ServiceException.notFound("Region not found: " + code));
     RequestUserContext context = RequestUserContextHolder.get();
-    if (hasAdministrativeReadAccess(context)) {
+    Set<Long> scopedOutletIds = resolveVisibleOutletIds(context);
+    if (scopedOutletIds == null) {
       return region;
     }
-    Set<Long> visibleRegionIds = visibleRegionIds(
-        cachedHierarchy(),
-        accessibleOutletIds(context)
-    );
+    Set<Long> visibleRegionIds = visibleRegionIds(cachedHierarchy(), scopedOutletIds);
     if (!visibleRegionIds.contains(region.id())) {
       throw ServiceException.forbidden("Organization access denied for region " + code);
     }
@@ -70,15 +73,15 @@ public class OrgService {
   public List<OrgDtos.OutletView> listOutlets(Long regionId) {
     OrgHierarchyCacheService.CachedHierarchy hierarchy = cachedHierarchy();
     RequestUserContext context = RequestUserContextHolder.get();
-    if (hasAdministrativeReadAccess(context)) {
+    Set<Long> scopedOutletIds = resolveVisibleOutletIds(context);
+    if (scopedOutletIds == null) {
       if (regionId == null) {
         return hierarchy.outlets();
       }
       return orgRepository.listOutlets(regionId);
     }
-    Set<Long> visibleOutletIds = accessibleOutletIds(context);
     return hierarchy.outlets().stream()
-        .filter(outlet -> visibleOutletIds.contains(outlet.id()))
+        .filter(outlet -> scopedOutletIds.contains(outlet.id()))
         .filter(outlet -> regionId == null || outlet.regionId() == regionId)
         .toList();
   }
@@ -87,10 +90,11 @@ public class OrgService {
     OrgDtos.OutletView outlet = orgRepository.findOutletById(outletId)
         .orElseThrow(() -> ServiceException.notFound("Outlet not found: " + outletId));
     RequestUserContext context = RequestUserContextHolder.get();
-    if (hasAdministrativeReadAccess(context)) {
+    Set<Long> scopedOutletIds = resolveVisibleOutletIds(context);
+    if (scopedOutletIds == null) {
       return outlet;
     }
-    if (!accessibleOutletIds(context).contains(outletId)) {
+    if (!scopedOutletIds.contains(outletId)) {
       throw ServiceException.forbidden("Organization access denied for outlet " + outletId);
     }
     return outlet;
@@ -99,14 +103,14 @@ public class OrgService {
   public OrgDtos.OrgHierarchyView getHierarchy() {
     OrgHierarchyCacheService.CachedHierarchy cachedHierarchy = cachedHierarchy();
     RequestUserContext context = RequestUserContextHolder.get();
-    if (hasAdministrativeReadAccess(context)) {
+    Set<Long> scopedOutletIds = resolveVisibleOutletIds(context);
+    if (scopedOutletIds == null) {
       return new OrgDtos.OrgHierarchyView(cachedHierarchy.regions(), cachedHierarchy.outlets());
     }
-    Set<Long> visibleOutletIds = accessibleOutletIds(context);
     List<OrgDtos.OutletView> outlets = cachedHierarchy.outlets().stream()
-        .filter(outlet -> visibleOutletIds.contains(outlet.id()))
+        .filter(outlet -> scopedOutletIds.contains(outlet.id()))
         .toList();
-    Set<Long> visibleRegionIds = visibleRegionIds(cachedHierarchy, visibleOutletIds);
+    Set<Long> visibleRegionIds = visibleRegionIds(cachedHierarchy, scopedOutletIds);
     List<OrgDtos.RegionView> regions = cachedHierarchy.regions().stream()
         .filter(region -> visibleRegionIds.contains(region.id()))
         .toList();
@@ -179,17 +183,16 @@ public class OrgService {
     return orgHierarchyCacheService.getOrLoad(orgRepository.hierarchyVersionKey(), this::loadHierarchy);
   }
 
-  private boolean hasAdministrativeReadAccess(RequestUserContext context) {
-    return context.internalService() || context.hasRole("admin") || context.hasRole("superadmin");
-  }
-
-  private Set<Long> accessibleOutletIds(RequestUserContext context) {
-    context.requireUserId();
-    return context.outletIds();
+  /**
+   * Returns the set of outlet IDs the current user can see, or null for
+   * unrestricted access (superadmin / internal service).
+   */
+  private Set<Long> resolveVisibleOutletIds(RequestUserContext context) {
+    return authorizationPolicyService.resolveOrgReadableOutletIds(context);
   }
 
   private void requireAuthenticatedRead(RequestUserContext context) {
-    if (!hasAdministrativeReadAccess(context)) {
+    if (!authorizationPolicyService.hasAdministrativeOrgAccess(context)) {
       context.requireUserId();
     }
   }
@@ -223,10 +226,9 @@ public class OrgService {
   }
 
   private void requireMutationAccess(RequestUserContext context) {
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (authorizationPolicyService.canMutateOrg(context)) {
       return;
     }
-    context.requireUserId();
     throw ServiceException.forbidden("Administrative org access is required");
   }
 }

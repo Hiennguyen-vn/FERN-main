@@ -2,8 +2,11 @@ package com.fern.services.report.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.middleware.ServiceException;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
@@ -25,6 +28,8 @@ class ReportServiceTest {
 
   @Mock
   private ReportRepository reportRepository;
+  @Mock
+  private AuthorizationPolicyService authorizationPolicyService;
 
   @AfterEach
   void clearContext() {
@@ -36,6 +41,7 @@ class ReportServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         10L, "user", null, Set.of(), Set.of(), Set.of(7L), true, false, null
     ));
+    when(authorizationPolicyService.canReadReport(any(), eq(7L))).thenReturn(true);
     when(reportRepository.salesSummary(
         7L,
         LocalDate.parse("2026-02-25"),
@@ -55,7 +61,7 @@ class ReportServiceTest {
         new BigDecimal("145.00")
     )), 50, 0, 1));
 
-    ReportService service = new ReportService(reportRepository);
+    ReportService service = new ReportService(reportRepository, authorizationPolicyService);
     PagedResult<ReportDtos.SalesSummary> result = service.salesSummary(
         7L,
         LocalDate.parse("2026-02-25"),
@@ -76,7 +82,8 @@ class ReportServiceTest {
         10L, "user", null, Set.of(), Set.of(), Set.of(8L), true, false, null
     ));
 
-    ReportService service = new ReportService(reportRepository);
+    when(authorizationPolicyService.canReadReport(any(), eq(7L))).thenReturn(false);
+    ReportService service = new ReportService(reportRepository, authorizationPolicyService);
     assertThrows(ServiceException.class, () -> service.lowStock(7L, null, null, null, null, null));
   }
 
@@ -85,6 +92,7 @@ class ReportServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "gateway"
     ));
+    when(authorizationPolicyService.canReadReport(any(), eq(7L))).thenReturn(true);
     when(reportRepository.lowStock(
         7L,
         null,
@@ -101,7 +109,7 @@ class ReportServiceTest {
         new BigDecimal("5.0000")
     )), 50, 0, 1));
 
-    ReportService service = new ReportService(reportRepository);
+    ReportService service = new ReportService(reportRepository, authorizationPolicyService);
     PagedResult<ReportDtos.LowStockSnapshot> result = service.lowStock(7L, null, null, null, null, null);
 
     assertEquals(1, result.items().size());

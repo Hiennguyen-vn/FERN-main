@@ -91,13 +91,16 @@ public class AuthService {
         resolveUserAgent(httpRequest),
         resolveClientIp(httpRequest)
     );
+    Set<Long> allOutletIds = new LinkedHashSet<>();
+    allOutletIds.addAll(matrix.rolesByOutlet().keySet());
+    allOutletIds.addAll(matrix.permissionsByOutlet().keySet());
     String token = jwtTokenService.issueAccessToken(
         user.id(),
         user.username(),
         session.sessionId(),
         flatten(matrix.rolesByOutlet()),
         flatten(matrix.permissionsByOutlet()),
-        matrix.permissionsByOutlet().keySet(),
+        allOutletIds,
         accessTokenTtlSeconds
     );
     return toLoginResponse(token, user, matrix, session);
@@ -135,13 +138,16 @@ public class AuthService {
     AuthUserRecord user = authUserRepository.findById(userId)
         .orElseThrow(() -> ServiceException.notFound("User not found: " + userId));
     PermissionMatrix matrix = permissionMatrixService.load(userId);
+    Set<Long> allOutletIds = new LinkedHashSet<>();
+    allOutletIds.addAll(matrix.rolesByOutlet().keySet());
+    allOutletIds.addAll(matrix.permissionsByOutlet().keySet());
     String token = jwtTokenService.issueAccessToken(
         user.id(),
         user.username(),
         refreshedSession.sessionId(),
         flatten(matrix.rolesByOutlet()),
         flatten(matrix.permissionsByOutlet()),
-        matrix.permissionsByOutlet().keySet(),
+        allOutletIds,
         accessTokenTtlSeconds
     );
     return toLoginResponse(token, user, matrix, refreshedSession);

@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -38,6 +39,8 @@ class SalesServiceTest {
   private SalesRepository salesRepository;
   @Mock
   private TypedKafkaEventPublisher kafkaEventPublisher;
+  @Mock
+  private AuthorizationPolicyService authorizationPolicyService;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
 
@@ -51,7 +54,8 @@ class SalesServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         15L, "cashier", "sess-15", Set.of("cashier"), Set.of(), Set.of(7L), true, false, null
     ));
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    when(authorizationPolicyService.canWriteSales(any())).thenReturn(false);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     assertThrows(ServiceException.class, () -> service.openPosSession(new SalesDtos.OpenPosSessionRequest(
         "POS-001",
@@ -116,8 +120,9 @@ class SalesServiceTest {
         Instant.parse("2026-03-27T00:00:00Z")
     );
     when(salesRepository.submitSale(request)).thenReturn(sale);
+    when(authorizationPolicyService.canWriteSales(any())).thenReturn(true);
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
     SalesDtos.SaleView result = service.submitSale(request);
 
     verify(salesRepository).submitSale(request);
@@ -155,7 +160,8 @@ class SalesServiceTest {
             null
         )
     );
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    when(authorizationPolicyService.canWriteSales(any())).thenReturn(true);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.submitSale(request));
 
@@ -200,8 +206,9 @@ class SalesServiceTest {
         Set.of(7L)
     );
     when(salesRepository.createPromotion(request)).thenReturn(promotion);
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(7L))).thenReturn(true);
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
     SalesDtos.PromotionView result = service.createPromotion(request);
 
     verify(salesRepository).createPromotion(request);
@@ -233,7 +240,8 @@ class SalesServiceTest {
         Set.of(11L)
     );
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(11L))).thenReturn(false);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.createPromotion(request));
     assertEquals(403, exception.getStatusCode());
@@ -244,6 +252,7 @@ class SalesServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         15L, "cashier", "sess-15", Set.of("cashier"), Set.of(), Set.of(7L), true, false, null
     ));
+    when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(Set.of(7L));
     when(salesRepository.findSale(500L)).thenReturn(java.util.Optional.of(new SalesDtos.SaleView(
         "500",
         11L,
@@ -265,7 +274,7 @@ class SalesServiceTest {
         Instant.parse("2026-03-27T00:00:00Z")
     )));
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.getSale(500L));
     assertEquals(403, exception.getStatusCode());
@@ -284,6 +293,7 @@ class SalesServiceTest {
         false,
         null
     ));
+    when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(Set.of(2000L, 2002L));
     when(salesRepository.listSales(
         Set.of(2002L),
         LocalDate.parse("2024-07-01"),
@@ -299,7 +309,7 @@ class SalesServiceTest {
         0
     )).thenReturn(PagedResult.of(List.of(), 100, 0, 0));
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
     service.listSales(
         2002L,
         LocalDate.parse("2024-07-01"),
@@ -356,8 +366,11 @@ class SalesServiceTest {
         )
     );
     when(salesRepository.listOrderingTables(Set.of(2000L), null)).thenReturn(tables);
+    when(authorizationPolicyService.canWriteSales(any())).thenReturn(true);
+    when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(Set.of(2000L));
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2000L))).thenReturn(true);
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
     List<SalesDtos.OrderingTableLinkView> result = service.listOrderingTables(2000L, null);
 
     verify(salesRepository).listOrderingTables(Set.of(2000L), null);
@@ -379,7 +392,8 @@ class SalesServiceTest {
         null
     ));
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    when(authorizationPolicyService.canWriteSales(any())).thenReturn(false);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     ServiceException exception =
         assertThrows(ServiceException.class, () -> service.listOrderingTables(2000L, null));
@@ -400,7 +414,10 @@ class SalesServiceTest {
         null
     ));
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    when(authorizationPolicyService.canWriteSales(any())).thenReturn(true);
+    when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(Set.of(2000L));
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2002L))).thenReturn(false);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     ServiceException exception =
         assertThrows(ServiceException.class, () -> service.listOrderingTables(2002L, null));
@@ -413,8 +430,10 @@ class SalesServiceTest {
         7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null
     ));
     when(salesRepository.listOrderingTables(null, "active")).thenReturn(List.of());
+    when(authorizationPolicyService.canWriteSales(any())).thenReturn(true);
+    when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(null);
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
     service.listOrderingTables(null, "active");
 
     verify(salesRepository).listOrderingTables(null, "active");
@@ -437,8 +456,9 @@ class SalesServiceTest {
     SalesDtos.SaleView confirmedOrder = publicOrder("9800", 2000L, "order_approved");
     when(salesRepository.findSale(9800L)).thenReturn(Optional.of(openOrder));
     when(salesRepository.approveSale(9800L, 15L)).thenReturn(confirmedOrder);
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2000L))).thenReturn(true);
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
     SalesDtos.SaleView result = service.confirmSale(9800L);
 
     verify(salesRepository).approveSale(9800L, 15L);
@@ -460,8 +480,9 @@ class SalesServiceTest {
         null
     ));
     when(salesRepository.findSale(9800L)).thenReturn(Optional.of(publicOrder("9800", 2000L, "order_created")));
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2000L))).thenReturn(false);
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.confirmSale(9800L));
     assertEquals(403, exception.getStatusCode());
@@ -480,6 +501,7 @@ class SalesServiceTest {
         false,
         null
     ));
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2000L))).thenReturn(true);
     when(salesRepository.findSale(9801L)).thenReturn(Optional.of(new SalesDtos.SaleView(
         "9801",
         2000L,
@@ -501,7 +523,7 @@ class SalesServiceTest {
         Instant.parse("2026-03-31T08:35:00Z")
     )));
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.confirmSale(9801L));
     assertEquals(409, exception.getStatusCode());
@@ -512,11 +534,12 @@ class SalesServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null
     ));
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2000L))).thenReturn(true);
     when(salesRepository.findSale(9800L)).thenReturn(Optional.of(publicOrder("9800", 2000L, "payment_done")));
     when(salesRepository.approveSale(9800L, 7L))
         .thenThrow(ServiceException.conflict("Only newly created orders can be approved"));
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.confirmSale(9800L));
     assertEquals(409, exception.getStatusCode());
@@ -529,7 +552,7 @@ class SalesServiceTest {
     ));
     when(salesRepository.findSale(9800L)).thenReturn(Optional.empty());
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.confirmSale(9800L));
     assertEquals(404, exception.getStatusCode());
@@ -586,8 +609,9 @@ class SalesServiceTest {
     );
     when(salesRepository.findSale(9800L)).thenReturn(Optional.of(approvedOrder));
     when(salesRepository.markPaymentDone(9800L, request)).thenReturn(paidOrder);
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2000L))).thenReturn(true);
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
     SalesDtos.SaleView result = service.markPaymentDone(9800L, request);
 
     verify(salesRepository).markPaymentDone(9800L, request);
@@ -612,6 +636,7 @@ class SalesServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null
     ));
+    when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(null);
     when(salesRepository.listPosSessions(
         null,
         LocalDate.parse("2024-07-01"),
@@ -626,7 +651,7 @@ class SalesServiceTest {
         0
     )).thenReturn(PagedResult.of(List.of(), 50, 0, 0));
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
     service.listPosSessions(
         null,
         LocalDate.parse("2024-07-01"),
@@ -669,6 +694,7 @@ class SalesServiceTest {
         false,
         null
     ));
+    when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(Set.of(2000L, 2002L));
     when(salesRepository.listPromotions(
         Set.of(2000L),
         "active",
@@ -680,7 +706,7 @@ class SalesServiceTest {
         0
     )).thenReturn(PagedResult.of(List.of(), 100, 0, 0));
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
     service.listPromotions(
         2000L,
         "active",
@@ -741,8 +767,10 @@ class SalesServiceTest {
     );
     when(salesRepository.findPromotion(9400L)).thenReturn(Optional.of(existing));
     when(salesRepository.updatePromotionStatus(9400L, "inactive")).thenReturn(inactive);
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2000L))).thenReturn(true);
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2002L))).thenReturn(true);
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
     SalesDtos.PromotionView result = service.deactivatePromotion(9400L);
 
     verify(salesRepository).updatePromotionStatus(9400L, "inactive");
@@ -754,6 +782,7 @@ class SalesServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         15L, "cashier", "sess-15", Set.of("cashier"), Set.of(), Set.of(2000L), true, false, null
     ));
+    when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(Set.of(2000L));
     when(salesRepository.findPromotion(9401L)).thenReturn(Optional.of(new SalesDtos.PromotionView(
         "9401",
         "US Breakfast Combo",
@@ -766,7 +795,7 @@ class SalesServiceTest {
         Set.of(2100L)
     )));
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.getPromotion(9401L));
     assertEquals(403, exception.getStatusCode());
@@ -789,8 +818,9 @@ class SalesServiceTest {
         Set.of(2000L, 2002L)
     );
     when(salesRepository.findPromotion(9400L)).thenReturn(Optional.of(promotion));
+    when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(Set.of(2000L));
 
-    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, clock);
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
 
     SalesDtos.PromotionView result = service.getPromotion(9400L);
     assertEquals("9400", result.id());

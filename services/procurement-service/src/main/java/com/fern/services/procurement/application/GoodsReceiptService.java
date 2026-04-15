@@ -1,8 +1,7 @@
 package com.fern.services.procurement.application;
 
 import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.PermissionMatrix;
-import com.dorabets.common.spring.auth.PermissionMatrixService;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -24,20 +23,20 @@ public class GoodsReceiptService {
 
   private final ProcurementRepository procurementRepository;
   private final SnowflakeIdGenerator idGenerator;
-  private final PermissionMatrixService permissionMatrixService;
+  private final AuthorizationPolicyService authorizationPolicyService;
   private final TypedKafkaEventPublisher eventPublisher;
   private final Clock clock;
 
   public GoodsReceiptService(
       ProcurementRepository procurementRepository,
       SnowflakeIdGenerator idGenerator,
-      PermissionMatrixService permissionMatrixService,
+      AuthorizationPolicyService authorizationPolicyService,
       TypedKafkaEventPublisher eventPublisher,
       Clock clock
   ) {
     this.procurementRepository = procurementRepository;
     this.idGenerator = idGenerator;
-    this.permissionMatrixService = permissionMatrixService;
+    this.authorizationPolicyService = authorizationPolicyService;
     this.eventPublisher = eventPublisher;
     this.clock = clock;
   }
@@ -135,13 +134,7 @@ public class GoodsReceiptService {
 
   private void requireProcurementWrite(long outletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
-      return;
-    }
-    long userId = context.requireUserId();
-    PermissionMatrix matrix = permissionMatrixService.load(userId);
-    if (matrix.rolesForOutlet(outletId).contains("outlet_manager")
-        || matrix.hasPermission(outletId, "purchase.approve")) {
+    if (authorizationPolicyService.canWriteProcurement(context, outletId)) {
       return;
     }
     throw ServiceException.forbidden("Procurement write access is required for outlet " + outletId);
@@ -149,31 +142,25 @@ public class GoodsReceiptService {
 
   private void requireProcurementRead(long outletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (authorizationPolicyService.canReadProcurement(context, outletId)) {
       return;
     }
-    context.requireUserId();
-    if (!context.outletIds().contains(outletId)) {
-      throw ServiceException.forbidden("Procurement read access denied for outlet " + outletId);
-    }
+    throw ServiceException.forbidden("Procurement read access denied for outlet " + outletId);
   }
 
   private Set<Long> resolveReadableOutletIds(Long requestedOutletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    Set<Long> readable = authorizationPolicyService.resolveProcurementReadableOutletIds(context);
+    if (readable == null) {
       return requestedOutletId == null ? null : Set.of(requestedOutletId);
     }
-    context.requireUserId();
-    if (context.outletIds().isEmpty()) {
-      throw ServiceException.forbidden("Procurement read access requires outlet scope");
-    }
     if (requestedOutletId != null) {
-      if (!context.outletIds().contains(requestedOutletId)) {
+      if (!readable.contains(requestedOutletId)) {
         throw ServiceException.forbidden("Procurement read access denied for outlet " + requestedOutletId);
       }
       return Set.of(requestedOutletId);
     }
-    return context.outletIds();
+    return readable;
   }
 
   private int sanitizeLimit(Integer limit) {

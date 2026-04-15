@@ -258,6 +258,19 @@ public final class SalesDtos {
   ) {
   }
 
+  public record UpdatePromotionRequest(
+      String name,
+      String promoType,
+      BigDecimal valueAmount,
+      BigDecimal valuePercent,
+      BigDecimal minOrderAmount,
+      BigDecimal maxDiscountAmount,
+      Instant effectiveFrom,
+      Instant effectiveTo,
+      String status,
+      Set<Long> outletIds
+  ) {}
+
   public record PromotionView(
       String id,
       String name,

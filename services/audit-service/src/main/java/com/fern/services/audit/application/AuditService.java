@@ -1,6 +1,7 @@
 package com.fern.services.audit.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.web.PagedResult;
@@ -15,9 +16,11 @@ import org.springframework.stereotype.Service;
 public class AuditService {
 
   private final AuditRepository auditRepository;
+  private final AuthorizationPolicyService authorizationPolicyService;
 
-  public AuditService(AuditRepository auditRepository) {
+  public AuditService(AuditRepository auditRepository, AuthorizationPolicyService authorizationPolicyService) {
     this.auditRepository = auditRepository;
+    this.authorizationPolicyService = authorizationPolicyService;
   }
 
   public AuditDtos.AuditLogView getAuditLog(long auditLogId) {
@@ -109,10 +112,9 @@ public class AuditService {
 
   private void requireAuditRead() {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (authorizationPolicyService.canReadAudit(context)) {
       return;
     }
-    context.requireUserId();
     throw ServiceException.forbidden("Audit read access is required");
   }
 

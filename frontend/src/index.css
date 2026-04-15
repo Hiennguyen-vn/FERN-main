@@ -159,6 +159,49 @@
     border: 1px solid hsl(var(--scope-outlet) / 0.2);
   }
 
+  .scope-bar {
+    @apply h-10 border-b flex items-center px-4 gap-2;
+    background: hsl(var(--topbar-bg) / 0.5);
+    border-color: hsl(var(--topbar-border));
+  }
+
+  .scope-bar-select {
+    @apply inline-flex items-center gap-2 h-7 px-2.5 rounded-md text-xs font-medium;
+    @apply border bg-background hover:bg-accent transition-colors cursor-pointer;
+    max-width: 220px;
+  }
+
+  .scope-bar-select-prompt {
+    @apply border-dashed border-primary/40 text-primary;
+  }
+
+  .scope-bar-label {
+    @apply inline-flex items-center gap-2 h-7 px-2.5 text-xs font-medium text-foreground;
+  }
+
+  .scope-bar-divider {
+    @apply w-px h-5 bg-border mx-1 flex-shrink-0;
+  }
+
+  .scope-bar-chip {
+    @apply inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-medium whitespace-nowrap transition-all cursor-pointer flex-shrink-0;
+  }
+
+  .scope-bar-chip-active {
+    @apply bg-primary text-primary-foreground shadow-sm;
+  }
+
+  .scope-bar-chip-idle {
+    @apply bg-muted/60 text-muted-foreground hover:bg-accent hover:text-foreground;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
   .surface-elevated {
     background: hsl(var(--surface-1));
     box-shadow: var(--shadow-md);

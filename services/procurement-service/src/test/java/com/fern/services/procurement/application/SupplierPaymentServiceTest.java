@@ -2,11 +2,13 @@ package com.fern.services.procurement.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.PermissionMatrixService;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.web.PagedResult;
@@ -30,7 +32,7 @@ class SupplierPaymentServiceTest {
   @Mock
   private SnowflakeIdGenerator idGenerator;
   @Mock
-  private PermissionMatrixService permissionMatrixService;
+  private AuthorizationPolicyService authorizationPolicyService;
 
   @AfterEach
   void clearContext() {
@@ -42,6 +44,7 @@ class SupplierPaymentServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     ));
+    when(authorizationPolicyService.canWriteProcurement(any(), anyLong())).thenReturn(true);
     ProcurementDtos.SupplierPaymentView payment = new ProcurementDtos.SupplierPaymentView(
         "100",
         200L,
@@ -117,7 +120,7 @@ class SupplierPaymentServiceTest {
     when(procurementRepository.findGoodsReceipt(500L)).thenReturn(java.util.Optional.of(receipt));
     when(procurementRepository.findPurchaseOrder(600L)).thenReturn(java.util.Optional.of(po));
 
-    SupplierPaymentService service = new SupplierPaymentService(procurementRepository, idGenerator, permissionMatrixService);
+    SupplierPaymentService service = new SupplierPaymentService(procurementRepository, idGenerator, authorizationPolicyService);
     service.postPayment(100L);
 
     verify(procurementRepository).updateSupplierPaymentStatus(100L, "posted");
@@ -137,7 +140,8 @@ class SupplierPaymentServiceTest {
         null
     ));
 
-    SupplierPaymentService service = new SupplierPaymentService(procurementRepository, idGenerator, permissionMatrixService);
+    when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(700L));
+    SupplierPaymentService service = new SupplierPaymentService(procurementRepository, idGenerator, authorizationPolicyService);
     ServiceException exception = assertThrows(ServiceException.class, () -> service.listPayments(
         701L,
         null,
@@ -167,6 +171,7 @@ class SupplierPaymentServiceTest {
         false,
         null
     ));
+    when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(700L));
     when(procurementRepository.listSupplierPayments(
         Set.of(700L),
         400L,
@@ -180,7 +185,7 @@ class SupplierPaymentServiceTest {
         0
     )).thenReturn(PagedResult.of(List.of(), 100, 0, 0));
 
-    SupplierPaymentService service = new SupplierPaymentService(procurementRepository, idGenerator, permissionMatrixService);
+    SupplierPaymentService service = new SupplierPaymentService(procurementRepository, idGenerator, authorizationPolicyService);
     service.listPayments(
         700L,
         400L,

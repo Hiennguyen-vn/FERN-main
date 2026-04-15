@@ -1,6 +1,7 @@
 package com.fern.services.finance.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -21,17 +22,20 @@ public class FinanceService {
   private final FinanceRepository financeRepository;
   private final SnowflakeIdGenerator idGenerator;
   private final TypedKafkaEventPublisher eventPublisher;
+  private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
 
   public FinanceService(
       FinanceRepository financeRepository,
       SnowflakeIdGenerator idGenerator,
       TypedKafkaEventPublisher eventPublisher,
+      AuthorizationPolicyService authorizationPolicyService,
       Clock clock
   ) {
     this.financeRepository = financeRepository;
     this.idGenerator = idGenerator;
     this.eventPublisher = eventPublisher;
+    this.authorizationPolicyService = authorizationPolicyService;
     this.clock = clock;
   }
 
@@ -118,19 +122,17 @@ public class FinanceService {
 
   private void requireFinanceWrite() {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (authorizationPolicyService.canWriteFinance(context)) {
       return;
     }
-    context.requireUserId();
     throw ServiceException.forbidden("Finance write access is required");
   }
 
   private void requireFinanceRead() {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (authorizationPolicyService.canReadFinance(context)) {
       return;
     }
-    context.requireUserId();
     throw ServiceException.forbidden("Finance read access is required");
   }
 

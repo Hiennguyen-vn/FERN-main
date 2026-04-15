@@ -2,11 +2,13 @@ package com.fern.services.procurement.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.PermissionMatrixService;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.web.PagedResult;
@@ -32,7 +34,7 @@ class PurchaseOrderServiceTest {
   @Mock
   private SnowflakeIdGenerator idGenerator;
   @Mock
-  private PermissionMatrixService permissionMatrixService;
+  private AuthorizationPolicyService authorizationPolicyService;
 
   @AfterEach
   void clearContext() {
@@ -44,6 +46,7 @@ class PurchaseOrderServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     ));
+    when(authorizationPolicyService.canApproveProcurement(any(), anyLong())).thenReturn(true);
     ProcurementDtos.PurchaseOrderView draft = new ProcurementDtos.PurchaseOrderView(
         600L,
         400L,
@@ -81,7 +84,7 @@ class PurchaseOrderServiceTest {
     when(procurementRepository.findPurchaseOrder(600L)).thenReturn(java.util.Optional.of(draft));
     when(procurementRepository.approvePurchaseOrder(600L, null)).thenReturn(approved);
 
-    PurchaseOrderService service = new PurchaseOrderService(procurementRepository, idGenerator, permissionMatrixService);
+    PurchaseOrderService service = new PurchaseOrderService(procurementRepository, idGenerator, authorizationPolicyService);
     ProcurementDtos.PurchaseOrderView result = service.approvePurchaseOrder(600L);
 
     verify(procurementRepository).approvePurchaseOrder(600L, null);
@@ -93,7 +96,8 @@ class PurchaseOrderServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         12L, "manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
     ));
-    PurchaseOrderService service = new PurchaseOrderService(procurementRepository, idGenerator, permissionMatrixService);
+    when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(2000L));
+    PurchaseOrderService service = new PurchaseOrderService(procurementRepository, idGenerator, authorizationPolicyService);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.listPurchaseOrders(
         2001L,
@@ -116,6 +120,7 @@ class PurchaseOrderServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         12L, "manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
     ));
+    when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(2000L));
     when(procurementRepository.listPurchaseOrders(
         Set.of(2000L),
         6000L,
@@ -129,7 +134,7 @@ class PurchaseOrderServiceTest {
         0
     )).thenReturn(PagedResult.of(List.of(), 100, 0, 0));
 
-    PurchaseOrderService service = new PurchaseOrderService(procurementRepository, idGenerator, permissionMatrixService);
+    PurchaseOrderService service = new PurchaseOrderService(procurementRepository, idGenerator, authorizationPolicyService);
     service.listPurchaseOrders(
         2000L,
         6000L,

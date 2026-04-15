@@ -3,6 +3,7 @@ package com.fern.services.procurement.application;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -10,8 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.PermissionMatrix;
-import com.dorabets.common.spring.auth.PermissionMatrixService;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -26,7 +26,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -42,7 +41,7 @@ class SupplierInvoiceServiceTest {
   @Mock
   private SnowflakeIdGenerator idGenerator;
   @Mock
-  private PermissionMatrixService permissionMatrixService;
+  private AuthorizationPolicyService authorizationPolicyService;
   @Mock
   private TypedKafkaEventPublisher eventPublisher;
 
@@ -58,6 +57,7 @@ class SupplierInvoiceServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     ));
+    when(authorizationPolicyService.canWriteProcurement(any(), anyLong())).thenReturn(true);
     ProcurementDtos.SupplierInvoiceView invoice = new ProcurementDtos.SupplierInvoiceView(
         300L,
         "INV-300",
@@ -120,7 +120,7 @@ class SupplierInvoiceServiceTest {
     SupplierInvoiceService service = new SupplierInvoiceService(
         procurementRepository,
         idGenerator,
-        permissionMatrixService,
+        authorizationPolicyService,
         eventPublisher,
         clock
     );
@@ -206,12 +206,12 @@ class SupplierInvoiceServiceTest {
     when(procurementRepository.findSupplierInvoice(300L)).thenReturn(java.util.Optional.of(invoice));
     when(procurementRepository.findGoodsReceipt(500L)).thenReturn(java.util.Optional.of(receipt));
     when(procurementRepository.findPurchaseOrder(600L)).thenReturn(java.util.Optional.of(po));
-    when(permissionMatrixService.load(91L)).thenReturn(new PermissionMatrix(91L, Map.of(), Map.of()));
+    when(authorizationPolicyService.canWriteProcurement(any(), eq(700L))).thenReturn(false);
 
     SupplierInvoiceService service = new SupplierInvoiceService(
         procurementRepository,
         idGenerator,
-        permissionMatrixService,
+        authorizationPolicyService,
         eventPublisher,
         clock
     );
@@ -239,10 +239,11 @@ class SupplierInvoiceServiceTest {
         false,
         null
     ));
+    when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(700L));
     SupplierInvoiceService service = new SupplierInvoiceService(
         procurementRepository,
         idGenerator,
-        permissionMatrixService,
+        authorizationPolicyService,
         eventPublisher,
         clock
     );
@@ -277,6 +278,7 @@ class SupplierInvoiceServiceTest {
         false,
         null
     ));
+    when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(700L));
     when(procurementRepository.listSupplierInvoices(
         Set.of(700L),
         400L,
@@ -294,7 +296,7 @@ class SupplierInvoiceServiceTest {
     SupplierInvoiceService service = new SupplierInvoiceService(
         procurementRepository,
         idGenerator,
-        permissionMatrixService,
+        authorizationPolicyService,
         eventPublisher,
         clock
     );

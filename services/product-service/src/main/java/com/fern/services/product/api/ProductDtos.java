@@ -107,4 +107,117 @@ public final class ProductDtos {
       @NotEmpty List<@Valid RecipeLineRequest> items
   ) {
   }
+
+  public record UpdateProductRequest(
+      String name,
+      String categoryCode,
+      String status,
+      String imageUrl,
+      String description
+  ) {
+  }
+
+  public record UpdateItemRequest(
+      String name,
+      String categoryCode,
+      String baseUomCode,
+      BigDecimal minStockLevel,
+      BigDecimal maxStockLevel,
+      String status
+  ) {
+  }
+
+  public record AvailabilityView(
+      long productId,
+      long outletId,
+      boolean available
+  ) {
+  }
+
+  public record SetAvailabilityRequest(
+      @NotNull Long productId,
+      @NotNull Long outletId,
+      boolean available
+  ) {
+  }
+
+  public record CategoryView(String code, String name, boolean isActive, String description) {}
+
+  public record CreateCategoryRequest(@NotBlank String code, @NotBlank String name, String description) {}
+
+  public record UpdateCategoryRequest(String name, String description, Boolean isActive) {}
+
+  // ── Menu ──────────────────────────────────────────────
+
+  public record MenuView(
+      long id,
+      String code,
+      String name,
+      String description,
+      String status,
+      String scopeType,
+      Long scopeId,
+      List<MenuCategoryView> categories
+  ) {}
+
+  public record MenuCategoryView(
+      long id,
+      String code,
+      String name,
+      int displayOrder,
+      List<MenuItemView> items
+  ) {}
+
+  public record MenuItemView(
+      long id,
+      long productId,
+      String productCode,
+      String productName,
+      String productStatus,
+      int displayOrder,
+      boolean isActive
+  ) {}
+
+  public record CreateMenuRequest(
+      @NotBlank String code,
+      @NotBlank String name,
+      String description,
+      String scopeType,
+      Long scopeId
+  ) {}
+
+  public record UpdateMenuRequest(
+      String name,
+      String description,
+      String status
+  ) {}
+
+  public record AddMenuCategoryRequest(
+      @NotBlank String code,
+      @NotBlank String name,
+      int displayOrder
+  ) {}
+
+  public record AddMenuItemRequest(
+      @NotNull Long productId,
+      int displayOrder
+  ) {}
+
+  public record MenuItemExclusionView(
+      long menuItemId,
+      long outletId,
+      String reason
+  ) {}
+
+  public record SetMenuItemExclusionRequest(
+      @NotNull Long menuItemId,
+      @NotNull Long outletId,
+      String reason
+  ) {}
+
+  // ── Channel & Daypart ─────────────────────────────────
+
+  public record ChannelView(String code, String name, boolean isActive, int displayOrder) {}
+
+  public record DaypartView(String code, String name, String startTime, String endTime, boolean isActive, int displayOrder) {}
 }

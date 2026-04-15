@@ -4,6 +4,7 @@ import com.dorabets.common.spring.web.PagedResult;
 import com.fern.services.product.application.ProductService;
 import jakarta.validation.Valid;
 import java.time.LocalDate;
+import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -105,5 +106,70 @@ public class ProductController {
       @Valid @RequestBody ProductDtos.UpsertRecipeRequest request
   ) {
     return productService.upsertRecipe(productId, request);
+  }
+
+  @PutMapping("/products/{productId}")
+  public ProductDtos.ProductView updateProduct(
+      @PathVariable long productId,
+      @RequestBody ProductDtos.UpdateProductRequest request
+  ) {
+    return productService.updateProduct(productId, request);
+  }
+
+  @PutMapping("/items/{itemId}")
+  public ProductDtos.ItemView updateItem(
+      @PathVariable long itemId,
+      @RequestBody ProductDtos.UpdateItemRequest request
+  ) {
+    return productService.updateItem(itemId, request);
+  }
+
+  @GetMapping("/availability")
+  public java.util.List<ProductDtos.AvailabilityView> availability(
+      @RequestParam(required = false) Long productId,
+      @RequestParam(required = false) Long outletId
+  ) {
+    return productService.listAvailability(productId, outletId);
+  }
+
+  @PutMapping("/availability")
+  public ProductDtos.AvailabilityView setAvailability(
+      @Valid @RequestBody ProductDtos.SetAvailabilityRequest request
+  ) {
+    return productService.setAvailability(request);
+  }
+
+  @GetMapping("/categories")
+  public List<ProductDtos.CategoryView> listProductCategories() {
+    return productService.listProductCategories();
+  }
+
+  @PostMapping("/categories")
+  @ResponseStatus(HttpStatus.CREATED)
+  public ProductDtos.CategoryView createProductCategory(
+      @Valid @RequestBody ProductDtos.CreateCategoryRequest request
+  ) {
+    return productService.createProductCategory(request);
+  }
+
+  @PutMapping("/categories/{code}")
+  public ProductDtos.CategoryView updateProductCategory(
+      @PathVariable String code,
+      @RequestBody ProductDtos.UpdateCategoryRequest request
+  ) {
+    return productService.updateProductCategory(code, request);
+  }
+
+  @GetMapping("/item-categories")
+  public List<ProductDtos.CategoryView> listItemCategories() {
+    return productService.listItemCategories();
+  }
+
+  @PostMapping("/item-categories")
+  @ResponseStatus(HttpStatus.CREATED)
+  public ProductDtos.CategoryView createItemCategory(
+      @Valid @RequestBody ProductDtos.CreateCategoryRequest request
+  ) {
+    return productService.createItemCategory(request);
   }
 }

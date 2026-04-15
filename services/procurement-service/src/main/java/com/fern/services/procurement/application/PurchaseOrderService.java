@@ -1,8 +1,7 @@
 package com.fern.services.procurement.application;
 
 import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.PermissionMatrix;
-import com.dorabets.common.spring.auth.PermissionMatrixService;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.web.PagedResult;
@@ -11,7 +10,6 @@ import com.fern.services.procurement.api.ProcurementDtos;
 import com.fern.services.procurement.infrastructure.ProcurementRepository;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.LocalDate;
-import java.util.List;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 
@@ -20,16 +18,16 @@ public class PurchaseOrderService {
 
   private final ProcurementRepository procurementRepository;
   private final SnowflakeIdGenerator idGenerator;
-  private final PermissionMatrixService permissionMatrixService;
+  private final AuthorizationPolicyService authorizationPolicyService;
 
   public PurchaseOrderService(
       ProcurementRepository procurementRepository,
       SnowflakeIdGenerator idGenerator,
-      PermissionMatrixService permissionMatrixService
+      AuthorizationPolicyService authorizationPolicyService
   ) {
     this.procurementRepository = procurementRepository;
     this.idGenerator = idGenerator;
-    this.permissionMatrixService = permissionMatrixService;
+    this.authorizationPolicyService = authorizationPolicyService;
   }
 
   public ProcurementDtos.PurchaseOrderView createPurchaseOrder(ProcurementDtos.CreatePurchaseOrderRequest request) {
@@ -83,47 +81,39 @@ public class PurchaseOrderService {
 
   private void requireProcurementWrite(long outletId, boolean approval) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
-      return;
-    }
-    long userId = context.requireUserId();
-    PermissionMatrix matrix = permissionMatrixService.load(userId);
-    if (matrix.rolesForOutlet(outletId).contains("outlet_manager")) {
-      return;
-    }
-    if (approval && matrix.hasPermission(outletId, "purchase.approve")) {
-      return;
+    if (approval) {
+      if (authorizationPolicyService.canApproveProcurement(context, outletId)) {
+        return;
+      }
+    } else {
+      if (authorizationPolicyService.canWriteProcurement(context, outletId)) {
+        return;
+      }
     }
     throw ServiceException.forbidden("Procurement write access is required for outlet " + outletId);
   }
 
   private void requireProcurementRead(long outletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (authorizationPolicyService.canReadProcurement(context, outletId)) {
       return;
     }
-    context.requireUserId();
-    if (!context.outletIds().contains(outletId)) {
-      throw ServiceException.forbidden("Procurement read access denied for outlet " + outletId);
-    }
+    throw ServiceException.forbidden("Procurement read access denied for outlet " + outletId);
   }
 
   private Set<Long> resolveReadableOutletIds(Long requestedOutletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    Set<Long> readable = authorizationPolicyService.resolveProcurementReadableOutletIds(context);
+    if (readable == null) {
       return requestedOutletId == null ? null : Set.of(requestedOutletId);
     }
-    context.requireUserId();
-    if (context.outletIds().isEmpty()) {
-      throw ServiceException.forbidden("Procurement read access requires outlet scope");
-    }
     if (requestedOutletId != null) {
-      if (!context.outletIds().contains(requestedOutletId)) {
+      if (!readable.contains(requestedOutletId)) {
         throw ServiceException.forbidden("Procurement read access denied for outlet " + requestedOutletId);
       }
       return Set.of(requestedOutletId);
     }
-    return context.outletIds();
+    return readable;
   }
 
   private int sanitizeLimit(Integer limit) {

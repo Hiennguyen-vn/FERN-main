@@ -47,8 +47,8 @@ const STATE_CONFIG: Record<PermissionState, {
   },
   scope_mismatch: {
     icon: Globe,
-    title: 'Scope mismatch',
-    description: 'This content is outside your current scope. Adjust your scope selection to access this data.',
+    title: 'Outlet selection required',
+    description: 'This module requires an outlet-level scope. Please select a specific outlet from the scope selector to view data.',
     className: 'permission-banner permission-banner-blocked',
   },
   route_unavailable: {
@@ -103,7 +103,7 @@ export function ServiceUnavailablePage({
   state,
   moduleName,
 }: {
-  state: 'route_unavailable' | 'service_unavailable' | 'branch_blocked';
+  state: 'route_unavailable' | 'service_unavailable' | 'branch_blocked' | 'scope_mismatch';
   moduleName: string;
 }) {
   const config = STATE_CONFIG[state];

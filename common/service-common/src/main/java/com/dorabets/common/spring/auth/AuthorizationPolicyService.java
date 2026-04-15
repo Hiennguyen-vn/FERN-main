@@ -323,6 +323,333 @@ public class AuthorizationPolicyService {
     return OUTLET_MANAGER_CONTRACT_ROLES.containsAll(targetProfile.canonicalRoles());
   }
 
+  // --- Org domain ---
+
+  public boolean canReadOrg(RequestUserContext context) {
+    if (context.internalService()) {
+      return true;
+    }
+    context.requireUserId();
+    return true;
+  }
+
+  /**
+   * Full unfiltered org read — superadmin only.
+   * Admin and region_manager use scoped access via {@link #resolveOrgReadableOutletIds}.
+   * See business rules §5.1 and §8.1 (admin is governance-only, scoped).
+   */
+  public boolean hasAdministrativeOrgAccess(RequestUserContext context) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    return profile.hasGlobalRole(CanonicalRole.SUPERADMIN);
+  }
+
+  /**
+   * Resolves the set of outlet IDs an admin or region_manager can see
+   * in org read operations. Returns null for superadmin (all outlets).
+   */
+  public Set<Long> resolveOrgReadableOutletIds(RequestUserContext context) {
+    if (context.internalService()) {
+      return null;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return null;
+    }
+    // Admin: scoped to governed outlets (§8.1)
+    if (profile.canonicalRoles().contains(CanonicalRole.ADMIN)) {
+      return profile.outletsForRole(CanonicalRole.ADMIN);
+    }
+    // Region manager: scoped to region outlets (§5.1)
+    if (profile.canonicalRoles().contains(CanonicalRole.REGION_MANAGER)) {
+      return profile.outletsForRole(CanonicalRole.REGION_MANAGER);
+    }
+    // Other roles: scoped to their outlet assignments
+    return context.outletIds();
+  }
+
+  public boolean canMutateOrg(RequestUserContext context) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    return profile.hasGlobalRole(CanonicalRole.SUPERADMIN)
+        || profile.canonicalRoles().contains(CanonicalRole.ADMIN);
+  }
+
+  // --- Catalog / Product domain ---
+
+  public boolean canMutateCatalog(RequestUserContext context) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    if (profile.canonicalRoles().contains(CanonicalRole.PRODUCT_MANAGER)) {
+      return true;
+    }
+    PermissionMatrix matrix = permissionMatrixService.load(userId);
+    return context.outletIds().stream()
+        .anyMatch(outletId -> matrix.hasPermission(outletId, "product.catalog.write"));
+  }
+
+  public boolean canReadCatalogForOutlet(RequestUserContext context, long outletId) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    if (profile.canonicalRoles().contains(CanonicalRole.PRODUCT_MANAGER)
+        || profile.canonicalRoles().contains(CanonicalRole.REGION_MANAGER)) {
+      return profile.outletIds().contains(outletId);
+    }
+    return context.outletIds().contains(outletId);
+  }
+
+  // --- Sales domain ---
+
+  public boolean canWriteSales(RequestUserContext context) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    if (profile.canonicalRoles().contains(CanonicalRole.OUTLET_MANAGER)
+        || profile.canonicalRoles().contains(CanonicalRole.STAFF)) {
+      return true;
+    }
+    PermissionMatrix matrix = permissionMatrixService.load(userId);
+    return context.outletIds().stream()
+        .anyMatch(outletId -> matrix.hasPermission(outletId, "sales.order.write"));
+  }
+
+  public boolean canWriteSalesForOutlet(RequestUserContext context, long outletId) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    if (profile.hasRoleForOutlet(CanonicalRole.OUTLET_MANAGER, outletId)
+        || profile.hasRoleForOutlet(CanonicalRole.STAFF, outletId)) {
+      return true;
+    }
+    PermissionMatrix matrix = permissionMatrixService.load(userId);
+    return matrix.hasPermission(outletId, "sales.order.write");
+  }
+
+  public Set<Long> resolveSalesReadableOutletIds(RequestUserContext context) {
+    if (context.internalService()) {
+      return null;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return null;
+    }
+    if (profile.canonicalRoles().contains(CanonicalRole.REGION_MANAGER)) {
+      return profile.outletIds();
+    }
+    return context.outletIds();
+  }
+
+  // --- Procurement domain ---
+
+  public boolean canWriteProcurement(RequestUserContext context, long outletId) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    if (profile.hasRoleForOutlet(CanonicalRole.OUTLET_MANAGER, outletId)) {
+      return true;
+    }
+    if (profile.hasRoleForOutlet(CanonicalRole.PROCUREMENT, outletId)) {
+      return true;
+    }
+    PermissionMatrix matrix = permissionMatrixService.load(userId);
+    return matrix.hasPermission(outletId, "purchase.write");
+  }
+
+  public boolean canApproveProcurement(RequestUserContext context, long outletId) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    if (profile.hasRoleForOutlet(CanonicalRole.OUTLET_MANAGER, outletId)) {
+      return true;
+    }
+    PermissionMatrix matrix = permissionMatrixService.load(userId);
+    return matrix.hasPermission(outletId, "purchase.approve");
+  }
+
+  public boolean canReadProcurement(RequestUserContext context, long outletId) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    if (profile.hasRoleForOutlet(CanonicalRole.PROCUREMENT, outletId)
+        || profile.hasRoleForOutlet(CanonicalRole.OUTLET_MANAGER, outletId)) {
+      return true;
+    }
+    return context.outletIds().contains(outletId);
+  }
+
+  public Set<Long> resolveProcurementReadableOutletIds(RequestUserContext context) {
+    if (context.internalService()) {
+      return null;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return null;
+    }
+    LinkedHashSet<Long> result = new LinkedHashSet<>();
+    result.addAll(profile.outletsForRole(CanonicalRole.PROCUREMENT));
+    result.addAll(profile.outletsForRole(CanonicalRole.OUTLET_MANAGER));
+    result.addAll(context.outletIds());
+    if (result.isEmpty()) {
+      throw ServiceException.forbidden("Procurement read access requires outlet scope");
+    }
+    return Set.copyOf(result);
+  }
+
+  // --- Inventory domain ---
+
+  public boolean canWriteInventory(RequestUserContext context, long outletId) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    if (profile.hasRoleForOutlet(CanonicalRole.OUTLET_MANAGER, outletId)) {
+      return true;
+    }
+    PermissionMatrix matrix = permissionMatrixService.load(userId);
+    return matrix.hasPermission(outletId, "inventory.write");
+  }
+
+  public Set<Long> resolveInventoryReadableOutletIds(RequestUserContext context) {
+    if (context.internalService()) {
+      return null;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return null;
+    }
+    return context.outletIds();
+  }
+
+  // --- Finance domain ---
+
+  public boolean canWriteFinance(RequestUserContext context) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    return profile.canonicalRoles().contains(CanonicalRole.FINANCE)
+        || profile.canonicalRoles().contains(CanonicalRole.OUTLET_MANAGER);
+  }
+
+  public boolean canReadFinance(RequestUserContext context) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    return profile.canonicalRoles().contains(CanonicalRole.FINANCE)
+        || profile.canonicalRoles().contains(CanonicalRole.REGION_MANAGER)
+        || profile.canonicalRoles().contains(CanonicalRole.OUTLET_MANAGER);
+  }
+
+  public Set<Long> resolveFinanceReadableOutletIds(RequestUserContext context) {
+    if (context.internalService()) {
+      return null;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return null;
+    }
+    LinkedHashSet<Long> result = new LinkedHashSet<>();
+    result.addAll(profile.outletsForRole(CanonicalRole.FINANCE));
+    result.addAll(profile.outletsForRole(CanonicalRole.REGION_MANAGER));
+    result.addAll(profile.outletsForRole(CanonicalRole.OUTLET_MANAGER));
+    return result.isEmpty() ? null : Set.copyOf(result);
+  }
+
+  // --- Audit domain ---
+
+  public boolean canReadAudit(RequestUserContext context) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    return profile.canonicalRoles().contains(CanonicalRole.ADMIN)
+        || profile.canonicalRoles().contains(CanonicalRole.REGION_MANAGER);
+  }
+
+  // --- Report domain ---
+
+  public boolean canReadReport(RequestUserContext context, long outletId) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    if (profile.hasRoleForOutlet(CanonicalRole.REGION_MANAGER, outletId)
+        || profile.hasRoleForOutlet(CanonicalRole.OUTLET_MANAGER, outletId)
+        || profile.hasRoleForOutlet(CanonicalRole.FINANCE, outletId)) {
+      return true;
+    }
+    return context.outletIds().contains(outletId);
+  }
+
   private boolean canAssignRoleAtOutlet(BusinessUserProfile profile, CanonicalRole targetRole, long outletId) {
     for (BusinessScopeAssignment assignment : profile.assignments()) {
       if (assignment.role() != CanonicalRole.ADMIN || !assignment.outletIds().contains(outletId)) {

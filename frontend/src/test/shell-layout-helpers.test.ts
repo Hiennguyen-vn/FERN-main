@@ -59,20 +59,20 @@ describe('shell layout helpers', () => {
     const cashierSession = buildSession({
       permissionsByOutlet: { '101': ['sales.order.write'] },
     });
-    const adminSession = buildSession({
-      rolesByOutlet: { '101': ['admin'] },
+    const financeSession = buildSession({
+      rolesByOutlet: { '101': ['finance'] },
     });
 
     const cashierFamilies = collectAccessibleFamilies(cashierSession);
     const cashierModules = filterAccessibleModules(cashierSession);
     const cashierActions = filterActionHub(cashierSession);
-    const adminActions = filterActionHub(adminSession);
+    const financeActions = filterActionHub(financeSession);
 
     expect(cashierFamilies.has('pos')).toBe(true);
     expect(cashierFamilies.has('finance')).toBe(false);
     expect(cashierModules.some((module) => module.family === 'pos')).toBe(true);
     expect(cashierModules.some((module) => module.family === 'finance')).toBe(false);
     expect(cashierActions.quickActions.some((action) => action.module === 'finance')).toBe(false);
-    expect(adminActions.quickActions.some((action) => action.module === 'finance')).toBe(true);
+    expect(financeActions.quickActions.some((action) => action.module === 'finance')).toBe(true);
   });
 });

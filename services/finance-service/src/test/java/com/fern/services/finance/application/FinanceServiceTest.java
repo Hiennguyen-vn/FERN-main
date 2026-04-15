@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -37,6 +38,8 @@ class FinanceServiceTest {
   private SnowflakeIdGenerator idGenerator;
   @Mock
   private TypedKafkaEventPublisher eventPublisher;
+  @Mock
+  private AuthorizationPolicyService authorizationPolicyService;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
 
@@ -50,6 +53,7 @@ class FinanceServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         9L, "admin", "sess-9", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
     ));
+    when(authorizationPolicyService.canWriteFinance(any())).thenReturn(true);
     when(idGenerator.generateId()).thenReturn(501L);
     when(financeRepository.createOperatingExpense(
         501L,
@@ -75,7 +79,7 @@ class FinanceServiceTest {
         "Cleaning supplies"
     ));
 
-    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, clock);
+    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
     FinanceDtos.ExpenseView result = service.createOperatingExpense(new FinanceDtos.CreateOperatingExpenseRequest(
         7L,
         LocalDate.parse("2026-03-27"),
@@ -97,6 +101,7 @@ class FinanceServiceTest {
 
   @Test
   void createOtherExpenseUsesSnowflakeAndPublishesEvent() {
+    when(authorizationPolicyService.canWriteFinance(any())).thenReturn(true);
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "audit-service"
     ));
@@ -125,7 +130,7 @@ class FinanceServiceTest {
         "Bank fee"
     ));
 
-    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, clock);
+    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
     FinanceDtos.ExpenseView result = service.createOtherExpense(new FinanceDtos.CreateOtherExpenseRequest(
         7L,
         LocalDate.parse("2026-03-27"),
@@ -150,7 +155,8 @@ class FinanceServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         11L, "workflow.hcm.manager", "sess-11", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
     ));
-    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, clock);
+    when(authorizationPolicyService.canReadFinance(any())).thenReturn(false);
+    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.listExpenses(
         2000L,
@@ -172,6 +178,7 @@ class FinanceServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         9L, "admin", "sess-9", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
     ));
+    when(authorizationPolicyService.canReadFinance(any())).thenReturn(true);
     when(financeRepository.listExpenses(
         7L,
         LocalDate.parse("2026-03-01"),
@@ -184,7 +191,7 @@ class FinanceServiceTest {
         15
     )).thenReturn(PagedResult.of(java.util.List.of(), 100, 15, 0));
 
-    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, clock);
+    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
     service.listExpenses(
         7L,
         LocalDate.parse("2026-03-01"),

@@ -1,8 +1,7 @@
 package com.fern.services.procurement.application;
 
 import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.PermissionMatrix;
-import com.dorabets.common.spring.auth.PermissionMatrixService;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.web.PagedResult;
@@ -10,6 +9,7 @@ import com.dorabets.common.spring.web.QueryConventions;
 import com.fern.services.procurement.api.ProcurementDtos;
 import com.fern.services.procurement.infrastructure.ProcurementRepository;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -17,16 +17,16 @@ public class SupplierService {
 
   private final ProcurementRepository procurementRepository;
   private final SnowflakeIdGenerator idGenerator;
-  private final PermissionMatrixService permissionMatrixService;
+  private final AuthorizationPolicyService authorizationPolicyService;
 
   public SupplierService(
       ProcurementRepository procurementRepository,
       SnowflakeIdGenerator idGenerator,
-      PermissionMatrixService permissionMatrixService
+      AuthorizationPolicyService authorizationPolicyService
   ) {
     this.procurementRepository = procurementRepository;
     this.idGenerator = idGenerator;
-    this.permissionMatrixService = permissionMatrixService;
+    this.authorizationPolicyService = authorizationPolicyService;
   }
 
   public ProcurementDtos.SupplierView createSupplier(ProcurementDtos.CreateSupplierRequest request) {
@@ -68,15 +68,12 @@ public class SupplierService {
 
   private void requireGlobalProcurementWrite() {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (context.internalService()) {
       return;
     }
-    long userId = context.requireUserId();
-    PermissionMatrix matrix = permissionMatrixService.load(userId);
-    boolean allowed = context.outletIds().stream().anyMatch(outletId ->
-        matrix.rolesForOutlet(outletId).contains("outlet_manager")
-            || matrix.hasPermission(outletId, "purchase.approve")
-            || matrix.hasPermission(outletId, "purchase.write"));
+    context.requireUserId();
+    boolean allowed = context.outletIds().stream()
+        .anyMatch(outletId -> authorizationPolicyService.canWriteProcurement(context, outletId));
     if (!allowed) {
       throw ServiceException.forbidden("Procurement write access is required");
     }
@@ -84,11 +81,11 @@ public class SupplierService {
 
   private void requireGlobalProcurementRead() {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    Set<Long> readable = authorizationPolicyService.resolveProcurementReadableOutletIds(context);
+    if (readable == null) {
       return;
     }
-    context.requireUserId();
-    if (context.outletIds().isEmpty()) {
+    if (readable.isEmpty()) {
       throw ServiceException.forbidden("Procurement read access requires outlet scope");
     }
   }
