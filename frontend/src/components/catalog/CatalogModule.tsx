@@ -10,8 +10,10 @@ import {
   type ItemView, type PriceView, type ProductView, type PromotionView, type RecipeView,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
+import { useAuth } from '@/auth/use-auth';
+import { hasCatalogMutationAccess } from '@/auth/authorization';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
-import { EmptyState, ServiceUnavailablePage } from '@/components/shell/PermissionStates';
+import { EmptyState, PermissionBanner, ServiceUnavailablePage } from '@/components/shell/PermissionStates';
 import { useListQueryState } from '@/hooks/use-list-query-state';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
@@ -26,6 +28,7 @@ import { MenuAssignment } from '@/components/catalog/MenuAssignment';
 import { ScopeOverrideExplorer } from '@/components/catalog/ScopeOverrideExplorer';
 import { PublishCenter } from '@/components/catalog/PublishCenter';
 import { ChangeHistory } from '@/components/catalog/ChangeHistory';
+import { VariantsModule } from '@/components/catalog/VariantsModule';
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -44,6 +47,8 @@ const TABS: { key: CatTab; label: string; icon: React.ElementType }[] = [
   { key: 'history', label: 'History', icon: History },
   { key: 'variants', label: 'Variants', icon: Layers },
 ];
+
+const READ_ONLY_TABS = TABS.filter((tab) => ['products', 'recipes', 'pricing'].includes(tab.key));
 
 const ITEM_CATEGORY_OPTIONS = ['ingredient'];
 const ITEM_UOM_OPTIONS = ['g', 'kg', 'ml', 'cup'];
@@ -64,6 +69,7 @@ function nextKey() {
 // ─── Main ─────────────────────────────────────────────────────────────────
 
 export function CatalogModule() {
+  const { session } = useAuth();
   const { token, scope } = useShellRuntime();
   const outletId = normalizeNumeric(scope.outletId);
   const [activeTab, setActiveTab] = useState<CatTab>('overview');
@@ -107,6 +113,10 @@ export function CatalogModule() {
   const recipesQuery = useListQueryState({ initialLimit: 25, initialSortBy: 'name', initialSortDir: 'asc' as const });
   const pricesQuery = useListQueryState<{ outletId?: string }>({ initialLimit: 25, initialSortBy: 'effectiveFrom', initialSortDir: 'desc' as const, initialFilters: { outletId: outletId || undefined } });
   const promotionsQuery = useListQueryState<{ outletId?: string; status?: string }>({ initialLimit: 25, initialSortBy: 'effectiveFrom', initialSortDir: 'desc' as const, initialFilters: { outletId: outletId || undefined, status: undefined } });
+  const patchPriceFilters = pricesQuery.patchFilters;
+  const patchPromotionFilters = promotionsQuery.patchFilters;
+  const canManageCatalog = hasCatalogMutationAccess(session);
+  const visibleTabs = canManageCatalog ? TABS : READ_ONLY_TABS;
 
   // ── Data loading ──
 
@@ -114,40 +124,40 @@ export function CatalogModule() {
     if (!token) return;
     setItemsLoading(true);
     try {
-      const r = await productApi.itemsPaged(token, { q: itemsQuery.q || undefined, sortBy: itemsQuery.sortBy, sortDir: itemsQuery.sortDir, limit: itemsQuery.limit, offset: itemsQuery.offset });
+      const r = await productApi.itemsPaged(token, { q: itemsQuery.debouncedSearch || undefined, sortBy: itemsQuery.sortBy, sortDir: itemsQuery.sortDir, limit: itemsQuery.limit, offset: itemsQuery.offset });
       setItems(r.items); setItemsTotal(r.totalCount); setItemsHasMore(r.items.length >= itemsQuery.limit);
     } catch (e) { toast.error(getErrorMessage(e, 'Failed to load items')); } finally { setItemsLoading(false); }
-  }, [token, itemsQuery.q, itemsQuery.sortBy, itemsQuery.sortDir, itemsQuery.limit, itemsQuery.offset]);
+  }, [token, itemsQuery.debouncedSearch, itemsQuery.sortBy, itemsQuery.sortDir, itemsQuery.limit, itemsQuery.offset]);
 
   const loadRecipes = useCallback(async () => {
     if (!token) return;
     setRecipesLoading(true);
     try {
-      const r = await productApi.productsPaged(token, { q: recipesQuery.q || undefined, sortBy: recipesQuery.sortBy, sortDir: recipesQuery.sortDir, limit: recipesQuery.limit, offset: recipesQuery.offset });
+      const r = await productApi.productsPaged(token, { q: recipesQuery.debouncedSearch || undefined, sortBy: recipesQuery.sortBy, sortDir: recipesQuery.sortDir, limit: recipesQuery.limit, offset: recipesQuery.offset });
       setRecipeProducts(r.items); setRecipeTotal(r.totalCount); setRecipeHasMore(r.items.length >= recipesQuery.limit);
       const byId: Record<string, RecipeView | null> = {};
       await Promise.all(r.items.map(async p => { try { byId[String(p.id)] = await productApi.recipe(token, String(p.id)); } catch { byId[String(p.id)] = null; } }));
       setRecipesByProductId(byId);
     } catch (e) { toast.error(getErrorMessage(e, 'Failed to load recipes')); } finally { setRecipesLoading(false); }
-  }, [token, recipesQuery.q, recipesQuery.sortBy, recipesQuery.sortDir, recipesQuery.limit, recipesQuery.offset]);
+  }, [token, recipesQuery.debouncedSearch, recipesQuery.sortBy, recipesQuery.sortDir, recipesQuery.limit, recipesQuery.offset]);
 
   const loadPricing = useCallback(async () => {
     if (!token || !outletId) return;
     setPricesLoading(true);
     try {
-      const r = await productApi.pricesPaged(token, { outletId, q: pricesQuery.q || undefined, sortBy: pricesQuery.sortBy, sortDir: pricesQuery.sortDir, limit: pricesQuery.limit, offset: pricesQuery.offset });
+      const r = await productApi.pricesPaged(token, { outletId, q: pricesQuery.debouncedSearch || undefined, sortBy: pricesQuery.sortBy, sortDir: pricesQuery.sortDir, limit: pricesQuery.limit, offset: pricesQuery.offset });
       setPrices(r.items); setPricesTotal(r.totalCount); setPricesHasMore(r.items.length >= pricesQuery.limit);
     } catch (e) { toast.error(getErrorMessage(e, 'Failed to load prices')); } finally { setPricesLoading(false); }
-  }, [token, outletId, pricesQuery.q, pricesQuery.sortBy, pricesQuery.sortDir, pricesQuery.limit, pricesQuery.offset]);
+  }, [token, outletId, pricesQuery.debouncedSearch, pricesQuery.sortBy, pricesQuery.sortDir, pricesQuery.limit, pricesQuery.offset]);
 
   const loadPromotions = useCallback(async () => {
     if (!token || !outletId) return;
     setPromotionsLoading(true);
     try {
-      const r = await salesApi.promotions(token, { outletId, status: promotionsQuery.filters.status, q: promotionsQuery.q || undefined, sortBy: promotionsQuery.sortBy, sortDir: promotionsQuery.sortDir, limit: promotionsQuery.limit, offset: promotionsQuery.offset });
+      const r = await salesApi.promotions(token, { outletId, status: promotionsQuery.filters.status, q: promotionsQuery.debouncedSearch || undefined, sortBy: promotionsQuery.sortBy, sortDir: promotionsQuery.sortDir, limit: promotionsQuery.limit, offset: promotionsQuery.offset });
       setPromotions(r.items); setPromotionsTotal(r.totalCount); setPromotionsHasMore(r.items.length >= promotionsQuery.limit);
     } catch { /* optional */ } finally { setPromotionsLoading(false); }
-  }, [token, outletId, promotionsQuery.filters.status, promotionsQuery.q, promotionsQuery.sortBy, promotionsQuery.sortDir, promotionsQuery.limit, promotionsQuery.offset]);
+  }, [token, outletId, promotionsQuery.filters.status, promotionsQuery.debouncedSearch, promotionsQuery.sortBy, promotionsQuery.sortDir, promotionsQuery.limit, promotionsQuery.offset]);
 
   const loadOptions = useCallback(async () => {
     if (!token) return;
@@ -157,9 +167,19 @@ export function CatalogModule() {
   // Tab triggers
   useEffect(() => { if (activeTab === 'ingredients') void loadItems(); }, [activeTab, loadItems]);
   useEffect(() => { if (activeTab === 'recipes') { void loadRecipes(); void loadOptions(); } }, [activeTab, loadRecipes, loadOptions]);
-  useEffect(() => { if (activeTab === 'pricing') { void loadPricing(); void loadPromotions(); void loadOptions(); } }, [activeTab, loadPricing, loadPromotions, loadOptions]);
-  useEffect(() => { pricesQuery.patchFilters({ outletId: outletId || undefined }); }, [outletId, pricesQuery.patchFilters]);
-  useEffect(() => { promotionsQuery.patchFilters({ outletId: outletId || undefined }); }, [outletId, promotionsQuery.patchFilters]);
+  useEffect(() => {
+    if (activeTab !== 'pricing') return;
+    void loadPricing();
+    if (canManageCatalog) void loadPromotions();
+    void loadOptions();
+  }, [activeTab, canManageCatalog, loadPricing, loadPromotions, loadOptions]);
+  useEffect(() => { patchPriceFilters({ outletId: outletId || undefined }); }, [outletId, patchPriceFilters]);
+  useEffect(() => { patchPromotionFilters({ outletId: outletId || undefined }); }, [outletId, patchPromotionFilters]);
+  useEffect(() => {
+    if (visibleTabs.some((tab) => tab.key === activeTab)) return;
+    setActiveTab('products');
+    setSelectedProduct(null);
+  }, [activeTab, visibleTabs]);
 
   // ── Actions ──
 
@@ -224,7 +244,7 @@ export function CatalogModule() {
     <div className="flex flex-col h-full animate-fade-in">
       {/* Tab bar */}
       <div className="border-b bg-card px-6 flex items-center gap-0 flex-shrink-0">
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <button key={t.key} onClick={() => { setActiveTab(t.key); setSelectedProduct(null); }}
             className={cn('flex items-center gap-1.5 px-4 py-3 text-xs font-medium border-b-2 transition-colors',
               activeTab === t.key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>
@@ -232,6 +252,16 @@ export function CatalogModule() {
           </button>
         ))}
       </div>
+
+      {!canManageCatalog ? (
+        <div className="px-6 pt-4">
+          <PermissionBanner
+            state="read_only"
+            moduleName="Catalog"
+            detail="Your current role can only view product master data, recipe details, and outlet pricing."
+          />
+        </div>
+      ) : null}
 
       <div className="flex-1 overflow-hidden flex">
 
@@ -245,13 +275,14 @@ export function CatalogModule() {
         {/* ══ PRODUCTS ═════════════════════════════════════════════════ */}
         {activeTab === 'products' && (
           <>
-            <div className={cn('border-r overflow-hidden', selectedProduct ? 'w-[45%]' : 'w-full max-w-xl')}>
+            <div className={cn('border-r overflow-hidden', selectedProduct ? 'w-full md:w-[45%]' : 'w-full max-w-xl')}>
               <ProductListPanel key={productRefreshKey} token={token} selectedId={selectedProduct ? String(selectedProduct.id) : null}
-                onSelect={p => setSelectedProduct(p)} compact={!!selectedProduct} />
+                onSelect={p => setSelectedProduct(p)} compact={!!selectedProduct} canCreate={canManageCatalog} />
             </div>
             {selectedProduct ? (
               <div className="flex-1 overflow-hidden">
                 <ProductDetailPanel product={selectedProduct} token={token} outletId={outletId}
+                  canManageCatalog={canManageCatalog}
                   onClose={() => setSelectedProduct(null)} onProductUpdated={() => setProductRefreshKey(k => k + 1)} />
               </div>
             ) : (
@@ -276,7 +307,7 @@ export function CatalogModule() {
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold">Ingredients ({itemsTotal})</h3>
                 <div className="flex items-center gap-2">
-                  <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" /><input className="h-8 w-56 rounded-md border border-input bg-background pl-8 pr-3 text-xs" placeholder="Search..." value={itemsQuery.searchInput} onChange={e => itemsQuery.setSearchInput(e.target.value)} /></div>
+                  <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" /><input className="h-8 w-full sm:w-56 rounded-md border border-input bg-background pl-8 pr-3 text-xs" placeholder="Search..." value={itemsQuery.searchInput} onChange={e => itemsQuery.setSearchInput(e.target.value)} /></div>
                   <button onClick={() => void loadItems()} disabled={itemsLoading} className="h-8 px-2 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"><RefreshCw className={cn('h-3.5 w-3.5', itemsLoading && 'animate-spin')} /></button>
                 </div>
               </div>
@@ -307,7 +338,7 @@ export function CatalogModule() {
                 <div className="flex items-center justify-between gap-3">
                   <h3 className="text-sm font-semibold">Product Recipes ({recipeTotal})</h3>
                   <div className="flex items-center gap-2">
-                    <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" /><input className="h-8 w-48 rounded-md border border-input bg-background pl-8 pr-3 text-xs" placeholder="Search..." value={recipesQuery.searchInput} onChange={e => recipesQuery.setSearchInput(e.target.value)} /></div>
+                    <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" /><input className="h-8 w-full sm:w-48 rounded-md border border-input bg-background pl-8 pr-3 text-xs" placeholder="Search..." value={recipesQuery.searchInput} onChange={e => recipesQuery.setSearchInput(e.target.value)} /></div>
                     <button onClick={() => void loadRecipes()} disabled={recipesLoading} className="h-8 w-8 rounded border flex items-center justify-center hover:bg-accent disabled:opacity-60"><RefreshCw className={cn('h-3.5 w-3.5', recipesLoading && 'animate-spin')} /></button>
                   </div>
                 </div>
@@ -323,7 +354,7 @@ export function CatalogModule() {
                         <td className="px-3 py-2 text-xs text-muted-foreground">{recipe?.version || '—'}</td>
                         <td className="px-3 py-2"><StatusBadge status={recipe?.status || (recipe ? 'draft' : undefined)} />{!recipe && <span className="text-[10px] text-muted-foreground ml-1">none</span>}</td>
                         <td className="px-3 py-2 text-right text-xs">{recipe?.items?.length || 0}</td>
-                        <td className="px-3 py-2 text-right"><button onClick={() => void openRecipeEditor(String(p.id), recipe)} className="h-6 px-2 rounded border text-[10px] hover:bg-accent">{recipe ? 'Edit' : 'New'}</button></td>
+                        <td className="px-3 py-2 text-right"><button onClick={() => void openRecipeEditor(String(p.id), recipe)} className="h-6 px-2 rounded border text-[10px] hover:bg-accent">{canManageCatalog ? (recipe ? 'Edit' : 'New') : 'View'}</button></td>
                       </tr>
                     );
                   })}
@@ -334,31 +365,35 @@ export function CatalogModule() {
               {/* Recipe builder */}
               <div className="surface-elevated p-4 space-y-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div><p className="text-[10px] uppercase tracking-wide text-muted-foreground">Recipe Editor</p><h3 className="text-sm font-semibold mt-0.5">{selectedRecipeProduct ? String(selectedRecipeProduct.name || selectedRecipeProduct.code) : 'Select product'}</h3></div>
-                  <div className="flex gap-2">
-                    <button onClick={() => { setRecipeLines([]); setRecipeForm(f => ({ ...f, version: 'v1', yieldQty: '1', status: 'draft' })); }} className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent">Reset</button>
-                    <button onClick={() => void saveRecipe()} disabled={!recipeForm.productId || !!actionBusy} className="h-7 px-2.5 rounded bg-primary text-primary-foreground text-[10px] font-medium inline-flex items-center gap-1 disabled:opacity-60"><Save className="h-3 w-3" />{actionBusy === 'save-recipe' ? '...' : 'Save'}</button>
-                  </div>
+                  <div><p className="text-[10px] uppercase tracking-wide text-muted-foreground">{canManageCatalog ? 'Recipe Editor' : 'Recipe Details'}</p><h3 className="text-sm font-semibold mt-0.5">{selectedRecipeProduct ? String(selectedRecipeProduct.name || selectedRecipeProduct.code) : 'Select product'}</h3></div>
+                  {canManageCatalog ? (
+                    <div className="flex gap-2">
+                      <button onClick={() => { setRecipeLines([]); setRecipeForm(f => ({ ...f, version: 'v1', yieldQty: '1', status: 'draft' })); }} className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent">Reset</button>
+                      <button onClick={() => void saveRecipe()} disabled={!recipeForm.productId || !!actionBusy} className="h-7 px-2.5 rounded bg-primary text-primary-foreground text-[10px] font-medium inline-flex items-center gap-1 disabled:opacity-60"><Save className="h-3 w-3" />{actionBusy === 'save-recipe' ? '...' : 'Save'}</button>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="col-span-2"><label className="text-[10px] text-muted-foreground">Product</label><select className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={recipeForm.productId} onChange={e => void openRecipeEditor(e.target.value)}><option value="">Select</option>{productOptions.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.name || p.code)}</option>)}</select></div>
-                  <div><label className="text-[10px] text-muted-foreground">Version</label><input className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={recipeForm.version} onChange={e => setRecipeForm(f => ({ ...f, version: e.target.value }))} /></div>
-                  <div><label className="text-[10px] text-muted-foreground">Status</label><select className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={recipeForm.status} onChange={e => setRecipeForm(f => ({ ...f, status: e.target.value }))}>{RECIPE_STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}</select></div>
-                  <div><label className="text-[10px] text-muted-foreground">Yield</label><input type="number" min="0" step="0.001" className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={recipeForm.yieldQty} onChange={e => setRecipeForm(f => ({ ...f, yieldQty: e.target.value }))} /></div>
-                  <div><label className="text-[10px] text-muted-foreground">Yield UOM</label><select className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={recipeForm.yieldUomCode} onChange={e => setRecipeForm(f => ({ ...f, yieldUomCode: e.target.value }))}>{RECIPE_YIELD_UOM_OPTIONS.map(u => <option key={u}>{u}</option>)}</select></div>
+                  <div className="col-span-2"><label className="text-[10px] text-muted-foreground">Product</label><select disabled={!canManageCatalog} className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs disabled:opacity-100 disabled:text-foreground" value={recipeForm.productId} onChange={e => void openRecipeEditor(e.target.value)}><option value="">Select</option>{productOptions.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.name || p.code)}</option>)}</select></div>
+                  <div><label className="text-[10px] text-muted-foreground">Version</label><input readOnly={!canManageCatalog} className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={recipeForm.version} onChange={e => setRecipeForm(f => ({ ...f, version: e.target.value }))} /></div>
+                  <div><label className="text-[10px] text-muted-foreground">Status</label><select disabled={!canManageCatalog} className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs disabled:opacity-100 disabled:text-foreground" value={recipeForm.status} onChange={e => setRecipeForm(f => ({ ...f, status: e.target.value }))}>{RECIPE_STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}</select></div>
+                  <div><label className="text-[10px] text-muted-foreground">Yield</label><input readOnly={!canManageCatalog} type="number" min="0" step="0.001" className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={recipeForm.yieldQty} onChange={e => setRecipeForm(f => ({ ...f, yieldQty: e.target.value }))} /></div>
+                  <div><label className="text-[10px] text-muted-foreground">Yield UOM</label><select disabled={!canManageCatalog} className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs disabled:opacity-100 disabled:text-foreground" value={recipeForm.yieldUomCode} onChange={e => setRecipeForm(f => ({ ...f, yieldUomCode: e.target.value }))}>{RECIPE_YIELD_UOM_OPTIONS.map(u => <option key={u}>{u}</option>)}</select></div>
                 </div>
                 <div className="border rounded-lg">
                   <div className="flex items-center justify-between px-3 py-1.5 border-b bg-muted/20">
                     <p className="text-xs font-semibold">Lines ({recipeLines.length})</p>
-                    <button onClick={addRecipeLine} disabled={itemOptions.length === 0} className="h-6 px-2 rounded border text-[10px] inline-flex items-center gap-1 hover:bg-accent disabled:opacity-60"><Plus className="h-3 w-3" />Add</button>
+                    {canManageCatalog ? (
+                      <button onClick={addRecipeLine} disabled={itemOptions.length === 0} className="h-6 px-2 rounded border text-[10px] inline-flex items-center gap-1 hover:bg-accent disabled:opacity-60"><Plus className="h-3 w-3" />Add</button>
+                    ) : null}
                   </div>
-                  {recipeLines.length === 0 ? <div className="px-3 py-4 text-center text-[10px] text-muted-foreground">No lines</div> : (
-                    <div className="divide-y">{recipeLines.map((line, idx) => (
-                      <div key={line.key} className="grid grid-cols-[1fr_70px_70px_30px] gap-1.5 p-2">
-                        <select className="h-7 rounded border border-input bg-background px-1.5 text-[11px]" value={line.itemId} onChange={e => updateLineItem(line.key, e.target.value)}><option value="">Item {idx + 1}</option>{itemOptions.map(i => <option key={String(i.id)} value={String(i.id)}>{String(i.name || i.code)}</option>)}</select>
-                        <input type="number" min="0" step="0.001" className="h-7 rounded border border-input bg-background px-1.5 text-[11px]" value={line.qtyRequired} onChange={e => updateRecipeLine(line.key, { qtyRequired: e.target.value })} />
-                        <select className="h-7 rounded border border-input bg-background px-1 text-[11px]" value={line.uomCode} onChange={e => updateRecipeLine(line.key, { uomCode: e.target.value })}>{Array.from(new Set([resolveUom(line.itemId), ...ITEM_UOM_OPTIONS])).map(u => <option key={`${line.key}-${u}`}>{u}</option>)}</select>
-                        <button onClick={() => removeRecipeLine(line.key)} className="h-7 w-7 rounded border text-muted-foreground hover:text-foreground hover:bg-accent"><Trash2 className="h-2.5 w-2.5 mx-auto" /></button>
+                  {recipeLines.length === 0 ? <div className="px-3 py-4 text-center text-[10px] text-muted-foreground">{canManageCatalog ? 'No lines — click Add to start building the recipe' : 'No recipe lines configured'}</div> : (
+                    <div className="divide-y overflow-x-auto">{recipeLines.map((line, idx) => (
+                      <div key={line.key} className={cn('grid gap-1.5 p-2 min-w-[320px]', canManageCatalog ? 'grid-cols-[minmax(120px,1fr)_70px_70px_30px]' : 'grid-cols-[minmax(120px,1fr)_70px_70px]')}>
+                        <select disabled={!canManageCatalog} className="h-7 rounded border border-input bg-background px-1.5 text-[11px] disabled:opacity-100 disabled:text-foreground" value={line.itemId} onChange={e => updateLineItem(line.key, e.target.value)}><option value="">Item {idx + 1}</option>{itemOptions.map(i => <option key={String(i.id)} value={String(i.id)}>{String(i.name || i.code)}</option>)}</select>
+                        <input readOnly={!canManageCatalog} type="number" min="0" step="0.001" className="h-7 rounded border border-input bg-background px-1.5 text-[11px]" value={line.qtyRequired} onChange={e => updateRecipeLine(line.key, { qtyRequired: e.target.value })} />
+                        <select disabled={!canManageCatalog} className="h-7 rounded border border-input bg-background px-1 text-[11px] disabled:opacity-100 disabled:text-foreground" value={line.uomCode} onChange={e => updateRecipeLine(line.key, { uomCode: e.target.value })}>{Array.from(new Set([resolveUom(line.itemId), ...ITEM_UOM_OPTIONS])).map(u => <option key={`${line.key}-${u}`}>{u}</option>)}</select>
+                        {canManageCatalog ? <button onClick={() => removeRecipeLine(line.key)} className="h-7 w-7 rounded border text-muted-foreground hover:text-foreground hover:bg-accent"><Trash2 className="h-2.5 w-2.5 mx-auto" /></button> : null}
                       </div>
                     ))}</div>
                   )}
@@ -371,59 +406,66 @@ export function CatalogModule() {
         {/* ══ PRICING ═════════════════════════════════════════════════ */}
         {activeTab === 'pricing' && (
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
-            {!outletId ? <EmptyState title="Outlet required" description="Select an outlet from the scope bar to manage pricing." /> : (
+            {!outletId ? <EmptyState title="Outlet required" description="Select an outlet from the scope bar at the top of the page, then return here to manage pricing and promotions." /> : (
               <>
-                <div className="surface-elevated p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <div className="md:col-span-2"><label className="text-xs text-muted-foreground">Product</label><select className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={priceForm.productId} onChange={e => setPriceForm(f => ({ ...f, productId: e.target.value }))}><option value="">Select</option>{productOptions.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.name || p.code)}</option>)}</select></div>
-                  <div><label className="text-xs text-muted-foreground">Price</label><input type="number" className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={priceForm.priceAmount} onChange={e => setPriceForm(f => ({ ...f, priceAmount: e.target.value }))} /></div>
-                  <div className="flex items-end"><button onClick={() => void upsertPrice()} disabled={!!actionBusy} className="h-9 w-full rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-60">{actionBusy === 'upsert-price' ? '...' : 'Save Price'}</button></div>
-                </div>
+                {canManageCatalog ? (
+                  <div className="surface-elevated p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div className="md:col-span-2"><label className="text-xs text-muted-foreground">Product</label><select className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={priceForm.productId} onChange={e => setPriceForm(f => ({ ...f, productId: e.target.value }))}><option value="">Select</option>{productOptions.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.name || p.code)}</option>)}</select></div>
+                    <div><label className="text-xs text-muted-foreground">Price</label><input type="number" className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={priceForm.priceAmount} onChange={e => setPriceForm(f => ({ ...f, priceAmount: e.target.value }))} /></div>
+                    <div className="flex items-end"><button onClick={() => void upsertPrice()} disabled={!!actionBusy} className="h-9 w-full rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-60">{actionBusy === 'upsert-price' ? '...' : 'Save Price'}</button></div>
+                  </div>
+                ) : null}
                 <div className="surface-elevated p-4 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="text-sm font-semibold">Prices ({pricesTotal})</h3>
                     <div className="flex items-center gap-2">
-                      <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" /><input className="h-8 w-56 rounded-md border border-input bg-background pl-8 pr-3 text-xs" placeholder="Search..." value={pricesQuery.searchInput} onChange={e => pricesQuery.setSearchInput(e.target.value)} /></div>
+                      <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" /><input className="h-8 w-full sm:w-56 rounded-md border border-input bg-background pl-8 pr-3 text-xs" placeholder="Search..." value={pricesQuery.searchInput} onChange={e => pricesQuery.setSearchInput(e.target.value)} /></div>
                       <button onClick={() => void loadPricing()} disabled={pricesLoading} className="h-8 w-8 rounded border flex items-center justify-center hover:bg-accent disabled:opacity-60"><RefreshCw className={cn('h-3.5 w-3.5', pricesLoading && 'animate-spin')} /></button>
                     </div>
                   </div>
                   <div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b bg-muted/30">
                     <th className="text-left text-[11px] px-4 py-2.5">Product</th><th className="text-left text-[11px] px-4 py-2.5">Currency</th><th className="text-right text-[11px] px-4 py-2.5">Price</th><th className="text-left text-[11px] px-4 py-2.5">From</th>
                   </tr></thead><tbody>
-                    {pricesLoading && prices.length === 0 ? <ListTableSkeleton columns={4} rows={6} /> : prices.length === 0 ? <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">No prices</td></tr> : prices.map((p, i) => (
-                      <tr key={i} className="border-b last:border-0 hover:bg-muted/20">
-                        <td className="px-4 py-2.5 text-sm">{String((p as Record<string,unknown>).productName || (p as Record<string,unknown>).productCode || p.productId)}</td>
-                        <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(p.currencyCode || '—')}</td>
-                        <td className="px-4 py-2.5 text-right text-sm font-mono">{Number(p.priceValue ?? p.priceAmount ?? 0).toFixed(2)}</td>
-                        <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(p.effectiveFrom || '—')}</td>
-                      </tr>
-                    ))}
+                    {pricesLoading && prices.length === 0 ? <ListTableSkeleton columns={4} rows={6} /> : prices.length === 0 ? <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">No prices</td></tr> : prices.map((p, i) => {
+                      const prod = productOptions.find(x => String(x.id) === String(p.productId));
+                      return (
+                        <tr key={i} className="border-b last:border-0 hover:bg-muted/20">
+                          <td className="px-4 py-2.5"><p className="text-sm">{prod ? String(prod.name || prod.code) : String(p.productId)}</p>{prod?.code && <p className="text-[10px] text-muted-foreground font-mono">{String(prod.code)}</p>}</td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(p.currencyCode || '—')}</td>
+                          <td className="px-4 py-2.5 text-right text-sm font-mono">{Number(p.priceValue ?? p.priceAmount ?? 0).toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(p.effectiveFrom || '—')}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody></table></div>
                   <ListPaginationControls total={pricesTotal} limit={pricesQuery.limit} offset={pricesQuery.offset} hasMore={pricesHasMore} disabled={pricesLoading} onPageChange={pricesQuery.setPage} onLimitChange={pricesQuery.setPageSize} />
                 </div>
-                <div className="surface-elevated p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-sm font-semibold">Promotions ({promotionsTotal})</h3>
-                    <div className="flex items-center gap-2">
-                      <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={promotionsQuery.filters.status || 'all'} onChange={e => promotionsQuery.setFilter('status', e.target.value === 'all' ? undefined : e.target.value)}>
-                        <option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option>
-                      </select>
-                      <button onClick={() => void loadPromotions()} disabled={promotionsLoading} className="h-8 w-8 rounded border flex items-center justify-center hover:bg-accent disabled:opacity-60"><RefreshCw className={cn('h-3.5 w-3.5', promotionsLoading && 'animate-spin')} /></button>
+                {canManageCatalog ? (
+                  <div className="surface-elevated p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-sm font-semibold">Promotions ({promotionsTotal})</h3>
+                      <div className="flex items-center gap-2">
+                        <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={promotionsQuery.filters.status || 'all'} onChange={e => promotionsQuery.setFilter('status', e.target.value === 'all' ? undefined : e.target.value)}>
+                          <option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option>
+                        </select>
+                        <button onClick={() => void loadPromotions()} disabled={promotionsLoading} className="h-8 w-8 rounded border flex items-center justify-center hover:bg-accent disabled:opacity-60"><RefreshCw className={cn('h-3.5 w-3.5', promotionsLoading && 'animate-spin')} /></button>
+                      </div>
                     </div>
+                    <div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b bg-muted/30">
+                      <th className="text-left text-[11px] px-4 py-2.5">Name</th><th className="text-left text-[11px] px-4 py-2.5">Type</th><th className="text-left text-[11px] px-4 py-2.5">Status</th><th className="text-right text-[11px] px-4 py-2.5"></th>
+                    </tr></thead><tbody>
+                      {promotionsLoading && promotions.length === 0 ? <ListTableSkeleton columns={4} rows={3} /> : promotions.length === 0 ? <tr><td colSpan={4} className="px-4 py-6 text-center text-sm text-muted-foreground">No promotions</td></tr> : promotions.map(p => (
+                        <tr key={String(p.id)} className="border-b last:border-0 hover:bg-muted/20">
+                          <td className="px-4 py-2.5 text-sm font-medium">{String(p.name || p.id)}</td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(p.promoType || '—')}</td>
+                          <td className="px-4 py-2.5"><StatusBadge status={p.status} /></td>
+                          <td className="px-4 py-2.5 text-right">{(p.status === 'active' || p.status === 'draft') && <button onClick={() => void deactivatePromotion(String(p.id))} disabled={actionBusy === `deact:${p.id}`} className="h-6 px-2 rounded border text-[10px] inline-flex items-center gap-1 hover:bg-accent disabled:opacity-60"><Pause className="h-2.5 w-2.5" />Deact</button>}</td>
+                        </tr>
+                      ))}
+                    </tbody></table></div>
+                    <ListPaginationControls total={promotionsTotal} limit={promotionsQuery.limit} offset={promotionsQuery.offset} hasMore={promotionsHasMore} disabled={promotionsLoading} onPageChange={promotionsQuery.setPage} onLimitChange={promotionsQuery.setPageSize} />
                   </div>
-                  <div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b bg-muted/30">
-                    <th className="text-left text-[11px] px-4 py-2.5">Name</th><th className="text-left text-[11px] px-4 py-2.5">Type</th><th className="text-left text-[11px] px-4 py-2.5">Status</th><th className="text-right text-[11px] px-4 py-2.5"></th>
-                  </tr></thead><tbody>
-                    {promotionsLoading && promotions.length === 0 ? <ListTableSkeleton columns={4} rows={3} /> : promotions.length === 0 ? <tr><td colSpan={4} className="px-4 py-6 text-center text-sm text-muted-foreground">No promotions</td></tr> : promotions.map(p => (
-                      <tr key={String(p.id)} className="border-b last:border-0 hover:bg-muted/20">
-                        <td className="px-4 py-2.5 text-sm font-medium">{String(p.name || p.id)}</td>
-                        <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(p.promoType || '—')}</td>
-                        <td className="px-4 py-2.5"><StatusBadge status={p.status} /></td>
-                        <td className="px-4 py-2.5 text-right">{(p.status === 'active' || p.status === 'draft') && <button onClick={() => void deactivatePromotion(String(p.id))} disabled={actionBusy === `deact:${p.id}`} className="h-6 px-2 rounded border text-[10px] inline-flex items-center gap-1 hover:bg-accent disabled:opacity-60"><Pause className="h-2.5 w-2.5" />Deact</button>}</td>
-                      </tr>
-                    ))}
-                  </tbody></table></div>
-                  <ListPaginationControls total={promotionsTotal} limit={promotionsQuery.limit} offset={promotionsQuery.offset} hasMore={promotionsHasMore} disabled={promotionsLoading} onPageChange={promotionsQuery.setPage} onLimitChange={promotionsQuery.setPageSize} />
-                </div>
+                ) : null}
               </>
             )}
           </div>
@@ -464,32 +506,10 @@ export function CatalogModule() {
           </div>
         )}
 
-        {/* ══ VARIANTS & MODIFIERS (Phase 2 placeholder) ═════════ */}
+        {/* ══ VARIANTS & MODIFIERS ═════════════════════════════════ */}
         {activeTab === 'variants' && (
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="surface-elevated p-6 text-center space-y-3">
-              <div className="h-12 w-12 rounded-xl bg-muted/50 flex items-center justify-center mx-auto">
-                <Layers className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <h3 className="text-sm font-semibold">Variants & Modifier Groups</h3>
-              <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                Product variants (S/M/L, Hot/Iced) and modifier groups (Toppings, Sugar Level)
-                will be available when backend tables are provisioned.
-              </p>
-              <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1.5 text-[10px] font-medium text-amber-700">
-                <Loader2 className="h-3 w-3" />
-                Requires backend: product_variant, modifier_group tables
-              </div>
-              <div className="border rounded-lg p-4 text-left max-w-md mx-auto mt-4">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Planned capabilities</p>
-                <ul className="space-y-1.5 text-xs text-muted-foreground">
-                  <li className="flex items-center gap-2">• Product size variants (Regular, Large) with price modifiers</li>
-                  <li className="flex items-center gap-2">• Modifier groups (Toppings, Sugar Level, Ice Level)</li>
-                  <li className="flex items-center gap-2">• Per-option pricing and availability rules</li>
-                  <li className="flex items-center gap-2">• POS integration for order customization</li>
-                </ul>
-              </div>
-            </div>
+          <div className="flex-1 overflow-hidden">
+            <VariantsModule token={token} />
           </div>
         )}
 

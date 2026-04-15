@@ -2,6 +2,7 @@ import { apiRequest, type PagedResponse } from '@/api/client';
 import { decodeArrayFromPageOrArray, decodePaged } from '@/api/decoders';
 import {
   asDateOnly,
+  asBoolean,
   asId,
   asNullableNumber,
   asNullableString,
@@ -171,7 +172,7 @@ export interface PublishItemView {
   createdAt: string;
 }
 
-export interface AuditLogView {
+export interface CatalogAuditLogView {
   id: string;
   entityType: string;
   entityId: string;
@@ -185,6 +186,37 @@ export interface AuditLogView {
   username: string | null;
   publishVersionId: string | null;
   createdAt: string;
+}
+
+export interface VariantView {
+  id: string;
+  productId: string;
+  code: string;
+  name: string;
+  priceModifierType: string;
+  priceModifierValue: number;
+  displayOrder: number;
+  isActive: boolean;
+}
+
+export interface ModifierOptionView {
+  id: string;
+  code: string;
+  name: string;
+  priceAdjustment: number;
+  displayOrder: number;
+  isActive: boolean;
+}
+
+export interface ModifierGroupView {
+  id: string;
+  code: string;
+  name: string;
+  selectionType: string;
+  minSelections: number;
+  maxSelections: number;
+  isActive: boolean;
+  options: ModifierOptionView[];
 }
 
 export interface CreateProductPayload {
@@ -230,10 +262,17 @@ export interface UpsertRecipePayload {
   items: Array<{ itemId: string | number; qty?: number; qtyRequired?: number; uomCode: string }>;
 }
 
-function toLongValue(value: unknown): number | null {
+/**
+ * Convert to a value suitable for JSON body fields that map to backend Long.
+ * Snowflake IDs exceed Number.MAX_SAFE_INTEGER — we keep them as strings.
+ * Spring Boot Jackson deserializes quoted strings to Long correctly.
+ */
+function toLongValue(value: unknown): string | number | null {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
-  return /^\d+$/.test(text) ? Number(text) : null;
+  if (!/^\d+$/.test(text)) return null;
+  const num = Number(text);
+  return Number.isSafeInteger(num) ? num : text;
 }
 
 function trimToNull(value: unknown): string | null {
@@ -320,9 +359,38 @@ function decodeAvailability(value: unknown): AvailabilityView {
   };
 }
 
+function decodeCategory(value: unknown): CategoryView {
+  const record = asRecord(value) ?? {};
+  return {
+    code: asString(record.code),
+    name: asString(record.name),
+    isActive: asBoolean(record.isActive, true),
+    description: asNullableString(record.description),
+  };
+}
+
+function decodeCatalogAuditLog(value: unknown): CatalogAuditLogView {
+  const record = asRecord(value) ?? {};
+  return {
+    id: asId(record.id),
+    entityType: asString(record.entityType),
+    entityId: asString(record.entityId),
+    action: asString(record.action),
+    fieldName: asNullableString(record.fieldName),
+    oldValue: asNullableString(record.oldValue),
+    newValue: asNullableString(record.newValue),
+    scopeType: asNullableString(record.scopeType),
+    scopeId: asNullableString(record.scopeId),
+    userId: asNullableString(record.userId),
+    username: asNullableString(record.username),
+    publishVersionId: asNullableString(record.publishVersionId),
+    createdAt: asString(record.createdAt),
+  };
+}
+
 export const productApi = {
   products: async (token: string): Promise<ProductView[]> =>
-    decodeArrayFromPageOrArray(await apiRequest('/api/v1/product/products', { token }), decodeProduct),
+    decodeArrayFromPageOrArray(await apiRequest('/api/v1/product/products', { token, query: { limit: 1000 } }), decodeProduct),
   productsPaged: async (token: string, query: ProductsQuery): Promise<PagedResponse<ProductView>> =>
     decodePaged(await apiRequest('/api/v1/product/products', { token, query }), decodeProduct),
   createProduct: async (token: string, payload: CreateProductPayload): Promise<unknown> =>
@@ -338,7 +406,7 @@ export const productApi = {
       },
     }),
   items: async (token: string): Promise<ItemView[]> =>
-    decodeArrayFromPageOrArray(await apiRequest('/api/v1/product/items', { token }), decodeItem),
+    decodeArrayFromPageOrArray(await apiRequest('/api/v1/product/items', { token, query: { limit: 1000 } }), decodeItem),
   itemsPaged: async (token: string, query: ItemsQuery): Promise<PagedResponse<ItemView>> =>
     decodePaged(await apiRequest('/api/v1/product/items', { token, query }), decodeItem),
   createItem: async (token: string, payload: CreateItemPayload): Promise<unknown> =>
@@ -430,32 +498,32 @@ export const productApi = {
 
   productCategories: async (token: string): Promise<CategoryView[]> => {
     const result = await apiRequest('/api/v1/product/categories', { token });
-    return Array.isArray(result) ? result : [];
+    return Array.isArray(result) ? result.map(decodeCategory) : [];
   },
 
   createProductCategory: async (
     token: string,
     payload: { code: string; name: string; description?: string },
   ): Promise<CategoryView> =>
-    asRecord(await apiRequest('/api/v1/product/categories', { method: 'POST', token, body: payload })) as CategoryView,
+    decodeCategory(await apiRequest('/api/v1/product/categories', { method: 'POST', token, body: payload })),
 
   updateProductCategory: async (
     token: string,
     code: string,
     payload: { name?: string; description?: string; isActive?: boolean },
   ): Promise<CategoryView> =>
-    asRecord(await apiRequest(`/api/v1/product/categories/${encodeURIComponent(code)}`, { method: 'PUT', token, body: payload })) as CategoryView,
+    decodeCategory(await apiRequest(`/api/v1/product/categories/${encodeURIComponent(code)}`, { method: 'PUT', token, body: payload })),
 
   itemCategories: async (token: string): Promise<CategoryView[]> => {
     const result = await apiRequest('/api/v1/product/item-categories', { token });
-    return Array.isArray(result) ? result : [];
+    return Array.isArray(result) ? result.map(decodeCategory) : [];
   },
 
   createItemCategory: async (
     token: string,
     payload: { code: string; name: string; description?: string },
   ): Promise<CategoryView> =>
-    asRecord(await apiRequest('/api/v1/product/item-categories', { method: 'POST', token, body: payload })) as CategoryView,
+    decodeCategory(await apiRequest('/api/v1/product/item-categories', { method: 'POST', token, body: payload })),
 
   // ── Menu ────────────────────────────────────────────────
 
@@ -564,8 +632,37 @@ export const productApi = {
 
   // ── Audit Log ───────────────────────────────────────────
 
-  auditLog: async (token: string, query?: { entityType?: string; entityId?: string; userId?: string; limit?: number; offset?: number }): Promise<AuditLogView[]> => {
-    const result = await apiRequest('/api/v1/product/audit-log', { token, query });
+  // ── Variants & Modifiers ─────────────────────────────────
+
+  variants: async (token: string, productId: string): Promise<VariantView[]> => {
+    const result = await apiRequest('/api/v1/product/variants', { token, query: { productId } });
     return Array.isArray(result) ? result : [];
+  },
+
+  createVariant: async (token: string, payload: { productId: string; code: string; name: string; priceModifierType?: string; priceModifierValue?: number; displayOrder?: number }): Promise<VariantView> =>
+    asRecord(await apiRequest('/api/v1/product/variants', { method: 'POST', token, body: { ...payload, productId: toLongValue(payload.productId), displayOrder: payload.displayOrder ?? 0 } })) as unknown as VariantView,
+
+  deleteVariant: async (token: string, variantId: string): Promise<void> => {
+    await apiRequest(`/api/v1/product/variants/${variantId}`, { method: 'DELETE', token });
+  },
+
+  modifierGroups: async (token: string): Promise<ModifierGroupView[]> => {
+    const result = await apiRequest('/api/v1/product/modifier-groups', { token });
+    return Array.isArray(result) ? result : [];
+  },
+
+  createModifierGroup: async (token: string, payload: { code: string; name: string; selectionType?: string; minSelections?: number; maxSelections?: number }): Promise<ModifierGroupView> =>
+    asRecord(await apiRequest('/api/v1/product/modifier-groups', { method: 'POST', token, body: { ...payload, minSelections: payload.minSelections ?? 0, maxSelections: payload.maxSelections ?? 1 } })) as unknown as ModifierGroupView,
+
+  addModifierOption: async (token: string, groupId: string, payload: { code: string; name: string; priceAdjustment?: number; displayOrder?: number }): Promise<ModifierOptionView> =>
+    asRecord(await apiRequest(`/api/v1/product/modifier-groups/${groupId}/options`, { method: 'POST', token, body: { ...payload, priceAdjustment: payload.priceAdjustment ?? 0, displayOrder: payload.displayOrder ?? 0 } })) as unknown as ModifierOptionView,
+
+  deleteModifierOption: async (token: string, optionId: string): Promise<void> => {
+    await apiRequest(`/api/v1/product/modifier-options/${optionId}`, { method: 'DELETE', token });
+  },
+
+  auditLog: async (token: string, query?: { entityType?: string; entityId?: string; userId?: string; limit?: number; offset?: number }): Promise<CatalogAuditLogView[]> => {
+    const result = await apiRequest('/api/v1/product/audit-log', { token, query });
+    return Array.isArray(result) ? result.map(decodeCatalogAuditLog) : [];
   },
 };

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Rocket, Plus, Send, CheckCircle2, XCircle, Clock, RotateCcw,
-  Trash2, Loader2, RefreshCw, ChevronRight, FileText,
+  Rocket, Plus, Send, CheckCircle2, XCircle, RotateCcw,
+  Trash2, Loader2, RefreshCw, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -49,6 +49,11 @@ export function PublishCenter({ token }: PublishCenterProps) {
   useEffect(() => { void loadVersions(); }, [loadVersions]);
 
   useEffect(() => {
+    if (!token) return;
+    productApi.products(token).then(setProducts).catch(() => {});
+  }, [token]);
+
+  useEffect(() => {
     if (!selectedId || !token) { setSelectedVersion(null); setItems([]); return; }
     (async () => {
       try {
@@ -79,10 +84,14 @@ export function PublishCenter({ token }: PublishCenterProps) {
     if (!selectedId || !itemForm.entityId || !itemForm.summary) { toast.error('Fill all fields'); return; }
     setBusy('add-item');
     try {
-      await productApi.addPublishItem(token, selectedId, itemForm);
+      await productApi.addPublishItem(token, selectedId, {
+        ...itemForm,
+        scopeType: itemForm.scopeType || undefined,
+        scopeId: itemForm.scopeId || undefined,
+      });
       toast.success('Change added');
       setAddingItem(false);
-      setItemForm({ entityType: 'price', entityId: '', changeType: 'update', summary: '' });
+      setItemForm({ entityType: 'price', entityId: '', changeType: 'update', summary: '', scopeType: '', scopeId: '' });
       void loadVersions();
     } catch (e) { toast.error(getErrorMessage(e, 'Failed')); } finally { setBusy(''); }
   };
@@ -165,7 +174,7 @@ export function PublishCenter({ token }: PublishCenterProps) {
 
       <div className="flex-1 flex overflow-hidden">
         {/* Left: version list */}
-        <div className="w-80 border-r flex flex-col flex-shrink-0 overflow-hidden">
+        <div className="w-full sm:w-72 md:w-80 border-r flex flex-col flex-shrink-0 overflow-hidden">
           {creating && (
             <div className="px-3 py-3 border-b space-y-2 bg-muted/20">
               <input className="h-7 w-full rounded border border-input bg-background px-2 text-xs" placeholder="Draft name" value={createForm.name} onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} />
@@ -267,21 +276,55 @@ export function PublishCenter({ token }: PublishCenterProps) {
 
                 {addingItem && (
                   <div className="px-4 py-3 border-b bg-muted/10 space-y-2">
-                    <div className="grid grid-cols-4 gap-2">
-                      <select className="h-7 rounded border border-input bg-background px-1 text-xs" value={itemForm.entityType} onChange={e => setItemForm(f => ({ ...f, entityType: e.target.value }))}>
-                        <option value="product">product</option><option value="recipe">recipe</option>
-                        <option value="price">price</option><option value="availability">availability</option>
-                        <option value="menu_assignment">menu</option>
-                      </select>
-                      <input className="h-7 rounded border border-input bg-background px-2 text-xs font-mono" placeholder="Entity ID" value={itemForm.entityId} onChange={e => setItemForm(f => ({ ...f, entityId: e.target.value }))} />
-                      <select className="h-7 rounded border border-input bg-background px-1 text-xs" value={itemForm.changeType} onChange={e => setItemForm(f => ({ ...f, changeType: e.target.value }))}>
-                        <option value="create">create</option><option value="update">update</option><option value="delete">delete</option>
-                      </select>
-                      <input className="h-7 rounded border border-input bg-background px-2 text-xs" placeholder="Summary" value={itemForm.summary} onChange={e => setItemForm(f => ({ ...f, summary: e.target.value }))} />
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Add Change to Draft</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-muted-foreground">Entity Type</label>
+                        <select className="mt-0.5 h-7 w-full rounded border border-input bg-background px-1 text-xs" value={itemForm.entityType} onChange={e => setItemForm(f => ({ ...f, entityType: e.target.value }))}>
+                          <option value="product">Product</option><option value="recipe">Recipe</option>
+                          <option value="price">Price</option><option value="availability">Availability</option>
+                          <option value="menu_assignment">Menu Assignment</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-muted-foreground">Change Type</label>
+                        <select className="mt-0.5 h-7 w-full rounded border border-input bg-background px-1 text-xs" value={itemForm.changeType} onChange={e => setItemForm(f => ({ ...f, changeType: e.target.value }))}>
+                          <option value="create">New (create)</option><option value="update">Change (update)</option><option value="delete">Remove (delete)</option>
+                        </select>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[10px] text-muted-foreground">Product</label>
+                        <select className="mt-0.5 h-7 w-full rounded border border-input bg-background px-1 text-xs" value={itemForm.entityId} onChange={e => {
+                          const prod = products.find(p => String(p.id) === e.target.value);
+                          setItemForm(f => ({ ...f, entityId: e.target.value, summary: f.summary || (prod ? `${f.changeType} ${f.entityType} for ${prod.name}` : '') }));
+                        }}>
+                          <option value="">Select product...</option>
+                          {products.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.name || p.code)} ({String(p.code)})</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-muted-foreground">Scope</label>
+                        <select className="mt-0.5 h-7 w-full rounded border border-input bg-background px-1 text-xs" value={itemForm.scopeType} onChange={e => setItemForm(f => ({ ...f, scopeType: e.target.value }))}>
+                          <option value="">No scope</option><option value="corporate">Corporate</option><option value="region">Region</option><option value="outlet">Outlet</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-muted-foreground">Scope ID</label>
+                        <input className="mt-0.5 h-7 w-full rounded border border-input bg-background px-2 text-xs" placeholder="e.g. outlet ID"
+                          value={itemForm.scopeId} onChange={e => setItemForm(f => ({ ...f, scopeId: e.target.value }))} />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[10px] text-muted-foreground">Summary</label>
+                        <input className="mt-0.5 h-7 w-full rounded border border-input bg-background px-2 text-xs"
+                          placeholder="Describe the change..." value={itemForm.summary} onChange={e => setItemForm(f => ({ ...f, summary: e.target.value }))} />
+                      </div>
                     </div>
-                    <div className="flex gap-1">
-                      <button onClick={() => void handleAddItem()} disabled={!!busy} className="h-6 px-2 rounded bg-primary text-primary-foreground text-[10px] font-medium disabled:opacity-60">Add</button>
-                      <button onClick={() => setAddingItem(false)} className="h-6 px-2 rounded border text-[10px]">Cancel</button>
+                    <div className="flex gap-1 pt-1">
+                      <button onClick={() => void handleAddItem()} disabled={!itemForm.entityId || !itemForm.summary || !!busy}
+                        className="h-7 px-3 rounded bg-primary text-primary-foreground text-[10px] font-medium disabled:opacity-60 inline-flex items-center gap-1">
+                        <Plus className="h-3 w-3" />Add Change
+                      </button>
+                      <button onClick={() => setAddingItem(false)} className="h-7 px-3 rounded border text-[10px] hover:bg-accent">Cancel</button>
                     </div>
                   </div>
                 )}

@@ -3,6 +3,7 @@ import {
   Package, Leaf, BookOpen, DollarSign, Store, AlertTriangle, ArrowRight,
   CheckCircle2, Loader2, TrendingUp,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { productApi } from '@/api/fern-api';
 import type { ProductView, ItemView } from '@/api/fern-api';
@@ -20,7 +21,8 @@ interface CatalogMetrics {
   totalIngredients: number;
   recipeCoverage: number;
   pricedAtOutlet: number;
-  availableOutlets: number;
+  availableCount: number;
+  totalOutletCount: number;
   loading: boolean;
 }
 
@@ -28,7 +30,7 @@ export function CatalogControlTower({ token, outletId, onNavigate }: ControlTowe
   const [metrics, setMetrics] = useState<CatalogMetrics>({
     totalProducts: 0, activeProducts: 0, draftProducts: 0,
     totalIngredients: 0, recipeCoverage: 0, pricedAtOutlet: 0,
-    availableOutlets: 0, loading: true,
+    availableCount: 0, totalOutletCount: 0, loading: true,
   });
 
   const load = useCallback(async () => {
@@ -46,6 +48,15 @@ export function CatalogControlTower({ token, outletId, onNavigate }: ControlTowe
         pricedCount = prices.totalCount;
       }
 
+      // Availability stats
+      let availableCount = 0;
+      let totalOutletCount = 0;
+      try {
+        const allAvail = await productApi.availability(token, {});
+        totalOutletCount = new Set(allAvail.map(a => String(a.outletId))).size;
+        availableCount = allAvail.filter(a => a.available).length;
+      } catch { /* optional */ }
+
       // Count recipes by loading first page of products and checking each
       let recipeCount = 0;
       const prodPage = await productApi.productsPaged(token, { limit: 50, offset: 0 });
@@ -58,18 +69,21 @@ export function CatalogControlTower({ token, outletId, onNavigate }: ControlTowe
 
       const activeCount = prodPage.items.filter(p => p.status === 'active').length;
       const draftCount = prodPage.items.filter(p => p.status === 'draft').length;
+      const sampleSize = Math.min(products.totalCount, 50);
 
       setMetrics({
         totalProducts: products.totalCount,
         activeProducts: activeCount,
         draftProducts: draftCount,
         totalIngredients: items.totalCount,
-        recipeCoverage: products.totalCount > 0 ? Math.round((recipeCount / Math.min(products.totalCount, 50)) * 100) : 0,
+        recipeCoverage: sampleSize > 0 ? Math.round((recipeCount / sampleSize) * 100) : 0,
         pricedAtOutlet: pricedCount,
-        availableOutlets: 0,
+        availableCount,
+        totalOutletCount,
         loading: false,
       });
-    } catch {
+    } catch (e) {
+      toast.error('Failed to load catalog metrics');
       setMetrics(m => ({ ...m, loading: false }));
     }
   }, [token, outletId]);
@@ -81,6 +95,7 @@ export function CatalogControlTower({ token, outletId, onNavigate }: ControlTowe
     { label: 'Ingredients', value: metrics.totalIngredients, sub: 'tracked items', icon: Leaf, color: 'text-foreground' },
     { label: 'Recipe Coverage', value: `${metrics.recipeCoverage}%`, sub: 'of products', icon: BookOpen, color: metrics.recipeCoverage < 80 ? 'text-amber-600' : 'text-foreground' },
     { label: 'Priced (outlet)', value: metrics.pricedAtOutlet, sub: outletId ? 'at current outlet' : 'select outlet', icon: DollarSign, color: 'text-foreground' },
+    { label: 'Availability', value: metrics.availableCount, sub: `across ${metrics.totalOutletCount} outlets`, icon: Store, color: metrics.availableCount === 0 && metrics.totalProducts > 0 ? 'text-amber-600' : 'text-foreground' },
   ];
 
   const alerts: { severity: 'warning' | 'info'; label: string; tab: string }[] = [];
@@ -88,7 +103,7 @@ export function CatalogControlTower({ token, outletId, onNavigate }: ControlTowe
     alerts.push({ severity: 'warning', label: `${metrics.draftProducts} products still in draft`, tab: 'products' });
   }
   if (metrics.recipeCoverage < 100 && metrics.totalProducts > 0) {
-    alerts.push({ severity: 'info', label: `${100 - metrics.recipeCoverage}% products missing recipes`, tab: 'recipes' });
+    alerts.push({ severity: 'info', label: `~${100 - metrics.recipeCoverage}% products missing recipes (sampled)`, tab: 'recipes' });
   }
   if (outletId && metrics.pricedAtOutlet === 0 && metrics.totalProducts > 0) {
     alerts.push({ severity: 'warning', label: 'No products priced at current outlet', tab: 'pricing' });

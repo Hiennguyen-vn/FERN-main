@@ -15,9 +15,10 @@ interface ProductListPanelProps {
   selectedId: string | null;
   onSelect: (product: ProductView) => void;
   compact?: boolean;
+  canCreate?: boolean;
 }
 
-export function ProductListPanel({ token, selectedId, onSelect, compact }: ProductListPanelProps) {
+export function ProductListPanel({ token, selectedId, onSelect, compact, canCreate = true }: ProductListPanelProps) {
   const [products, setProducts] = useState<ProductView[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -33,7 +34,7 @@ export function ProductListPanel({ token, selectedId, onSelect, compact }: Produ
     setLoading(true);
     try {
       const result = await productApi.productsPaged(token, {
-        q: query.q || undefined, sortBy: query.sortBy, sortDir: query.sortDir,
+        q: query.debouncedSearch || undefined, sortBy: query.sortBy, sortDir: query.sortDir,
         limit: query.limit, offset: query.offset,
       });
       setProducts(result.items);
@@ -44,7 +45,7 @@ export function ProductListPanel({ token, selectedId, onSelect, compact }: Produ
     } finally {
       setLoading(false);
     }
-  }, [token, query.q, query.sortBy, query.sortDir, query.limit, query.offset]);
+  }, [token, query.debouncedSearch, query.sortBy, query.sortDir, query.limit, query.offset]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -70,14 +71,16 @@ export function ProductListPanel({ token, selectedId, onSelect, compact }: Produ
       {/* Header */}
       <div className="p-3 border-b flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Products ({total})</h2>
-        <button onClick={() => setShowCreate(!showCreate)}
-          className="h-7 px-2.5 rounded-md bg-primary text-primary-foreground text-[11px] font-medium inline-flex items-center gap-1">
-          <Plus className="h-3 w-3" />{compact ? '' : 'Add'}
-        </button>
+        {canCreate ? (
+          <button onClick={() => setShowCreate(!showCreate)}
+            className="h-7 px-2.5 rounded-md bg-primary text-primary-foreground text-[11px] font-medium inline-flex items-center gap-1">
+            <Plus className="h-3 w-3" />{compact ? '' : 'Add'}
+          </button>
+        ) : null}
       </div>
 
       {/* Create form */}
-      {showCreate && (
+      {canCreate && showCreate && (
         <div className="p-3 border-b bg-muted/30 space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <input className="h-8 rounded-md border border-input bg-background px-2.5 text-xs" placeholder="Code" value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} />

@@ -9,6 +9,7 @@ export interface AuditLogView {
   entityName?: string | null;
   entityId?: string | null;
   actorUserId?: string | null;
+  correlationId?: string | null;
   createdAt?: string | null;
   newData?: unknown;
   oldData?: unknown;
@@ -96,6 +97,7 @@ function decodeAuditLog(value: unknown): AuditLogView {
     entityName: asNullableString(record.entityName),
     entityId: asNullableString(record.entityId),
     actorUserId: record.actorUserId === null || record.actorUserId === undefined ? null : asId(record.actorUserId),
+    correlationId: asNullableString(record.correlationId),
     createdAt: asNullableString(record.createdAt),
     newData: record.newData,
     oldData: record.oldData,
@@ -149,4 +151,3 @@ export const auditApi = {
   traces: async (token: string, query: AuditTracesQuery): Promise<PagedResponse<AuditTrace>> =>
     decodePaged(await apiRequest('/api/v1/audit/traces', { token, query }), decodeAuditTrace),
 };
-

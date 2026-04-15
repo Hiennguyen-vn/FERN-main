@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hasCrmReadAccess,
   hasHrCompensationAccess,
+  hasIamRoleManagementAccess,
+  hasIamUserManagementAccess,
   hasModuleAccess,
+  hasPosOrderingTableAccess,
   hasSalesOrderQueueAccess,
 } from '@/auth/authorization';
 import { COOKIE_AUTH_TOKEN_SENTINEL } from '@/auth/session';
@@ -72,6 +76,8 @@ describe('hasModuleAccess', () => {
 
     expect(hasModuleAccess(salesSession, 'pos')).toBe(true);
     expect(hasModuleAccess(salesSession, 'crm')).toBe(true);
+    expect(hasCrmReadAccess(salesSession)).toBe(true);
+    expect(hasPosOrderingTableAccess(salesSession)).toBe(true);
     expect(hasSalesOrderQueueAccess(salesSession)).toBe(true);
   });
 
@@ -99,11 +105,26 @@ describe('hasModuleAccess', () => {
     const viewer = buildSession({
       rolesByOutlet: { '101': ['cashier'] },
     });
-    const iamManager = buildSession({
+    const userManager = buildSession({
       permissionsByOutlet: { '101': ['auth.user.write'] },
+    });
+    const roleManager = buildSession({
+      permissionsByOutlet: { '101': ['auth.role.write'] },
+    });
+    const admin = buildSession({
+      rolesByOutlet: { '101': ['admin'] },
     });
 
     expect(hasModuleAccess(viewer, 'iam')).toBe(false);
-    expect(hasModuleAccess(iamManager, 'iam')).toBe(true);
+    expect(hasModuleAccess(userManager, 'iam')).toBe(true);
+    expect(hasModuleAccess(roleManager, 'iam')).toBe(true);
+    expect(hasIamUserManagementAccess(viewer)).toBe(false);
+    expect(hasIamRoleManagementAccess(viewer)).toBe(false);
+    expect(hasIamUserManagementAccess(userManager)).toBe(true);
+    expect(hasIamRoleManagementAccess(userManager)).toBe(false);
+    expect(hasIamUserManagementAccess(roleManager)).toBe(false);
+    expect(hasIamRoleManagementAccess(roleManager)).toBe(true);
+    expect(hasIamUserManagementAccess(admin)).toBe(true);
+    expect(hasIamRoleManagementAccess(admin)).toBe(true);
   });
 });

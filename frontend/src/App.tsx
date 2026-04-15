@@ -74,7 +74,7 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
             <Route path="/order/:tableToken" element={<LazyRoute><PublicOrderPage /></LazyRoute>} />

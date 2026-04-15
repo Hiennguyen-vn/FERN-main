@@ -10,10 +10,11 @@ import { CancelOrder } from '@/components/pos/CancelOrder';
 import { CloseSession } from '@/components/pos/CloseSession';
 import { ReconcileSession } from '@/components/pos/ReconcileSession';
 import { OutletStatsPanel } from '@/components/pos/OutletStatsPanel';
-import { EmptyState } from '@/components/shell/PermissionStates';
+import { EmptyState, PermissionBanner } from '@/components/shell/PermissionStates';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { isApiError } from '@/api/client';
 import type { POSSession, SaleOrder, OrderLineItem, PaymentMethod } from '@/types/pos';
 import { usePOSSessions, type DBPosSession } from '@/hooks/use-pos-sessions';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
@@ -32,6 +33,12 @@ import {
   distributeAmountAcrossItems,
   mapSaleToUi,
 } from '@/components/pos/sale-order-utils';
+import {
+  hasCrmReadAccess,
+  hasPosOrderingTableAccess,
+} from '@/auth/authorization';
+import { useAuth } from '@/auth/use-auth';
+import type { PermissionState } from '@/types/shell';
 import { toast } from 'sonner';
 
 type POSView =
@@ -71,7 +78,16 @@ function formatDateTime(value?: string | null) {
   return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
 }
 
+function resolveCapabilityState(error: unknown): PermissionState | null {
+  if (!isApiError(error)) return null;
+  if (error.status === 401 || error.status === 403) return 'action_disabled';
+  if (error.status === 404 || error.status === 405 || error.status === 501) return 'route_unavailable';
+  if (error.status >= 500) return 'service_unavailable';
+  return null;
+}
+
 export function POSModule({ outletName, operatorName, outletId, onCustomerOrders }: Props) {
+  const { session } = useAuth();
   const { token, scope } = useShellRuntime();
   const [view, setView] = useState<POSView>({ screen: 'list' });
   const [orders, setOrders] = useState<SaleOrder[]>([]);
@@ -81,10 +97,12 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
   const [customers, setCustomers] = useState<CrmCustomerView[]>([]);
   const [customersLoading, setCustomersLoading] = useState(false);
   const [customersError, setCustomersError] = useState('');
+  const [customersErrorState, setCustomersErrorState] = useState<PermissionState | null>(null);
   const [customerQuery, setCustomerQuery] = useState('');
   const [orderingTables, setOrderingTables] = useState<OrderingTableView[]>([]);
   const [tablesLoading, setTablesLoading] = useState(false);
   const [tablesError, setTablesError] = useState('');
+  const [tablesErrorState, setTablesErrorState] = useState<PermissionState | null>(null);
   const [tableStatusFilter, setTableStatusFilter] = useState('all');
 
   const {
@@ -98,6 +116,8 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
   } = usePOSSessions();
 
   const scopedOutletId = normalizeNumericId(outletId || scope.outletId);
+  const canAccessCustomerReferences = hasCrmReadAccess(session);
+  const canAccessOrderingTables = hasPosOrderingTableAccess(session);
 
   const goList = useCallback(() => setView({ screen: 'list' }), []);
 
@@ -227,10 +247,12 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
     if (!token) {
       setCustomers([]);
       setCustomersError('');
+      setCustomersErrorState(null);
       return;
     }
     setCustomersLoading(true);
     setCustomersError('');
+    setCustomersErrorState(null);
     try {
       const page = await crmApi.customers(token, {
         outletId: scopedOutletId || undefined,
@@ -243,6 +265,7 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
       console.error('POS customer load failed:', error);
       setCustomers([]);
       setCustomersError(getErrorMessage(error, 'Unable to load customers'));
+      setCustomersErrorState(resolveCapabilityState(error));
     } finally {
       setCustomersLoading(false);
     }
@@ -252,15 +275,18 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
     if (!token) {
       setOrderingTables([]);
       setTablesError('');
+      setTablesErrorState(null);
       return;
     }
     if (!scopedOutletId) {
       setOrderingTables([]);
       setTablesError('Select an outlet scope to load ordering tables');
+      setTablesErrorState(null);
       return;
     }
     setTablesLoading(true);
     setTablesError('');
+    setTablesErrorState(null);
     try {
       const rows = await salesApi.orderingTables(token, scopedOutletId, status === 'all' ? undefined : status);
       setOrderingTables(Array.isArray(rows) ? rows : []);
@@ -268,6 +294,7 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
       console.error('POS ordering tables load failed:', error);
       setOrderingTables([]);
       setTablesError(getErrorMessage(error, 'Unable to load ordering tables'));
+      setTablesErrorState(resolveCapabilityState(error));
     } finally {
       setTablesLoading(false);
     }
@@ -296,9 +323,11 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
     // Reset outlet-scoped references so active tab reloads with current scope.
     setCustomers([]);
     setCustomersError('');
+    setCustomersErrorState(null);
     setCustomerQuery('');
     setOrderingTables([]);
     setTablesError('');
+    setTablesErrorState(null);
     setTableStatusFilter('all');
   }, [scopedOutletId, token]);
 
@@ -506,11 +535,22 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
   }
 
   if (view.screen === 'customers') {
+    if (!canAccessCustomerReferences) {
+      return (
+        <POSCapabilityState
+          onBack={goList}
+          moduleName="POS Customers"
+          state="action_disabled"
+          detail="Customer lookup follows CRM read access and is not enabled for the current session."
+        />
+      );
+    }
     return (
       <POSCustomersScreen
         onBack={goList}
         loading={customersLoading}
         error={customersError}
+        errorState={customersErrorState}
         query={customerQuery}
         onQueryChange={setCustomerQuery}
         onSearch={() => void loadCustomers(customerQuery)}
@@ -520,11 +560,22 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
   }
 
   if (view.screen === 'tables') {
+    if (!canAccessOrderingTables) {
+      return (
+        <POSCapabilityState
+          onBack={goList}
+          moduleName="POS Tables"
+          state="action_disabled"
+          detail="Ordering-table link generation requires sales write coverage on the selected outlet."
+        />
+      );
+    }
     return (
       <POSTablesScreen
         onBack={goList}
         loading={tablesLoading}
         error={tablesError}
+        errorState={tablesErrorState}
         statusFilter={tableStatusFilter}
         onStatusFilterChange={setTableStatusFilter}
         onRefresh={() => void loadOrderingTables(tableStatusFilter)}
@@ -547,10 +598,10 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
         onReconcile={(session) => setView({ screen: 'reconcile', sessionId: session.id })}
         onEditSession={(session) => setView({ screen: 'edit-session', sessionId: session.id })}
         onDeleteSession={(session) => handleDeleteSession(session.id)}
-        onCustomerOrders={onCustomerOrders}
-        onCustomers={() => setView({ screen: 'customers' })}
+        onCustomerOrders={canAccessOrderingTables ? onCustomerOrders : undefined}
+        onCustomers={canAccessCustomerReferences ? () => setView({ screen: 'customers' }) : undefined}
         onOutletStats={() => setView({ screen: 'outlet-stats' })}
-        onTables={() => setView({ screen: 'tables' })}
+        onTables={canAccessOrderingTables ? () => setView({ screen: 'tables' }) : undefined}
       />
     );
   }
@@ -702,6 +753,27 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
   return null;
 }
 
+function POSCapabilityState({
+  onBack,
+  moduleName,
+  state,
+  detail,
+}: {
+  onBack: () => void;
+  moduleName: string;
+  state: PermissionState;
+  detail: string;
+}) {
+  return (
+    <div className="p-6 space-y-4 animate-fade-in">
+      <button onClick={onBack} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+        <ArrowLeft className="h-3 w-3" /> Back
+      </button>
+      <PermissionBanner state={state} moduleName={moduleName} detail={detail} />
+    </div>
+  );
+}
+
 function EditPOSSession({ session, onBack, onSave }: {
   session: DBPosSession;
   onBack: () => void;
@@ -768,6 +840,7 @@ function POSCustomersScreen({
   onBack,
   loading,
   error,
+  errorState,
   query,
   onQueryChange,
   onSearch,
@@ -776,6 +849,7 @@ function POSCustomersScreen({
   onBack: () => void;
   loading: boolean;
   error: string;
+  errorState?: PermissionState | null;
   query: string;
   onQueryChange: (value: string) => void;
   onSearch: () => void;
@@ -805,9 +879,15 @@ function POSCustomersScreen({
           </div>
         </div>
 
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
+        {errorState ? (
+          <PermissionBanner
+            state={errorState}
+            moduleName="POS Customers"
+            detail={error || 'Customer lookup is not available in the current environment.'}
+          />
+        ) : error ? <p className="text-xs text-destructive">{error}</p> : null}
 
-        {loading ? (
+        {errorState ? null : loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
@@ -852,6 +932,7 @@ function POSTablesScreen({
   onBack,
   loading,
   error,
+  errorState,
   statusFilter,
   onStatusFilterChange,
   onRefresh,
@@ -860,6 +941,7 @@ function POSTablesScreen({
   onBack: () => void;
   loading: boolean;
   error: string;
+  errorState?: PermissionState | null;
   statusFilter: string;
   onStatusFilterChange: (value: string) => void;
   onRefresh: () => void;
@@ -899,9 +981,15 @@ function POSTablesScreen({
           </div>
         </div>
 
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
+        {errorState ? (
+          <PermissionBanner
+            state={errorState}
+            moduleName="POS Tables"
+            detail={error || 'Ordering-table links are not available in the current environment.'}
+          />
+        ) : error ? <p className="text-xs text-destructive">{error}</p> : null}
 
-        {loading ? (
+        {errorState ? null : loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>

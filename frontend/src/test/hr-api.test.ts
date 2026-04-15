@@ -89,11 +89,13 @@ describe('hr api', () => {
   });
 
   it('keeps snowflake ids exact when creating work shifts', async () => {
+    const shiftId = '3477607321800556549';
+    const userId = '3477607856247160832';
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
         id: 9100,
-        shiftId: 3477607321800556549,
-        userId: 3477607856247160832,
+        shiftId,
+        userId,
         outletId: 101,
         workDate: '2026-04-10',
         scheduleStatus: 'scheduled',
@@ -103,9 +105,9 @@ describe('hr api', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    await hrApi.createWorkShift('token-1', {
-      shiftId: '3477607321800556549',
-      userId: '3477607856247160832',
+    const created = await hrApi.createWorkShift('token-1', {
+      shiftId,
+      userId,
       workDate: '2026-04-10',
       note: 'Schedule test',
     });
@@ -113,12 +115,14 @@ describe('hr api', () => {
     const request = fetchMock.mock.calls[0]?.[1];
     const body = JSON.parse(String(request?.body || '{}'));
     expect(body).toMatchObject({
-      shiftId: '3477607321800556549',
-      userId: '3477607856247160832',
+      shiftId,
+      userId,
       workDate: '2026-04-10',
       note: 'Schedule test',
     });
     expect(typeof body.shiftId).toBe('string');
     expect(typeof body.userId).toBe('string');
+    expect(created.shiftId).toBe(shiftId);
+    expect(created.userId).toBe(userId);
   });
 });

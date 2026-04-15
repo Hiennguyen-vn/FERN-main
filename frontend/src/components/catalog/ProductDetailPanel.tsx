@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Package, BookOpen, DollarSign, Store, X, Loader2, Save, Edit2, Check,
-  Plus, ArrowRight, AlertTriangle,
+  Plus, ArrowRight, AlertTriangle, MapPin,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -10,39 +10,91 @@ import {
   type ProductView, type RecipeView, type PriceView, type AvailabilityView,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
-import { useShellRuntime } from '@/hooks/use-shell-runtime';
 import { EmptyState } from '@/components/shell/PermissionStates';
 import { StatusBadge } from '@/components/catalog/StatusBadge';
-import { DependencyCard, buildProductDependencies } from '@/components/catalog/shared';
+import { ScopePill } from '@/components/catalog/shared';
 
 type DetailTab = 'identity' | 'recipe' | 'pricing' | 'availability';
+
+interface OrgOutlet { id: string; code: string; name: string; regionId: string | number; }
+interface OrgRegion { id: string; code: string; name: string; currencyCode: string; }
 
 interface ProductDetailPanelProps {
   product: ProductView;
   token: string;
   outletId: string;
+  canManageCatalog: boolean;
   onClose: () => void;
   onProductUpdated: () => void;
 }
 
-export function ProductDetailPanel({ product, token, outletId, onClose, onProductUpdated }: ProductDetailPanelProps) {
+export function ProductDetailPanel({ product, token, outletId, canManageCatalog, onClose, onProductUpdated }: ProductDetailPanelProps) {
   const [tab, setTab] = useState<DetailTab>('identity');
   const [loading, setLoading] = useState(false);
   const [recipe, setRecipe] = useState<RecipeView | null>(null);
   const [prices, setPrices] = useState<PriceView[]>([]);
+  const [allPrices, setAllPrices] = useState<PriceView[]>([]);
   const [availability, setAvailability] = useState<AvailabilityView[]>([]);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', description: '', status: '' });
   const [saving, setSaving] = useState('');
 
-  // Outlet names
-  const [outletNames, setOutletNames] = useState<Record<string, string>>({});
+  // Org data
+  const [outlets, setOutlets] = useState<OrgOutlet[]>([]);
+  const [regions, setRegions] = useState<OrgRegion[]>([]);
+
+  // Item names for recipe display
+  const [itemNames, setItemNames] = useState<Record<string, string>>({});
+
+  // Refresh key to force all-prices reload after save
+  const [priceRefreshKey, setPriceRefreshKey] = useState(0);
 
   // Set Price form
   const [showPriceForm, setShowPriceForm] = useState(false);
+  const [priceScope, setPriceScope] = useState<'outlet' | 'region'>('outlet');
+  const [priceTargetOutletId, setPriceTargetOutletId] = useState('');
+  const [priceTargetRegionId, setPriceTargetRegionId] = useState('');
   const [priceForm, setPriceForm] = useState({ amount: '', effectiveFrom: new Date().toISOString().slice(0, 10) });
 
   const pid = String(product.id);
+
+  // Load org data + item names
+  useEffect(() => {
+    if (!token) return;
+    (async () => {
+      try {
+        const [h, items] = await Promise.all([
+          orgApi.hierarchy(token),
+          productApi.items(token).catch(() => [] as Array<{ id: string; name?: string | null; code?: string | null }>),
+        ]);
+        setOutlets(h.outlets.map((o: Record<string, unknown>) => ({
+          id: String(o.id), code: String(o.code || ''), name: String(o.name || ''), regionId: String(o.regionId || ''),
+        })));
+        setRegions(h.regions.map((r: Record<string, unknown>) => ({
+          id: String(r.id), code: String(r.code || ''), name: String(r.name || ''), currencyCode: String(r.currencyCode || 'USD'),
+        })));
+        const names: Record<string, string> = {};
+        for (const item of items) names[String(item.id)] = String(item.name || item.code || item.id);
+        setItemNames(names);
+      } catch { /* optional */ }
+    })();
+  }, [token]);
+
+  const outletLabel = (oid: string) => {
+    const o = outlets.find(x => x.id === oid);
+    return o ? `${o.code} · ${o.name}` : `Outlet ${oid}`;
+  };
+  const regionLabel = (rid: string) => {
+    const r = regions.find(x => x.id === rid);
+    return r ? `${r.code} · ${r.name}` : `Region ${rid}`;
+  };
+  const outletsForRegion = (rid: string) => outlets.filter(o => String(o.regionId) === rid);
+  const currencyForOutlet = (oid: string) => {
+    const o = outlets.find(x => x.id === oid);
+    if (!o) return 'USD';
+    const r = regions.find(x => x.id === String(o.regionId));
+    return r?.currencyCode || 'USD';
+  };
 
   // Load detail data
   const loadDetail = useCallback(async () => {
@@ -50,14 +102,17 @@ export function ProductDetailPanel({ product, token, outletId, onClose, onProduc
     setLoading(true);
     try {
       const [r, avail] = await Promise.all([
-        productApi.recipe(token, pid).catch(() => null),
-        productApi.availability(token, { productId: pid }).catch(() => []),
+        productApi.recipe(token, pid).catch(() => null as RecipeView | null),
+        productApi.availability(token, { productId: pid }).catch(() => [] as AvailabilityView[]),
       ]);
       setRecipe(r);
       setAvailability(avail);
+
+      // Load prices at current outlet
       if (outletId) {
-        const ps = await productApi.prices(token, outletId).catch(() => []);
-        setPrices(ps.filter((p: PriceView) => String(p.productId) === pid));
+        const ps = await productApi.pricesPaged(token, { outletId, limit: 200, offset: 0 }).catch(() => ({ items: [] as PriceView[] }));
+        const filtered = (ps.items || []).filter((p: PriceView) => String(p.productId) === pid);
+        setPrices(filtered);
       }
     } finally {
       setLoading(false);
@@ -66,104 +121,108 @@ export function ProductDetailPanel({ product, token, outletId, onClose, onProduc
 
   useEffect(() => { void loadDetail(); }, [loadDetail]);
 
-  // Load outlet names for display
+  // Load prices across all outlets (separate effect to avoid infinite loop)
   useEffect(() => {
-    if (!token) return;
+    if (!token || outlets.length === 0) { setAllPrices([]); return; }
+    let cancelled = false;
     (async () => {
-      try {
-        const hierarchy = await orgApi.hierarchy(token);
-        const names: Record<string, string> = {};
-        for (const outlet of hierarchy.outlets) {
-          names[String(outlet.id)] = `${outlet.code || ''} · ${outlet.name || ''}`.trim();
-        }
-        setOutletNames(names);
-      } catch { /* optional */ }
+      const results: PriceView[] = [];
+      for (const outlet of outlets) {
+        if (cancelled) break;
+        try {
+          const ps = await productApi.pricesPaged(token, { outletId: outlet.id, limit: 200, offset: 0 });
+          const filtered = (ps.items || []).filter((p: PriceView) => String(p.productId) === pid);
+          results.push(...filtered.map(p => ({ ...p, outletId: outlet.id } as PriceView)));
+        } catch { /* skip outlet */ }
+      }
+      if (!cancelled) setAllPrices(results);
     })();
-  }, [token]);
+    return () => { cancelled = true; };
+  }, [token, pid, outlets, priceRefreshKey]);
 
-  const outletLabel = (oid: string) => outletNames[oid] || `Outlet ${oid}`;
-
-  // Edit product
+  // Edit
   const startEdit = () => {
     setEditForm({ name: String(product.name || ''), description: String(product.description || ''), status: String(product.status || 'draft') });
     setEditing(true);
   };
 
   const saveEdit = async () => {
-    // §H — Product lifecycle enforcement: validate before activating
+    if (!canManageCatalog) return;
     if (editForm.status === 'active' && product.status !== 'active') {
       const issues: string[] = [];
       if (!editForm.name?.trim()) issues.push('Product name is required');
       if (!recipe) issues.push('At least one active recipe is required');
       if (priceCount === 0) issues.push('At least one outlet price is required');
-      if (issues.length > 0) {
-        toast.error(`Cannot activate: ${issues.join('; ')}`);
-        return;
-      }
+      if (issues.length > 0) { toast.error(`Cannot activate: ${issues.join('; ')}`); return; }
     }
     setSaving('product');
     try {
-      await productApi.updateProduct(token, pid, {
-        name: editForm.name || undefined,
-        description: editForm.description || undefined,
-        status: editForm.status || undefined,
-      });
+      await productApi.updateProduct(token, pid, { name: editForm.name || undefined, description: editForm.description || undefined, status: editForm.status || undefined });
       toast.success('Product updated');
       setEditing(false);
       onProductUpdated();
-    } catch (e) {
-      toast.error(getErrorMessage(e, 'Failed to update'));
-    } finally {
-      setSaving('');
-    }
+    } catch (e) { toast.error(getErrorMessage(e, 'Failed to update')); } finally { setSaving(''); }
   };
 
-  // Set price at current outlet
+  // Set price — supports outlet or region scope
   const savePrice = async () => {
-    if (!outletId || !priceForm.amount) return;
+    if (!canManageCatalog) return;
+    if (!priceForm.amount) return;
     setSaving('price');
     try {
-      await productApi.upsertPrice(token, {
-        productId: pid,
-        outletId,
-        priceAmount: Number(priceForm.amount),
-        effectiveFrom: priceForm.effectiveFrom,
-      });
-      toast.success(`Price set at ${outletLabel(outletId)}`);
+      if (priceScope === 'region' && priceTargetRegionId) {
+        // Fan-out: set price for all outlets in region
+        const regionOutlets = outletsForRegion(priceTargetRegionId);
+        if (regionOutlets.length === 0) { toast.error('No outlets in selected region'); setSaving(''); return; }
+        let success = 0;
+        for (const outlet of regionOutlets) {
+          try {
+            await productApi.upsertPrice(token, { productId: pid, outletId: outlet.id, currencyCode: currencyForOutlet(outlet.id), priceAmount: Number(priceForm.amount), effectiveFrom: priceForm.effectiveFrom });
+            success++;
+          } catch { /* continue */ }
+        }
+        toast.success(`Price set at ${success}/${regionOutlets.length} outlets in ${regionLabel(priceTargetRegionId)}`);
+      } else if (priceTargetOutletId) {
+        await productApi.upsertPrice(token, { productId: pid, outletId: priceTargetOutletId, currencyCode: currencyForOutlet(priceTargetOutletId), priceAmount: Number(priceForm.amount), effectiveFrom: priceForm.effectiveFrom });
+        toast.success(`Price set at ${outletLabel(priceTargetOutletId)}`);
+      } else {
+        toast.error('Select a target outlet or region'); setSaving(''); return;
+      }
       setShowPriceForm(false);
       setPriceForm({ amount: '', effectiveFrom: new Date().toISOString().slice(0, 10) });
+      setPriceRefreshKey(k => k + 1);
       void loadDetail();
       onProductUpdated();
-    } catch (e) {
-      toast.error(getErrorMessage(e, 'Failed to set price'));
-    } finally {
-      setSaving('');
-    }
+    } catch (e) { toast.error(getErrorMessage(e, 'Failed to set price')); } finally { setSaving(''); }
   };
 
   // Toggle availability
   const toggleAvailability = async (oid: string, current: boolean) => {
+    if (!canManageCatalog) return;
     setSaving(`avail:${oid}`);
     try {
       await productApi.setAvailability(token, pid, oid, !current);
-      toast.success(`${!current ? 'Enabled' : 'Disabled'} at outlet`);
+      toast.success(`${!current ? 'Enabled' : 'Disabled'} at ${outletLabel(oid)}`);
       void loadDetail();
-    } catch (e) {
-      toast.error(getErrorMessage(e, 'Failed to update availability'));
-    } finally {
-      setSaving('');
-    }
+    } catch (e) { toast.error(getErrorMessage(e, 'Failed')); } finally { setSaving(''); }
   };
 
-  const TABS: { key: DetailTab; label: string; icon: React.ElementType }[] = [
-    { key: 'identity', label: 'Identity', icon: Package },
-    { key: 'recipe', label: 'Recipe', icon: BookOpen },
-    { key: 'pricing', label: 'Pricing', icon: DollarSign },
-    { key: 'availability', label: `Outlets (${availability.filter(a => a.available).length})`, icon: Store },
-  ];
+  const TABS: { key: DetailTab; label: string; icon: React.ElementType }[] = canManageCatalog
+    ? [
+      { key: 'identity', label: 'Identity', icon: Package },
+      { key: 'recipe', label: 'Recipe', icon: BookOpen },
+      { key: 'pricing', label: 'Pricing', icon: DollarSign },
+      { key: 'availability', label: `Outlets (${availability.filter(a => a.available).length})`, icon: Store },
+    ]
+    : [
+      { key: 'identity', label: 'Product', icon: Package },
+      { key: 'recipe', label: 'Recipe', icon: BookOpen },
+      { key: 'pricing', label: 'Pricing', icon: DollarSign },
+    ];
 
   const availCount = availability.filter(a => a.available).length;
-  const priceCount = prices.length;
+  const priceCount = allPrices.length || prices.length;
+  const pricedOutletIds = new Set(allPrices.map(p => String(p.outletId)));
 
   return (
     <div className="flex flex-col h-full">
@@ -201,42 +260,44 @@ export function ProductDetailPanel({ product, token, outletId, onClose, onProduc
       <div className="flex-1 overflow-y-auto p-4">
         {loading ? (
           <div className="flex items-center justify-center py-10"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>
+
         ) : tab === 'identity' ? (
           <div className="space-y-4">
-            {/* Dependencies — clickable to jump to relevant tab */}
-            <div className="border rounded-lg">
-              <div className="px-3 py-2 border-b bg-muted/20">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Dependencies</p>
-              </div>
-              <div className="divide-y">
-                <button onClick={() => setTab('recipe')} className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-muted/20 text-left">
-                  <BookOpen className={cn('h-3.5 w-3.5 flex-shrink-0', !recipe ? 'text-amber-500' : 'text-muted-foreground')} />
-                  <span className="text-xs flex-1">Recipe</span>
-                  <span className={cn('text-xs font-mono', !recipe ? 'text-amber-600 font-medium' : 'text-muted-foreground')}>{recipe ? '1/1' : '0/1'}</span>
-                  <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                </button>
-                <button onClick={() => { setTab('pricing'); if (priceCount === 0) setShowPriceForm(true); }} className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-muted/20 text-left">
-                  <DollarSign className={cn('h-3.5 w-3.5 flex-shrink-0', priceCount === 0 ? 'text-amber-500' : 'text-muted-foreground')} />
-                  <span className="text-xs flex-1">Outlet pricing</span>
-                  <span className={cn('text-xs font-mono', priceCount === 0 ? 'text-amber-600 font-medium' : 'text-muted-foreground')}>{priceCount}/{availability.length || '—'}</span>
-                  <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                </button>
-                <button onClick={() => setTab('availability')} className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-muted/20 text-left">
-                  <Store className={cn('h-3.5 w-3.5 flex-shrink-0', availCount === 0 && availability.length > 0 ? 'text-amber-500' : 'text-muted-foreground')} />
-                  <span className="text-xs flex-1">Availability</span>
-                  <span className={cn('text-xs font-mono', availCount === 0 && availability.length > 0 ? 'text-amber-600 font-medium' : 'text-muted-foreground')}>{availCount}/{availability.length}</span>
-                  <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                </button>
-              </div>
-              {(priceCount === 0 && availability.length > 0) && (
-                <div className="px-3 py-2 border-t bg-amber-50/50">
-                  <p className="text-[10px] text-amber-600 flex items-center gap-1">
-                    <AlertTriangle className="h-2.5 w-2.5" />
-                    {availability.length - priceCount} outlet pricing missing
-                  </p>
+            {canManageCatalog ? (
+              <div className="border rounded-lg">
+                <div className="px-3 py-2 border-b bg-muted/20">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Dependencies</p>
                 </div>
-              )}
-            </div>
+                <div className="divide-y">
+                  <button onClick={() => setTab('recipe')} className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-muted/20 text-left">
+                    <BookOpen className={cn('h-3.5 w-3.5 flex-shrink-0', !recipe ? 'text-amber-500' : 'text-emerald-500')} />
+                    <span className="text-xs flex-1">Recipe</span>
+                    <span className={cn('text-xs font-mono', !recipe ? 'text-amber-600 font-medium' : 'text-muted-foreground')}>{recipe ? '1/1' : '0/1'}</span>
+                    <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                  </button>
+                  <button onClick={() => { setTab('pricing'); if (priceCount === 0) setShowPriceForm(true); }} className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-muted/20 text-left">
+                    <DollarSign className={cn('h-3.5 w-3.5 flex-shrink-0', priceCount === 0 ? 'text-amber-500' : 'text-emerald-500')} />
+                    <span className="text-xs flex-1">Outlet pricing</span>
+                    <span className={cn('text-xs font-mono', priceCount === 0 ? 'text-amber-600 font-medium' : 'text-muted-foreground')}>{pricedOutletIds.size}/{outlets.length || availability.length || '—'}</span>
+                    <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                  </button>
+                  <button onClick={() => setTab('availability')} className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-muted/20 text-left">
+                    <Store className={cn('h-3.5 w-3.5 flex-shrink-0', availCount === 0 && availability.length > 0 ? 'text-amber-500' : 'text-emerald-500')} />
+                    <span className="text-xs flex-1">Availability</span>
+                    <span className={cn('text-xs font-mono', availCount === 0 && availability.length > 0 ? 'text-amber-600 font-medium' : 'text-muted-foreground')}>{availCount}/{availability.length}</span>
+                    <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                  </button>
+                </div>
+                {priceCount === 0 && outlets.length > 0 ? (
+                  <div className="px-3 py-2 border-t bg-amber-50/50">
+                    <p className="text-[10px] text-amber-600 flex items-center gap-1">
+                      <AlertTriangle className="h-2.5 w-2.5" />
+                      {outlets.length} outlet pricing missing — click to set price by region or outlet
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {/* Product info */}
             {editing ? (
@@ -250,25 +311,18 @@ export function ProductDetailPanel({ product, token, outletId, onClose, onProduc
                     <option value="draft">draft</option><option value="active">active</option><option value="inactive">inactive</option><option value="discontinued">discontinued</option>
                   </select></div>
                 {editForm.status === 'active' && product.status !== 'active' && (
-                  <div className="col-span-full rounded-lg border border-amber-200 bg-amber-50/50 p-2.5 space-y-1">
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-2.5 space-y-1">
                     <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Activation requirements</p>
                     <ul className="space-y-0.5 text-[11px]">
-                      <li className={editForm.name?.trim() ? 'text-emerald-600' : 'text-amber-600'}>
-                        {editForm.name?.trim() ? '✓' : '✗'} Product name
-                      </li>
-                      <li className={recipe ? 'text-emerald-600' : 'text-amber-600'}>
-                        {recipe ? '✓' : '✗'} Active recipe
-                      </li>
-                      <li className={priceCount > 0 ? 'text-emerald-600' : 'text-amber-600'}>
-                        {priceCount > 0 ? '✓' : '✗'} At least one outlet price
-                      </li>
+                      <li className={editForm.name?.trim() ? 'text-emerald-600' : 'text-amber-600'}>{editForm.name?.trim() ? '✓' : '✗'} Product name</li>
+                      <li className={recipe ? 'text-emerald-600' : 'text-amber-600'}>{recipe ? '✓' : '✗'} Active recipe</li>
+                      <li className={priceCount > 0 ? 'text-emerald-600' : 'text-amber-600'}>{priceCount > 0 ? '✓' : '✗'} At least one outlet price</li>
                     </ul>
                   </div>
                 )}
                 <div className="flex items-center gap-2">
                   <button onClick={() => void saveEdit()} disabled={!!saving} className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-xs font-medium inline-flex items-center gap-1.5 disabled:opacity-60">
-                    <Save className="h-3 w-3" />{saving ? '...' : 'Save'}
-                  </button>
+                    <Save className="h-3 w-3" />{saving ? '...' : 'Save'}</button>
                   <button onClick={() => setEditing(false)} className="h-8 px-3 rounded-md border text-xs hover:bg-accent">Cancel</button>
                 </div>
               </div>
@@ -276,7 +330,9 @@ export function ProductDetailPanel({ product, token, outletId, onClose, onProduc
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Master Data</p>
-                  <button onClick={startEdit} className="h-6 px-2 rounded border text-[10px] inline-flex items-center gap-1 hover:bg-accent"><Edit2 className="h-2.5 w-2.5" />Edit</button>
+                  {canManageCatalog ? (
+                    <button onClick={startEdit} className="h-6 px-2 rounded border text-[10px] inline-flex items-center gap-1 hover:bg-accent"><Edit2 className="h-2.5 w-2.5" />Edit</button>
+                  ) : null}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><p className="text-[10px] text-muted-foreground">Code</p><p className="text-xs font-mono mt-0.5">{String(product.code || '—')}</p></div>
@@ -288,10 +344,11 @@ export function ProductDetailPanel({ product, token, outletId, onClose, onProduc
               </div>
             )}
           </div>
+
         ) : tab === 'recipe' ? (
           <div className="space-y-3">
             {!recipe ? (
-              <EmptyState title="No recipe" description="No recipe configured. Go to Recipes tab to create one." />
+              <EmptyState title="No recipe" description={canManageCatalog ? 'No recipe configured. Go to Recipes tab to create one.' : 'No recipe is configured for this product.'} />
             ) : (
               <>
                 <div className="grid grid-cols-3 gap-3">
@@ -308,7 +365,7 @@ export function ProductDetailPanel({ product, token, outletId, onClose, onProduc
                     </tr></thead><tbody>
                       {recipe.items.map((line, i) => (
                         <tr key={i} className="border-b last:border-0">
-                          <td className="px-3 py-1.5 text-xs font-mono">{String(line.itemId || '—')}</td>
+                          <td className="px-3 py-1.5 text-xs">{itemNames[String(line.itemId)] || <span className="font-mono text-muted-foreground">{String(line.itemId || '—')}</span>}</td>
                           <td className="px-3 py-1.5 text-right text-xs">{Number(line.qtyRequired ?? line.qty ?? 0).toFixed(3)}</td>
                           <td className="px-3 py-1.5 text-xs text-muted-foreground">{String(line.uomCode || '—')}</td>
                         </tr>
@@ -319,123 +376,350 @@ export function ProductDetailPanel({ product, token, outletId, onClose, onProduc
               </>
             )}
           </div>
+
         ) : tab === 'pricing' ? (
           <div className="space-y-3">
-            {!outletId ? (
-              <EmptyState title="Outlet required" description="Select an outlet from the scope bar to set pricing." />
-            ) : (
-              <>
-                {/* Current outlet context */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Store className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-xs font-medium">{outletLabel(outletId)}</span>
-                  </div>
-                  {!showPriceForm && (
-                    <button onClick={() => setShowPriceForm(true)} className="h-7 px-2.5 rounded-md bg-primary text-primary-foreground text-[10px] font-medium inline-flex items-center gap-1">
-                      <Plus className="h-3 w-3" />Set Price
+            {/* Set Price action */}
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
+                Price Rules ({pricedOutletIds.size}/{outlets.length} outlets priced)
+              </p>
+              {canManageCatalog && !showPriceForm && (
+                <button onClick={() => { setShowPriceForm(true); setPriceTargetOutletId(outletId); }}
+                  className="h-7 px-2.5 rounded-md bg-primary text-primary-foreground text-[10px] font-medium inline-flex items-center gap-1">
+                  <Plus className="h-3 w-3" />Set Price
+                </button>
+              )}
+            </div>
+
+            {/* Scope-aware Set Price form */}
+            {canManageCatalog && showPriceForm && (
+              <div className="border rounded-lg p-3 space-y-3 border-l-2 border-l-primary bg-muted/10">
+                <p className="text-xs font-semibold">Set Price for {String(product.name || product.code)}</p>
+
+                {/* Scope selector */}
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Apply to</label>
+                  <div className="mt-1 flex rounded-md border overflow-hidden w-fit">
+                    <button onClick={() => setPriceScope('outlet')}
+                      className={cn('px-3 py-1.5 text-[11px] font-medium transition-colors',
+                        priceScope === 'outlet' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>
+                      Single Outlet
                     </button>
-                  )}
+                    <button onClick={() => setPriceScope('region')}
+                      className={cn('px-3 py-1.5 text-[11px] font-medium transition-colors border-l',
+                        priceScope === 'region' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>
+                      Entire Region
+                    </button>
+                  </div>
                 </div>
 
-                {/* Set Price form */}
-                {showPriceForm && (
-                  <div className="border rounded-lg p-3 space-y-2 border-l-2 border-l-primary bg-muted/10">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      Set price at {outletLabel(outletId)}
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">Price Amount</label>
-                        <input type="number" min="0" step="0.01" className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm font-mono"
-                          placeholder="0.00" value={priceForm.amount} onChange={e => setPriceForm(f => ({ ...f, amount: e.target.value }))} />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">Effective From</label>
-                        <input type="date" className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm"
-                          value={priceForm.effectiveFrom} onChange={e => setPriceForm(f => ({ ...f, effectiveFrom: e.target.value }))} />
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => void savePrice()} disabled={!priceForm.amount || !!saving}
-                        className="h-7 px-3 rounded-md bg-primary text-primary-foreground text-xs font-medium inline-flex items-center gap-1.5 disabled:opacity-60">
-                        <Save className="h-3 w-3" />{saving === 'price' ? '...' : 'Save'}
-                      </button>
-                      <button onClick={() => setShowPriceForm(false)} className="h-7 px-3 rounded-md border text-xs hover:bg-accent">Cancel</button>
-                    </div>
+                {priceScope === 'outlet' ? (
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">Target Outlet</label>
+                    <select className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                      value={priceTargetOutletId} onChange={e => setPriceTargetOutletId(e.target.value)}>
+                      <option value="">Select outlet...</option>
+                      {outlets.map(o => (
+                        <option key={o.id} value={o.id}>
+                          {o.code} · {o.name} {pricedOutletIds.has(o.id) ? '(priced)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">Target Region (sets price for all outlets)</label>
+                    <select className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                      value={priceTargetRegionId} onChange={e => setPriceTargetRegionId(e.target.value)}>
+                      <option value="">Select region...</option>
+                      {regions.map(r => (
+                        <option key={r.id} value={r.id}>
+                          {r.code} · {r.name} ({outletsForRegion(r.id).length} outlets)
+                        </option>
+                      ))}
+                    </select>
+                    {priceTargetRegionId && (
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Will set price at: {outletsForRegion(priceTargetRegionId).map(o => o.code).join(', ') || 'no outlets'}
+                      </p>
+                    )}
                   </div>
                 )}
 
-                {/* Price list */}
-                {prices.length === 0 && !showPriceForm ? (
-                  <div className="border rounded-lg p-6 text-center">
-                    <DollarSign className="h-6 w-6 mx-auto text-muted-foreground/30 mb-2" />
-                    <p className="text-sm text-muted-foreground">No price set at this outlet</p>
-                    <button onClick={() => setShowPriceForm(true)} className="mt-2 h-7 px-3 rounded-md bg-primary text-primary-foreground text-[10px] font-medium inline-flex items-center gap-1">
-                      <Plus className="h-3 w-3" />Set First Price
-                    </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">Price Amount</label>
+                    <input type="number" min="0" step="0.01" className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm font-mono"
+                      placeholder="0.00" value={priceForm.amount} onChange={e => setPriceForm(f => ({ ...f, amount: e.target.value }))} />
                   </div>
-                ) : prices.length > 0 && (
-                  <div className="border rounded-lg overflow-hidden">
-                    <table className="w-full"><thead><tr className="border-b bg-muted/30">
-                      <th className="text-left text-[10px] px-3 py-2">Currency</th>
-                      <th className="text-right text-[10px] px-3 py-2">Price</th>
-                      <th className="text-left text-[10px] px-3 py-2">From</th>
-                    </tr></thead><tbody>
-                      {prices.map((p, i) => (
-                        <tr key={i} className="border-b last:border-0">
-                          <td className="px-3 py-1.5 text-xs">{String(p.currencyCode || '—')}</td>
-                          <td className="px-3 py-1.5 text-right text-sm font-mono font-medium">{Number(p.priceValue ?? p.priceAmount ?? 0).toFixed(2)}</td>
-                          <td className="px-3 py-1.5 text-xs text-muted-foreground">{String(p.effectiveFrom || '—')}</td>
-                        </tr>
-                      ))}
-                    </tbody></table>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">Effective From</label>
+                    <input type="date" className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm"
+                      value={priceForm.effectiveFrom} onChange={e => setPriceForm(f => ({ ...f, effectiveFrom: e.target.value }))} />
                   </div>
-                )}
-              </>
+                </div>
+
+                {/* Scope confirmation */}
+                <div className="flex items-center gap-2 rounded-md bg-blue-50/50 border border-blue-200 p-2">
+                  <MapPin className="h-3.5 w-3.5 text-blue-600 flex-shrink-0" />
+                  <p className="text-[10px] text-blue-700">
+                    {priceScope === 'region' && priceTargetRegionId
+                      ? `This will set ${priceForm.amount || '—'} at ${outletsForRegion(priceTargetRegionId).length} outlets in ${regionLabel(priceTargetRegionId)}`
+                      : priceTargetOutletId
+                        ? `This will set ${priceForm.amount || '—'} at ${outletLabel(priceTargetOutletId)}`
+                        : 'Select a target to see impact'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button onClick={() => void savePrice()} disabled={!priceForm.amount || !!saving}
+                    className="h-7 px-3 rounded-md bg-primary text-primary-foreground text-xs font-medium inline-flex items-center gap-1.5 disabled:opacity-60">
+                    <Save className="h-3 w-3" />{saving === 'price' ? 'Saving...' : 'Save Price'}
+                  </button>
+                  <button onClick={() => setShowPriceForm(false)} className="h-7 px-3 rounded-md border text-xs hover:bg-accent">Cancel</button>
+                </div>
+              </div>
             )}
-          </div>
-        ) : tab === 'availability' ? (
-          <div className="space-y-3">
-            {availability.length === 0 ? (
-              <EmptyState title="No availability data" description="No outlet availability records found." />
-            ) : (
+
+            {/* Price grid: all outlets */}
+            {outlets.length > 0 ? (
               <div className="border rounded-lg overflow-hidden">
                 <table className="w-full"><thead><tr className="border-b bg-muted/30">
                   <th className="text-left text-[10px] px-3 py-2">Outlet</th>
-                  <th className="text-center text-[10px] px-3 py-2">Available</th>
-                  <th className="text-right text-[10px] px-3 py-2"></th>
+                  <th className="text-right text-[10px] px-3 py-2">Price</th>
+                  <th className="text-left text-[10px] px-3 py-2">Currency</th>
+                  <th className="text-left text-[10px] px-3 py-2">From</th>
+                  <th className="text-left text-[10px] px-3 py-2">Source</th>
                 </tr></thead><tbody>
-                  {availability.map(a => (
-                    <tr key={a.outletId} className="border-b last:border-0">
-                      <td className="px-3 py-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <Store className="h-3 w-3 text-muted-foreground" />
-                          <div>
-                            <span className="text-xs">{outletLabel(String(a.outletId))}</span>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-3 py-1.5 text-center">
-                        {a.available ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full"><Check className="h-2.5 w-2.5" />Enabled</span>
+                  {outlets.map(outlet => {
+                    const price = allPrices.find(p => String(p.outletId) === outlet.id);
+                    return (
+                      <tr key={outlet.id} className="border-b last:border-0 hover:bg-muted/10">
+                        <td className="px-3 py-1.5">
+                          <p className="text-xs">{outlet.code}</p>
+                          <p className="text-[10px] text-muted-foreground">{outlet.name}</p>
+                        </td>
+                        {price ? (
+                          <>
+                            <td className="px-3 py-1.5 text-right text-sm font-mono font-medium">{Number(price.priceValue ?? price.priceAmount ?? 0).toLocaleString()}</td>
+                            <td className="px-3 py-1.5 text-xs text-muted-foreground">{String(price.currencyCode || '—')}</td>
+                            <td className="px-3 py-1.5 text-xs text-muted-foreground">{String(price.effectiveFrom || '—')}</td>
+                            <td className="px-3 py-1.5">
+                              <ScopePill level="outlet" label="outlet" />
+                            </td>
+                          </>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full"><X className="h-2.5 w-2.5" />Disabled</span>
+                          <>
+                            <td className="px-3 py-1.5 text-right text-xs text-muted-foreground/50">—</td>
+                            <td className="px-3 py-1.5 text-xs text-muted-foreground/50">—</td>
+                            <td className="px-3 py-1.5 text-xs text-muted-foreground/50">—</td>
+                            <td className="px-3 py-1.5">
+                              {canManageCatalog ? (
+                                <button onClick={() => { setShowPriceForm(true); setPriceScope('outlet'); setPriceTargetOutletId(outlet.id); }}
+                                  className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5">
+                                  <Plus className="h-2.5 w-2.5" />Set
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-muted-foreground/50">—</span>
+                              )}
+                            </td>
+                          </>
                         )}
-                      </td>
-                      <td className="px-3 py-1.5 text-right">
-                        <button
-                          onClick={() => void toggleAvailability(a.outletId, a.available)}
-                          disabled={saving === `avail:${a.outletId}`}
-                          className="h-6 px-2 rounded border text-[10px] hover:bg-accent disabled:opacity-60"
-                        >
-                          {saving === `avail:${a.outletId}` ? '...' : a.available ? 'Disable' : 'Enable'}
-                        </button>
-                      </td>
+                      </tr>
+                    );
+                  })}
+                </tbody></table>
+              </div>
+            ) : prices.length > 0 ? (
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full"><thead><tr className="border-b bg-muted/30">
+                  <th className="text-left text-[10px] px-3 py-2">Currency</th>
+                  <th className="text-right text-[10px] px-3 py-2">Price</th>
+                  <th className="text-left text-[10px] px-3 py-2">From</th>
+                </tr></thead><tbody>
+                  {prices.map((p, i) => (
+                    <tr key={i} className="border-b last:border-0">
+                      <td className="px-3 py-1.5 text-xs">{String(p.currencyCode || '—')}</td>
+                      <td className="px-3 py-1.5 text-right text-sm font-mono font-medium">{Number(p.priceValue ?? p.priceAmount ?? 0).toLocaleString()}</td>
+                      <td className="px-3 py-1.5 text-xs text-muted-foreground">{String(p.effectiveFrom || '—')}</td>
                     </tr>
                   ))}
                 </tbody></table>
               </div>
+            ) : !showPriceForm ? (
+              <div className="border rounded-lg p-6 text-center">
+                <DollarSign className="h-6 w-6 mx-auto text-muted-foreground/30 mb-2" />
+                <p className="text-sm text-muted-foreground">No prices configured</p>
+                {canManageCatalog ? (
+                  <button onClick={() => setShowPriceForm(true)} className="mt-2 h-7 px-3 rounded-md bg-primary text-primary-foreground text-[10px] font-medium inline-flex items-center gap-1">
+                    <Plus className="h-3 w-3" />Set First Price
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+        ) : tab === 'availability' ? (
+          <div className="space-y-3">
+            {/* Summary */}
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
+                Outlets ({availCount} enabled / {availability.length} total)
+              </p>
+            </div>
+
+            {availability.length === 0 ? (
+              <EmptyState title="No availability data" description="No outlet availability records found." />
+            ) : (
+              (() => {
+                // Group by region — only show outlets user can see (in their scope)
+                const regionGroups: { region: OrgRegion; items: { outlet: OrgOutlet; avail: AvailabilityView; hasPriceAtOutlet: boolean }[] }[] = [];
+                const availByOutlet = new Map(availability.map(a => [String(a.outletId), a]));
+                const knownOutletIds = new Set(outlets.map(o => o.id));
+                const usedOutletIds = new Set<string>();
+
+                for (const region of regions) {
+                  const regionOutlets = outletsForRegion(region.id);
+                  const items = regionOutlets
+                    .map(outlet => {
+                      const avail = availByOutlet.get(outlet.id);
+                      if (!avail) return null;
+                      usedOutletIds.add(outlet.id);
+                      return { outlet, avail, hasPriceAtOutlet: pricedOutletIds.has(outlet.id) };
+                    })
+                    .filter((x): x is NonNullable<typeof x> => x !== null);
+                  if (items.length > 0) regionGroups.push({ region, items });
+                }
+
+                // Known outlets not yet grouped (in user scope but no region match)
+                const knownOrphans = availability
+                  .filter(a => !usedOutletIds.has(String(a.outletId)) && knownOutletIds.has(String(a.outletId)))
+                  .map(a => {
+                    const outlet = outlets.find(o => o.id === String(a.outletId))!;
+                    usedOutletIds.add(String(a.outletId));
+                    return { outlet, avail: a, hasPriceAtOutlet: pricedOutletIds.has(String(a.outletId)) };
+                  });
+
+                // Outlets outside user scope — count only, don't show raw IDs
+                const outOfScopeCount = availability.filter(a => !usedOutletIds.has(String(a.outletId))).length;
+                const outOfScopeEnabled = availability.filter(a => !usedOutletIds.has(String(a.outletId)) && a.available).length;
+
+                return (
+                  <div className="space-y-2">
+                    {regionGroups.map(group => {
+                      const enabledInRegion = group.items.filter(i => i.avail.available).length;
+                      const pricedInRegion = group.items.filter(i => i.hasPriceAtOutlet).length;
+                      return (
+                        <div key={group.region.id} className="border rounded-lg overflow-hidden">
+                          {/* Region header */}
+                          <div className="px-3 py-2 bg-muted/30 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <MapPin className="h-3 w-3 text-muted-foreground" />
+                              <span className="text-xs font-semibold">{group.region.name}</span>
+                              <span className="text-[10px] text-muted-foreground font-mono">{group.region.code}</span>
+                              <ScopePill level="region" label={group.region.currencyCode} />
+                            </div>
+                            <span className="text-[10px] text-muted-foreground">
+                              {enabledInRegion}/{group.items.length} enabled · {pricedInRegion}/{group.items.length} priced
+                            </span>
+                          </div>
+                          {/* Outlet rows */}
+                          <div className="divide-y">
+                            {group.items.map(({ outlet, avail, hasPriceAtOutlet }) => {
+                              const price = allPrices.find(p => String(p.outletId) === outlet.id);
+                              return (
+                                <div key={outlet.id} className="px-3 py-2 flex items-center gap-3 hover:bg-muted/10">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-medium">{outlet.code}</p>
+                                    <p className="text-[10px] text-muted-foreground">{outlet.name}</p>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {/* Available */}
+                                    {avail.available ? (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full"><Check className="h-2.5 w-2.5" />Enabled</span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full"><X className="h-2.5 w-2.5" />Disabled</span>
+                                    )}
+                                    {/* Price status */}
+                                    {hasPriceAtOutlet ? (
+                                      <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-mono">
+                                        {price ? Number(price.priceValue ?? price.priceAmount ?? 0).toLocaleString() : '✓'} {price?.currencyCode || ''}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-amber-500 bg-amber-50 px-2 py-0.5 rounded-full">no price</span>
+                                    )}
+                                    {/* Toggle */}
+                                    <button onClick={() => void toggleAvailability(avail.outletId, avail.available)}
+                                      disabled={saving === `avail:${avail.outletId}`}
+                                      className="h-6 px-2 rounded border text-[10px] hover:bg-accent disabled:opacity-60 flex-shrink-0">
+                                      {saving === `avail:${avail.outletId}` ? '...' : avail.available ? 'Disable' : 'Enable'}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Known outlets not grouped into a region */}
+                    {knownOrphans.length > 0 && (
+                      <div className="border rounded-lg overflow-hidden">
+                        <div className="px-3 py-2 bg-muted/30 flex items-center gap-2">
+                          <Store className="h-3 w-3 text-muted-foreground" />
+                          <span className="text-xs font-semibold text-muted-foreground">Other outlets in scope</span>
+                          <span className="text-[10px] text-muted-foreground">{knownOrphans.length} outlets</span>
+                        </div>
+                        <div className="divide-y">
+                          {knownOrphans.map(({ outlet, avail, hasPriceAtOutlet }) => {
+                            const price = allPrices.find(p => String(p.outletId) === outlet.id);
+                            return (
+                              <div key={outlet.id} className="px-3 py-2 flex items-center gap-3 hover:bg-muted/10">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium">{outlet.code}</p>
+                                  {outlet.name && <p className="text-[10px] text-muted-foreground">{outlet.name}</p>}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {avail.available ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full"><Check className="h-2.5 w-2.5" />Enabled</span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full"><X className="h-2.5 w-2.5" />Disabled</span>
+                                  )}
+                                  {hasPriceAtOutlet ? (
+                                    <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-mono">
+                                      {price ? Number(price.priceValue ?? price.priceAmount ?? 0).toLocaleString() : '✓'} {price?.currencyCode || ''}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-amber-500 bg-amber-50 px-2 py-0.5 rounded-full">no price</span>
+                                  )}
+                                  <button onClick={() => void toggleAvailability(avail.outletId, avail.available)}
+                                    disabled={saving === `avail:${avail.outletId}`}
+                                    className="h-6 px-2 rounded border text-[10px] hover:bg-accent disabled:opacity-60 flex-shrink-0">
+                                    {saving === `avail:${avail.outletId}` ? '...' : avail.available ? 'Disable' : 'Enable'}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Outlets outside user scope — summary only */}
+                    {outOfScopeCount > 0 && (
+                      <div className="border rounded-lg p-3 bg-muted/10 flex items-center gap-2">
+                        <Store className="h-3.5 w-3.5 text-muted-foreground" />
+                        <p className="text-xs text-muted-foreground">
+                          <span className="font-medium">{outOfScopeCount} more outlets</span> outside your scope
+                          ({outOfScopeEnabled} enabled)
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
             )}
           </div>
         ) : null}

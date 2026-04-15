@@ -143,3 +143,44 @@ export function hasHrCompensationAccess(session: AuthSession | null) {
 export function hasSalesOrderQueueAccess(session: AuthSession | null) {
   return hasModuleAccess(session, 'pos');
 }
+
+export function hasCrmReadAccess(session: AuthSession | null) {
+  return hasModuleAccess(session, 'crm');
+}
+
+export function hasPosOrderingTableAccess(session: AuthSession | null) {
+  return hasSalesOrderQueueAccess(session);
+}
+
+export function hasCatalogMutationAccess(session: AuthSession | null) {
+  if (!session) return false;
+
+  const { roles, permissions, isSuperadmin, isGovernanceOnly } = getAccessState(session);
+
+  if (isSuperadmin) return true;
+  if (roles.has('product_manager')) return true;
+
+  return !isGovernanceOnly && permissions.has('product.catalog.write');
+}
+
+export function hasIamUserManagementAccess(session: AuthSession | null) {
+  if (!session) return false;
+
+  const { roles, permissions, isSuperadmin, isGovernanceOnly } = getAccessState(session);
+
+  if (isSuperadmin) return true;
+  if (roles.has('admin')) return true;
+
+  return !isGovernanceOnly && permissions.has('auth.user.write');
+}
+
+export function hasIamRoleManagementAccess(session: AuthSession | null) {
+  if (!session) return false;
+
+  const { roles, permissions, isSuperadmin, isGovernanceOnly } = getAccessState(session);
+
+  if (isSuperadmin) return true;
+  if (roles.has('admin')) return true;
+
+  return !isGovernanceOnly && permissions.has('auth.role.write');
+}

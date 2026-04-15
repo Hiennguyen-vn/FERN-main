@@ -133,7 +133,11 @@ export function MenuAssignment({ token }: MenuAssignmentProps) {
 
   const toggleCat = (catId: string) => setExpandedCats(prev => {
     const next = new Set(prev);
-    next.has(catId) ? next.delete(catId) : next.add(catId);
+    if (next.has(catId)) {
+      next.delete(catId);
+    } else {
+      next.add(catId);
+    }
     return next;
   });
 
@@ -148,7 +152,7 @@ export function MenuAssignment({ token }: MenuAssignmentProps) {
   return (
     <div className="flex h-full animate-fade-in">
       {/* ── Left: Menu list ─────────────────────────────── */}
-      <div className="w-72 border-r flex flex-col flex-shrink-0">
+      <div className="w-full sm:w-64 md:w-72 border-r flex flex-col flex-shrink-0">
         <div className="px-4 py-3 border-b flex items-center justify-between">
           <h3 className="text-sm font-semibold flex items-center gap-1.5">
             <LayoutGrid className="h-3.5 w-3.5 text-muted-foreground" />Menus
@@ -208,9 +212,14 @@ export function MenuAssignment({ token }: MenuAssignmentProps) {
       <div className="flex-1 flex flex-col overflow-hidden">
         {!selectedMenu ? (
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
-            <div className="text-center">
-              <LayoutGrid className="h-8 w-8 mx-auto mb-2 opacity-20" />
-              <p className="text-xs">Select a menu or create one</p>
+            <div className="text-center space-y-2">
+              <LayoutGrid className="h-8 w-8 mx-auto opacity-20" />
+              <p className="text-xs">{menus.length === 0 ? 'No menus yet' : 'Select a menu'}</p>
+              {menus.length === 0 && (
+                <button onClick={() => setCreating(true)} className="h-7 px-3 rounded-md bg-primary text-primary-foreground text-[10px] font-medium inline-flex items-center gap-1">
+                  <Plus className="h-3 w-3" />Create your first menu
+                </button>
+              )}
             </div>
           </div>
         ) : (
@@ -261,8 +270,8 @@ export function MenuAssignment({ token }: MenuAssignmentProps) {
                                 <span className="text-[10px] text-muted-foreground w-5 text-right">{idx + 1}.</span>
                                 <Package className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-xs font-medium truncate">{item.productName}</p>
-                                  <p className="text-[10px] text-muted-foreground font-mono">{item.productCode}</p>
+                                  <p className="text-xs font-medium truncate">{item.productName || products.find(p => String(p.id) === String(item.productId))?.name || '(Unknown)'}</p>
+                                  <p className="text-[10px] text-muted-foreground font-mono">{item.productCode || String(item.productId)}</p>
                                 </div>
                                 <StatusBadge status={item.productStatus} />
                                 <button

@@ -20,20 +20,26 @@ import {
   type AuthUserListItem,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
+import {
+  hasIamRoleManagementAccess,
+  hasIamUserManagementAccess,
+} from '@/auth/authorization';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
-import { EmptyState, ServiceUnavailablePage } from '@/components/shell/PermissionStates';
+import {
+  PermissionBanner,
+  ServiceUnavailablePage,
+} from '@/components/shell/PermissionStates';
 import { useAuth } from '@/auth/use-auth';
 import { useListQueryState } from '@/hooks/use-list-query-state';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
 
-type IAMView = 'dashboard' | 'users' | 'roles' | 'permissions' | 'scopes' | 'overrides' | 'effective-access';
+type IAMView = 'dashboard' | 'users' | 'roles' | 'scopes' | 'overrides' | 'effective-access';
 
 const IAM_TABS: { key: IAMView; label: string; icon: React.ElementType }[] = [
   { key: 'dashboard', label: 'Dashboard', icon: Shield },
   { key: 'users', label: 'Users', icon: Users },
   { key: 'roles', label: 'Roles', icon: Key },
-  { key: 'permissions', label: 'Permissions', icon: Shield },
   { key: 'scopes', label: 'Scopes', icon: Globe },
   { key: 'overrides', label: 'Overrides', icon: ShieldAlert },
   { key: 'effective-access', label: 'Effective Access', icon: Eye },
@@ -54,6 +60,8 @@ export function IAMModule() {
   const { token, scope } = useShellRuntime();
   const { session } = useAuth();
   const outletId = normalizeNumeric(scope.outletId);
+  const canManageUsers = hasIamUserManagementAccess(session);
+  const canManageRoles = hasIamRoleManagementAccess(session);
 
   const [view, setView] = useState<IAMView>('dashboard');
   const [loading, setLoading] = useState(true);
@@ -114,6 +122,26 @@ export function IAMModule() {
     roleCode: '',
     permissionCodes: '',
   });
+
+  const availableTabs = useMemo(
+    () => IAM_TABS.filter((tab) => {
+      if (tab.key === 'users') return canManageUsers;
+      if (tab.key === 'roles') return canManageRoles;
+      return true;
+    }),
+    [canManageRoles, canManageUsers],
+  );
+
+  const governanceDetail = useMemo(() => {
+    if (canManageUsers && canManageRoles) return '';
+    if (canManageUsers) {
+      return 'This scope can manage users and outlet assignments, but cannot change role permission bundles.';
+    }
+    if (canManageRoles) {
+      return 'This scope can manage role permission bundles, but cannot create or update user accounts.';
+    }
+    return 'This scope can inspect IAM state only. User and role mutations are hidden because the required governance permissions are not assigned.';
+  }, [canManageRoles, canManageUsers]);
 
   const loadSessions = useCallback(async () => {
     if (!token) {
@@ -207,6 +235,11 @@ export function IAMModule() {
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  useEffect(() => {
+    if (availableTabs.some((tab) => tab.key === view)) return;
+    setView(availableTabs[0]?.key ?? 'dashboard');
+  }, [availableTabs, view]);
 
   useEffect(() => {
     // Keep IAM tab data aligned with active outlet scope.
@@ -350,7 +383,7 @@ export function IAMModule() {
   return (
     <div className="flex flex-col h-full animate-fade-in">
       <div className="border-b bg-card px-6 flex items-center gap-0 flex-shrink-0">
-        {IAM_TABS.map((tab) => (
+        {availableTabs.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setView(tab.key)}
@@ -372,6 +405,14 @@ export function IAMModule() {
           <div className="flex items-center justify-center py-16">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
+        ) : null}
+
+        {!loading && governanceDetail ? (
+          <PermissionBanner
+            state="read_only"
+            moduleName="IAM"
+            detail={governanceDetail}
+          />
         ) : null}
 
         {!loading && view === 'dashboard' ? (
@@ -643,13 +684,6 @@ export function IAMModule() {
               </button>
             </div>
           </div>
-        ) : null}
-
-        {!loading && view === 'permissions' ? (
-          <EmptyState
-            title="Permission catalog endpoint missing"
-            description="The backend does not currently expose a read API for permission catalog discovery in this module."
-          />
         ) : null}
 
         {!loading && view === 'scopes' ? (

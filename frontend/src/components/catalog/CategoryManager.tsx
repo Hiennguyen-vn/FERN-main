@@ -71,6 +71,8 @@ export function CategoryManager({ token }: CategoryManagerProps) {
 
   const saveEdit = async () => {
     if (!editingCode) return;
+    if (!editForm.name.trim()) { toast.error('Name is required'); return; }
+    if (activeType !== 'product') { toast.error('Item category editing not yet supported'); return; }
     setBusy('edit');
     try {
       await productApi.updateProductCategory(token, editingCode, editForm);
@@ -85,6 +87,7 @@ export function CategoryManager({ token }: CategoryManagerProps) {
   };
 
   const toggleActive = async (cat: CategoryView) => {
+    if (activeType !== 'product') { toast.error('Item category toggle not yet supported'); return; }
     setBusy(`toggle:${cat.code}`);
     try {
       await productApi.updateProductCategory(token, cat.code, { isActive: !cat.isActive });
@@ -230,7 +233,7 @@ export function CategoryManager({ token }: CategoryManagerProps) {
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          {activeType === 'product' && (
+                          {activeType === 'product' ? (
                             <>
                               <button onClick={() => startEdit(cat)} className="h-6 px-2 rounded border text-[10px] inline-flex items-center gap-1 hover:bg-accent">
                                 <Edit2 className="h-2.5 w-2.5" />
@@ -243,6 +246,8 @@ export function CategoryManager({ token }: CategoryManagerProps) {
                                 {cat.isActive ? 'Deactivate' : 'Activate'}
                               </button>
                             </>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground">read-only</span>
                           )}
                         </div>
                       </td>

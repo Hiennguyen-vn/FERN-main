@@ -237,7 +237,7 @@ export function useDashboardData() {
     } finally {
       setLoading(false);
     }
-  }, [scope.outletId, token]);
+  }, [scope.outletId, scope.outletName, token]);
 
   useEffect(() => {
     void fetchData();

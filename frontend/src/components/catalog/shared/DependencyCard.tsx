@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import { BookOpen, DollarSign, LayoutGrid, Store, AlertTriangle } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 
 interface DependencyItem {
   label: string;
@@ -47,42 +47,4 @@ export function DependencyCard({ items, className }: DependencyCardProps) {
       )}
     </div>
   );
-}
-
-/** Convenience: build dependency items from counts */
-export function buildProductDependencies(opts: {
-  hasRecipe: boolean;
-  priceCount: number;
-  totalOutlets: number;
-  menuCount?: number;
-  availableCount?: number;
-}): DependencyItem[] {
-  return [
-    {
-      label: 'Recipe',
-      count: opts.hasRecipe ? 1 : 0,
-      total: 1,
-      icon: BookOpen,
-      warning: !opts.hasRecipe,
-    },
-    {
-      label: 'Outlet pricing',
-      count: opts.priceCount,
-      total: opts.totalOutlets,
-      icon: DollarSign,
-      warning: opts.priceCount === 0 && opts.totalOutlets > 0,
-    },
-    ...(opts.availableCount != null ? [{
-      label: 'Availability',
-      count: opts.availableCount,
-      total: opts.totalOutlets,
-      icon: Store,
-      warning: opts.availableCount === 0 && opts.totalOutlets > 0,
-    }] : []),
-    ...(opts.menuCount != null ? [{
-      label: 'Menu assignments',
-      count: opts.menuCount,
-      icon: LayoutGrid,
-    }] : []),
-  ];
 }

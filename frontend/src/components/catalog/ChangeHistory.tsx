@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { productApi, type AuditLogView } from '@/api/fern-api';
+import { productApi, type CatalogAuditLogView } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
 
 interface ChangeHistoryProps {
@@ -22,7 +22,7 @@ const ACTION_STYLES: Record<string, string> = {
 };
 
 export function ChangeHistory({ token }: ChangeHistoryProps) {
-  const [entries, setEntries] = useState<AuditLogView[]>([]);
+  const [entries, setEntries] = useState<CatalogAuditLogView[]>([]);
   const [loading, setLoading] = useState(false);
   const [entityType, setEntityType] = useState('');
   const [limit] = useState(50);

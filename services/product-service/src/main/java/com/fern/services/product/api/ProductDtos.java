@@ -220,4 +220,18 @@ public final class ProductDtos {
   public record ChannelView(String code, String name, boolean isActive, int displayOrder) {}
 
   public record DaypartView(String code, String name, String startTime, String endTime, boolean isActive, int displayOrder) {}
+
+  // ── Variants & Modifiers ──────────────────────────────
+
+  public record VariantView(long id, long productId, String code, String name, String priceModifierType, java.math.BigDecimal priceModifierValue, int displayOrder, boolean isActive) {}
+
+  public record CreateVariantRequest(@NotNull Long productId, @NotBlank String code, @NotBlank String name, String priceModifierType, java.math.BigDecimal priceModifierValue, int displayOrder) {}
+
+  public record ModifierGroupView(long id, String code, String name, String selectionType, int minSelections, int maxSelections, boolean isActive, List<ModifierOptionView> options) {}
+
+  public record ModifierOptionView(long id, String code, String name, java.math.BigDecimal priceAdjustment, int displayOrder, boolean isActive) {}
+
+  public record CreateModifierGroupRequest(@NotBlank String code, @NotBlank String name, String selectionType, int minSelections, int maxSelections) {}
+
+  public record AddModifierOptionRequest(@NotBlank String code, @NotBlank String name, java.math.BigDecimal priceAdjustment, int displayOrder) {}
 }

@@ -2,10 +2,12 @@ package com.fern.services.product.api;
 
 import com.dorabets.common.spring.web.PagedResult;
 import com.fern.services.product.application.ProductService;
+import com.fern.services.product.infrastructure.VariantRepository;
 import jakarta.validation.Valid;
 import java.time.LocalDate;
 import java.util.List;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,9 +23,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class ProductController {
 
   private final ProductService productService;
+  private final VariantRepository variantRepository;
 
-  public ProductController(ProductService productService) {
+  public ProductController(ProductService productService, VariantRepository variantRepository) {
     this.productService = productService;
+    this.variantRepository = variantRepository;
   }
 
   @GetMapping("/products")
@@ -171,5 +175,49 @@ public class ProductController {
       @Valid @RequestBody ProductDtos.CreateCategoryRequest request
   ) {
     return productService.createItemCategory(request);
+  }
+
+  // ── Variants ──────────────────────────────────────────
+
+  @GetMapping("/variants")
+  public java.util.List<ProductDtos.VariantView> listVariants(@RequestParam long productId) {
+    return variantRepository.listVariants(productId);
+  }
+
+  @PostMapping("/variants")
+  @ResponseStatus(HttpStatus.CREATED)
+  public ProductDtos.VariantView createVariant(@Valid @RequestBody ProductDtos.CreateVariantRequest request) {
+    return variantRepository.createVariant(request);
+  }
+
+  @DeleteMapping("/variants/{variantId}")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void deleteVariant(@PathVariable long variantId) {
+    variantRepository.deleteVariant(variantId);
+  }
+
+  // ── Modifier Groups ───────────────────────────────────
+
+  @GetMapping("/modifier-groups")
+  public java.util.List<ProductDtos.ModifierGroupView> listModifierGroups() {
+    return variantRepository.listModifierGroups();
+  }
+
+  @PostMapping("/modifier-groups")
+  @ResponseStatus(HttpStatus.CREATED)
+  public ProductDtos.ModifierGroupView createModifierGroup(@Valid @RequestBody ProductDtos.CreateModifierGroupRequest request) {
+    return variantRepository.createModifierGroup(request);
+  }
+
+  @PostMapping("/modifier-groups/{groupId}/options")
+  @ResponseStatus(HttpStatus.CREATED)
+  public ProductDtos.ModifierOptionView addModifierOption(@PathVariable long groupId, @Valid @RequestBody ProductDtos.AddModifierOptionRequest request) {
+    return variantRepository.addOption(groupId, request);
+  }
+
+  @DeleteMapping("/modifier-options/{optionId}")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void deleteModifierOption(@PathVariable long optionId) {
+    variantRepository.deleteOption(optionId);
   }
 }

@@ -254,6 +254,11 @@ export function WorkforceModule() {
   const patchAttendanceFilters = attendanceQuery.patchFilters;
   const patchOvertimeFilters = overtimeQuery.patchFilters;
   const patchLeaveFilters = leaveQuery.patchFilters;
+  const setAttendancePage = attendanceQuery.setPage;
+  const setOvertimePage = overtimeQuery.setPage;
+  const overtimeSearchInput = overtimeQuery.searchInput;
+  const overtimeSortBy = overtimeQuery.sortBy;
+  const overtimeSortDir = overtimeQuery.sortDir;
 
   const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
   const outletsById = useMemo(() => new Map(outlets.map((outlet) => [outlet.id, outlet])), [outlets]);
@@ -504,9 +509,9 @@ export function WorkforceModule() {
       startDate: dateFilter,
       endDate: dateFilter,
     });
-    attendanceQuery.setPage(0);
+    setAttendancePage(0);
     setAssignmentDraft((prev) => ({ ...prev, workDate: dateFilter }));
-  }, [attendanceQuery.setPage, dateFilter, outletId, patchAttendanceFilters, patchLeaveFilters, patchOvertimeFilters]);
+  }, [dateFilter, outletId, patchAttendanceFilters, patchLeaveFilters, patchOvertimeFilters, setAttendancePage]);
 
   useEffect(() => {
     if (!token) return;
@@ -567,8 +572,8 @@ export function WorkforceModule() {
 
   useEffect(() => {
     if (activeTab !== 'overtime') return;
-    overtimeQuery.setPage(0);
-  }, [activeTab, overtimeFocus, overtimeQuery.searchInput, overtimeQuery.sortBy, overtimeQuery.sortDir, overtimeQuery.setPage]);
+    setOvertimePage(0);
+  }, [activeTab, overtimeFocus, overtimeSearchInput, overtimeSortBy, overtimeSortDir, setOvertimePage]);
 
   useEffect(() => {
     if (activeTab !== 'leave') return;

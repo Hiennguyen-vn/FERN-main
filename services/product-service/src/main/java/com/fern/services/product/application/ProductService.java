@@ -12,6 +12,7 @@ import com.fern.events.product.ProductRecipeUpdatedEvent;
 import com.fern.events.product.ProductRecipeUpdatedLineItem;
 import com.fern.services.product.api.ProductDtos;
 import com.fern.services.product.infrastructure.ProductRepository;
+import com.fern.services.product.infrastructure.PublishRepository;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
@@ -24,6 +25,7 @@ public class ProductService {
   private final ProductPriceCacheService productPriceCacheService;
   private final TypedKafkaEventPublisher kafkaEventPublisher;
   private final AuthorizationPolicyService authorizationPolicyService;
+  private final PublishRepository publishRepository;
   private final Clock clock;
 
   public ProductService(
@@ -31,12 +33,14 @@ public class ProductService {
       ProductPriceCacheService productPriceCacheService,
       TypedKafkaEventPublisher kafkaEventPublisher,
       AuthorizationPolicyService authorizationPolicyService,
+      PublishRepository publishRepository,
       Clock clock
   ) {
     this.productRepository = productRepository;
     this.productPriceCacheService = productPriceCacheService;
     this.kafkaEventPublisher = kafkaEventPublisher;
     this.authorizationPolicyService = authorizationPolicyService;
+    this.publishRepository = publishRepository;
     this.clock = clock;
   }
 
@@ -63,7 +67,9 @@ public class ProductService {
   public ProductDtos.ProductView createProduct(ProductDtos.CreateProductRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
     requireCatalogMutationAccess(context);
-    return productRepository.createProduct(request, context.userId());
+    ProductDtos.ProductView created = productRepository.createProduct(request, context.userId());
+    audit("product", created.id(), "create", null, null, created.name(), "corporate", null);
+    return created;
   }
 
   public PagedResult<ProductDtos.ItemView> listItems(
@@ -89,7 +95,9 @@ public class ProductService {
   public ProductDtos.ItemView createItem(ProductDtos.CreateItemRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
     requireCatalogMutationAccess(context);
-    return productRepository.createItem(request);
+    ProductDtos.ItemView created = productRepository.createItem(request);
+    audit("item", created.id(), "create", null, null, created.name(), "corporate", null);
+    return created;
   }
 
   public PagedResult<ProductDtos.PriceView> listPrices(
@@ -157,6 +165,10 @@ public class ProductService {
             clock.instant()
         )
     );
+    audit("price", saved.productId(), previous == null ? "create" : "update", "priceValue",
+        previous == null ? null : previous.priceValue().toPlainString(),
+        saved.priceValue().toPlainString(),
+        "outlet", Long.toString(saved.outletId()));
     return saved;
   }
 
@@ -184,6 +196,7 @@ public class ProductService {
             context.userId()
         )
     );
+    audit("recipe", recipe.productId(), "update", "version", null, recipe.version(), "corporate", null);
     return recipe;
   }
 
@@ -209,16 +222,32 @@ public class ProductService {
     return QueryConventions.sanitizeOffset(offset);
   }
 
+  private void audit(String entityType, long entityId, String action, String field, String oldVal, String newVal, String scopeType, String scopeId) {
+    try {
+      Long userId = null;
+      try { userId = RequestUserContextHolder.get().userId(); } catch (Exception ignored) {}
+      publishRepository.writeAuditLog(entityType, entityId, action, field, oldVal, newVal, scopeType, scopeId, userId, null, null);
+    } catch (Exception ignored) { /* audit should not break business operations */ }
+  }
+
   public ProductDtos.ProductView updateProduct(long productId, ProductDtos.UpdateProductRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
     requireCatalogMutationAccess(context);
-    return productRepository.updateProduct(productId, request, context.userId());
+    ProductDtos.ProductView updated = productRepository.updateProduct(productId, request, context.userId());
+    if (request.status() != null) {
+      audit("product", productId, "status_change", "status", null, request.status(), "corporate", null);
+    } else {
+      audit("product", productId, "update", null, null, updated.name(), "corporate", null);
+    }
+    return updated;
   }
 
   public ProductDtos.ItemView updateItem(long itemId, ProductDtos.UpdateItemRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
     requireCatalogMutationAccess(context);
-    return productRepository.updateItem(itemId, request);
+    ProductDtos.ItemView updated = productRepository.updateItem(itemId, request);
+    audit("item", itemId, "update", null, null, updated.name(), "corporate", null);
+    return updated;
   }
 
   public List<ProductDtos.AvailabilityView> listAvailability(Long productId, Long outletId) {
