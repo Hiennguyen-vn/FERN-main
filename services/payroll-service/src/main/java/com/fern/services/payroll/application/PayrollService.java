@@ -1,6 +1,9 @@
 package com.fern.services.payroll.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
+import com.dorabets.common.spring.auth.BusinessUserProfile;
+import com.dorabets.common.spring.auth.CanonicalRole;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -16,6 +19,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -26,23 +31,26 @@ public class PayrollService {
   private final SnowflakeIdGenerator idGenerator;
   private final TypedKafkaEventPublisher eventPublisher;
   private final Clock clock;
+  private final AuthorizationPolicyService authorizationPolicyService;
 
   public PayrollService(
       PayrollRepository payrollRepository,
       HrServiceClient hrServiceClient,
       SnowflakeIdGenerator idGenerator,
       TypedKafkaEventPublisher eventPublisher,
-      Clock clock
+      Clock clock,
+      AuthorizationPolicyService authorizationPolicyService
   ) {
     this.payrollRepository = payrollRepository;
     this.hrServiceClient = hrServiceClient;
     this.idGenerator = idGenerator;
     this.eventPublisher = eventPublisher;
     this.clock = clock;
+    this.authorizationPolicyService = authorizationPolicyService;
   }
 
   public PayrollDtos.PayrollPeriodView createPeriod(PayrollDtos.CreatePayrollPeriodRequest request) {
-    requirePayrollAdmin();
+    requirePayrollPrepareAccess(request.regionId());
     validatePeriodDates(request.startDate(), request.endDate(), request.payDate());
     if (payrollRepository.findPeriodByRegionAndWindow(request.regionId(), request.startDate(), request.endDate()).isPresent()) {
       throw ServiceException.conflict(
@@ -64,9 +72,11 @@ public class PayrollService {
   }
 
   public PayrollDtos.PayrollPeriodView getPeriod(long periodId) {
-    requirePayrollAdmin();
     return payrollRepository.findPeriod(periodId)
-        .map(this::toDto)
+        .map(record -> {
+          requirePayrollReadAccess(record.regionId());
+          return toDto(record);
+        })
         .orElseThrow(() -> ServiceException.notFound("Payroll period not found: " + periodId));
   }
 
@@ -80,8 +90,9 @@ public class PayrollService {
       Integer limit,
       Integer offset
   ) {
-    requirePayrollAdmin();
+    Set<Long> scopedRegionIds = resolvePayrollReadRegionIds();
     return payrollRepository.listPeriods(
+            scopedRegionIds,
             regionId,
             startDate,
             endDate,
@@ -94,9 +105,9 @@ public class PayrollService {
   }
 
   public PayrollDtos.PayrollTimesheetView createTimesheet(PayrollDtos.CreatePayrollTimesheetRequest request) {
-    requirePayrollAdmin();
     PayrollRepository.PayrollPeriodScopeRecord period = payrollRepository.findPeriodScope(request.payrollPeriodId())
         .orElseThrow(() -> ServiceException.notFound("Payroll period not found: " + request.payrollPeriodId()));
+    requirePayrollPrepareAccess(period.regionId());
     if (payrollRepository.findTimesheetByPeriodAndUser(request.payrollPeriodId(), request.userId()).isPresent()) {
       throw ServiceException.conflict(
           "Timesheet already exists for user " + request.userId() + " in payroll period " + request.payrollPeriodId()
@@ -148,8 +159,6 @@ public class PayrollService {
   public PayrollDtos.PayrollTimesheetView importFromAttendance(
       PayrollDtos.ImportFromAttendanceRequest request
   ) {
-    requirePayrollAdmin();
-
     PayrollRepository.PayrollPeriodRecord period = payrollRepository
         .findPeriod(request.payrollPeriodId())
         .orElseThrow(() -> ServiceException.notFound(
@@ -159,6 +168,7 @@ public class PayrollService {
         .findPeriodScope(request.payrollPeriodId())
         .orElseThrow(() -> ServiceException.notFound(
             "Payroll period scope not found: " + request.payrollPeriodId()));
+    requirePayrollPrepareAccess(periodScope.regionId());
 
     if (payrollRepository.findTimesheetByPeriodAndUser(
         request.payrollPeriodId(), request.userId()).isPresent()) {
@@ -258,7 +268,9 @@ public class PayrollService {
   }
 
   public PayrollDtos.PayrollTimesheetView getTimesheet(long timesheetId) {
-    requirePayrollAdmin();
+    PayrollRepository.PayrollTimesheetScopeRecord scope = payrollRepository.findTimesheetScope(timesheetId)
+        .orElseThrow(() -> ServiceException.notFound("Payroll timesheet not found: " + timesheetId));
+    requirePayrollReadAccess(scope.regionId());
     return payrollRepository.findTimesheet(timesheetId)
         .map(this::toDto)
         .orElseThrow(() -> ServiceException.notFound("Payroll timesheet not found: " + timesheetId));
@@ -274,8 +286,9 @@ public class PayrollService {
       Integer limit,
       Integer offset
   ) {
-    requirePayrollAdmin();
+    Set<Long> scopedRegionIds = resolvePayrollReadRegionIds();
     return payrollRepository.listTimesheets(
+            scopedRegionIds,
             payrollPeriodId,
             userId,
             outletId,
@@ -288,10 +301,9 @@ public class PayrollService {
   }
 
   public PayrollDtos.PayrollView generatePayroll(PayrollDtos.GeneratePayrollRequest request) {
-    requirePayrollAdmin();
-    if (payrollRepository.findTimesheet(request.payrollTimesheetId()).isEmpty()) {
-      throw ServiceException.notFound("Payroll timesheet not found: " + request.payrollTimesheetId());
-    }
+    PayrollRepository.PayrollTimesheetScopeRecord timesheetScope = payrollRepository.findTimesheetScope(request.payrollTimesheetId())
+        .orElseThrow(() -> ServiceException.notFound("Payroll timesheet not found: " + request.payrollTimesheetId()));
+    requirePayrollPrepareAccess(timesheetScope.regionId());
     if (payrollRepository.findPayrollByTimesheetId(request.payrollTimesheetId()).isPresent()) {
       throw ServiceException.conflict("Payroll already exists for timesheet " + request.payrollTimesheetId());
     }
@@ -308,7 +320,9 @@ public class PayrollService {
   }
 
   public PayrollDtos.PayrollView getPayroll(long payrollId) {
-    requirePayrollAdmin();
+    PayrollRepository.PayrollScopeRecord scope = payrollRepository.findPayrollScope(payrollId)
+        .orElseThrow(() -> ServiceException.notFound("Payroll not found: " + payrollId));
+    requirePayrollReadAccess(scope.regionId());
     return payrollRepository.findPayroll(payrollId)
         .map(this::toDto)
         .orElseThrow(() -> ServiceException.notFound("Payroll not found: " + payrollId));
@@ -325,8 +339,9 @@ public class PayrollService {
       Integer limit,
       Integer offset
   ) {
-    requirePayrollAdmin();
+    Set<Long> scopedRegionIds = resolvePayrollReadRegionIds();
     return payrollRepository.listPayroll(
+            scopedRegionIds,
             payrollPeriodId,
             userId,
             outletId,
@@ -340,7 +355,9 @@ public class PayrollService {
   }
 
   public PayrollDtos.PayrollView approvePayroll(long payrollId) {
-    requirePayrollAdmin();
+    PayrollRepository.PayrollScopeRecord scope = payrollRepository.findPayrollScope(payrollId)
+        .orElseThrow(() -> ServiceException.notFound("Payroll not found: " + payrollId));
+    requirePayrollApproveAccess(scope.regionId());
     PayrollRepository.PayrollRecord existing = payrollRepository.findPayroll(payrollId)
         .orElseThrow(() -> ServiceException.notFound("Payroll not found: " + payrollId));
     if (!"draft".equalsIgnoreCase(existing.status())) {
@@ -368,7 +385,9 @@ public class PayrollService {
   }
 
   public PayrollDtos.PayrollView rejectPayroll(long payrollId, String reason) {
-    requirePayrollAdmin();
+    PayrollRepository.PayrollScopeRecord scope = payrollRepository.findPayrollScope(payrollId)
+        .orElseThrow(() -> ServiceException.notFound("Payroll not found: " + payrollId));
+    requirePayrollApproveAccess(scope.regionId());
     PayrollRepository.PayrollRecord existing = payrollRepository.findPayroll(payrollId)
         .orElseThrow(() -> ServiceException.notFound("Payroll not found: " + payrollId));
     if (!"draft".equalsIgnoreCase(existing.status())) {
@@ -382,13 +401,55 @@ public class PayrollService {
     return toDto(rejected);
   }
 
-  private void requirePayrollAdmin() {
+  private void requirePayrollPrepareAccess(long regionId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (context.internalService()) {
       return;
     }
-    context.requireUserId();
-    throw ServiceException.forbidden("Payroll administration access is required");
+    if (authorizationPolicyService.canPreparePayroll(context, regionId)) {
+      return;
+    }
+    throw ServiceException.forbidden("Payroll preparation scope is required");
+  }
+
+  private void requirePayrollApproveAccess(long regionId) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (context.internalService()) {
+      return;
+    }
+    if (authorizationPolicyService.canApprovePayroll(context, regionId)) {
+      return;
+    }
+    throw ServiceException.forbidden("Payroll approval scope is required");
+  }
+
+  private void requirePayrollReadAccess(long regionId) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (context.internalService()
+        || authorizationPolicyService.canPreparePayroll(context, regionId)
+        || authorizationPolicyService.canApprovePayroll(context, regionId)) {
+      return;
+    }
+    throw ServiceException.forbidden("Payroll scope is required");
+  }
+
+  private Set<Long> resolvePayrollReadRegionIds() {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (context.internalService()) {
+      return null;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = authorizationPolicyService.resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return null;
+    }
+    LinkedHashSet<Long> regionIds = new LinkedHashSet<>();
+    regionIds.addAll(profile.regionIdsForRole(CanonicalRole.HR));
+    regionIds.addAll(profile.regionIdsForRole(CanonicalRole.FINANCE));
+    if (regionIds.isEmpty()) {
+      throw ServiceException.forbidden("Payroll scope is required");
+    }
+    return Set.copyOf(regionIds);
   }
 
   private int sanitizeLimit(Integer limit) {

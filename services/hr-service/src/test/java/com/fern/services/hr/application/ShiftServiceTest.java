@@ -2,18 +2,25 @@ package com.fern.services.hr.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
+import com.dorabets.common.spring.auth.BusinessScopeAssignment;
+import com.dorabets.common.spring.auth.BusinessUserProfile;
+import com.dorabets.common.spring.auth.CanonicalRole;
 import com.dorabets.common.spring.auth.PermissionMatrixService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.dorabets.common.spring.auth.ScopeType;
 import com.fern.services.hr.api.ShiftDto;
 import com.fern.services.hr.infrastructure.ShiftRepository;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Instant;
 import java.time.LocalTime;
+import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +37,8 @@ class ShiftServiceTest {
   private SnowflakeIdGenerator idGenerator;
   @Mock
   private PermissionMatrixService permissionMatrixService;
+  @Mock
+  private AuthorizationPolicyService authorizationPolicyService;
 
   @AfterEach
   void clearContext() {
@@ -66,7 +75,7 @@ class ShiftServiceTest {
         )
     ));
 
-    ShiftService service = new ShiftService(shiftRepository, idGenerator, permissionMatrixService);
+    ShiftService service = new ShiftService(shiftRepository, idGenerator, permissionMatrixService, authorizationPolicyService);
     ShiftDto result = service.createShift(new ShiftDto.Create(
         10L,
         "MORNING",
@@ -95,7 +104,7 @@ class ShiftServiceTest {
         null
     ));
 
-    ShiftService service = new ShiftService(shiftRepository, idGenerator, permissionMatrixService);
+    ShiftService service = new ShiftService(shiftRepository, idGenerator, permissionMatrixService, authorizationPolicyService);
 
     assertThrows(ServiceException.class, () -> service.createShift(new ShiftDto.Create(
         10L,
@@ -108,7 +117,7 @@ class ShiftServiceTest {
   }
 
   @Test
-  void listShiftsRequiresOutletScopeForNonAdminUsers() {
+  void listShiftsUsesResolvedSchedulingScopeForOutletManagers() {
     RequestUserContextHolder.set(new RequestUserContext(
         9L,
         "manager",
@@ -120,18 +129,36 @@ class ShiftServiceTest {
         false,
         null
     ));
+    when(authorizationPolicyService.resolveUserProfile(9L))
+        .thenReturn(profile(9L, assignment(CanonicalRole.OUTLET_MANAGER, 10L)));
+    when(permissionMatrixService.load(9L)).thenReturn(new com.dorabets.common.spring.auth.PermissionMatrix(9L, java.util.Map.of(), java.util.Map.of()));
+    when(shiftRepository.findByOutletId(null, Set.of(10L), null, null, null, 20, 0))
+        .thenReturn(com.dorabets.common.spring.web.PagedResult.of(List.of(), 20, 0, 0));
 
-    ShiftService service = new ShiftService(shiftRepository, idGenerator, permissionMatrixService);
+    ShiftService service = new ShiftService(shiftRepository, idGenerator, permissionMatrixService, authorizationPolicyService);
 
-    ServiceException exception = assertThrows(ServiceException.class, () -> service.listShiftsByOutlet(
+    service.listShiftsByOutlet(
         null,
         null,
         null,
         null,
         20,
         0
-    ));
+    );
 
-    assertEquals(403, exception.getStatusCode());
+    verify(shiftRepository).findByOutletId(null, Set.of(10L), null, null, null, 20, 0);
+  }
+
+  private static BusinessUserProfile profile(long userId, BusinessScopeAssignment... assignments) {
+    return new BusinessUserProfile(
+        userId,
+        Set.of(assignments[0].role()),
+        List.of(assignments),
+        assignments[0].outletIds()
+    );
+  }
+
+  private static BusinessScopeAssignment assignment(CanonicalRole role, long outletId) {
+    return new BusinessScopeAssignment(role, ScopeType.OUTLET, outletId, Long.toString(outletId), Set.of(outletId), Set.of(role.storedRoleCode()));
   }
 }

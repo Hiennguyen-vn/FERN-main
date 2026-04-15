@@ -1,6 +1,9 @@
 package com.fern.services.hr.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
+import com.dorabets.common.spring.auth.BusinessUserProfile;
+import com.dorabets.common.spring.auth.CanonicalRole;
 import com.dorabets.common.spring.auth.PermissionMatrix;
 import com.dorabets.common.spring.auth.PermissionMatrixService;
 import com.dorabets.common.spring.auth.RequestUserContext;
@@ -11,7 +14,9 @@ import com.fern.services.hr.api.ShiftDto;
 import com.fern.services.hr.infrastructure.ShiftRepository;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.LocalDate;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,15 +28,18 @@ public class ShiftService {
   private final ShiftRepository shiftRepository;
   private final SnowflakeIdGenerator idGenerator;
   private final PermissionMatrixService permissionMatrixService;
+  private final AuthorizationPolicyService authorizationPolicyService;
 
   public ShiftService(
       ShiftRepository shiftRepository,
       SnowflakeIdGenerator idGenerator,
-      PermissionMatrixService permissionMatrixService
+      PermissionMatrixService permissionMatrixService,
+      AuthorizationPolicyService authorizationPolicyService
   ) {
     this.shiftRepository = shiftRepository;
     this.idGenerator = idGenerator;
     this.permissionMatrixService = permissionMatrixService;
+    this.authorizationPolicyService = authorizationPolicyService;
   }
 
   @Transactional
@@ -69,16 +77,13 @@ public class ShiftService {
       Integer limit,
       Integer offset
   ) {
-    RequestUserContext context = RequestUserContextHolder.get();
-    boolean admin = context.internalService() || context.hasRole("admin") || context.hasRole("superadmin");
-    if (!admin && outletId == null) {
-      throw ServiceException.forbidden("Outlet-scoped HR access is required");
-    }
+    Set<Long> scopedOutletIds = resolveSchedulingOutletIds(false);
     if (outletId != null) {
       requireScheduleAccess(outletId, false);
     }
     return shiftRepository.findByOutletId(
             outletId,
+            scopedOutletIds,
             QueryConventions.normalizeQuery(q),
             sortBy,
             sortDir,
@@ -131,26 +136,47 @@ public class ShiftService {
 
   private void requireScheduleAccess(Long outletId, boolean mutation) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (context.internalService()) {
       return;
     }
-    long userId = context.requireUserId();
     if (outletId == null) {
-      if (mutation) {
-        throw ServiceException.forbidden("Outlet-scoped HR access is required");
+      if (!mutation) {
+        return;
       }
-      return;
+      throw ServiceException.forbidden("Outlet-scoped HR access is required");
     }
-    PermissionMatrix matrix = permissionMatrixService.load(userId);
-    if (matrix.hasPermission(outletId, HR_SCHEDULE_PERMISSION)
-        || matrix.rolesForOutlet(outletId).contains("admin")
-        || matrix.rolesForOutlet(outletId).contains("outlet_manager")) {
-      return;
-    }
-    if (!mutation && context.outletIds().contains(outletId)) {
+    if (authorizationPolicyService.canManageHrSchedule(context, outletId, mutation)) {
       return;
     }
     throw ServiceException.forbidden("Missing HR schedule access for outlet " + outletId);
+  }
+
+  private Set<Long> resolveSchedulingOutletIds(boolean mutation) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (context.internalService()) {
+      return null;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = authorizationPolicyService.resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return null;
+    }
+    LinkedHashSet<Long> outletIds = new LinkedHashSet<>();
+    outletIds.addAll(profile.outletsForRole(CanonicalRole.HR));
+    outletIds.addAll(profile.outletsForRole(CanonicalRole.OUTLET_MANAGER));
+    PermissionMatrix matrix = permissionMatrixService.load(userId);
+    matrix.permissionsByOutlet().forEach((outletId, permissionCodes) -> {
+      if (permissionCodes.contains(HR_SCHEDULE_PERMISSION)) {
+        outletIds.add(outletId);
+      }
+    });
+    if (!mutation && !context.outletIds().isEmpty()) {
+      outletIds.addAll(context.outletIds());
+    }
+    if (outletIds.isEmpty() && mutation) {
+      throw ServiceException.forbidden("Outlet-scoped HR access is required");
+    }
+    return outletIds.isEmpty() ? Set.of() : Set.copyOf(outletIds);
   }
 
   private static void validateTimes(java.time.LocalTime startTime, java.time.LocalTime endTime) {

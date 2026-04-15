@@ -167,6 +167,11 @@ public class AuthController {
     return authService.listRoleCatalog(q, sortBy, sortDir, limit, offset);
   }
 
+  @GetMapping("/business-roles")
+  public List<AuthDtos.BusinessRoleCatalogItem> listBusinessRoles() {
+    return authService.listBusinessRoles();
+  }
+
   @PutMapping("/roles/{roleCode}/permissions")
   public AuthDtos.RolePermissionsResponse updateRolePermissions(
       @PathVariable String roleCode,

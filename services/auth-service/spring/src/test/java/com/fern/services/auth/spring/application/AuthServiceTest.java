@@ -5,20 +5,28 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.AuthSessionRepository;
 import com.dorabets.common.spring.auth.AuthSessionService;
+import com.dorabets.common.spring.auth.BusinessScopeAssignment;
+import com.dorabets.common.spring.auth.BusinessUserProfile;
+import com.dorabets.common.spring.auth.CanonicalRole;
 import com.dorabets.common.spring.auth.JwtClaims;
 import com.dorabets.common.spring.auth.JwtTokenService;
+import com.dorabets.common.spring.auth.OrgScopeRepository;
 import com.dorabets.common.spring.auth.PermissionMatrix;
 import com.dorabets.common.spring.auth.PermissionMatrixService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.dorabets.common.spring.auth.RoleAliasResolver;
+import com.dorabets.common.spring.auth.ScopeType;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.auth.RoleUpdatedEvent;
@@ -33,6 +41,7 @@ import com.natsu.common.utils.security.PasswordUtil;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -54,6 +63,10 @@ class AuthServiceTest {
   @Mock
   private PermissionMatrixService permissionMatrixService;
   @Mock
+  private AuthorizationPolicyService authorizationPolicyService;
+  @Mock
+  private OrgScopeRepository orgScopeRepository;
+  @Mock
   private AuthSessionService authSessionService;
   @Mock
   private TypedKafkaEventPublisher kafkaEventPublisher;
@@ -61,6 +74,7 @@ class AuthServiceTest {
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
   private final JwtTokenService jwtTokenService =
       new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET);
+  private final RoleAliasResolver roleAliasResolver = new RoleAliasResolver();
 
   @AfterEach
   void clearContext() {
@@ -87,12 +101,17 @@ class AuthServiceTest {
     );
     when(authUserRepository.findByUsername("alice")).thenReturn(Optional.of(user));
     when(permissionMatrixService.load(42L)).thenReturn(matrix);
+    when(authorizationPolicyService.resolveUserProfile(42L, matrix))
+        .thenReturn(profile(42L, assignment(CanonicalRole.ADMIN, ScopeType.OUTLET, 7L, "OUTLET-7", Set.of(7L))));
     when(authSessionService.openSession(eq(42L), eq(900L), any(), any()))
         .thenReturn(sessionRecord("session-42", 42L, "2026-03-27T00:00:00Z", "2026-03-27T00:15:00Z"));
 
     AuthService service = new AuthService(
         authUserRepository,
         permissionMatrixService,
+        authorizationPolicyService,
+        orgScopeRepository,
+        roleAliasResolver,
         jwtTokenService,
         authSessionService,
         kafkaEventPublisher,
@@ -135,6 +154,9 @@ class AuthServiceTest {
     AuthService service = new AuthService(
         authUserRepository,
         permissionMatrixService,
+        authorizationPolicyService,
+        orgScopeRepository,
+        roleAliasResolver,
         jwtTokenService,
         authSessionService,
         kafkaEventPublisher,
@@ -178,12 +200,17 @@ class AuthServiceTest {
     );
     when(authUserRepository.findById(42L)).thenReturn(Optional.of(user));
     when(permissionMatrixService.load(42L)).thenReturn(matrix);
+    when(authorizationPolicyService.resolveUserProfile(42L, matrix))
+        .thenReturn(profile(42L, assignment(CanonicalRole.ADMIN, ScopeType.OUTLET, 7L, "OUTLET-7", Set.of(7L))));
     when(authSessionService.getRequiredSession("sess-42", 42L))
         .thenReturn(sessionRecord("sess-42", 42L, "2026-03-27T00:00:00Z", "2026-03-27T00:10:00Z"));
 
     AuthService service = new AuthService(
         authUserRepository,
         permissionMatrixService,
+        authorizationPolicyService,
+        orgScopeRepository,
+        roleAliasResolver,
         jwtTokenService,
         authSessionService,
         kafkaEventPublisher,
@@ -231,12 +258,17 @@ class AuthServiceTest {
     );
     when(authUserRepository.findById(42L)).thenReturn(Optional.of(user));
     when(permissionMatrixService.load(42L)).thenReturn(matrix);
+    when(authorizationPolicyService.resolveUserProfile(42L, matrix))
+        .thenReturn(profile(42L, assignment(CanonicalRole.OUTLET_MANAGER, ScopeType.OUTLET, 7L, "OUTLET-7", Set.of(7L))));
     when(authSessionService.refreshSession(eq("sess-42"), eq(42L), eq(600L), any(), any()))
         .thenReturn(sessionRecord("sess-99", 42L, "2026-03-27T00:05:00Z", "2026-03-27T00:15:00Z"));
 
     AuthService service = new AuthService(
         authUserRepository,
         permissionMatrixService,
+        authorizationPolicyService,
+        orgScopeRepository,
+        roleAliasResolver,
         jwtTokenService,
         authSessionService,
         kafkaEventPublisher,
@@ -275,6 +307,9 @@ class AuthServiceTest {
     AuthService service = new AuthService(
         authUserRepository,
         permissionMatrixService,
+        authorizationPolicyService,
+        orgScopeRepository,
+        roleAliasResolver,
         jwtTokenService,
         authSessionService,
         kafkaEventPublisher,
@@ -308,6 +343,9 @@ class AuthServiceTest {
     AuthService service = new AuthService(
         authUserRepository,
         permissionMatrixService,
+        authorizationPolicyService,
+        orgScopeRepository,
+        roleAliasResolver,
         jwtTokenService,
         authSessionService,
         kafkaEventPublisher,
@@ -342,6 +380,9 @@ class AuthServiceTest {
     AuthService service = new AuthService(
         authUserRepository,
         permissionMatrixService,
+        authorizationPolicyService,
+        orgScopeRepository,
+        roleAliasResolver,
         jwtTokenService,
         authSessionService,
         kafkaEventPublisher,
@@ -366,6 +407,10 @@ class AuthServiceTest {
         null
     ));
     when(authUserRepository.countActiveUsers()).thenReturn(1L);
+    when(authorizationPolicyService.resolveUserProfile(7L))
+        .thenReturn(profile(7L, assignment(CanonicalRole.ADMIN, ScopeType.OUTLET, 7L, "OUTLET-7", Set.of(7L))));
+    when(authorizationPolicyService.canAssignRole(any(RequestUserContext.class), eq("cashier"), eq(Set.of(7L))))
+        .thenReturn(true);
     when(authUserRepository.createUser(any(CreateUserCommand.class))).thenReturn(new AuthUserRecord(
         101L,
         "new.user",
@@ -386,6 +431,9 @@ class AuthServiceTest {
     AuthService service = new AuthService(
         authUserRepository,
         permissionMatrixService,
+        authorizationPolicyService,
+        orgScopeRepository,
+        roleAliasResolver,
         jwtTokenService,
         authSessionService,
         kafkaEventPublisher,
@@ -399,7 +447,8 @@ class AuthServiceTest {
         " New User ",
         " EMP-101 ",
         " new.user@example.com ",
-        List.of(new AuthDtos.OutletAccessAssignment(7L, Set.of("cashier"), Set.of("sales.order.write")))
+        List.of(new AuthDtos.OutletAccessAssignment(7L, Set.of("cashier"), Set.of("sales.order.write"))),
+        null
     ));
 
     ArgumentCaptor<CreateUserCommand> commandCaptor = ArgumentCaptor.forClass(CreateUserCommand.class);
@@ -419,9 +468,9 @@ class AuthServiceTest {
   void updateRolePermissionsPublishesRoleUpdatedEvent() {
     RequestUserContextHolder.set(new RequestUserContext(
         7L,
-        "admin",
+        "superadmin",
         "sess-admin",
-        Set.of("admin"),
+        Set.of("superadmin"),
         Set.of("auth.role.write"),
         Set.of(),
         true,
@@ -435,10 +484,15 @@ class AuthServiceTest {
             Instant.parse("2026-03-27T00:00:00Z")
         ));
     when(authUserRepository.findUserIdsByRoleCode("manager")).thenReturn(Set.of(101L, 102L));
+    when(authorizationPolicyService.resolveUserProfile(7L))
+        .thenReturn(profile(7L, assignment(CanonicalRole.SUPERADMIN, ScopeType.GLOBAL, null, "global", Set.of(7L))));
 
     AuthService service = new AuthService(
         authUserRepository,
         permissionMatrixService,
+        authorizationPolicyService,
+        orgScopeRepository,
+        roleAliasResolver,
         jwtTokenService,
         authSessionService,
         kafkaEventPublisher,
@@ -493,5 +547,25 @@ class AuthServiceTest {
         Instant.parse(issuedAt),
         revokedAt == null ? Instant.parse(issuedAt) : Instant.parse(revokedAt)
     );
+  }
+
+  private static BusinessUserProfile profile(long userId, BusinessScopeAssignment... assignments) {
+    LinkedHashSet<CanonicalRole> roles = new LinkedHashSet<>();
+    LinkedHashSet<Long> outletIds = new LinkedHashSet<>();
+    for (BusinessScopeAssignment assignment : assignments) {
+      roles.add(assignment.role());
+      outletIds.addAll(assignment.outletIds());
+    }
+    return new BusinessUserProfile(userId, roles, List.of(assignments), outletIds);
+  }
+
+  private static BusinessScopeAssignment assignment(
+      CanonicalRole role,
+      ScopeType scopeType,
+      Long scopeId,
+      String scopeCode,
+      Set<Long> outletIds
+  ) {
+    return new BusinessScopeAssignment(role, scopeType, scopeId, scopeCode, outletIds, Set.of(role.storedRoleCode()));
   }
 }

@@ -139,6 +139,27 @@ public class PayrollRepository extends BaseRepository {
   ) {
   }
 
+  public record PayrollTimesheetScopeRecord(
+      long timesheetId,
+      long payrollPeriodId,
+      long regionId,
+      String regionCode,
+      long userId,
+      Long outletId
+  ) {
+  }
+
+  public record PayrollScopeRecord(
+      long payrollId,
+      long payrollTimesheetId,
+      long payrollPeriodId,
+      long regionId,
+      String regionCode,
+      long userId,
+      Long outletId
+  ) {
+  }
+
   public void insertPeriod(
       long id,
       long regionId,
@@ -212,6 +233,20 @@ public class PayrollRepository extends BaseRepository {
       int limit,
       int offset
   ) {
+    return listPeriods(null, regionId, startDate, endDate, q, sortBy, sortDir, limit, offset);
+  }
+
+  public PagedResult<PayrollPeriodRecord> listPeriods(
+      Set<Long> scopedRegionIds,
+      Long regionId,
+      LocalDate startDate,
+      LocalDate endDate,
+      String q,
+      String sortBy,
+      String sortDir,
+      int limit,
+      int offset
+  ) {
     StringBuilder sql = new StringBuilder(
         """
         SELECT id, region_id, name, start_date, end_date, pay_date, note, created_at, updated_at,
@@ -221,6 +256,7 @@ public class PayrollRepository extends BaseRepository {
         """
     );
     List<Object> params = new ArrayList<>();
+    appendRegionScopeFilter(sql, params, "region_id", scopedRegionIds);
     if (regionId != null) {
       sql.append(" AND region_id = ?");
       params.add(regionId);
@@ -379,6 +415,20 @@ public class PayrollRepository extends BaseRepository {
       int limit,
       int offset
   ) {
+    return listTimesheets(null, payrollPeriodId, userId, outletId, q, sortBy, sortDir, limit, offset);
+  }
+
+  public PagedResult<PayrollTimesheetListItemRecord> listTimesheets(
+      Set<Long> scopedRegionIds,
+      Long payrollPeriodId,
+      Long userId,
+      Long outletId,
+      String q,
+      String sortBy,
+      String sortDir,
+      int limit,
+      int offset
+  ) {
     StringBuilder sql = new StringBuilder(
         """
         SELECT pt.id, pt.payroll_period_id, pp.name AS payroll_period_name, pp.start_date, pp.end_date,
@@ -391,6 +441,7 @@ public class PayrollRepository extends BaseRepository {
         """
     );
     List<Object> params = new ArrayList<>();
+    appendRegionScopeFilter(sql, params, "pp.region_id", scopedRegionIds);
     if (payrollPeriodId != null) {
       sql.append(" AND pt.payroll_period_id = ?");
       params.add(payrollPeriodId);
@@ -457,6 +508,21 @@ public class PayrollRepository extends BaseRepository {
       int limit,
       int offset
   ) {
+    return listPayroll(null, payrollPeriodId, userId, outletId, status, q, sortBy, sortDir, limit, offset);
+  }
+
+  public PagedResult<PayrollListItemRecord> listPayroll(
+      Set<Long> scopedRegionIds,
+      Long payrollPeriodId,
+      Long userId,
+      Long outletId,
+      String status,
+      String q,
+      String sortBy,
+      String sortDir,
+      int limit,
+      int offset
+  ) {
     StringBuilder sql = new StringBuilder(
         """
         SELECT p.id, p.payroll_timesheet_id, pt.payroll_period_id, pp.name AS payroll_period_name,
@@ -470,6 +536,7 @@ public class PayrollRepository extends BaseRepository {
         """
     );
     List<Object> params = new ArrayList<>();
+    appendRegionScopeFilter(sql, params, "pp.region_id", scopedRegionIds);
     if (payrollPeriodId != null) {
       sql.append(" AND pt.payroll_period_id = ?");
       params.add(payrollPeriodId);
@@ -527,6 +594,36 @@ public class PayrollRepository extends BaseRepository {
         """,
         this::mapPayroll,
         payrollTimesheetId
+    );
+  }
+
+  public Optional<PayrollTimesheetScopeRecord> findTimesheetScope(long timesheetId) {
+    return queryOne(
+        """
+        SELECT pt.id AS timesheet_id, pt.payroll_period_id, pp.region_id, r.code AS region_code, pt.user_id, pt.outlet_id
+        FROM core.payroll_timesheet pt
+        JOIN core.payroll_period pp ON pp.id = pt.payroll_period_id
+        JOIN core.region r ON r.id = pp.region_id
+        WHERE pt.id = ?
+        """,
+        this::mapTimesheetScope,
+        timesheetId
+    );
+  }
+
+  public Optional<PayrollScopeRecord> findPayrollScope(long payrollId) {
+    return queryOne(
+        """
+        SELECT p.id AS payroll_id, p.payroll_timesheet_id, pt.payroll_period_id, pp.region_id, r.code AS region_code,
+               pt.user_id, pt.outlet_id
+        FROM core.payroll p
+        JOIN core.payroll_timesheet pt ON pt.id = p.payroll_timesheet_id
+        JOIN core.payroll_period pp ON pp.id = pt.payroll_period_id
+        JOIN core.region r ON r.id = pp.region_id
+        WHERE p.id = ?
+        """,
+        this::mapPayrollScope,
+        payrollId
     );
   }
 
@@ -734,6 +831,21 @@ public class PayrollRepository extends BaseRepository {
     }
   }
 
+  private PayrollTimesheetScopeRecord mapTimesheetScope(ResultSet rs) {
+    try {
+      return new PayrollTimesheetScopeRecord(
+          rs.getLong("timesheet_id"),
+          rs.getLong("payroll_period_id"),
+          rs.getLong("region_id"),
+          rs.getString("region_code"),
+          rs.getLong("user_id"),
+          rs.getObject("outlet_id", Long.class)
+      );
+    } catch (SQLException e) {
+      throw new IllegalStateException("Unable to map payroll timesheet scope", e);
+    }
+  }
+
   private PayrollRecord mapPayroll(ResultSet rs) {
     try {
       Timestamp approvedAt = rs.getTimestamp("approved_at");
@@ -779,6 +891,22 @@ public class PayrollRepository extends BaseRepository {
       );
     } catch (SQLException e) {
       throw new IllegalStateException("Unable to map payroll list item", e);
+    }
+  }
+
+  private PayrollScopeRecord mapPayrollScope(ResultSet rs) {
+    try {
+      return new PayrollScopeRecord(
+          rs.getLong("payroll_id"),
+          rs.getLong("payroll_timesheet_id"),
+          rs.getLong("payroll_period_id"),
+          rs.getLong("region_id"),
+          rs.getString("region_code"),
+          rs.getLong("user_id"),
+          rs.getObject("outlet_id", Long.class)
+      );
+    } catch (SQLException e) {
+      throw new IllegalStateException("Unable to map payroll scope", e);
     }
   }
 
@@ -843,6 +971,34 @@ public class PayrollRepository extends BaseRepository {
   private void bindParams(PreparedStatement ps, List<Object> params) throws SQLException {
     for (int i = 0; i < params.size(); i++) {
       ps.setObject(i + 1, params.get(i));
+    }
+  }
+
+  private void appendRegionScopeFilter(
+      StringBuilder sql,
+      List<Object> params,
+      String column,
+      Set<Long> scopedRegionIds
+  ) {
+    if (scopedRegionIds == null) {
+      return;
+    }
+    if (scopedRegionIds.isEmpty()) {
+      sql.append(" AND 1 = 0");
+      return;
+    }
+    sql.append(" AND ").append(column).append(" IN (");
+    appendPlaceholders(sql, scopedRegionIds.size());
+    sql.append(')');
+    params.addAll(scopedRegionIds);
+  }
+
+  private void appendPlaceholders(StringBuilder sql, int count) {
+    for (int i = 0; i < count; i++) {
+      if (i > 0) {
+        sql.append(", ");
+      }
+      sql.append('?');
     }
   }
 }

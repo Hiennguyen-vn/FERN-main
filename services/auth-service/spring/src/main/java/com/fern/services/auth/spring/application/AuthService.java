@@ -1,14 +1,21 @@
 package com.fern.services.auth.spring.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.AuthSessionRepository;
 import com.dorabets.common.spring.auth.AuthSessionService;
+import com.dorabets.common.spring.auth.BusinessScopeAssignment;
+import com.dorabets.common.spring.auth.BusinessUserProfile;
+import com.dorabets.common.spring.auth.CanonicalRole;
 import com.dorabets.common.spring.auth.JwtClaims;
 import com.dorabets.common.spring.auth.JwtTokenService;
+import com.dorabets.common.spring.auth.OrgScopeRepository;
 import com.dorabets.common.spring.auth.PermissionMatrix;
 import com.dorabets.common.spring.auth.PermissionMatrixService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.dorabets.common.spring.auth.RoleAliasResolver;
+import com.dorabets.common.spring.auth.ScopeType;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.dorabets.common.spring.web.PagedResult;
 import com.dorabets.common.spring.web.QueryConventions;
@@ -28,6 +35,8 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,6 +47,9 @@ public class AuthService {
 
   private final AuthUserRepository authUserRepository;
   private final PermissionMatrixService permissionMatrixService;
+  private final AuthorizationPolicyService authorizationPolicyService;
+  private final OrgScopeRepository orgScopeRepository;
+  private final RoleAliasResolver roleAliasResolver;
   private final JwtTokenService jwtTokenService;
   private final AuthSessionService authSessionService;
   private final TypedKafkaEventPublisher kafkaEventPublisher;
@@ -47,6 +59,9 @@ public class AuthService {
   public AuthService(
       AuthUserRepository authUserRepository,
       PermissionMatrixService permissionMatrixService,
+      AuthorizationPolicyService authorizationPolicyService,
+      OrgScopeRepository orgScopeRepository,
+      RoleAliasResolver roleAliasResolver,
       JwtTokenService jwtTokenService,
       AuthSessionService authSessionService,
       TypedKafkaEventPublisher kafkaEventPublisher,
@@ -55,6 +70,9 @@ public class AuthService {
   ) {
     this.authUserRepository = authUserRepository;
     this.permissionMatrixService = permissionMatrixService;
+    this.authorizationPolicyService = authorizationPolicyService;
+    this.orgScopeRepository = orgScopeRepository;
+    this.roleAliasResolver = roleAliasResolver;
     this.jwtTokenService = jwtTokenService;
     this.authSessionService = authSessionService;
     this.kafkaEventPublisher = kafkaEventPublisher;
@@ -97,6 +115,7 @@ public class AuthService {
         toUserSummary(user),
         matrix.rolesByOutlet(),
         matrix.permissionsByOutlet(),
+        toBusinessScopeViews(authorizationPolicyService.resolveUserProfile(userId, matrix)),
         session.sessionId(),
         session.issuedAt(),
         session.expiresAt()
@@ -162,8 +181,9 @@ public class AuthService {
   public AuthDtos.UserSummary createUser(AuthDtos.CreateUserRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
     long existingUsers = authUserRepository.countActiveUsers();
+    List<OutletAccessGrant> accessGrants = resolveAccessGrants(request);
     if (existingUsers > 0) {
-      enforceUserCreationPermission(context, request);
+      enforceUserCreationPermission(context, accessGrants);
     }
 
     String passwordHash;
@@ -172,16 +192,6 @@ public class AuthService {
     } catch (Exception e) {
       throw new IllegalStateException("Unable to hash password", e);
     }
-
-    List<OutletAccessGrant> accessGrants = request.outletAccess() == null
-        ? List.of()
-        : request.outletAccess().stream()
-            .map(assignment -> new OutletAccessGrant(
-                assignment.outletId(),
-                normalizeValues(assignment.roles()),
-                normalizeValues(assignment.permissions())
-            ))
-            .toList();
 
     AuthUserRecord created = authUserRepository.createUser(new CreateUserCommand(
         request.username().trim(),
@@ -322,12 +332,25 @@ public class AuthService {
     );
   }
 
+  public List<AuthDtos.BusinessRoleCatalogItem> listBusinessRoles() {
+    requireIamCatalogRead();
+    return authorizationPolicyService.businessRoles().stream()
+        .map(role -> new AuthDtos.BusinessRoleCatalogItem(
+            role.code(),
+            role.displayName(),
+            businessRoleDescription(role),
+            role.defaultScopeType().code(),
+            roleAliasResolver.aliasesFor(role)
+        ))
+        .toList();
+  }
+
   public AuthDtos.RolePermissionsResponse updateRolePermissions(
       String roleCode,
       AuthDtos.UpdateRolePermissionsRequest request
   ) {
     RequestUserContext context = RequestUserContextHolder.get();
-    requireRoleAdmin(context);
+    requireGlobalRoleAdmin(context);
     RolePermissionUpdateResult result = authUserRepository.replaceRolePermissions(
         roleCode,
         normalizeValues(request.permissionCodes())
@@ -368,37 +391,64 @@ public class AuthService {
 
   private void enforceUserCreationPermission(
       RequestUserContext context,
-      AuthDtos.CreateUserRequest request
+      List<OutletAccessGrant> accessGrants
   ) {
-    long actorUserId = context.requireUserId();
-    if (isAdminContext(context)) {
+    if (context.internalService()) {
       return;
     }
-    if (request.outletAccess() == null || request.outletAccess().isEmpty()) {
+    long actorUserId = context.requireUserId();
+    BusinessUserProfile actorProfile = authorizationPolicyService.resolveUserProfile(actorUserId);
+    if (actorProfile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return;
+    }
+    if (accessGrants.isEmpty()) {
       throw ServiceException.forbidden("User creation requires admin access or outlet assignments");
     }
-    for (AuthDtos.OutletAccessAssignment assignment : request.outletAccess()) {
-      if (!permissionMatrixService.hasPermission(actorUserId, assignment.outletId(), "auth.user.write")) {
+
+    Set<Long> requestedOutletIds = accessGrants.stream()
+        .map(OutletAccessGrant::outletId)
+        .collect(Collectors.toCollection(LinkedHashSet::new));
+    if (!actorProfile.outletsForRole(CanonicalRole.ADMIN).isEmpty()) {
+      authorizationPolicyService.requireGovernedOutlets(context, requestedOutletIds);
+      for (OutletAccessGrant accessGrant : accessGrants) {
+        for (String roleCode : accessGrant.roles()) {
+          if (!authorizationPolicyService.canAssignRole(context, roleCode, Set.of(accessGrant.outletId()))) {
+            throw ServiceException.forbidden("Role assignment is outside admin scope: " + roleCode);
+          }
+        }
+      }
+      return;
+    }
+
+    for (OutletAccessGrant accessGrant : accessGrants) {
+      if (!permissionMatrixService.hasPermission(actorUserId, accessGrant.outletId(), "auth.user.write")) {
         throw ServiceException.forbidden(
-            "Missing auth.user.write for outlet " + assignment.outletId()
+            "Missing auth.user.write for outlet " + accessGrant.outletId()
         );
+      }
+      if (!accessGrant.roles().isEmpty()
+          && !permissionMatrixService.hasPermission(actorUserId, accessGrant.outletId(), "auth.role.write")) {
+        throw ServiceException.forbidden("Missing auth.role.write for outlet " + accessGrant.outletId());
+      }
+      for (String roleCode : accessGrant.roles()) {
+        CanonicalRole canonicalRole = roleAliasResolver.toCanonicalRole(roleCode)
+            .orElseThrow(() -> ServiceException.forbidden("Unsupported business role assignment: " + roleCode));
+        if (canonicalRole == CanonicalRole.ADMIN || canonicalRole == CanonicalRole.SUPERADMIN) {
+          throw ServiceException.forbidden("Direct IAM writers cannot assign administrative roles");
+        }
       }
     }
   }
 
-  private void requireRoleAdmin(RequestUserContext context) {
-    context.requireUserId();
-    if (isAdminContext(context)) {
+  private void requireGlobalRoleAdmin(RequestUserContext context) {
+    if (context.internalService()) {
       return;
     }
-    throw ServiceException.forbidden("Administrative role management is required");
-  }
-
-  private boolean isAdminContext(RequestUserContext context) {
-    return context.internalService()
-        || context.hasRole("admin")
-        || context.hasRole("superadmin")
-        || context.hasPermission("auth.role.write");
+    context.requireUserId();
+    if (authorizationPolicyService.resolveUserProfile(context.userId()).hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return;
+    }
+    throw ServiceException.forbidden("Superadmin role management is required");
   }
 
   private void requireIamCatalogRead() {
@@ -407,24 +457,20 @@ public class AuthService {
 
   private Set<Long> resolveReadableOutletIds(Long requestedOutletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    Set<Long> readableOutletIds = authorizationPolicyService.resolveGovernedOutletIds(context);
+    if (readableOutletIds == null) {
       return requestedOutletId == null ? null : Set.of(requestedOutletId);
     }
-
-    context.requireUserId();
-    if (!context.hasPermission("auth.user.write") && !context.hasPermission("auth.role.write")) {
+    if (readableOutletIds.isEmpty()) {
       throw ServiceException.forbidden("IAM read access is required");
     }
-    if (context.outletIds().isEmpty()) {
-      throw ServiceException.forbidden("IAM read access requires outlet scope");
-    }
     if (requestedOutletId != null) {
-      if (!context.outletIds().contains(requestedOutletId)) {
+      if (!readableOutletIds.contains(requestedOutletId)) {
         throw ServiceException.forbidden("IAM read access denied for outlet " + requestedOutletId);
       }
       return Set.of(requestedOutletId);
     }
-    return context.outletIds();
+    return readableOutletIds;
   }
 
   private int sanitizeLimit(int limit) {
@@ -476,16 +522,172 @@ public class AuthService {
       PermissionMatrix matrix,
       AuthSessionRepository.AuthSessionRecord session
   ) {
+    BusinessUserProfile profile = authorizationPolicyService.resolveUserProfile(user.id(), matrix);
     return new AuthDtos.LoginResponse(
         token,
         accessTokenTtlSeconds,
         toUserSummary(user),
         matrix.rolesByOutlet(),
         matrix.permissionsByOutlet(),
+        toBusinessScopeViews(profile),
         session.sessionId(),
         session.issuedAt(),
         session.expiresAt()
     );
+  }
+
+  private List<OutletAccessGrant> resolveAccessGrants(AuthDtos.CreateUserRequest request) {
+    Map<Long, MutableGrant> grantsByOutlet = new LinkedHashMap<>();
+    if (request.outletAccess() != null) {
+      request.outletAccess().forEach(assignment -> mergeGrant(
+          grantsByOutlet,
+          assignment.outletId(),
+          normalizeRoleCodes(assignment.roles(), false),
+          normalizeValues(assignment.permissions())
+      ));
+    }
+    if (request.scopeAssignments() != null) {
+      request.scopeAssignments().forEach(assignment -> {
+        ScopeType scopeType = ScopeType.fromCode(assignment.scopeType());
+        Set<String> roleCodes = normalizeRoleCodes(assignment.roles(), true);
+        Set<String> permissionCodes = normalizeValues(assignment.permissions());
+        List<Long> outletIds = resolveScopeOutletIds(scopeType, assignment.scopeId(), roleCodes);
+        outletIds.forEach(outletId -> mergeGrant(grantsByOutlet, outletId, roleCodes, permissionCodes));
+      });
+    }
+    return grantsByOutlet.values().stream()
+        .map(grant -> new OutletAccessGrant(
+            grant.outletId(),
+            Set.copyOf(grant.roles()),
+            Set.copyOf(grant.permissions())
+        ))
+        .toList();
+  }
+
+  private List<Long> resolveScopeOutletIds(ScopeType scopeType, String scopeId, Set<String> roleCodes) {
+    return switch (scopeType) {
+      case OUTLET -> List.of(parseOutletId(scopeId));
+      case REGION -> {
+        OrgScopeRepository.RegionScope regionScope = orgScopeRepository.findRegionScope(scopeId)
+            .orElseThrow(() -> ServiceException.notFound("Region scope not found: " + scopeId));
+        if (regionScope.outletIds().isEmpty()) {
+          throw ServiceException.badRequest("Region scope has no active outlets: " + scopeId);
+        }
+        yield regionScope.outletIds().stream().sorted().toList();
+      }
+      case GLOBAL -> {
+        if (roleCodes.stream().map(roleAliasResolver::toCanonicalRole).flatMap(Optional::stream)
+            .anyMatch(role -> role != CanonicalRole.SUPERADMIN)) {
+          throw ServiceException.badRequest("Global scope is reserved for superadmin");
+        }
+        Set<Long> outletIds = orgScopeRepository.findAllActiveOutletIds();
+        if (outletIds.isEmpty()) {
+          throw ServiceException.badRequest("Global scope has no active outlets");
+        }
+        yield outletIds.stream().sorted().toList();
+      }
+    };
+  }
+
+  private long parseOutletId(String scopeId) {
+    try {
+      return Long.parseLong(Objects.requireNonNull(scopeId).trim());
+    } catch (Exception e) {
+      throw ServiceException.badRequest("Invalid outlet scope id: " + scopeId);
+    }
+  }
+
+  private Set<String> normalizeRoleCodes(Set<String> values, boolean strictBusinessRole) {
+    if (values == null || values.isEmpty()) {
+      return Set.of();
+    }
+    LinkedHashSet<String> normalized = new LinkedHashSet<>();
+    for (String value : values) {
+      if (value == null || value.isBlank()) {
+        continue;
+      }
+      Optional<CanonicalRole> canonicalRole = roleAliasResolver.toCanonicalRole(value);
+      if (strictBusinessRole && canonicalRole.isEmpty()) {
+        throw ServiceException.badRequest("Unsupported business role: " + value);
+      }
+      normalized.add(roleAliasResolver.toStoredRoleCode(value));
+    }
+    return Set.copyOf(normalized);
+  }
+
+  private void mergeGrant(
+      Map<Long, MutableGrant> grantsByOutlet,
+      long outletId,
+      Set<String> roles,
+      Set<String> permissions
+  ) {
+    MutableGrant grant = grantsByOutlet.computeIfAbsent(outletId, MutableGrant::new);
+    grant.roles().addAll(roles);
+    grant.permissions().addAll(permissions);
+  }
+
+  private List<AuthDtos.BusinessScopeView> toBusinessScopeViews(BusinessUserProfile profile) {
+    Map<String, MutableBusinessScopeView> grouped = new LinkedHashMap<>();
+    for (BusinessScopeAssignment assignment : profile.assignments()) {
+      String scopeId = assignment.scopeType() == ScopeType.GLOBAL
+          ? "global"
+          : assignment.scopeId() == null ? null : Long.toString(assignment.scopeId());
+      String key = assignment.scopeType().code() + ":" + scopeId;
+      MutableBusinessScopeView view = grouped.computeIfAbsent(
+          key,
+          ignored -> new MutableBusinessScopeView(assignment.scopeType().code(), scopeId, assignment.scopeCode())
+      );
+      view.roles().add(assignment.role().code());
+      view.outletIds().addAll(assignment.outletIds());
+    }
+    return grouped.values().stream()
+        .map(view -> new AuthDtos.BusinessScopeView(
+            view.scopeType(),
+            view.scopeId(),
+            view.scopeCode(),
+            Set.copyOf(view.roles()),
+            Set.copyOf(view.outletIds())
+        ))
+        .toList();
+  }
+
+  private String businessRoleDescription(CanonicalRole role) {
+    return switch (role) {
+      case SUPERADMIN -> "Full chain-wide authority and emergency override";
+      case ADMIN -> "Scoped IAM governance for region or outlet";
+      case REGION_MANAGER -> "Regional operational oversight";
+      case OUTLET_MANAGER -> "Outlet owner for store operations and approvals";
+      case STAFF -> "Frontline cashier and POS operator";
+      case PRODUCT_MANAGER -> "Regional menu, catalog, and pricing owner";
+      case PROCUREMENT -> "Store procurement operator without final approval";
+      case FINANCE -> "Regional finance and payroll approver";
+      case KITCHEN_STAFF -> "Outlet kitchen and fulfillment operator";
+      case HR -> "Regional HR, scheduling, contracts, and payroll preparation";
+    };
+  }
+
+  private record MutableGrant(
+      long outletId,
+      LinkedHashSet<String> roles,
+      LinkedHashSet<String> permissions
+  ) {
+
+    private MutableGrant(long outletId) {
+      this(outletId, new LinkedHashSet<>(), new LinkedHashSet<>());
+    }
+  }
+
+  private record MutableBusinessScopeView(
+      String scopeType,
+      String scopeId,
+      String scopeCode,
+      LinkedHashSet<String> roles,
+      LinkedHashSet<Long> outletIds
+  ) {
+
+    private MutableBusinessScopeView(String scopeType, String scopeId, String scopeCode) {
+      this(scopeType, scopeId, scopeCode, new LinkedHashSet<>(), new LinkedHashSet<>());
+    }
   }
 
   private static AuthDtos.SessionView toSessionView(

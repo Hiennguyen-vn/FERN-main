@@ -1,6 +1,9 @@
 package com.fern.services.hr.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
+import com.dorabets.common.spring.auth.BusinessUserProfile;
+import com.dorabets.common.spring.auth.CanonicalRole;
 import com.dorabets.common.spring.auth.PermissionMatrix;
 import com.dorabets.common.spring.auth.PermissionMatrixService;
 import com.dorabets.common.spring.auth.RequestUserContext;
@@ -12,6 +15,7 @@ import com.fern.services.hr.infrastructure.ShiftRepository;
 import com.fern.services.hr.infrastructure.WorkShiftRepository;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.LocalDate;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.stereotype.Service;
@@ -27,17 +31,20 @@ public class WorkShiftService {
   private final ShiftRepository shiftRepository;
   private final SnowflakeIdGenerator idGenerator;
   private final PermissionMatrixService permissionMatrixService;
+  private final AuthorizationPolicyService authorizationPolicyService;
 
   public WorkShiftService(
       WorkShiftRepository workShiftRepository,
       ShiftRepository shiftRepository,
       SnowflakeIdGenerator idGenerator,
-      PermissionMatrixService permissionMatrixService
+      PermissionMatrixService permissionMatrixService,
+      AuthorizationPolicyService authorizationPolicyService
   ) {
     this.workShiftRepository = workShiftRepository;
     this.shiftRepository = shiftRepository;
     this.idGenerator = idGenerator;
     this.permissionMatrixService = permissionMatrixService;
+    this.authorizationPolicyService = authorizationPolicyService;
   }
 
   @Transactional
@@ -86,16 +93,17 @@ public class WorkShiftService {
       Integer offset
   ) {
     RequestUserContext context = RequestUserContextHolder.get();
-    boolean admin = context.internalService() || context.hasRole("admin") || context.hasRole("superadmin");
     Long resolvedUserId = userId;
     Long resolvedOutletId = outletId;
+    Set<Long> scopedOutletIds = resolveSchedulingOutletIds(false);
 
-    if (!admin) {
+    if (scopedOutletIds != null) {
       long currentUserId = context.requireUserId();
-      if (resolvedUserId == null && resolvedOutletId == null) {
+      boolean scheduler = !scopedOutletIds.isEmpty();
+      if (!scheduler && resolvedUserId == null && resolvedOutletId == null) {
         resolvedUserId = currentUserId;
       }
-      if (resolvedUserId != null && resolvedUserId != currentUserId) {
+      if (!scheduler && resolvedUserId != null && resolvedUserId != currentUserId) {
         throw ServiceException.forbidden("Cannot view another user's work shifts");
       }
       if (resolvedOutletId != null) {
@@ -107,6 +115,7 @@ public class WorkShiftService {
     return workShiftRepository.search(
             resolvedUserId,
             resolvedOutletId,
+            scopedOutletIds,
             from,
             to,
             trimToNull(scheduleStatus),
@@ -194,7 +203,7 @@ public class WorkShiftService {
 
   private void requireReadAccess(WorkShiftRepository.WorkShiftRecord record) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (resolveSchedulingOutletIds(false) == null) {
       return;
     }
     Long userId = context.userId();
@@ -210,7 +219,7 @@ public class WorkShiftService {
 
   private void requireAttendanceMutationAccess(WorkShiftRepository.WorkShiftRecord record) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (resolveSchedulingOutletIds(true) == null) {
       return;
     }
     Long userId = context.userId();
@@ -222,20 +231,38 @@ public class WorkShiftService {
 
   private void requireScheduleAccess(long outletId, boolean mutation) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (context.internalService()) {
       return;
     }
-    long userId = context.requireUserId();
-    PermissionMatrix matrix = permissionMatrixService.load(userId);
-    if (matrix.hasPermission(outletId, HR_SCHEDULE_PERMISSION)
-        || matrix.rolesForOutlet(outletId).contains("admin")
-        || matrix.rolesForOutlet(outletId).contains("outlet_manager")) {
-      return;
-    }
-    if (!mutation && context.outletIds().contains(outletId)) {
+    if (authorizationPolicyService.canManageHrSchedule(context, outletId, mutation)) {
       return;
     }
     throw ServiceException.forbidden("Missing HR schedule access for outlet " + outletId);
+  }
+
+  private Set<Long> resolveSchedulingOutletIds(boolean mutation) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (context.internalService()) {
+      return null;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = authorizationPolicyService.resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return null;
+    }
+    LinkedHashSet<Long> outletIds = new LinkedHashSet<>();
+    outletIds.addAll(profile.outletsForRole(CanonicalRole.HR));
+    outletIds.addAll(profile.outletsForRole(CanonicalRole.OUTLET_MANAGER));
+    PermissionMatrix matrix = permissionMatrixService.load(userId);
+    matrix.permissionsByOutlet().forEach((outletId, permissionCodes) -> {
+      if (permissionCodes.contains(HR_SCHEDULE_PERMISSION)) {
+        outletIds.add(outletId);
+      }
+    });
+    if (!mutation && !context.outletIds().isEmpty()) {
+      outletIds.addAll(context.outletIds());
+    }
+    return outletIds.isEmpty() ? Set.of() : Set.copyOf(outletIds);
   }
 
   private static String defaultEnum(String value, String fallback) {

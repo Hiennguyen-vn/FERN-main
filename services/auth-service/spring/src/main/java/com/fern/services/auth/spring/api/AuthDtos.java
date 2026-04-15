@@ -26,6 +26,7 @@ public final class AuthDtos {
       UserSummary user,
       Map<Long, Set<String>> rolesByOutlet,
       Map<Long, Set<String>> permissionsByOutlet,
+      List<BusinessScopeView> scopeAssignments,
       String sessionId,
       Instant issuedAt,
       Instant expiresAt
@@ -39,13 +40,22 @@ public final class AuthDtos {
   ) {
   }
 
+  public record ScopeAssignmentRequest(
+      @NotBlank String scopeType,
+      @NotBlank String scopeId,
+      Set<String> roles,
+      Set<String> permissions
+  ) {
+  }
+
   public record CreateUserRequest(
       @NotBlank String username,
       @NotBlank String password,
       @NotBlank String fullName,
       String employeeCode,
       String email,
-      @Valid List<OutletAccessAssignment> outletAccess
+      @Valid List<OutletAccessAssignment> outletAccess,
+      @Valid List<ScopeAssignmentRequest> scopeAssignments
   ) {
   }
 
@@ -58,6 +68,7 @@ public final class AuthDtos {
       UserSummary user,
       Map<Long, Set<String>> rolesByOutlet,
       Map<Long, Set<String>> permissionsByOutlet,
+      List<BusinessScopeView> scopeAssignments,
       String sessionId,
       Instant issuedAt,
       Instant expiresAt
@@ -161,6 +172,24 @@ public final class AuthDtos {
       String roleCode,
       Set<String> permissionCodes,
       Instant updatedAt
+  ) {
+  }
+
+  public record BusinessScopeView(
+      String scopeType,
+      String scopeId,
+      String scopeCode,
+      Set<String> roles,
+      Set<Long> outletIds
+  ) {
+  }
+
+  public record BusinessRoleCatalogItem(
+      String code,
+      String name,
+      String description,
+      String scopeType,
+      Set<String> aliases
   ) {
   }
 }

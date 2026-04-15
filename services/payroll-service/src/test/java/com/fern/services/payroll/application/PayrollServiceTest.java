@@ -8,6 +8,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
+import com.dorabets.common.spring.auth.BusinessUserProfile;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
@@ -21,6 +23,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
@@ -40,6 +43,8 @@ class PayrollServiceTest {
   private SnowflakeIdGenerator idGenerator;
   @Mock
   private TypedKafkaEventPublisher eventPublisher;
+  @Mock
+  private AuthorizationPolicyService authorizationPolicyService;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
 
@@ -48,27 +53,24 @@ class PayrollServiceTest {
     RequestUserContextHolder.clear();
   }
 
+  private PayrollService service() {
+    return new PayrollService(
+        payrollRepository,
+        hrServiceClient,
+        idGenerator,
+        eventPublisher,
+        clock,
+        authorizationPolicyService
+    );
+  }
+
   @Test
   void generatePayrollRejectsDuplicateTimesheet() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     ));
-    when(payrollRepository.findTimesheet(70L)).thenReturn(Optional.of(
-        new PayrollRepository.PayrollTimesheetRecord(
-            70L,
-            11L,
-            3012L,
-            2001L,
-            BigDecimal.ONE,
-            new BigDecimal("8.0"),
-            BigDecimal.ZERO,
-            new BigDecimal("1.5"),
-            0,
-            BigDecimal.ZERO,
-            null,
-            Instant.now(),
-            Instant.now()
-        )
+    when(payrollRepository.findTimesheetScope(70L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetScopeRecord(70L, 11L, 1002L, "US", 3012L, 2001L)
     ));
     when(payrollRepository.findPayrollByTimesheetId(70L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollRecord(
@@ -87,7 +89,7 @@ class PayrollServiceTest {
         )
     ));
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.generatePayroll(
         new PayrollDtos.GeneratePayrollRequest(70L, "USD", BigDecimal.TEN, BigDecimal.TEN, null)
@@ -122,7 +124,7 @@ class PayrollServiceTest {
         )
     ));
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.createTimesheet(
         new PayrollDtos.CreatePayrollTimesheetRequest(
@@ -152,7 +154,7 @@ class PayrollServiceTest {
     when(payrollRepository.findTimesheetByPeriodAndUser(70L, 3012L)).thenReturn(Optional.empty());
     when(payrollRepository.outletBelongsToRegionScope(2000L, 1002L)).thenReturn(false);
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.createTimesheet(
         new PayrollDtos.CreatePayrollTimesheetRequest(
@@ -183,7 +185,7 @@ class PayrollServiceTest {
     when(payrollRepository.outletBelongsToRegionScope(2001L, 1002L)).thenReturn(true);
     when(payrollRepository.userHasOutletScope(3012L, 2001L)).thenReturn(false);
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.createTimesheet(
         new PayrollDtos.CreatePayrollTimesheetRequest(
@@ -207,9 +209,9 @@ class PayrollServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     ));
-    when(payrollRepository.findTimesheet(70L)).thenReturn(Optional.empty());
+    when(payrollRepository.findTimesheetScope(70L)).thenReturn(Optional.empty());
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.generatePayroll(
         new PayrollDtos.GeneratePayrollRequest(70L, "USD", BigDecimal.TEN, BigDecimal.TEN, null)
@@ -252,11 +254,14 @@ class PayrollServiceTest {
         Instant.parse("2026-03-27T00:00:00Z"),
         Instant.parse("2026-03-27T00:00:00Z")
     )));
+    when(payrollRepository.findPayrollScope(99L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollScopeRecord(99L, 88L, 11L, 1002L, "US", 12L, 13L)
+    ));
     when(payrollRepository.approvePayroll(99L, null)).thenReturn(
         new PayrollRepository.PayrollApprovalProjection(payroll, 11L, 12L, 13L)
     );
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
     service.approvePayroll(99L);
 
     verify(eventPublisher).publish(
@@ -270,8 +275,12 @@ class PayrollServiceTest {
   @Test
   void rejectPayrollUpdatesDraftRun() {
     RequestUserContextHolder.set(new RequestUserContext(
-        5L, "admin", "sess-5", Set.of("admin"), Set.of(), Set.of(), true, false, null
+        5L, "finance", "sess-5", Set.of("finance"), Set.of(), Set.of(), true, false, null
     ));
+    when(payrollRepository.findPayrollScope(99L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollScopeRecord(99L, 88L, 11L, 1002L, "US", 12L, 13L)
+    ));
+    when(authorizationPolicyService.canApprovePayroll(RequestUserContextHolder.get(), 1002L)).thenReturn(true);
     when(payrollRepository.findPayroll(99L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollRecord(
             99L,
@@ -305,7 +314,7 @@ class PayrollServiceTest {
         )
     );
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
     PayrollDtos.PayrollView result = service.rejectPayroll(99L, "Missing evidence");
 
     assertEquals("rejected", result.status());
@@ -316,6 +325,9 @@ class PayrollServiceTest {
   void approvePayrollRejectsNonDraftRuns() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
+    ));
+    when(payrollRepository.findPayrollScope(99L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollScopeRecord(99L, 88L, 11L, 1002L, "US", 12L, 13L)
     ));
     when(payrollRepository.findPayroll(99L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollRecord(
@@ -334,7 +346,7 @@ class PayrollServiceTest {
         )
     ));
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
     ServiceException exception = assertThrows(ServiceException.class, () -> service.approvePayroll(99L));
 
     assertEquals(409, exception.getStatusCode());
@@ -345,7 +357,7 @@ class PayrollServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     ));
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
 
     assertThrows(ServiceException.class, () -> service.createPeriod(new PayrollDtos.CreatePayrollPeriodRequest(
         7L,
@@ -378,7 +390,7 @@ class PayrollServiceTest {
         Instant.now()
     )));
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.createPeriod(
         new PayrollDtos.CreatePayrollPeriodRequest(
@@ -399,7 +411,9 @@ class PayrollServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         15L, "manager", "sess-15", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
     ));
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    when(authorizationPolicyService.resolveUserProfile(15L))
+        .thenReturn(new BusinessUserProfile(15L, Set.of(), List.of(), Set.of(2000L)));
+    PayrollService service = service();
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.listPeriods(
         null,
@@ -420,13 +434,13 @@ class PayrollServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     ));
-    when(payrollRepository.listTimesheets(11L, 12L, 13L, null, null, null, 200, 0))
+    when(payrollRepository.listTimesheets(null, 11L, 12L, 13L, null, null, null, 200, 0))
         .thenReturn(PagedResult.of(java.util.List.of(), 200, 0, 0));
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
     service.listTimesheets(11L, 12L, 13L, null, null, null, 1000, null);
 
-    verify(payrollRepository).listTimesheets(11L, 12L, 13L, null, null, null, 200, 0);
+    verify(payrollRepository).listTimesheets(null, 11L, 12L, 13L, null, null, null, 200, 0);
   }
 
   @Test
@@ -434,13 +448,13 @@ class PayrollServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     ));
-    when(payrollRepository.listPayroll(11L, 12L, 13L, "approved", null, null, null, 50, 0))
+    when(payrollRepository.listPayroll(null, 11L, 12L, 13L, "approved", null, null, null, 50, 0))
         .thenReturn(PagedResult.of(java.util.List.of(), 50, 0, 0));
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
     service.listPayroll(11L, 12L, 13L, "approved", null, null, null, null, null);
 
-    verify(payrollRepository).listPayroll(11L, 12L, 13L, "approved", null, null, null, 50, 0);
+    verify(payrollRepository).listPayroll(null, 11L, 12L, 13L, "approved", null, null, null, 50, 0);
   }
 
   @Test
@@ -448,12 +462,12 @@ class PayrollServiceTest {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     ));
-    when(payrollRepository.listPeriods(7L, LocalDate.parse("2026-03-01"), LocalDate.parse("2026-03-31"), null, null, null, 200, 5))
+    when(payrollRepository.listPeriods(null, 7L, LocalDate.parse("2026-03-01"), LocalDate.parse("2026-03-31"), null, null, null, 200, 5))
         .thenReturn(PagedResult.of(java.util.List.of(), 200, 5, 0));
 
-    PayrollService service = new PayrollService(payrollRepository, hrServiceClient, idGenerator, eventPublisher, clock);
+    PayrollService service = service();
     service.listPeriods(7L, LocalDate.parse("2026-03-01"), LocalDate.parse("2026-03-31"), null, null, null, 1000, 5);
 
-    verify(payrollRepository).listPeriods(7L, LocalDate.parse("2026-03-01"), LocalDate.parse("2026-03-31"), null, null, null, 200, 5);
+    verify(payrollRepository).listPeriods(null, 7L, LocalDate.parse("2026-03-01"), LocalDate.parse("2026-03-31"), null, null, null, 200, 5);
   }
 }

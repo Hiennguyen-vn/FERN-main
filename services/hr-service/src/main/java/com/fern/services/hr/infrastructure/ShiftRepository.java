@@ -79,6 +79,7 @@ public class ShiftRepository extends BaseRepository {
 
   public PagedResult<ShiftRecord> findByOutletId(
       Long outletId,
+      Set<Long> scopedOutletIds,
       String q,
       String sortBy,
       String sortDir,
@@ -99,6 +100,9 @@ public class ShiftRepository extends BaseRepository {
       if (outletId != null) {
         sql.append(" AND outlet_id = ?");
         params.add(outletId);
+      }
+      if (scopedOutletIds != null) {
+        appendScopedOutletFilter(sql, params, scopedOutletIds);
       }
       if (q != null && !q.isBlank()) {
         sql.append(" AND (COALESCE(code, '') ILIKE ? OR name ILIKE ?)");
@@ -233,6 +237,26 @@ public class ShiftRepository extends BaseRepository {
   private void bind(java.sql.PreparedStatement ps, List<Object> params) throws SQLException {
     for (int i = 0; i < params.size(); i++) {
       ps.setObject(i + 1, params.get(i));
+    }
+  }
+
+  private void appendScopedOutletFilter(StringBuilder sql, List<Object> params, Set<Long> scopedOutletIds) {
+    if (scopedOutletIds.isEmpty()) {
+      sql.append(" AND 1 = 0");
+      return;
+    }
+    sql.append(" AND outlet_id IN (");
+    appendPlaceholders(sql, scopedOutletIds.size());
+    sql.append(')');
+    params.addAll(scopedOutletIds);
+  }
+
+  private void appendPlaceholders(StringBuilder sql, int count) {
+    for (int i = 0; i < count; i++) {
+      if (i > 0) {
+        sql.append(", ");
+      }
+      sql.append('?');
     }
   }
 

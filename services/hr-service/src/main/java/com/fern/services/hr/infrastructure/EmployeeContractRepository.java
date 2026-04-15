@@ -122,6 +122,8 @@ public class EmployeeContractRepository extends BaseRepository {
   public PagedResult<ContractRecord> findContracts(
       Long userId,
       Long outletId,
+      Set<Long> scopedOutletIds,
+      Set<String> scopedRegionCodes,
       String status,
       LocalDate startDateFrom,
       LocalDate startDateTo,
@@ -197,6 +199,7 @@ public class EmployeeContractRepository extends BaseRepository {
         params.add(outletId);
         params.add(outletId);
       }
+      appendScopeFilter(sql, params, scopedOutletIds, scopedRegionCodes);
       sql.append(" ORDER BY ").append(resolveSortClause(sortBy, sortDir)).append(" LIMIT ? OFFSET ?");
       params.add(limit);
       params.add(offset);
@@ -217,18 +220,33 @@ public class EmployeeContractRepository extends BaseRepository {
     });
   }
 
-  public List<ContractRecord> findActiveContracts() {
-    return queryList(
-        """
-        SELECT id, user_id, employment_type, salary_type, base_salary, currency_code, region_code,
-               tax_code, bank_account, hire_date, start_date, end_date, status, created_by_user_id,
-               deleted_at, created_at, updated_at
-        FROM core.employee_contract
-        WHERE status = 'active' AND deleted_at IS NULL
-        ORDER BY user_id, start_date DESC
-        """,
-        this::mapContractRecord
-    );
+  public List<ContractRecord> findActiveContracts(Set<Long> scopedOutletIds, Set<String> scopedRegionCodes) {
+    return executeInTransaction(conn -> {
+      StringBuilder sql = new StringBuilder(
+          """
+          SELECT id, user_id, employment_type, salary_type, base_salary, currency_code, region_code,
+                 tax_code, bank_account, hire_date, start_date, end_date, status, created_by_user_id,
+                 deleted_at, created_at, updated_at
+          FROM core.employee_contract
+          WHERE status = 'active' AND deleted_at IS NULL
+          """
+      );
+      List<Object> params = new ArrayList<>();
+      appendScopeFilter(sql, params, scopedOutletIds, scopedRegionCodes);
+      sql.append(" ORDER BY user_id, start_date DESC");
+      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+        for (int i = 0; i < params.size(); i++) {
+          ps.setObject(i + 1, params.get(i));
+        }
+        try (ResultSet rs = ps.executeQuery()) {
+          List<ContractRecord> rows = new ArrayList<>();
+          while (rs.next()) {
+            rows.add(mapContractRecord(rs));
+          }
+          return rows;
+        }
+      }
+    });
   }
 
   public Optional<ContractRecord> findLatestActiveByUserId(long userId) {
@@ -339,6 +357,66 @@ public class EmployeeContractRepository extends BaseRepository {
 
   private static Instant toInstant(Timestamp value) {
     return value == null ? null : value.toInstant();
+  }
+
+  private void appendScopeFilter(
+      StringBuilder sql,
+      List<Object> params,
+      Set<Long> scopedOutletIds,
+      Set<String> scopedRegionCodes
+  ) {
+    if (scopedOutletIds == null && scopedRegionCodes == null) {
+      return;
+    }
+    boolean hasOutletScope = scopedOutletIds != null && !scopedOutletIds.isEmpty();
+    boolean hasRegionScope = scopedRegionCodes != null && !scopedRegionCodes.isEmpty();
+    if (!hasOutletScope && !hasRegionScope) {
+      sql.append(" AND 1 = 0");
+      return;
+    }
+    sql.append(" AND (");
+    boolean appended = false;
+    if (hasRegionScope) {
+      sql.append(" region_code IN (");
+      appendPlaceholders(sql, scopedRegionCodes.size());
+      sql.append(')');
+      params.addAll(scopedRegionCodes);
+      appended = true;
+    }
+    if (hasOutletScope) {
+      if (appended) {
+        sql.append(" OR ");
+      }
+      sql.append(
+          """
+          EXISTS (
+            SELECT 1
+            FROM (
+              SELECT ur.outlet_id
+              FROM core.user_role ur
+              WHERE ur.user_id = employee_contract.user_id
+              UNION
+              SELECT up.outlet_id
+              FROM core.user_permission up
+              WHERE up.user_id = employee_contract.user_id
+            ) scoped_outlets
+            WHERE scoped_outlets.outlet_id IN (
+          """
+      );
+      appendPlaceholders(sql, scopedOutletIds.size());
+      sql.append("))");
+      params.addAll(scopedOutletIds);
+    }
+    sql.append(')');
+  }
+
+  private void appendPlaceholders(StringBuilder sql, int count) {
+    for (int i = 0; i < count; i++) {
+      if (i > 0) {
+        sql.append(", ");
+      }
+      sql.append('?');
+    }
   }
 
   private String resolveSortClause(String sortBy, String sortDir) {

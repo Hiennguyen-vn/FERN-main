@@ -115,6 +115,7 @@ public class WorkShiftRepository extends BaseRepository {
   public PagedResult<WorkShiftRecord> search(
       Long userId,
       Long outletId,
+      Set<Long> scopedOutletIds,
       LocalDate startDate,
       LocalDate endDate,
       String scheduleStatus,
@@ -150,6 +151,9 @@ public class WorkShiftRepository extends BaseRepository {
       if (outletId != null) {
         sql.append(" AND s.outlet_id = ?");
         params.add(outletId);
+      }
+      if (scopedOutletIds != null) {
+        appendScopedOutletFilter(sql, params, "s.outlet_id", scopedOutletIds);
       }
       if (scheduleStatus != null && !scheduleStatus.isBlank()) {
         sql.append(" AND ws.schedule_status = ?::shift_schedule_status_enum");
@@ -336,6 +340,31 @@ public class WorkShiftRepository extends BaseRepository {
   private void bind(java.sql.PreparedStatement ps, List<Object> params) throws SQLException {
     for (int i = 0; i < params.size(); i++) {
       ps.setObject(i + 1, params.get(i));
+    }
+  }
+
+  private void appendScopedOutletFilter(
+      StringBuilder sql,
+      List<Object> params,
+      String column,
+      Set<Long> scopedOutletIds
+  ) {
+    if (scopedOutletIds.isEmpty()) {
+      sql.append(" AND 1 = 0");
+      return;
+    }
+    sql.append(" AND ").append(column).append(" IN (");
+    appendPlaceholders(sql, scopedOutletIds.size());
+    sql.append(')');
+    params.addAll(scopedOutletIds);
+  }
+
+  private void appendPlaceholders(StringBuilder sql, int count) {
+    for (int i = 0; i < count; i++) {
+      if (i > 0) {
+        sql.append(", ");
+      }
+      sql.append('?');
     }
   }
 }

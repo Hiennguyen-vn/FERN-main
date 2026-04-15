@@ -2,13 +2,19 @@ package com.fern.services.hr.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
+import com.dorabets.common.spring.auth.BusinessScopeAssignment;
+import com.dorabets.common.spring.auth.BusinessUserProfile;
+import com.dorabets.common.spring.auth.CanonicalRole;
 import com.dorabets.common.spring.auth.PermissionMatrixService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.dorabets.common.spring.auth.ScopeType;
 import com.fern.services.hr.api.WorkShiftDto;
 import com.fern.services.hr.infrastructure.ShiftRepository;
 import com.fern.services.hr.infrastructure.WorkShiftRepository;
@@ -16,6 +22,7 @@ import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +41,8 @@ class WorkShiftServiceTest {
   private SnowflakeIdGenerator idGenerator;
   @Mock
   private PermissionMatrixService permissionMatrixService;
+  @Mock
+  private AuthorizationPolicyService authorizationPolicyService;
 
   @AfterEach
   void clearContext() {
@@ -77,7 +86,13 @@ class WorkShiftServiceTest {
         7L
     )));
 
-    WorkShiftService service = new WorkShiftService(workShiftRepository, shiftRepository, idGenerator, permissionMatrixService);
+    WorkShiftService service = new WorkShiftService(
+        workShiftRepository,
+        shiftRepository,
+        idGenerator,
+        permissionMatrixService,
+        authorizationPolicyService
+    );
     WorkShiftDto result = service.createWorkShift(new WorkShiftDto.Create(
         10L,
         200L,
@@ -131,8 +146,21 @@ class WorkShiftServiceTest {
         Instant.parse("2026-03-27T00:05:00Z"),
         7L
     )));
+    when(authorizationPolicyService.resolveUserProfile(9L))
+        .thenReturn(profile(9L, assignment(CanonicalRole.OUTLET_MANAGER, 7L)));
+    when(permissionMatrixService.load(9L)).thenReturn(new com.dorabets.common.spring.auth.PermissionMatrix(9L, java.util.Map.of(), java.util.Map.of()));
+    when(authorizationPolicyService.canManageHrSchedule(any(RequestUserContext.class), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq(true)))
+        .thenReturn(true);
+    when(authorizationPolicyService.canManageHrSchedule(any(RequestUserContext.class), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq(false)))
+        .thenReturn(true);
 
-    WorkShiftService service = new WorkShiftService(workShiftRepository, shiftRepository, idGenerator, permissionMatrixService);
+    WorkShiftService service = new WorkShiftService(
+        workShiftRepository,
+        shiftRepository,
+        idGenerator,
+        permissionMatrixService,
+        authorizationPolicyService
+    );
     WorkShiftDto result = service.approveWorkShift(501L);
 
     verify(workShiftRepository).approve(501L, 9L);
@@ -162,7 +190,13 @@ class WorkShiftServiceTest {
         7L
     )));
 
-    WorkShiftService service = new WorkShiftService(workShiftRepository, shiftRepository, idGenerator, permissionMatrixService);
+    WorkShiftService service = new WorkShiftService(
+        workShiftRepository,
+        shiftRepository,
+        idGenerator,
+        permissionMatrixService,
+        authorizationPolicyService
+    );
 
     assertThrows(ServiceException.class, () -> service.updateAttendance(
         501L,
@@ -205,8 +239,17 @@ class WorkShiftServiceTest {
         Instant.parse("2026-03-27T00:00:00Z"),
         7L
     )));
+    when(authorizationPolicyService.resolveUserProfile(200L))
+        .thenReturn(profile(200L));
+    when(permissionMatrixService.load(200L)).thenReturn(new com.dorabets.common.spring.auth.PermissionMatrix(200L, java.util.Map.of(), java.util.Map.of()));
 
-    WorkShiftService service = new WorkShiftService(workShiftRepository, shiftRepository, idGenerator, permissionMatrixService);
+    WorkShiftService service = new WorkShiftService(
+        workShiftRepository,
+        shiftRepository,
+        idGenerator,
+        permissionMatrixService,
+        authorizationPolicyService
+    );
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.updateAttendance(
         501L,
@@ -219,5 +262,21 @@ class WorkShiftServiceTest {
     ));
 
     assertEquals(400, exception.getStatusCode());
+  }
+
+  private static BusinessUserProfile profile(long userId, BusinessScopeAssignment... assignments) {
+    if (assignments.length == 0) {
+      return new BusinessUserProfile(userId, Set.of(), List.of(), Set.of());
+    }
+    return new BusinessUserProfile(
+        userId,
+        Set.of(assignments[0].role()),
+        List.of(assignments),
+        assignments[0].outletIds()
+    );
+  }
+
+  private static BusinessScopeAssignment assignment(CanonicalRole role, long outletId) {
+    return new BusinessScopeAssignment(role, ScopeType.OUTLET, outletId, Long.toString(outletId), Set.of(outletId), Set.of(role.storedRoleCode()));
   }
 }

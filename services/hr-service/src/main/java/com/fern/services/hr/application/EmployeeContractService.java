@@ -1,6 +1,11 @@
 package com.fern.services.hr.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.spring.auth.AuthorizationPolicyService;
+import com.dorabets.common.spring.auth.BusinessScopeAssignment;
+import com.dorabets.common.spring.auth.BusinessUserProfile;
+import com.dorabets.common.spring.auth.CanonicalRole;
+import com.dorabets.common.spring.auth.ScopeType;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.web.PagedResult;
@@ -9,7 +14,9 @@ import com.fern.services.hr.api.EmployeeContractDto;
 import com.fern.services.hr.infrastructure.EmployeeContractRepository;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.LocalDate;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,18 +25,21 @@ public class EmployeeContractService {
 
   private final EmployeeContractRepository contractRepository;
   private final SnowflakeIdGenerator idGenerator;
+  private final AuthorizationPolicyService authorizationPolicyService;
 
   public EmployeeContractService(
       EmployeeContractRepository contractRepository,
-      SnowflakeIdGenerator idGenerator
+      SnowflakeIdGenerator idGenerator,
+      AuthorizationPolicyService authorizationPolicyService
   ) {
     this.contractRepository = contractRepository;
     this.idGenerator = idGenerator;
+    this.authorizationPolicyService = authorizationPolicyService;
   }
 
   @Transactional
   public EmployeeContractDto createContract(EmployeeContractDto.Create request) {
-    requireAdminOrInternal();
+    requireContractWriteAccess(request.userId(), request.regionCode());
     validateDates(request.startDate(), request.endDate());
     long contractId = idGenerator.generateId();
     contractRepository.insert(
@@ -52,20 +62,24 @@ public class EmployeeContractService {
   }
 
   public EmployeeContractDto getContract(long contractId) {
-    requireAdminOrInternal();
     return contractRepository.findById(contractId)
-        .map(this::toDto)
+        .map(record -> {
+          requireContractReadAccess(record.userId(), record.regionCode());
+          return toDto(record);
+        })
         .orElseThrow(() -> ServiceException.notFound("Contract not found: " + contractId));
   }
 
   public List<EmployeeContractDto> listContractsByUser(long userId) {
-    requireAdminOrInternal();
+    requireContractReadAccess(userId, null);
     return contractRepository.findByUserId(userId).stream().map(this::toDto).toList();
   }
 
   public List<EmployeeContractDto> listActiveContracts() {
-    requireAdminOrInternal();
-    return contractRepository.findActiveContracts().stream().map(this::toDto).toList();
+    ContractScope scope = resolveContractScope();
+    return contractRepository.findActiveContracts(scope.outletIds(), scope.regionCodes()).stream()
+        .map(this::toDto)
+        .toList();
   }
 
   public PagedResult<EmployeeContractDto> listContracts(
@@ -82,10 +96,15 @@ public class EmployeeContractService {
       Integer limit,
       Integer offset
   ) {
-    requireAdminOrInternal();
+    ContractScope scope = resolveContractScope();
+    if (outletId != null) {
+      requireScopeOutletAccess(outletId);
+    }
     return contractRepository.findContracts(
         userId,
         outletId,
+        scope.outletIds(),
+        scope.regionCodes(),
         status,
         startDateFrom,
         startDateTo,
@@ -100,7 +119,7 @@ public class EmployeeContractService {
   }
 
   public EmployeeContractDto getLatestActiveContract(long userId) {
-    requireAdminOrInternal();
+    requireContractReadAccess(userId, null);
     return contractRepository.findLatestActiveByUserId(userId)
         .map(this::toDto)
         .orElseThrow(() -> ServiceException.notFound("No active contract found for user " + userId));
@@ -108,9 +127,9 @@ public class EmployeeContractService {
 
   @Transactional
   public EmployeeContractDto updateContract(long contractId, EmployeeContractDto.Update request) {
-    requireAdminOrInternal();
     EmployeeContractRepository.ContractRecord existing = contractRepository.findById(contractId)
         .orElseThrow(() -> ServiceException.notFound("Contract not found: " + contractId));
+    requireContractWriteAccess(existing.userId(), existing.regionCode());
     validateDates(
         request.startDate() == null ? existing.startDate() : request.startDate(),
         request.endDate() == null ? existing.endDate() : request.endDate()
@@ -134,9 +153,9 @@ public class EmployeeContractService {
 
   @Transactional
   public EmployeeContractDto terminateContract(long contractId, LocalDate terminationDate) {
-    requireAdminOrInternal();
     EmployeeContractRepository.ContractRecord existing = contractRepository.findById(contractId)
         .orElseThrow(() -> ServiceException.notFound("Contract not found: " + contractId));
+    requireContractWriteAccess(existing.userId(), existing.regionCode());
     LocalDate endDate = terminationDate == null ? LocalDate.now() : terminationDate;
     validateDates(existing.startDate(), endDate);
     contractRepository.terminate(contractId, endDate);
@@ -154,13 +173,69 @@ public class EmployeeContractService {
     return normalized == null ? "draft" : normalized;
   }
 
-  private void requireAdminOrInternal() {
+  private void requireContractReadAccess(long targetUserId, String contractRegionCode) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
+    if (context.internalService()) {
       return;
     }
-    context.requireUserId();
-    throw ServiceException.forbidden("Administrative HR contract access is required");
+    if (authorizationPolicyService.canManageContractForUser(context, targetUserId, contractRegionCode)) {
+      return;
+    }
+    throw ServiceException.forbidden("HR contract scope is required");
+  }
+
+  private void requireContractWriteAccess(long targetUserId, String contractRegionCode) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (context.internalService()) {
+      return;
+    }
+    if (authorizationPolicyService.canManageContractForUser(context, targetUserId, contractRegionCode)) {
+      return;
+    }
+    throw ServiceException.forbidden("HR contract mutation scope is required");
+  }
+
+  private void requireScopeOutletAccess(long outletId) {
+    ContractScope scope = resolveContractScope();
+    if (scope.regionCodes() != null && !scope.regionCodes().isEmpty()) {
+      if (scope.outletIds() != null && scope.outletIds().contains(outletId)) {
+        return;
+      }
+    }
+    if (scope.outletIds() == null || scope.outletIds().contains(outletId)) {
+      return;
+    }
+    throw ServiceException.forbidden("HR contract access denied for outlet " + outletId);
+  }
+
+  private ContractScope resolveContractScope() {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (context.internalService()) {
+      return new ContractScope(null, null);
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = authorizationPolicyService.resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return new ContractScope(null, null);
+    }
+    LinkedHashSet<Long> outletIds = new LinkedHashSet<>();
+    outletIds.addAll(profile.outletsForRole(CanonicalRole.OUTLET_MANAGER));
+    outletIds.addAll(profile.outletsForRole(CanonicalRole.HR));
+    LinkedHashSet<String> regionCodes = new LinkedHashSet<>();
+    for (BusinessScopeAssignment assignment : profile.assignments()) {
+      if (assignment.role() == CanonicalRole.HR
+          && assignment.scopeType() == ScopeType.REGION
+          && assignment.scopeCode() != null) {
+        regionCodes.add(assignment.scopeCode());
+      }
+    }
+    if (outletIds.isEmpty() && regionCodes.isEmpty()) {
+      throw ServiceException.forbidden("HR contract access is required");
+    }
+    return new ContractScope(
+        outletIds.isEmpty() ? Set.of() : Set.copyOf(outletIds),
+        regionCodes.isEmpty() ? Set.of() : Set.copyOf(regionCodes)
+    );
   }
 
   private static String trimToNull(String value) {
@@ -191,5 +266,11 @@ public class EmployeeContractService {
         record.createdAt(),
         record.updatedAt()
     );
+  }
+
+  private record ContractScope(
+      Set<Long> outletIds,
+      Set<String> regionCodes
+  ) {
   }
 }
