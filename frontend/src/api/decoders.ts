@@ -26,7 +26,7 @@ export function decodePaged<T>(value: unknown, decodeItem: Decoder<T>): PagedRes
   };
 }
 
-export function getErrorMessage(error: unknown, fallback: string): string {
+export function getErrorMessage(error: unknown, fallback = 'Something went wrong'): string {
   if (isApiError(error)) {
     return error.message;
   }
@@ -35,4 +35,3 @@ export function getErrorMessage(error: unknown, fallback: string): string {
   }
   return fallback;
 }
-

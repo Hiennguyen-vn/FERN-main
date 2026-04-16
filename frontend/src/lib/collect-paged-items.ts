@@ -5,7 +5,7 @@ type PagedQuery = {
   offset?: number;
 };
 
-export async function collectPagedItems<T, Q extends PagedQuery>(
+export async function collectPagedItems<T, Q extends PagedQuery = PagedQuery>(
   loadPage: (query: Q) => Promise<PagedResponse<T>>,
   query: Omit<Q, 'limit' | 'offset'> & Partial<PagedQuery>,
   pageSize = 100,

@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Calendar,
   CheckCircle2,
   Clock,
-  FileText,
   RefreshCw,
   Search,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
-  authApi,
+  hrApi,
   payrollApi,
-  type AuthUserListItem,
-  type AuthUsersQuery,
+  type OutletStaffView,
   type PayrollPeriodView,
   type PayrollPeriodsQuery,
   type PayrollRunView,
@@ -33,6 +32,13 @@ import {
   periodWindowLabel,
 } from '@/components/payroll/payroll-truth';
 import { cn } from '@/lib/utils';
+import {
+  toNum,
+  formatMoneyExact,
+  formatDateShort,
+  formatDateTime as formatDateTimeUtil,
+  formatMonthYear,
+} from '@/components/finance/finance-utils';
 
 interface FinancePayrollReviewWorkspaceProps {
   token: string;
@@ -42,50 +48,8 @@ interface FinancePayrollReviewWorkspaceProps {
   outlets: ScopeOutlet[];
 }
 
-function toNumber(value: unknown) {
-  const numeric = Number(value ?? 0);
-  return Number.isFinite(numeric) ? numeric : 0;
-}
-
-function formatCurrency(value: unknown, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(toNumber(value));
-}
-
 function formatDate(value?: string | null) {
-  if (!value) {
-    return '—';
-  }
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(date);
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) {
-    return '—';
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(date);
+  return formatDateShort(value);
 }
 
 function formatDateRange(startDate?: string | null, endDate?: string | null) {
@@ -95,18 +59,9 @@ function formatDateRange(startDate?: string | null, endDate?: string | null) {
   return `${formatDate(startDate)} → ${formatDate(endDate)}`;
 }
 
-function formatMonthYear(value?: string | null) {
-  if (!value) {
-    return 'Payroll review';
-  }
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return 'Payroll review';
-  }
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'long',
-    year: 'numeric',
-  }).format(date);
+function formatMonthYearOrFallback(value?: string | null) {
+  const result = formatMonthYear(value);
+  return result === '—' ? 'Payroll review' : result;
 }
 
 function normalizeValue(value: string | number | null | undefined) {
@@ -118,7 +73,7 @@ function buildPeriodHeadline(period: PayrollPeriodView | null, regionName: strin
   if (explicitName) {
     return explicitName;
   }
-  return `${formatMonthYear(period?.startDate || period?.endDate || period?.payDate)} · ${regionName}`;
+  return `${formatMonthYearOrFallback(period?.startDate || period?.endDate || period?.payDate)} · ${regionName}`;
 }
 
 function getRegionName(regionsById: Map<string, ScopeRegion>, regionId?: string | number | null) {
@@ -129,21 +84,24 @@ function getRegionName(regionsById: Map<string, ScopeRegion>, regionId?: string 
   return regionsById.get(key)?.name || `Region ${key}`;
 }
 
-function getUserDisplay(usersById: Map<string, AuthUserListItem>, userId?: string | number | null) {
+function getUserDisplay(
+  staffById: Map<string, OutletStaffView>,
+  userId?: string | number | null,
+) {
   const key = normalizeValue(userId);
   if (!key) {
     return { primary: '—', secondary: undefined as string | undefined };
   }
 
-  const user = usersById.get(key);
-  if (!user) {
-    return { primary: `User ${key}`, secondary: undefined as string | undefined };
+  const staff = staffById.get(key);
+  if (staff) {
+    return {
+      primary: staff.fullName || staff.username || `Employee ${key}`,
+      secondary: staff.employeeCode || staff.username || undefined,
+    };
   }
 
-  return {
-    primary: user.fullName || user.username,
-    secondary: user.employeeCode || user.username || key,
-  };
+  return { primary: `Employee ${key}`, secondary: undefined as string | undefined };
 }
 
 export function FinancePayrollReviewWorkspace({
@@ -153,7 +111,7 @@ export function FinancePayrollReviewWorkspace({
   regions,
   outlets,
 }: FinancePayrollReviewWorkspaceProps) {
-  const [usersLoading, setUsersLoading] = useState(false);
+  const [staffLoading, setStaffLoading] = useState(false);
   const [periodsLoading, setPeriodsLoading] = useState(false);
   const [periodsError, setPeriodsError] = useState('');
   const [periods, setPeriods] = useState<PayrollPeriodView[]>([]);
@@ -163,17 +121,19 @@ export function FinancePayrollReviewWorkspace({
   const [workspaceError, setWorkspaceError] = useState('');
   const [timesheets, setTimesheets] = useState<PayrollTimesheetView[]>([]);
   const [runs, setRuns] = useState<PayrollRunView[]>([]);
-  const [users, setUsers] = useState<AuthUserListItem[]>([]);
+  const [staff, setStaff] = useState<OutletStaffView[]>([]);
   const [search, setSearch] = useState('');
   const [busyKey, setBusyKey] = useState('');
+  const [rejectingRunId, setRejectingRunId] = useState('');
+  const [rejectReason, setRejectReason] = useState('');
 
   const regionsById = useMemo(
     () => new Map(regions.map((region) => [region.id, region])),
     [regions],
   );
-  const usersById = useMemo(
-    () => new Map(users.map((user) => [user.id, user])),
-    [users],
+  const staffById = useMemo(
+    () => new Map(staff.map((s) => [String(s.id), s])),
+    [staff],
   );
   const outletsById = useMemo(
     () => new Map(outlets.map((outlet) => [outlet.id, outlet])),
@@ -217,7 +177,7 @@ export function FinancePayrollReviewWorkspace({
 
   const reviewRows = useMemo(() => {
     return timesheets.map((timesheet) => {
-      const userDisplay = getUserDisplay(usersById, timesheet.userId);
+      const userDisplay = getUserDisplay(staffById, timesheet.userId);
       const outletDisplay = getFinanceOutletDisplay(outletsById, timesheet.outletId);
       const run = runByTimesheetId.get(String(timesheet.id));
       const status = normalizeValue(run?.status).toLowerCase();
@@ -227,15 +187,15 @@ export function FinancePayrollReviewWorkspace({
         employeeSecondary: userDisplay.secondary,
         outletPrimary: outletDisplay.primary,
         outletSecondary: outletDisplay.secondary,
-        workHours: toNumber(timesheet.workHours),
-        overtimeHours: toNumber(timesheet.overtimeHours),
-        lateCount: toNumber(timesheet.lateCount),
-        absentDays: toNumber(timesheet.absentDays),
+        workHours: toNum(timesheet.workHours),
+        overtimeHours: toNum(timesheet.overtimeHours),
+        lateCount: toNum(timesheet.lateCount),
+        absentDays: toNum(timesheet.absentDays),
         run,
         runStatus: status,
       };
     });
-  }, [outletsById, runByTimesheetId, timesheets, usersById]);
+  }, [outletsById, runByTimesheetId, timesheets, staffById]);
 
   const rows = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -268,24 +228,38 @@ export function FinancePayrollReviewWorkspace({
     };
   }, [reviewRows]);
 
-  const loadUsers = useCallback(async () => {
-    setUsersLoading(true);
+  const scopedOutlets = useMemo(() => {
+    if (scopeOutletId) return outlets.filter((o) => o.id === scopeOutletId);
+    if (scopeRegionId) return outlets.filter((o) => o.regionId === scopeRegionId);
+    return outlets;
+  }, [outlets, scopeOutletId, scopeRegionId]);
+
+  const loadStaff = useCallback(async () => {
+    if (!token || scopedOutlets.length === 0) return;
+    setStaffLoading(true);
     try {
-      const items = await collectPagedItems<AuthUserListItem, AuthUsersQuery>(
-        (query) => authApi.users(token, query),
-        {
-          sortBy: 'username',
-          sortDir: 'asc',
-        },
-        200,
+      // Fetch staff from all scoped outlets in parallel, deduplicate by id
+      const results = await Promise.all(
+        scopedOutlets.map((o) => hrApi.outletStaff(token, o.id).catch(() => [] as OutletStaffView[])),
       );
-      setUsers(items);
+      const seen = new Set<string>();
+      const merged: OutletStaffView[] = [];
+      for (const batch of results) {
+        for (const s of batch) {
+          const key = String(s.id);
+          if (!seen.has(key)) {
+            seen.add(key);
+            merged.push(s);
+          }
+        }
+      }
+      setStaff(merged);
     } catch (error) {
-      console.error('Finance payroll review user load failed', error);
+      console.error('Finance payroll review staff load failed', error);
     } finally {
-      setUsersLoading(false);
+      setStaffLoading(false);
     }
-  }, [token]);
+  }, [token, scopedOutlets]);
 
   const loadPeriods = useCallback(async () => {
     setPeriodsLoading(true);
@@ -360,8 +334,8 @@ export function FinancePayrollReviewWorkspace({
   }, [scopeOutletId, selectedPeriodId, token]);
 
   useEffect(() => {
-    void loadUsers();
-  }, [loadUsers]);
+    void loadStaff();
+  }, [loadStaff]);
 
   useEffect(() => {
     void loadPeriods();
@@ -375,10 +349,29 @@ export function FinancePayrollReviewWorkspace({
     setBusyKey(`approve:${payrollId}`);
     try {
       await payrollApi.approveRun(token, payrollId);
-      toast.success('Payroll approved. Refresh Expense Ledger to see the accounting entry after event posting.');
+      toast.success('Payroll run approved. The expense entry will appear in the ledger shortly.');
       await loadWorkspace();
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, 'Unable to approve payroll run'));
+    } finally {
+      setBusyKey('');
+    }
+  };
+
+  const rejectRun = async (payrollId: string) => {
+    if (!rejectReason.trim()) {
+      toast.error('Please provide a reason for rejection');
+      return;
+    }
+    setBusyKey(`reject:${payrollId}`);
+    try {
+      await payrollApi.rejectRun(token, payrollId, { reason: rejectReason.trim() });
+      toast.success('Payroll run rejected.');
+      setRejectingRunId('');
+      setRejectReason('');
+      await loadWorkspace();
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, 'Unable to reject payroll run'));
     } finally {
       setBusyKey('');
     }
@@ -394,7 +387,7 @@ export function FinancePayrollReviewWorkspace({
           </div>
           <h3 className="mt-2 text-lg font-semibold">Finance review</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            Review draft payroll runs for {selectedRegionName}. HR prepares labor input first; Finance approves what is ready to post.
+            Review and approve payroll runs submitted by HR for {selectedRegionName}.
           </p>
         </div>
 
@@ -403,14 +396,14 @@ export function FinancePayrollReviewWorkspace({
         <div className="border-b px-5 py-3">
           <button
             onClick={() => {
-              void loadUsers();
+              void loadStaff();
               void loadPeriods();
               void loadWorkspace();
             }}
-            disabled={usersLoading || periodsLoading || workspaceLoading}
+            disabled={staffLoading || periodsLoading || workspaceLoading}
             className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', usersLoading || periodsLoading || workspaceLoading ? 'animate-spin' : '')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', staffLoading || periodsLoading || workspaceLoading ? 'animate-spin' : '')} />
             Refresh review
           </button>
         </div>
@@ -462,40 +455,48 @@ export function FinancePayrollReviewWorkspace({
         {selectedPeriod ? (
           <>
             <div className="surface-elevated overflow-hidden">
-              <div className="border-b px-5 py-5">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div className="border-b px-5 py-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                      <FileText className="h-3.5 w-3.5" />
-                      <span>Review queue</span>
-                    </div>
-                    <h3 className="mt-2 text-2xl font-semibold tracking-tight">{selectedPeriodHeadline}</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Approve only draft payroll runs that HR has already prepared. Expense posting lands in the ledger asynchronously after approval.
+                    <h3 className="text-base font-semibold">{selectedPeriodHeadline}</h3>
+                    <p className="text-xs text-muted-foreground">
+                      {selectedRegionName} · {formatDateRange(selectedPeriod.startDate, selectedPeriod.endDate)}
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <span className={cn('inline-flex rounded-full border px-2.5 py-1 text-[11px] font-medium', periodWindowBadgeClass(inferPeriodWindowState(selectedPeriod)))}>
-                        {periodWindowLabel(inferPeriodWindowState(selectedPeriod))}
-                      </span>
-                      <span className="inline-flex rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-                        {selectedRegionName}
-                      </span>
-                      <span className="inline-flex rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-                        {formatDateRange(selectedPeriod.startDate, selectedPeriod.endDate)}
-                      </span>
-                    </div>
                   </div>
-
-                  <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
-                    <span>{summary.draftRuns} draft</span>
-                    <span>·</span>
-                    <span>{summary.approvedRuns} approved</span>
-                    <span>·</span>
-                    <span>{summary.waitingOnHr} waiting on HR</span>
-                    <span>·</span>
-                    <span>{summary.overtimeHours.toFixed(2)} OT hrs</span>
+                  <span className={cn('inline-flex w-fit rounded-full border px-2.5 py-1 text-[11px] font-medium', periodWindowBadgeClass(inferPeriodWindowState(selectedPeriod)))}>
+                    {periodWindowLabel(inferPeriodWindowState(selectedPeriod))}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className={cn('rounded-lg border px-3 py-2', summary.draftRuns > 0 ? 'border-amber-200 bg-amber-50' : 'border-border bg-muted/30')}>
+                    <p className={cn('text-xl font-semibold', summary.draftRuns > 0 ? 'text-amber-700' : 'text-foreground')}>{summary.draftRuns}</p>
+                    <p className="text-[11px] text-muted-foreground">Pending approval</p>
+                  </div>
+                  <div className={cn('rounded-lg border px-3 py-2', summary.approvedRuns > 0 ? 'border-green-200 bg-green-50' : 'border-border bg-muted/30')}>
+                    <p className={cn('text-xl font-semibold', summary.approvedRuns > 0 ? 'text-green-700' : 'text-foreground')}>{summary.approvedRuns}</p>
+                    <p className="text-[11px] text-muted-foreground">Approved</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                    <p className="text-xl font-semibold">{summary.waitingOnHr}</p>
+                    <p className="text-[11px] text-muted-foreground">Waiting on HR</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                    <p className="text-xl font-semibold">{summary.overtimeHours.toFixed(1)}</p>
+                    <p className="text-[11px] text-muted-foreground">OT hours</p>
                   </div>
                 </div>
+                {summary.draftRuns === 0 && summary.approvedRuns > 0 && summary.waitingOnHr === 0 && (
+                  <div className="mt-3 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-xs text-green-800">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                    All payroll runs for this period have been approved. The ledger has been updated.
+                  </div>
+                )}
+                {summary.draftRuns > 0 && (
+                  <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs text-amber-800">
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                    {summary.draftRuns} run{summary.draftRuns > 1 ? 's' : ''} pending your approval. Review salary figures before approving.
+                  </div>
+                )}
               </div>
 
               <div className="border-b px-5 py-4">
@@ -570,7 +571,7 @@ export function FinancePayrollReviewWorkspace({
                                   {runStatus}
                                 </span>
                                 <span className="text-[11px] text-muted-foreground">
-                                  {shortHrRef(row.run.id)} · {row.run.approvedAt ? formatDateTime(row.run.approvedAt) : 'Awaiting finance approval'}
+                                  {shortHrRef(row.run.id)} · {row.run.approvedAt ? formatDateTimeUtil(row.run.approvedAt) : 'Awaiting finance approval'}
                                 </span>
                               </div>
                             ) : (
@@ -582,23 +583,80 @@ export function FinancePayrollReviewWorkspace({
                           </td>
                           <td className="px-4 py-2.5 text-right text-sm font-mono">
                             {row.run
-                              ? formatCurrency(row.run.netSalary, String(row.run.currencyCode || 'USD'))
+                              ? formatMoneyExact(row.run.netSalary, String(row.run.currencyCode || 'USD'))
                               : '—'}
                           </td>
                           <td className="px-4 py-2.5">
-                            {canApprove ? (
-                              <button
-                                onClick={() => void approveRun(String(row.run?.id))}
-                                disabled={busyKey === `approve:${row.run?.id}`}
-                                className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-60"
-                              >
+                            {!row.run ? (
+                              <span className="text-xs text-muted-foreground">Waiting on HR</span>
+                            ) : canApprove ? (
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    onClick={() => void approveRun(String(row.run?.id))}
+                                    disabled={!!busyKey}
+                                    className="inline-flex h-7 items-center gap-1.5 rounded-md border border-green-200 bg-green-50 px-2.5 text-[11px] font-medium text-green-700 transition-colors hover:bg-green-100 disabled:opacity-60"
+                                  >
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    {busyKey === `approve:${row.run?.id}` ? 'Approving…' : 'Approve'}
+                                  </button>
+                                  {rejectingRunId === String(row.run?.id) ? (
+                                    <button
+                                      onClick={() => { setRejectingRunId(''); setRejectReason(''); }}
+                                      className="inline-flex h-7 items-center px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                                    >
+                                      Cancel
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => setRejectingRunId(String(row.run?.id))}
+                                      disabled={!!busyKey}
+                                      className="inline-flex h-7 items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2.5 text-[11px] font-medium text-red-700 transition-colors hover:bg-red-100 disabled:opacity-60"
+                                    >
+                                      Reject
+                                    </button>
+                                  )}
+                                </div>
+                                {rejectingRunId === String(row.run?.id) && (
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="text"
+                                      placeholder="Reason for rejection"
+                                      value={rejectReason}
+                                      onChange={(e) => setRejectReason(e.target.value)}
+                                      className="h-7 flex-1 rounded-md border border-input bg-background px-2 text-xs"
+                                      onKeyDown={(e) => { if (e.key === 'Enter') void rejectRun(String(row.run?.id)); }}
+                                    />
+                                    <button
+                                      onClick={() => void rejectRun(String(row.run?.id))}
+                                      disabled={busyKey === `reject:${row.run?.id}` || !rejectReason.trim()}
+                                      className="inline-flex h-7 items-center rounded-md bg-red-600 px-2.5 text-[11px] font-medium text-white disabled:opacity-60"
+                                    >
+                                      {busyKey === `reject:${row.run?.id}` ? 'Rejecting…' : 'Confirm'}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            ) : row.runStatus === 'approved' ? (
+                              <div className="flex items-center gap-1.5 text-xs text-green-700">
                                 <CheckCircle2 className="h-3.5 w-3.5" />
-                                {busyKey === `approve:${row.run?.id}` ? 'Approving…' : 'Approve'}
-                              </button>
+                                Approved
+                                {row.run.approvedAt && (
+                                  <span className="text-muted-foreground">{formatDateTimeUtil(row.run.approvedAt)}</span>
+                                )}
+                              </div>
+                            ) : row.runStatus === 'rejected' ? (
+                              <div className="flex items-center gap-1.5 text-xs text-red-700">
+                                <AlertTriangle className="h-3.5 w-3.5" />
+                                Rejected
+                              </div>
+                            ) : row.runStatus === 'paid' ? (
+                              <div className="flex items-center gap-1.5 text-xs text-blue-700">
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                Paid
+                              </div>
                             ) : (
-                              <span className="text-xs text-muted-foreground">
-                                {row.run ? 'No finance action' : 'Waiting on HR'}
-                              </span>
+                              <span className="text-xs text-muted-foreground capitalize">{row.runStatus || '—'}</span>
                             )}
                           </td>
                         </tr>
@@ -613,9 +671,9 @@ export function FinancePayrollReviewWorkspace({
               <div className="flex items-start gap-3">
                 <Clock className="mt-0.5 h-4 w-4 text-blue-700" />
                 <div>
-                  <p className="font-medium">Ledger posting is asynchronous after approval</p>
+                  <p className="font-medium">Ledger posting</p>
                   <p className="mt-1 text-xs leading-relaxed text-blue-800">
-                    Finance approval emits the payroll-approved event. The ledger expense row appears after the finance-service consumer materializes that event.
+                    Once approved, the payroll expense will be posted to the ledger automatically.
                   </p>
                 </div>
               </div>

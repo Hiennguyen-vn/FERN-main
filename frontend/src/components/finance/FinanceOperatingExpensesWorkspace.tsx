@@ -4,7 +4,6 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   financeApi,
-  orgApi,
   type CreateExpensePayload,
   type ExpenseView,
   type ScopeOutlet,
@@ -24,6 +23,11 @@ import {
   getFinanceOutletDisplay,
 } from '@/components/finance/finance-display';
 import { resolveScopeCurrencyCode } from '@/lib/org-currency';
+import {
+  toNum,
+  formatMoneyExact,
+  getExpenseSourceBadge,
+} from '@/components/finance/finance-utils';
 
 interface Props {
   token: string;
@@ -33,49 +37,6 @@ interface Props {
   outlets: ScopeOutlet[];
 }
 
-function toNumber(value: unknown) {
-  const numeric = Number(value ?? 0);
-  return Number.isFinite(numeric) ? numeric : 0;
-}
-
-function formatCurrency(value: unknown, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(toNumber(value));
-}
-
-function getSourceBadge(sourceType?: string | null, subtype?: string | null) {
-  const raw = String(subtype || sourceType || '').toLowerCase();
-  if (raw === 'payroll') {
-    return {
-      label: 'Payroll',
-      className: 'bg-purple-100 text-purple-700 border-purple-200',
-      editable: false,
-    };
-  }
-  if (raw.includes('invoice') || raw === 'inventory_purchase') {
-    return {
-      label: 'Invoice',
-      className: 'bg-orange-100 text-orange-700 border-orange-200',
-      editable: false,
-    };
-  }
-  if (raw === 'operating_expense' || raw === 'operating' || raw === 'other' || raw === 'other_expense') {
-    return {
-      label: 'Manual',
-      className: 'bg-blue-100 text-blue-700 border-blue-200',
-      editable: true,
-    };
-  }
-  return {
-    label: 'System',
-    className: 'bg-muted text-muted-foreground border-border',
-    editable: false,
-  };
-}
 
 export function FinanceOperatingExpensesWorkspace({
   token,
@@ -84,8 +45,6 @@ export function FinanceOperatingExpensesWorkspace({
   regions,
   outlets,
 }: Props) {
-  const [allRegions, setAllRegions] = useState<ScopeRegion[]>(regions);
-  const [allOutlets, setAllOutlets] = useState<ScopeOutlet[]>(outlets);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [expenses, setExpenses] = useState<ExpenseView[]>([]);
@@ -99,6 +58,7 @@ export function FinanceOperatingExpensesWorkspace({
     currencyCode: 'USD',
     description: '',
     businessDate: new Date().toISOString().slice(0, 10),
+    selectedOutletId: '',
   });
 
   const query = useListQueryState<{ outletId?: string; sourceType?: string }>({
@@ -108,38 +68,33 @@ export function FinanceOperatingExpensesWorkspace({
     initialFilters: { outletId: scopeOutletId || undefined, sourceType: undefined },
   });
 
-  const effectiveRegions = allRegions.length > 0 ? allRegions : regions;
-  const effectiveOutlets = allOutlets.length > 0 ? allOutlets : outlets;
-
   const outletsById = useMemo(
-    () => new Map(effectiveOutlets.map((o) => [o.id, o])),
-    [effectiveOutlets],
+    () => new Map<string, ScopeOutlet>(outlets.map((o) => [o.id, o])),
+    [outlets],
   );
 
   const currencyCode = useMemo(
     () =>
       resolveScopeCurrencyCode({
-        regions: effectiveRegions,
-        outlets: effectiveOutlets,
+        regions,
+        outlets,
         regionId: scopeRegionId || '',
-        outletId: scopeOutletId || '',
+        outletId: scopeOutletId || expenseForm.selectedOutletId || '',
       }),
-    [effectiveOutlets, effectiveRegions, scopeOutletId, scopeRegionId],
+    [outlets, regions, scopeOutletId, scopeRegionId, expenseForm.selectedOutletId],
   );
 
   const currencyContext = useMemo(() => {
-    if (scopeOutletId) {
-      const outlet = effectiveOutlets.find((o) => o.id === scopeOutletId);
-      const region = outlet
-        ? effectiveRegions.find((r) => r.id === outlet.regionId)
-        : undefined;
-      return outlet && region ? `${outlet.code} · ${region.name}` : 'selected outlet';
+    const effectiveOutletId = scopeOutletId || expenseForm.selectedOutletId;
+    if (effectiveOutletId) {
+      const outlet = outlets.find((o) => o.id === effectiveOutletId);
+      return outlet ? (outlet.name || outlet.code || 'selected outlet') : 'selected outlet';
     }
     if (scopeRegionId) {
-      return effectiveRegions.find((r) => r.id === scopeRegionId)?.name || 'selected region';
+      return regions.find((r) => r.id === scopeRegionId)?.name || 'selected region';
     }
     return 'current scope';
-  }, [effectiveOutlets, effectiveRegions, scopeOutletId, scopeRegionId]);
+  }, [outlets, regions, scopeOutletId, scopeRegionId, expenseForm.selectedOutletId]);
 
   useEffect(() => {
     setExpenseForm((f) => (f.currencyCode === currencyCode ? f : { ...f, currencyCode }));
@@ -149,19 +104,6 @@ export function FinanceOperatingExpensesWorkspace({
     query.patchFilters({ outletId: scopeOutletId || undefined });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeOutletId]);
-
-  // Load org hierarchy if parents did not provide it
-  useEffect(() => {
-    if (!token || (regions.length > 0 && outlets.length > 0)) return;
-    void orgApi.hierarchy(token)
-      .then((h) => {
-        setAllRegions(h.regions || []);
-        setAllOutlets(h.outlets || []);
-      })
-      .catch((err: unknown) => {
-        console.error('OperatingExpenses org load failed', err);
-      });
-  }, [token, regions.length, outlets.length]);
 
   const loadExpenses = useCallback(async () => {
     if (!token) return;
@@ -192,11 +134,12 @@ export function FinanceOperatingExpensesWorkspace({
 
   const createExpense = async () => {
     if (!token) return;
-    if (!scopeOutletId) {
-      toast.error('Select an outlet scope before creating an expense');
+    const effectiveOutletId = scopeOutletId || expenseForm.selectedOutletId;
+    if (!effectiveOutletId) {
+      toast.error('Select an outlet before creating an expense');
       return;
     }
-    if (!expenseForm.description.trim() || toNumber(expenseForm.amount) <= 0) {
+    if (!expenseForm.description.trim() || toNum(expenseForm.amount) <= 0) {
       toast.error('Description and a positive amount are required');
       return;
     }
@@ -204,10 +147,10 @@ export function FinanceOperatingExpensesWorkspace({
     setActionBusy('create');
     try {
       const payload: CreateExpensePayload = {
-        outletId: scopeOutletId,
+        outletId: effectiveOutletId,
         businessDate: expenseForm.businessDate,
         currencyCode: expenseForm.currencyCode,
-        amount: toNumber(expenseForm.amount),
+        amount: toNum(expenseForm.amount),
         description: expenseForm.description.trim(),
         note: null,
       };
@@ -234,7 +177,7 @@ export function FinanceOperatingExpensesWorkspace({
     let manual = 0, payroll = 0, invoice = 0, sys = 0;
     for (const exp of expenses) {
       const raw = String(exp.subtype || exp.sourceType || '').toLowerCase();
-      const amt = toNumber(exp.amount);
+      const amt = toNum(exp.amount);
       if (raw === 'payroll') payroll += amt;
       else if (raw.includes('invoice') || raw === 'inventory_purchase') invoice += amt;
       else if (raw === 'operating_expense' || raw === 'operating' || raw === 'other' || raw === 'other_expense') manual += amt;
@@ -252,15 +195,13 @@ export function FinanceOperatingExpensesWorkspace({
           <div>
             <h3 className="text-lg font-semibold">Operating Expenses</h3>
             <p className="mt-0.5 max-w-2xl text-sm text-muted-foreground">
-              Full expense ledger with source tracking. Manual entries can be created when scoped to an outlet.
+              Full expense ledger with source tracking. Manual entries require selecting an outlet.
               Invoice- and payroll-linked rows are system-generated and immutable.
             </p>
           </div>
           <button
             onClick={() => setShowCreate((v) => !v)}
-            disabled={!scopeOutletId}
             className="flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-primary px-4 text-xs font-medium text-primary-foreground disabled:opacity-40"
-            title={!scopeOutletId ? 'Select an outlet scope to create expenses' : undefined}
           >
             <Plus className="h-3.5 w-3.5" />
             New Expense
@@ -270,10 +211,10 @@ export function FinanceOperatingExpensesWorkspace({
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <SummaryCard label="Manual" amount={summary.manual} color="bg-blue-100 text-blue-700" />
-        <SummaryCard label="Invoice-linked" amount={summary.invoice} color="bg-orange-100 text-orange-700" />
-        <SummaryCard label="Payroll-linked" amount={summary.payroll} color="bg-purple-100 text-purple-700" />
-        <SummaryCard label="In view (page)" amount={summary.totalInView} color="bg-muted text-foreground" />
+        <SummaryCard label="Manual" amount={summary.manual} currency={currencyCode} color="bg-blue-100 text-blue-700" />
+        <SummaryCard label="Invoice-linked" amount={summary.invoice} currency={currencyCode} color="bg-orange-100 text-orange-700" />
+        <SummaryCard label="Payroll-linked" amount={summary.payroll} currency={currencyCode} color="bg-purple-100 text-purple-700" />
+        <SummaryCard label="In view (page)" amount={summary.totalInView} currency={currencyCode} color="bg-muted text-foreground" />
       </div>
 
       {/* Create form */}
@@ -281,6 +222,23 @@ export function FinanceOperatingExpensesWorkspace({
         <div className="surface-elevated p-5">
           <h4 className="mb-4 text-sm font-semibold">New expense</h4>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
+            {!scopeOutletId && (
+              <div>
+                <label className="text-xs text-muted-foreground">Outlet</label>
+                <select
+                  className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={expenseForm.selectedOutletId}
+                  onChange={(e) => setExpenseForm((f) => ({ ...f, selectedOutletId: e.target.value }))}
+                >
+                  <option value="">Select outlet…</option>
+                  {outlets
+                    .filter((o) => !scopeRegionId || o.regionId === scopeRegionId)
+                    .map((o) => (
+                      <option key={o.id} value={o.id}>{o.code || o.name || o.id}</option>
+                    ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="text-xs text-muted-foreground">Expense type</label>
               <select
@@ -440,7 +398,7 @@ export function FinanceOperatingExpensesWorkspace({
               ) : (
                 expenses.map((exp) => {
                   const outletDisplay = getFinanceOutletDisplay(outletsById, exp.outletId);
-                  const src = getSourceBadge(exp.sourceType, exp.subtype);
+                  const src = getExpenseSourceBadge(exp.sourceType, exp.subtype);
                   return (
                     <tr key={String(exp.id)} className="border-b last:border-0 hover:bg-muted/20">
                       <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
@@ -478,7 +436,7 @@ export function FinanceOperatingExpensesWorkspace({
                         </div>
                       </td>
                       <td className="px-4 py-2.5 text-right text-sm font-mono whitespace-nowrap">
-                        {formatCurrency(exp.amount, String(exp.currencyCode || 'USD'))}
+                        {formatMoneyExact(exp.amount, String(exp.currencyCode || 'USD'))}
                       </td>
                     </tr>
                   );
@@ -520,19 +478,14 @@ export function FinanceOperatingExpensesWorkspace({
   );
 }
 
-function SummaryCard({ label, amount, color }: { label: string; amount: number; color: string }) {
+function SummaryCard({ label, amount, currency = 'USD', color }: { label: string; amount: number; currency?: string; color: string }) {
   return (
     <div className="surface-elevated px-4 py-3">
       <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium', color)}>
         {label}
       </span>
       <p className="mt-2 text-xl font-semibold font-mono">
-        {new Intl.NumberFormat('en-US', {
-          style: 'currency',
-          currency: 'USD',
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 0,
-        }).format(amount)}
+        {formatMoneyExact(amount, currency)}
       </p>
       <p className="mt-0.5 text-[11px] text-muted-foreground">in current page</p>
     </div>

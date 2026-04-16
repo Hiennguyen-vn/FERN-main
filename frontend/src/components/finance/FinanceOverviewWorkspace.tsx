@@ -3,24 +3,46 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
-  DollarSign,
   RefreshCw,
-  Users,
   XCircle,
 } from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { cn } from '@/lib/utils';
 import {
   financeApi,
   payrollApi,
   type ExpenseView,
   type PayrollPeriodView,
+  type PayrollPeriodsQuery,
   type PayrollRunView,
+  type PayrollRunsQuery,
   type ScopeOutlet,
   type ScopeRegion,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
 import { collectPagedItems } from '@/lib/collect-paged-items';
 import { getFinanceOutletDisplay } from '@/components/finance/finance-display';
+import type { FinanceTab } from '@/components/finance/finance-workspace-config';
+import {
+  buildRevenueSnapshot,
+  describeFinanceScope,
+  findPeriodComparison,
+  formatPeriodLabel,
+  getFinanceVisibleOutlets,
+  getFinanceVarianceStatus,
+  getPeriodKey,
+  toNumber,
+} from '@/components/finance/finance-phase2-utils';
+import { formatMoney } from '@/components/finance/finance-utils';
+import { useFinanceSalesOrders } from '@/components/finance/use-finance-sales-orders';
 
 interface Props {
   token: string;
@@ -28,21 +50,39 @@ interface Props {
   scopeOutletId?: string;
   regions: ScopeRegion[];
   outlets: ScopeOutlet[];
-  onNavigate: (tab: string) => void;
+  onNavigate: (tab: FinanceTab) => void;
 }
 
-function toNumber(v: unknown) {
-  const n = Number(v ?? 0);
-  return Number.isFinite(n) ? n : 0;
+interface OverviewKpis {
+  netSales: number;
+  totalPayroll: number;
+  totalExpenses: number;
+  otherExpenses: number;
+  manualExpenses: number;
+  payrollExpenses: number;
+  invoiceExpenses: number;
+  laborPct: number | null;
+  otherOpExPct: number | null;
+  varianceFlags: number;
+  currency: string;
 }
 
-function formatCurrency(value: unknown, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(toNumber(value));
+interface PeriodCloseStatus {
+  total: number;
+  approved: number;
+  pending: number;
+}
+
+interface OutletPerformanceRow {
+  outletId: string;
+  outletCode: string;
+  outletName: string;
+  netSales: number;
+  payroll: number;
+  laborPct: number | null;
+  otherExpenses: number;
+  otherOpExPct: number | null;
+  status: 'clear' | 'watch' | 'risk' | 'no-sales';
 }
 
 function sourceLabel(sourceType?: string | null, subtype?: string | null): {
@@ -56,19 +96,28 @@ function sourceLabel(sourceType?: string | null, subtype?: string | null): {
   return { label: 'System', color: 'bg-muted text-muted-foreground border-border' };
 }
 
-interface OverviewKpis {
-  totalExpenses: number;
-  totalPayroll: number;
-  manualExpenses: number;
-  payrollExpenses: number;
-  invoiceExpenses: number;
-  currency: string;
+/** Show ratio as "X.X% of sales" when sensible, or a warning when extreme */
+function safeRatioLabel(pct: number | null, suffix: string): string {
+  if (pct == null) return 'No sales data';
+  if (pct > 200) return 'Exceeds sales — check data';
+  if (pct > 100) return `${pct.toFixed(1)}% ${suffix} — over 100%`;
+  return `${pct.toFixed(1)}% ${suffix}`;
 }
 
-interface PeriodCloseStatus {
-  total: number;
-  approved: number;
-  pending: number;
+function ratioTone(pct: number | null, warnAt: number, dangerAt: number): 'default' | 'warning' | 'danger' {
+  if (pct == null) return 'default';
+  if (pct > 100) return 'danger';
+  if (pct > dangerAt) return 'danger';
+  if (pct > warnAt) return 'warning';
+  return 'default';
+}
+
+function formatDelta(value: number | null) {
+  if (value == null || !Number.isFinite(value)) {
+    return 'Latest period';
+  }
+  const prefix = value > 0 ? '+' : '';
+  return `${prefix}${value.toFixed(1)}%`;
 }
 
 export function FinanceOverviewWorkspace({
@@ -84,84 +133,191 @@ export function FinanceOverviewWorkspace({
   const [expenses, setExpenses] = useState<ExpenseView[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriodView[]>([]);
   const [runs, setRuns] = useState<PayrollRunView[]>([]);
+  const [selectedPeriodKey, setSelectedPeriodKey] = useState('');
+  const {
+    orders,
+    visibleOutlets,
+    loading: salesLoading,
+    error: salesError,
+    refresh: refreshSales,
+  } = useFinanceSalesOrders({
+    token,
+    scopeRegionId,
+    scopeOutletId,
+    outlets,
+  });
 
+  const scopedVisibleOutlets = useMemo(
+    () => (
+      visibleOutlets.length > 0
+        ? visibleOutlets
+        : getFinanceVisibleOutlets(outlets, scopeRegionId, scopeOutletId)
+    ),
+    [outlets, scopeOutletId, scopeRegionId, visibleOutlets],
+  );
   const outletsById = useMemo(
-    () => new Map(outlets.map((o) => [o.id, o])),
+    () => new Map(outlets.map((outlet) => [outlet.id, outlet])),
     [outlets],
   );
+  const scopeLabel = useMemo(
+    () =>
+      describeFinanceScope({
+        scopeRegionId,
+        scopeOutletId,
+        regions,
+        outlets,
+      }),
+    [outlets, regions, scopeOutletId, scopeRegionId],
+  );
+  const periodById = useMemo(
+    () => new Map(periods.map((period) => [period.id, period])),
+    [periods],
+  );
 
-  const scopedRegionId = useMemo(() => {
-    if (scopeRegionId) return scopeRegionId;
-    if (!scopeOutletId) return '';
-    return outlets.find((o) => o.id === scopeOutletId)?.regionId || '';
-  }, [outlets, scopeOutletId, scopeRegionId]);
+  const resolveRunPeriodKey = useCallback((run: PayrollRunView) => {
+    const linkedPeriod = periodById.get(String(run.payrollPeriodId || ''));
+    return getPeriodKey(linkedPeriod?.startDate || linkedPeriod?.payDate || run.createdAt);
+  }, [periodById]);
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     setError('');
     try {
-      const [expPage, periodItems] = await Promise.all([
+      const [expPage, periodItems, runItems] = await Promise.all([
         financeApi.expenses(token, {
           outletId: scopeOutletId || undefined,
-          limit: 200,
+          limit: 500,
           sortBy: 'businessDate',
           sortDir: 'desc',
         }),
-        collectPagedItems<PayrollPeriodView>(
-          (q) => payrollApi.periods(token, q),
-          { regionId: scopedRegionId || undefined, sortBy: 'startDate', sortDir: 'desc' },
-          50,
-        ),
+        collectPagedItems<PayrollPeriodView, PayrollPeriodsQuery>(
+          (query) => payrollApi.periods(token, query),
+          {
+            regionId: scopeRegionId || undefined,
+            sortBy: 'startDate',
+            sortDir: 'desc',
+          },
+          100,
+        ).catch(() => [] as PayrollPeriodView[]),
+        collectPagedItems<PayrollRunView, PayrollRunsQuery>(
+          (query) => payrollApi.runs(token, query),
+          {
+            outletId: scopeOutletId || undefined,
+            sortBy: 'createdAt',
+            sortDir: 'desc',
+          },
+          500,
+        ).catch(() => [] as PayrollRunView[]),
       ]);
 
-      const allExpenses = expPage.items || [];
-      setExpenses(allExpenses);
+      setExpenses(expPage.items || []);
       setPeriods(periodItems);
-
-      if (periodItems.length > 0) {
-        const recentPeriodId = periodItems[0]?.id;
-        if (recentPeriodId) {
-          const runItems = await collectPagedItems<PayrollRunView>(
-            (q) => payrollApi.runs(token, q),
-            {
-              payrollPeriodId: recentPeriodId,
-              outletId: scopeOutletId || undefined,
-              sortBy: 'userId',
-              sortDir: 'asc',
-            },
-            200,
-          );
-          setRuns(runItems);
-        }
-      }
+      setRuns(runItems);
     } catch (err: unknown) {
       setError(getErrorMessage(err, 'Unable to load finance overview'));
     } finally {
       setLoading(false);
     }
-  }, [token, scopeOutletId, scopedRegionId]);
+  }, [scopeOutletId, scopeRegionId, token]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const kpis = useMemo((): OverviewKpis => {
+  const selectablePeriods = useMemo(() => {
+    const keys = new Set<string>();
+
+    orders.forEach((order) => {
+      const key = getPeriodKey(order.createdAt);
+      if (key) keys.add(key);
+    });
+    expenses.forEach((expense) => {
+      const key = getPeriodKey(expense.businessDate || expense.createdAt);
+      if (key) keys.add(key);
+    });
+    periods.forEach((period) => {
+      const key = getPeriodKey(period.startDate || period.payDate);
+      if (key) keys.add(key);
+    });
+    runs.forEach((run) => {
+      const key = resolveRunPeriodKey(run);
+      if (key) keys.add(key);
+    });
+
+    return Array.from(keys)
+      .sort((left, right) => right.localeCompare(left))
+      .map((key) => ({
+        key,
+        label: formatPeriodLabel(key),
+      }));
+  }, [expenses, orders, periods, resolveRunPeriodKey, runs]);
+
+  useEffect(() => {
+    setSelectedPeriodKey((current) => {
+      if (current && selectablePeriods.some((option) => option.key === current)) {
+        return current;
+      }
+      return selectablePeriods[0]?.key || '';
+    });
+  }, [selectablePeriods]);
+
+  const activePeriodKey = selectedPeriodKey || selectablePeriods[0]?.key || '';
+  const comparisonPeriod = useMemo(
+    () => findPeriodComparison(selectablePeriods, activePeriodKey),
+    [activePeriodKey, selectablePeriods],
+  );
+
+  const revenueSnapshot = useMemo(
+    () =>
+      buildRevenueSnapshot({
+        orders,
+        visibleOutlets: scopedVisibleOutlets,
+        periodKey: activePeriodKey,
+        channelFilter: 'all',
+      }),
+    [activePeriodKey, orders, scopedVisibleOutlets],
+  );
+  const comparisonSnapshot = useMemo(
+    () =>
+      comparisonPeriod
+        ? buildRevenueSnapshot({
+            orders,
+            visibleOutlets: scopedVisibleOutlets,
+            periodKey: comparisonPeriod.key,
+            channelFilter: 'all',
+          })
+        : null,
+    [comparisonPeriod, orders, scopedVisibleOutlets],
+  );
+
+  const currentExpenses = useMemo(
+    () => expenses.filter((expense) => getPeriodKey(expense.businessDate || expense.createdAt) === activePeriodKey),
+    [activePeriodKey, expenses],
+  );
+  const currentPeriodRuns = useMemo(
+    () => runs.filter((run) => resolveRunPeriodKey(run) === activePeriodKey),
+    [activePeriodKey, resolveRunPeriodKey, runs],
+  );
+  const approvedRuns = useMemo(
+    () => currentPeriodRuns.filter((run) => String(run.status || '').toLowerCase() === 'approved'),
+    [currentPeriodRuns],
+  );
+
+  const overviewKpis = useMemo((): OverviewKpis => {
     let totalExpenses = 0;
-    let totalPayroll = 0;
     let manualExpenses = 0;
     let payrollExpenses = 0;
     let invoiceExpenses = 0;
-    let currency = 'USD';
+    let currency = revenueSnapshot.currency || 'USD';
 
-    for (const exp of expenses) {
-      const amount = toNumber(exp.amount);
-      const raw = String(exp.subtype || exp.sourceType || '').toLowerCase();
-      if (exp.currencyCode) currency = exp.currencyCode;
+    for (const expense of currentExpenses) {
+      const amount = toNumber(expense.amount);
+      const raw = String(expense.subtype || expense.sourceType || '').toLowerCase();
+      if (expense.currencyCode) currency = expense.currencyCode;
       totalExpenses += amount;
       if (raw === 'payroll') {
         payrollExpenses += amount;
-        totalPayroll += amount;
       } else if (raw.includes('invoice') || raw === 'inventory_purchase') {
         invoiceExpenses += amount;
       } else {
@@ -169,258 +325,336 @@ export function FinanceOverviewWorkspace({
       }
     }
 
-    return { totalExpenses, totalPayroll, manualExpenses, payrollExpenses, invoiceExpenses, currency };
-  }, [expenses]);
+    // Only count payroll runs from outlets in the visible scope
+    const visibleOutletIds = new Set(scopedVisibleOutlets.map((o) => o.id));
+    const scopedRuns = visibleOutletIds.size > 0
+      ? approvedRuns.filter((run) => visibleOutletIds.has(String(run.outletId ?? '')))
+      : approvedRuns;
+    const totalPayroll = scopedRuns.reduce((sum, run) => sum + toNumber(run.netSalary), 0);
+    if (!currency) {
+      currency = String(scopedRuns[0]?.currencyCode || 'USD');
+    }
+    // Only count non-payroll expenses from outlets in the visible scope
+    const scopedOtherExpenses = currentExpenses
+      .filter((expense) => {
+        const raw = String(expense.subtype || expense.sourceType || '').toLowerCase();
+        if (raw === 'payroll') return false;
+        if (visibleOutletIds.size > 0 && !visibleOutletIds.has(String(expense.outletId ?? ''))) return false;
+        return true;
+      });
+    const otherExpenses = scopedOtherExpenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
+    const laborPct = revenueSnapshot.netSales > 0 ? (totalPayroll / revenueSnapshot.netSales) * 100 : null;
+    const otherOpExPct = revenueSnapshot.netSales > 0 ? (otherExpenses / revenueSnapshot.netSales) * 100 : null;
+
+    const varianceFlags = scopedVisibleOutlets.reduce((count, outlet) => {
+      const outletNetSales = revenueSnapshot.outletRows.find((row) => row.outletId === outlet.id)?.netSales || 0;
+      const outletPayroll = approvedRuns
+        .filter((run) => String(run.outletId) === outlet.id)
+        .reduce((sum, run) => sum + toNumber(run.netSalary), 0);
+      const outletOtherExpenses = currentExpenses
+        .filter(
+          (expense) =>
+            String(expense.outletId) === outlet.id
+            && String(expense.subtype || expense.sourceType || '').toLowerCase() !== 'payroll',
+        )
+        .reduce((sum, expense) => sum + toNumber(expense.amount), 0);
+      const outletLaborPct = outletNetSales > 0 ? (outletPayroll / outletNetSales) * 100 : null;
+      const outletOtherOpExPct = outletNetSales > 0 ? (outletOtherExpenses / outletNetSales) * 100 : null;
+      const status = getFinanceVarianceStatus(outletLaborPct, outletOtherOpExPct, outletNetSales);
+      return status === 'watch' || status === 'risk' ? count + 1 : count;
+    }, 0);
+
+    return {
+      netSales: revenueSnapshot.netSales,
+      totalPayroll,
+      totalExpenses,
+      otherExpenses,
+      manualExpenses,
+      payrollExpenses,
+      invoiceExpenses,
+      laborPct,
+      otherOpExPct,
+      varianceFlags,
+      currency,
+    };
+  }, [approvedRuns, currentExpenses, revenueSnapshot, scopedVisibleOutlets]);
 
   const closeStatus = useMemo((): PeriodCloseStatus => {
-    const approved = runs.filter((r) => String(r.status || '').toLowerCase() === 'approved').length;
+    const approved = currentPeriodRuns.filter((run) => String(run.status || '').toLowerCase() === 'approved').length;
     return {
-      total: runs.length,
+      total: currentPeriodRuns.length,
       approved,
-      pending: runs.length - approved,
+      pending: currentPeriodRuns.length - approved,
     };
-  }, [runs]);
+  }, [currentPeriodRuns]);
 
-  const recentPeriod = periods[0] ?? null;
-
-  const recentExpenses = useMemo(
-    () => expenses.slice(0, 8),
-    [expenses],
+  const currentPayrollPeriod = useMemo(
+    () => periods.find((period) => getPeriodKey(period.startDate || period.payDate) === activePeriodKey) ?? periods[0] ?? null,
+    [activePeriodKey, periods],
   );
 
   const sourceMix = useMemo(() => {
-    const total = kpis.totalExpenses;
+    const total = overviewKpis.totalExpenses;
     if (total === 0) return { manual: 0, payroll: 0, invoice: 0 };
     return {
-      manual: Math.round((kpis.manualExpenses / total) * 100),
-      payroll: Math.round((kpis.payrollExpenses / total) * 100),
-      invoice: Math.round((kpis.invoiceExpenses / total) * 100),
+      manual: Math.round((overviewKpis.manualExpenses / total) * 100),
+      payroll: Math.round((overviewKpis.payrollExpenses / total) * 100),
+      invoice: Math.round((overviewKpis.invoiceExpenses / total) * 100),
     };
-  }, [kpis]);
+  }, [overviewKpis]);
+
+  const outletPerformanceRows = useMemo((): OutletPerformanceRow[] => {
+    return scopedVisibleOutlets
+      .map((outlet) => {
+        const outletNetSales = revenueSnapshot.outletRows.find((row) => row.outletId === outlet.id)?.netSales || 0;
+        const payroll = approvedRuns
+          .filter((run) => String(run.outletId) === outlet.id)
+          .reduce((sum, run) => sum + toNumber(run.netSalary), 0);
+        const otherExpenses = currentExpenses
+          .filter(
+            (expense) =>
+              String(expense.outletId) === outlet.id
+              && String(expense.subtype || expense.sourceType || '').toLowerCase() !== 'payroll',
+          )
+          .reduce((sum, expense) => sum + toNumber(expense.amount), 0);
+        const laborPct = outletNetSales > 0 ? (payroll / outletNetSales) * 100 : null;
+        const otherOpExPct = outletNetSales > 0 ? (otherExpenses / outletNetSales) * 100 : null;
+
+        return {
+          outletId: outlet.id,
+          outletCode: outlet.code || outlet.id,
+          outletName: outlet.name || outlet.id,
+          netSales: outletNetSales,
+          payroll,
+          laborPct,
+          otherExpenses,
+          otherOpExPct,
+          status: getFinanceVarianceStatus(laborPct, otherOpExPct, outletNetSales),
+        };
+      })
+      .filter((row) => row.netSales > 0 || row.payroll > 0 || row.otherExpenses > 0 || scopedVisibleOutlets.length === 1)
+      .sort((left, right) => right.netSales - left.netSales);
+  }, [approvedRuns, currentExpenses, revenueSnapshot.outletRows, scopedVisibleOutlets]);
+
+  const recentExpenses = useMemo(
+    () => currentExpenses.slice(0, 6),
+    [currentExpenses],
+  );
+
+  const revenueDeltaPct = comparisonSnapshot && comparisonSnapshot.netSales > 0
+    ? ((revenueSnapshot.netSales - comparisonSnapshot.netSales) / comparisonSnapshot.netSales) * 100
+    : null;
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header row */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-5 animate-fade-in">
+      {/* Compact header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Finance Overview</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Expense and payroll summary for current scope. Revenue and margin data available in Phase 2.
+          <h2 className="text-lg font-semibold">{scopeLabel}</h2>
+          <p className="text-xs text-muted-foreground">
+            {formatPeriodLabel(activePeriodKey)} · {revenueSnapshot.completedOrderCount} orders
           </p>
         </div>
-        <button
-          onClick={() => void load()}
-          disabled={loading}
-          className="flex h-8 items-center gap-1.5 rounded border px-3 text-xs hover:bg-accent disabled:opacity-60"
-        >
-          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-          Refresh
-        </button>
-      </div>
-
-      {error && (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          {error}
+        <div className="flex items-center gap-2">
+          <select
+            className="h-8 rounded-md border border-input bg-background px-2.5 text-xs"
+            value={activePeriodKey}
+            onChange={(event) => setSelectedPeriodKey(event.target.value)}
+          >
+            {selectablePeriods.length === 0 ? (
+              <option value="">No periods</option>
+            ) : (
+              selectablePeriods.map((option) => (
+                <option key={option.key} value={option.key}>{option.label}</option>
+              ))
+            )}
+          </select>
+          <button
+            onClick={() => { void load(); void refreshSales(); }}
+            disabled={loading || salesLoading}
+            className="flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent disabled:opacity-60"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', (loading || salesLoading) && 'animate-spin')} />
+            Refresh
+          </button>
         </div>
-      )}
-
-      {/* Phase 2 notice */}
-      <div className="rounded-lg border border-blue-200 bg-blue-50/60 px-4 py-3 text-sm text-blue-900">
-        <span className="font-medium">Phase 1 (current):</span> Expense totals and payroll status are live.{' '}
-        <span className="text-blue-700">Revenue, Labor %, and Prime Cost % will be available after sales-service integration (Phase 2).</span>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      {(error || salesError) ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-sm text-destructive">
+          {[error, salesError].filter(Boolean).join(' · ')}
+        </div>
+      ) : null}
+
+      {/* KPI cards — 4 primary metrics */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiCard
-          icon={<DollarSign className="h-4 w-4 text-muted-foreground" />}
-          label="Total Expenses"
-          value={loading ? '—' : formatCurrency(kpis.totalExpenses, kpis.currency)}
-          sub="Current scope, all time in view"
-          onClick={() => onNavigate('expenses')}
-        />
-        <KpiCard
-          icon={<Users className="h-4 w-4 text-muted-foreground" />}
-          label="Payroll (in expenses)"
-          value={loading ? '—' : formatCurrency(kpis.totalPayroll, kpis.currency)}
-          sub="From approved payroll runs"
-          onClick={() => onNavigate('labor')}
-        />
-        <KpiCard
-          icon={<Clock className="h-4 w-4 text-muted-foreground" />}
           label="Net Sales"
-          value="— (Phase 2)"
-          sub="Requires sales-service integration"
-          muted
+          value={formatMoney(overviewKpis.netSales, overviewKpis.currency)}
+          sub={`${revenueSnapshot.completedOrderCount} orders`}
+          delta={comparisonPeriod ? formatDelta(revenueDeltaPct) : undefined}
+          deltaPositive={revenueDeltaPct != null ? revenueDeltaPct >= 0 : undefined}
         />
         <KpiCard
-          icon={<AlertTriangle className="h-4 w-4 text-muted-foreground" />}
-          label="Prime Cost %"
-          value="— (Phase 2)"
-          sub="Requires revenue + COGS data"
-          muted
+          label="Labor Cost"
+          value={formatMoney(overviewKpis.totalPayroll, overviewKpis.currency)}
+          sub={safeRatioLabel(overviewKpis.laborPct, 'of sales')}
+          tone={ratioTone(overviewKpis.laborPct, 35, 40)}
+        />
+        <KpiCard
+          label="Operating Expenses"
+          value={formatMoney(overviewKpis.otherExpenses, overviewKpis.currency)}
+          sub={safeRatioLabel(overviewKpis.otherOpExPct, 'of sales')}
+          tone={ratioTone(overviewKpis.otherOpExPct, 25, 30)}
+        />
+        <KpiCard
+          label="Variance Flags"
+          value={String(overviewKpis.varianceFlags)}
+          sub={overviewKpis.varianceFlags === 0 ? 'All outlets within target' : `${overviewKpis.varianceFlags} outlet(s) over threshold`}
+          tone={overviewKpis.varianceFlags > 0 ? 'warning' : 'default'}
         />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
-        {/* Recent expenses table */}
-        <div className="surface-elevated overflow-hidden">
-          <div className="flex items-center justify-between border-b px-5 py-4">
-            <div>
-              <h3 className="text-sm font-semibold">Recent expense rows</h3>
-              <p className="text-xs text-muted-foreground">Last 8 entries across current scope</p>
+      {/* Main content grid */}
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="space-y-5">
+          {/* Daily trend chart */}
+          <section className="surface-elevated overflow-hidden">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h3 className="text-sm font-semibold">Daily revenue</h3>
+              <button onClick={() => onNavigate('revenue')} className="text-xs text-primary hover:underline">Details →</button>
             </div>
-            <button
-              onClick={() => onNavigate('expenses')}
-              className="text-xs text-primary hover:underline"
-            >
-              View all →
-            </button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted/30">
-                  {['Date', 'Outlet', 'Description', 'Source', 'Amount'].map((h) => (
-                    <th
-                      key={h}
-                      className={cn(
-                        'px-4 py-2.5 text-[11px] font-medium',
-                        h === 'Amount' ? 'text-right' : 'text-left',
-                      )}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {loading && recentExpenses.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                      Loading…
-                    </td>
+            <div className="h-[220px] px-3 py-3">
+              {revenueSnapshot.trend.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No data for this period.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={revenueSnapshot.trend}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                    <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
+                    <YAxis axisLine={false} tickLine={false} width={60} tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} tickFormatter={(v) => formatMoney(Number(v), overviewKpis.currency)} />
+                    <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid hsl(var(--border))', background: 'hsl(var(--card))', fontSize: 12 }} formatter={(v: number) => formatMoney(Number(v), overviewKpis.currency)} />
+                    <Bar dataKey="netSales" radius={[4, 4, 0, 0]} fill="hsl(var(--primary))" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </section>
+
+          {/* Outlet table */}
+          <section className="surface-elevated overflow-hidden">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h3 className="text-sm font-semibold">Outlet performance</h3>
+              <button onClick={() => onNavigate('prime-cost')} className="text-xs text-primary hover:underline">Prime Cost →</button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b bg-muted/30">
+                    {['Outlet', 'Net Sales', 'Labor %', 'OpEx %', 'Status'].map((h) => (
+                      <th key={h} className={cn('px-4 py-2 text-[11px] font-medium', ['Net Sales', 'Labor %', 'OpEx %'].includes(h) ? 'text-right' : 'text-left')}>{h}</th>
+                    ))}
                   </tr>
-                ) : recentExpenses.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                      No expenses found for current scope
-                    </td>
-                  </tr>
-                ) : (
-                  recentExpenses.map((exp) => {
-                    const outletDisplay = getFinanceOutletDisplay(outletsById, exp.outletId);
-                    const src = sourceLabel(exp.sourceType, exp.subtype);
-                    return (
-                      <tr key={String(exp.id)} className="border-b last:border-0">
-                        <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                          {String(exp.businessDate || '—')}
-                        </td>
+                </thead>
+                <tbody>
+                  {outletPerformanceRows.length === 0 ? (
+                    <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-muted-foreground">No outlet data.</td></tr>
+                  ) : (
+                    outletPerformanceRows.map((row) => (
+                      <tr key={row.outletId} className="border-b last:border-0 hover:bg-accent/20">
                         <td className="px-4 py-2.5">
-                          <div className="flex flex-col">
-                            <span className="text-xs font-medium">{outletDisplay.primary}</span>
-                            {outletDisplay.secondary && (
-                              <span className="text-[11px] font-mono text-muted-foreground">
-                                {outletDisplay.secondary}
-                              </span>
-                            )}
-                          </div>
+                          <span className="text-sm font-medium">{row.outletCode}</span>
+                          <span className="ml-1.5 text-xs text-muted-foreground">{row.outletName}</span>
                         </td>
-                        <td className="px-4 py-2.5 text-sm max-w-[200px] truncate">
-                          {String(exp.description || '—')}
+                        <td className="px-4 py-2.5 text-right font-mono text-sm">{formatMoney(row.netSales, overviewKpis.currency)}</td>
+                        <td className={cn('px-4 py-2.5 text-right text-sm', row.laborPct != null && row.laborPct > 100 && 'text-red-600')}>
+                          {row.laborPct == null ? '—' : row.laborPct > 200 ? '>200%' : `${row.laborPct.toFixed(1)}%`}
                         </td>
-                        <td className="px-4 py-2.5">
-                          <span
-                            className={cn(
-                              'inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium',
-                              src.color,
-                            )}
-                          >
-                            {src.label}
-                          </span>
+                        <td className={cn('px-4 py-2.5 text-right text-sm', row.otherOpExPct != null && row.otherOpExPct > 100 && 'text-red-600')}>
+                          {row.otherOpExPct == null ? '—' : row.otherOpExPct > 200 ? '>200%' : `${row.otherOpExPct.toFixed(1)}%`}
                         </td>
-                        <td className="px-4 py-2.5 text-right text-sm font-mono whitespace-nowrap">
-                          {formatCurrency(exp.amount, String(exp.currencyCode || 'USD'))}
-                        </td>
+                        <td className="px-4 py-2.5"><OutletStatusBadge status={row.status} /></td>
                       </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* Recent expenses */}
+          <section className="surface-elevated overflow-hidden">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h3 className="text-sm font-semibold">Recent expenses</h3>
+              <button onClick={() => onNavigate('expenses')} className="text-xs text-primary hover:underline">View all →</button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b bg-muted/30">
+                    {['Date', 'Outlet', 'Description', 'Source', 'Amount'].map((h) => (
+                      <th key={h} className={cn('px-4 py-2 text-[11px] font-medium', h === 'Amount' ? 'text-right' : 'text-left')}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentExpenses.length === 0 ? (
+                    <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-muted-foreground">No expenses this period.</td></tr>
+                  ) : (
+                    recentExpenses.map((expense) => {
+                      const outletDisplay = getFinanceOutletDisplay(outletsById, expense.outletId);
+                      const source = sourceLabel(expense.sourceType, expense.subtype);
+                      return (
+                        <tr key={String(expense.id)} className="border-b last:border-0">
+                          <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">{String(expense.businessDate || '—')}</td>
+                          <td className="px-4 py-2 text-xs font-medium">{outletDisplay.primary}</td>
+                          <td className="px-4 py-2 text-xs">{String(expense.description || '—')}</td>
+                          <td className="px-4 py-2">
+                            <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium', source.color)}>{source.label}</span>
+                          </td>
+                          <td className="px-4 py-2 text-right text-xs font-mono">{formatMoney(expense.amount, String(expense.currencyCode || overviewKpis.currency))}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
 
-        {/* Right panel */}
-        <div className="space-y-4">
-          {/* Expense source mix */}
-          <div className="surface-elevated px-5 py-4">
+        {/* Right sidebar */}
+        <div className="space-y-5">
+          <section className="surface-elevated px-4 py-4">
             <h3 className="mb-3 text-sm font-semibold">Expense sources</h3>
-            {kpis.totalExpenses === 0 ? (
-              <p className="text-xs text-muted-foreground">No expense data in current scope.</p>
+            {overviewKpis.totalExpenses === 0 ? (
+              <p className="text-xs text-muted-foreground">No expense data.</p>
             ) : (
-              <div className="space-y-2.5">
-                <SourceBar label="Manual entry" pct={sourceMix.manual} color="bg-blue-500" />
-                <SourceBar label="Invoice-linked" pct={sourceMix.invoice} color="bg-orange-500" />
-                <SourceBar label="Payroll-linked" pct={sourceMix.payroll} color="bg-purple-500" />
+              <div className="space-y-2">
+                <SourceBar label="Manual" pct={sourceMix.manual} color="bg-blue-500" />
+                <SourceBar label="Invoice" pct={sourceMix.invoice} color="bg-orange-500" />
+                <SourceBar label="Payroll" pct={sourceMix.payroll} color="bg-purple-500" />
               </div>
             )}
-            <button
-              onClick={() => onNavigate('expenses')}
-              className="mt-4 text-xs text-primary hover:underline"
-            >
-              View expense ledger →
-            </button>
-          </div>
+            <button onClick={() => onNavigate('expenses')} className="mt-3 text-xs text-primary hover:underline">View ledger →</button>
+          </section>
 
-          {/* Period close status */}
-          <div className="surface-elevated px-5 py-4">
-            <h3 className="mb-1 text-sm font-semibold">Latest payroll period</h3>
-            {recentPeriod ? (
-              <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  {String(recentPeriod.name || recentPeriod.startDate || '—')}
-                </p>
-                <div className="flex items-center gap-4 text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-                    <span>{closeStatus.approved} approved</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <XCircle className="h-3.5 w-3.5 text-amber-500" />
-                    <span>{closeStatus.pending} pending</span>
-                  </div>
-                </div>
-                {closeStatus.total > 0 && (
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="h-2 rounded-full bg-green-500 transition-all"
-                      style={{ width: `${Math.round((closeStatus.approved / closeStatus.total) * 100)}%` }}
-                    />
-                  </div>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">No payroll periods in scope.</p>
-            )}
-            <button
-              onClick={() => onNavigate('labor')}
-              className="mt-4 text-xs text-primary hover:underline"
-            >
-              View payroll review →
-            </button>
-          </div>
-
-          {/* Future metrics placeholder */}
-          <div className="surface-elevated px-5 py-4 opacity-60">
-            <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Phase 2 metrics</h3>
-            <div className="space-y-1.5 text-xs text-muted-foreground">
-              <p>Labor % of sales — needs sales-service</p>
-              <p>Prime Cost % — needs revenue + COGS</p>
-              <p>Gross Margin — needs revenue data</p>
-              <p>Outlet comparison heatmap</p>
+          <section className="surface-elevated px-4 py-4">
+            <h3 className="mb-1 text-sm font-semibold">Period close</h3>
+            <p className="text-xs text-muted-foreground">
+              {currentPayrollPeriod ? String(currentPayrollPeriod.name || formatPeriodLabel(activePeriodKey)) : formatPeriodLabel(activePeriodKey)}
+            </p>
+            <div className="mt-2 flex items-center gap-3 text-xs">
+              <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-600" />{closeStatus.approved} approved</span>
+              <span className="flex items-center gap-1"><XCircle className="h-3 w-3 text-amber-500" />{closeStatus.pending} pending</span>
             </div>
-          </div>
+            {closeStatus.total > 0 && (
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div className="h-1.5 rounded-full bg-green-500 transition-all" style={{ width: `${Math.round((closeStatus.approved / closeStatus.total) * 100)}%` }} />
+              </div>
+            )}
+            <button onClick={() => onNavigate('close')} className="mt-3 text-xs text-primary hover:underline">View checklist →</button>
+          </section>
         </div>
       </div>
     </div>
@@ -428,50 +662,81 @@ export function FinanceOverviewWorkspace({
 }
 
 function KpiCard({
-  icon,
   label,
   value,
   sub,
-  muted = false,
-  onClick,
+  delta,
+  deltaPositive,
+  tone = 'default',
 }: {
-  icon: React.ReactNode;
   label: string;
   value: string;
-  sub: string;
-  muted?: boolean;
-  onClick?: () => void;
+  sub?: string;
+  delta?: string;
+  deltaPositive?: boolean;
+  tone?: 'default' | 'warning' | 'danger';
 }) {
   return (
-    <div
-      className={cn(
-        'surface-elevated px-5 py-4',
-        onClick && 'cursor-pointer hover:bg-accent/30 transition-colors',
-        muted && 'opacity-60',
-      )}
-      onClick={onClick}
-      role={onClick ? 'button' : undefined}
-    >
-      <div className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-        {icon}
-        <span>{label}</span>
-      </div>
-      <p className="text-2xl font-semibold tracking-tight">{value}</p>
-      <p className="mt-1 text-[11px] text-muted-foreground">{sub}</p>
+    <div className={cn(
+      'surface-elevated rounded-lg px-4 py-3',
+      tone === 'danger' && 'ring-1 ring-red-200',
+      tone === 'warning' && 'ring-1 ring-amber-200',
+    )}>
+      <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
+      <p className={cn(
+        'mt-1 text-lg font-semibold tabular-nums',
+        tone === 'danger' && 'text-red-700',
+        tone === 'warning' && 'text-amber-700',
+      )}>{value}</p>
+      {delta ? (
+        <span className={cn(
+          'mt-1 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium',
+          deltaPositive ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700',
+        )}>{delta}</span>
+      ) : sub ? (
+        <p className="mt-1 text-[11px] text-muted-foreground">{sub}</p>
+      ) : null}
     </div>
+  );
+}
+
+function OutletStatusBadge({ status }: { status: OutletPerformanceRow['status'] }) {
+  if (status === 'risk') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-700">
+        <AlertTriangle className="h-3 w-3" /> Risk
+      </span>
+    );
+  }
+  if (status === 'watch') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+        <Clock className="h-3 w-3" /> Watch
+      </span>
+    );
+  }
+  if (status === 'no-sales') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+        No Sales
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[10px] font-medium text-green-700">
+      <CheckCircle2 className="h-3 w-3" /> Good
+    </span>
   );
 }
 
 function SourceBar({ label, pct, color }: { label: string; pct: number; color: string }) {
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-mono font-medium">{pct}%</span>
+    <div className="flex items-center gap-3">
+      <span className="w-14 shrink-0 text-xs text-muted-foreground">{label}</span>
+      <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+        <div className={cn('h-2 rounded-full transition-all', color)} style={{ width: `${Math.max(pct, 1)}%` }} />
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-        <div className={cn('h-1.5 rounded-full transition-all', color)} style={{ width: `${pct}%` }} />
-      </div>
+      <span className="w-8 shrink-0 text-right text-xs font-mono font-medium">{pct}%</span>
     </div>
   );
 }

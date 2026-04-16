@@ -278,7 +278,7 @@ function WorkforceModuleInner() {
   // Effective users for dropdowns — API list preferred, fallback to knownStaff
   const effectiveUsers = useMemo<AuthUserListItem[]>(() => {
     if (users.length > 0) return users;
-    return [...knownStaff.values()].map((s) => ({
+    return [...knownStaff.values()].map((s): AuthUserListItem => ({
       id: s.id,
       username: s.username,
       fullName: s.fullName,
@@ -363,7 +363,7 @@ function WorkforceModuleInner() {
     return <EmptyState title="Select an outlet" description="Choose an outlet from the sidebar to manage workforce." />;
   }
   if (error && !shifts.length) {
-    return <ServiceUnavailablePage service="Workforce" detail={error} />;
+    return <ServiceUnavailablePage state="service_unavailable" moduleName="Workforce" />;
   }
 
   return (
@@ -618,7 +618,7 @@ function DaypartSection({
           {group.shifts.map((s) => `${formatShiftTime(s.shift.startTime)}–${formatShiftTime(s.shift.endTime)}`).join(' · ')}
         </span>
         <span className={cn('text-xs font-medium ml-2 px-1.5 py-0.5 rounded', coverageTextClass(totalAssigned, totalRequired))}>
-          {totalAssigned}/{totalRequired} staff
+          {totalAssigned} staff
         </span>
         <span className={cn('ml-auto text-xs px-2 py-0.5 rounded font-medium', progressBadgeClass(overallProgress))}>
           {overallProgress === 'completed' ? '✓ Done' : overallProgress === 'in_progress' ? '● In Progress' : '○ Not Started'}
@@ -679,7 +679,7 @@ function DaypartSection({
                       {/* Action buttons */}
                       <div className="flex items-center gap-1 ml-auto shrink-0">
                         {/* Clock In */}
-                        {!a.actualStartTime && liveStatus !== 'on_leave' && liveStatus !== 'absent' && (
+                        {!a.actualStartTime && liveStatus !== 'on_leave' && liveStatus !== 'no_show' && (
                           <button
                             onClick={() => onUpdateAttendance(a.id, { attendanceStatus: 'present', actualStartTime: new Date().toISOString() })}
                             disabled={!!busyKey}
@@ -836,81 +836,132 @@ function SchedulePlannerTab({
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr className="bg-muted/30">
-              <th className="text-left p-2 border-b w-36 text-xs font-medium text-muted-foreground">Shift</th>
-              {weekDates.map((d) => (
-                <th key={d} className={cn(
-                  'text-center p-2 border-b text-xs font-medium',
-                  d === todayStr() ? 'bg-blue-50 text-blue-700' : 'text-muted-foreground',
-                )}>
-                  {formatDateShort(d)}
-                  {d === todayStr() && <div className="text-[10px] font-normal">Today</div>}
-                </th>
-              ))}
+              <th className="text-left p-3 border-b w-40 text-xs font-medium text-muted-foreground">Ca làm việc</th>
+              {weekDates.map((d) => {
+                const dayLabel = new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
+                const dayNum = new Date(d + 'T00:00:00').getDate();
+                const monthShort = new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short' });
+                return (
+                  <th key={d} className={cn(
+                    'text-center p-2 border-b text-xs font-medium min-w-[120px]',
+                    d === todayStr() ? 'bg-blue-50 text-blue-700' : 'text-muted-foreground',
+                  )}>
+                    <div className="font-semibold">{dayLabel}</div>
+                    <div className={cn('text-[10px] font-normal mt-0.5', d === todayStr() ? 'text-blue-600' : 'text-muted-foreground/70')}>
+                      {dayNum} {monthShort}
+                    </div>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
             {shiftsByDaypart.length === 0 && (
-              <tr><td colSpan={8} className="text-center p-6 text-muted-foreground text-sm">No shifts configured</td></tr>
+              <tr><td colSpan={8} className="text-center p-8 text-muted-foreground text-sm">No shifts configured</td></tr>
             )}
             {shiftsByDaypart.map(([daypart, dpShifts]) => (
-              dpShifts.map((shift, si) => (
-                <tr key={shift.id} className="hover:bg-muted/10">
-                  {si === 0 && (
-                    <td rowSpan={dpShifts.length} className="p-2 border-b border-r align-top">
-                      <div className="text-xs font-semibold text-muted-foreground uppercase">{getDaypartLabel(daypart as any)}</div>
-                      <div className="text-[11px] text-muted-foreground/70 mt-0.5">
-                        {formatShiftTime(dpShifts[0]?.startTime)}–{formatShiftTime(dpShifts[dpShifts.length - 1]?.endTime)}
+              dpShifts.map((shift) => {
+                const isSelected = selectedCell?.shiftId === shift.id;
+                return (
+                  <tr key={shift.id} className={cn(isSelected && 'bg-primary/5')}>
+                    <td className="p-3 border-b border-r align-top bg-muted/10">
+                      <div className="font-semibold text-xs text-foreground leading-tight">{shift.name}</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">
+                        {formatShiftTime(shift.startTime)}–{formatShiftTime(shift.endTime)}
                       </div>
+                      <div className="text-[10px] text-muted-foreground/60 mt-0.5 uppercase tracking-wide">{getDaypartLabel(daypart as any)}</div>
                     </td>
-                  )}
-                  {weekDates.map((d) => {
-                    const cov = computeWeekCoverage(shift, assignments, d);
-                    const unconfigured = isHeadcountUnconfigured(cov.required, cov.assigned);
-                    const isSelected = selectedCell?.shiftId === shift.id && selectedCell?.date === d;
-                    return (
-                      <td
-                        key={d}
-                        onClick={() => setSelectedCell(isSelected ? null : { shiftId: shift.id, date: d })}
-                        className={cn(
-                          'text-center p-2 border-b cursor-pointer transition-colors select-none',
-                          d === todayStr() && 'bg-blue-50/50',
-                          isSelected && 'ring-2 ring-inset ring-primary bg-primary/5',
-                          !isSelected && !unconfigured && cov.gap > 0 && 'bg-amber-50/50 hover:bg-amber-50',
-                          !isSelected && cov.assigned === 0 && 'bg-red-50/30 hover:bg-red-50/50',
-                          !isSelected && (unconfigured || cov.gap === 0) && 'hover:bg-muted/30',
-                        )}
-                      >
-                        <span className={cn('font-semibold text-sm', coverageTextClass(cov.assigned, cov.required))}>
-                          {cov.assigned}
-                        </span>
-                        {!unconfigured && (
-                          <span className="text-xs text-muted-foreground">/{cov.required}</span>
-                        )}
-                        {!unconfigured && cov.gap > 0 && (
-                          <div className="text-[10px] text-amber-600 leading-none mt-0.5">-{cov.gap}</div>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))
+                    {weekDates.map((d) => {
+                      const cellAssignments = assignments.filter(
+                        (a) => String(a.shiftId ?? '') === shift.id && a.workDate === d && String(a.scheduleStatus ?? '').trim() !== 'cancelled',
+                      );
+                      const cov = computeWeekCoverage(shift, assignments, d);
+                      const isCellSelected = selectedCell?.shiftId === shift.id && selectedCell?.date === d;
+                      const isToday = d === todayStr();
+                      return (
+                        <td
+                          key={d}
+                          onClick={() => setSelectedCell(isCellSelected ? null : { shiftId: shift.id, date: d })}
+                          className={cn(
+                            'p-1.5 border-b align-top cursor-pointer transition-colors select-none',
+                            isToday && 'bg-blue-50/30',
+                            isCellSelected && 'ring-2 ring-inset ring-primary bg-primary/5',
+                            !isCellSelected && !isToday && 'hover:bg-muted/20',
+                          )}
+                        >
+                          <div className="space-y-1 min-h-[40px]">
+                            {cellAssignments.map((a) => {
+                              const name = workShiftUserName(a, getUserName);
+                              const role = a.workRole ? getWorkRoleLabel(a.workRole) : null;
+                              const hasActualTime = !!a.actualStartTime;
+                              const checkIn = hasActualTime ? formatClockTime(a.actualStartTime) : null;
+                              const checkOut = a.actualEndTime ? formatClockTime(a.actualEndTime) : null;
+                              const attStatus = String(a.attendanceStatus ?? '').toLowerCase();
+                              const isLate = attStatus === 'late';
+                              const isAbsent = attStatus === 'absent';
+                              const isPresent = attStatus === 'present' || hasActualTime;
+                              return (
+                                <div
+                                  key={a.id}
+                                  className={cn(
+                                    'rounded px-1.5 py-1 text-[11px] leading-tight',
+                                    isAbsent && 'bg-red-100 text-red-800',
+                                    isLate && 'bg-amber-100 text-amber-800',
+                                    isPresent && !isLate && !isAbsent && 'bg-green-100 text-green-800',
+                                    !isPresent && !isLate && !isAbsent && 'bg-gray-100 text-gray-700',
+                                  )}
+                                >
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="font-medium truncate max-w-[80px]">{name}</span>
+                                    {role && (
+                                      <span className="text-[9px] font-semibold uppercase opacity-70 shrink-0">{role}</span>
+                                    )}
+                                  </div>
+                                  {(checkIn || checkOut) && (
+                                    <div className="text-[10px] opacity-75 mt-0.5">
+                                      {checkIn}{checkOut ? ` - ${checkOut}` : ''}
+                                    </div>
+                                  )}
+                                  {isLate && (
+                                    <div className="text-[9px] mt-0.5">⚠ Late</div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {cellAssignments.length === 0 && (
+                              <div className="text-[10px] text-muted-foreground/40 pt-1 text-center">—</div>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })
             ))}
           </tbody>
         </table>
       </div>
 
-      {/* Selected cell detail */}
+      {/* Assign modal — centered overlay */}
       {selectedCell && (
-        <ScheduleCellDetail
-          shift={shifts.find((s) => s.id === selectedCell.shiftId)!}
-          date={selectedCell.date}
-          assignments={assignments}
-          getUserName={getUserName}
-          users={users}
-          busyKey={busyKey}
-          onAssign={onAssign}
-          onClose={() => setSelectedCell(null)}
-        />
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={() => setSelectedCell(null)}
+        >
+          <div onClick={(e) => e.stopPropagation()}>
+            <ScheduleCellDetail
+              shift={shifts.find((s) => s.id === selectedCell.shiftId)!}
+              date={selectedCell.date}
+              assignments={assignments}
+              getUserName={getUserName}
+              users={users}
+              busyKey={busyKey}
+              onAssign={onAssign}
+              onClose={() => setSelectedCell(null)}
+            />
+          </div>
+        </div>
       )}
     </div>
   );
@@ -948,8 +999,8 @@ function ScheduleCellDetail({
   });
 
   return (
-    <div className="border rounded-lg overflow-hidden">
-      <div className="flex items-center justify-between bg-muted/20 px-4 py-2.5 border-b">
+    <div className="w-[640px] max-h-[85vh] flex flex-col bg-background border rounded-xl shadow-2xl overflow-hidden">
+      <div className="flex items-center justify-between bg-muted/20 px-4 py-3 border-b shrink-0">
         <div>
           <h3 className="font-semibold text-sm">{shift.name}</h3>
           <div className="text-xs text-muted-foreground">
@@ -961,7 +1012,7 @@ function ScheduleCellDetail({
         </button>
       </div>
 
-      <div className="p-4 grid grid-cols-2 gap-4">
+      <div className="p-4 grid grid-cols-2 gap-4 overflow-y-auto">
         {/* Left: assigned staff */}
         <div className="space-y-2">
           <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -1313,7 +1364,7 @@ function TimecardDetail({
 
         <div className="flex flex-wrap items-center gap-2">
           {/* Clock In */}
-          {!hasClockIn && liveStatus !== 'on_leave' && liveStatus !== 'absent' && (
+          {!hasClockIn && liveStatus !== 'on_leave' && liveStatus !== 'no_show' && (
             <button
               onClick={() => onUpdateAttendance(assignment.id, { attendanceStatus: 'present', actualStartTime: new Date().toISOString() })}
               disabled={!!busyKey}
@@ -1357,7 +1408,7 @@ function TimecardDetail({
           )}
 
           {/* Mark On Leave */}
-          {!hasClockIn && String(assignment.attendanceStatus ?? '').trim() !== 'leave' && liveStatus !== 'absent' && (
+          {!hasClockIn && String(assignment.attendanceStatus ?? '').trim() !== 'leave' && liveStatus !== 'no_show' && (
             <button
               onClick={() => onUpdateAttendance(assignment.id, { attendanceStatus: 'leave' })}
               disabled={!!busyKey}

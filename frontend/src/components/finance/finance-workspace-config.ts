@@ -1,5 +1,6 @@
 export type FinanceTab =
   | 'overview'
+  | 'pl'
   | 'revenue'
   | 'labor'
   | 'expenses'
@@ -8,6 +9,7 @@ export type FinanceTab =
 
 export const FINANCE_TAB_ITEMS = [
   { key: 'overview' as const, label: 'Overview', icon: 'LayoutDashboard' },
+  { key: 'pl' as const, label: 'P&L Summary', icon: 'TableProperties' },
   { key: 'revenue' as const, label: 'Revenue', icon: 'TrendingUp' },
   { key: 'labor' as const, label: 'Labor & Payroll', icon: 'Users' },
   { key: 'expenses' as const, label: 'Operating Expenses', icon: 'Receipt' },

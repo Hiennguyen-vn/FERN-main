@@ -27,8 +27,8 @@ export function getFinanceOutletDisplay(
   }
 
   return {
-    primary: `${outlet.code} · ${outlet.name}`,
-    secondary: key,
+    primary: outlet.name || outlet.code || key,
+    secondary: outlet.code || undefined,
   };
 }
 
