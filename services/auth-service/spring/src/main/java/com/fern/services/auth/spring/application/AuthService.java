@@ -380,6 +380,106 @@ public class AuthService {
     );
   }
 
+  public AuthDtos.UserRoleAssignment assignRoleToUser(long userId, AuthDtos.AssignRoleRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    String storedRoleCode = roleAliasResolver.toStoredRoleCode(request.roleCode());
+    enforceRoleMutation(context, storedRoleCode, request.outletIdAsLong());
+    Instant createdAt = authUserRepository.assignRoleToUser(userId, storedRoleCode, request.outletIdAsLong());
+    permissionMatrixService.evict(userId);
+    return new AuthDtos.UserRoleAssignment(userId, storedRoleCode, request.outletIdAsLong(), createdAt);
+  }
+
+  public void revokeRoleFromUser(long userId, AuthDtos.RevokeRoleRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    String storedRoleCode = roleAliasResolver.toStoredRoleCode(request.roleCode());
+    enforceRoleMutation(context, storedRoleCode, request.outletIdAsLong());
+    authUserRepository.revokeRoleFromUser(userId, storedRoleCode, request.outletIdAsLong());
+    permissionMatrixService.evict(userId);
+  }
+
+  public AuthDtos.UserPermissionGrant grantPermissionToUser(long userId, AuthDtos.GrantPermissionRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    enforcePermissionMutation(context, request.outletIdAsLong());
+    Instant createdAt = authUserRepository.grantPermissionToUser(userId, request.permissionCode(), request.outletIdAsLong());
+    permissionMatrixService.evict(userId);
+    return new AuthDtos.UserPermissionGrant(userId, request.permissionCode(), request.outletIdAsLong(), createdAt);
+  }
+
+  public void revokePermissionFromUser(long userId, AuthDtos.RevokePermissionRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    enforcePermissionMutation(context, request.outletIdAsLong());
+    authUserRepository.revokePermissionFromUser(userId, request.permissionCode(), request.outletIdAsLong());
+    permissionMatrixService.evict(userId);
+  }
+
+  /**
+   * Check that the actor can assign/revoke a role at the given outlet.
+   * Requires: superadmin, admin (scoped to outlet), or auth.role.write at outlet.
+   */
+  private void enforceRoleMutation(RequestUserContext context, String storedRoleCode, long outletId) {
+    if (context.internalService()) return;
+    long actorUserId = context.requireUserId();
+    BusinessUserProfile actorProfile = authorizationPolicyService.resolveUserProfile(actorUserId);
+    if (actorProfile.hasGlobalRole(CanonicalRole.SUPERADMIN)) return;
+    if (!actorProfile.outletsForRole(CanonicalRole.ADMIN).isEmpty()) {
+      authorizationPolicyService.requireGovernedOutlets(context, Set.of(outletId));
+      if (!authorizationPolicyService.canAssignRole(context, storedRoleCode, Set.of(outletId))) {
+        throw ServiceException.forbidden("Role assignment is outside admin scope: " + storedRoleCode);
+      }
+      return;
+    }
+    if (!permissionMatrixService.hasPermission(actorUserId, outletId, "auth.role.write")) {
+      throw ServiceException.forbidden("Missing auth.role.write for outlet " + outletId);
+    }
+    CanonicalRole canonicalRole = roleAliasResolver.toCanonicalRole(storedRoleCode)
+        .orElseThrow(() -> ServiceException.forbidden("Unsupported business role: " + storedRoleCode));
+    if (canonicalRole == CanonicalRole.ADMIN || canonicalRole == CanonicalRole.SUPERADMIN) {
+      throw ServiceException.forbidden("Cannot assign administrative roles via direct permission");
+    }
+  }
+
+  /**
+   * Check that the actor can grant/revoke a direct permission at the given outlet.
+   * Requires: superadmin, admin (scoped to outlet), or auth.role.write at outlet.
+   */
+  private void enforcePermissionMutation(RequestUserContext context, long outletId) {
+    if (context.internalService()) return;
+    long actorUserId = context.requireUserId();
+    BusinessUserProfile actorProfile = authorizationPolicyService.resolveUserProfile(actorUserId);
+    if (actorProfile.hasGlobalRole(CanonicalRole.SUPERADMIN)) return;
+    if (!actorProfile.outletsForRole(CanonicalRole.ADMIN).isEmpty()) {
+      authorizationPolicyService.requireGovernedOutlets(context, Set.of(outletId));
+      return;
+    }
+    if (!permissionMatrixService.hasPermission(actorUserId, outletId, "auth.role.write")) {
+      throw ServiceException.forbidden("Missing auth.role.write for outlet " + outletId);
+    }
+  }
+
+  public AuthDtos.UserSummary updateUserStatus(long userId, AuthDtos.UpdateUserStatusRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (!context.internalService()) {
+      long actorUserId = context.requireUserId();
+      BusinessUserProfile actorProfile = authorizationPolicyService.resolveUserProfile(actorUserId);
+      if (actorProfile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+        // Superadmin — no restriction
+      } else {
+        Set<Long> governedOutlets = actorProfile.outletsForRole(CanonicalRole.ADMIN);
+        if (governedOutlets.isEmpty()) {
+          throw ServiceException.forbidden("Admin or superadmin role is required to change user status");
+        }
+        // Verify target user has at least one outlet in admin's governed scope
+        Set<Long> targetUserOutlets = authUserRepository.findOutletIdsByUserId(userId);
+        boolean inScope = targetUserOutlets.stream().anyMatch(governedOutlets::contains);
+        if (!inScope) {
+          throw ServiceException.forbidden("Target user is outside your governed scope");
+        }
+      }
+    }
+    AuthUserRecord updated = authUserRepository.updateUserStatus(userId, request.status().trim().toLowerCase());
+    return toUserSummary(updated);
+  }
+
   private void verifyUserCanLogin(AuthUserRecord user, String password) {
     if (!"active".equalsIgnoreCase(user.status())) {
       throw ServiceException.forbidden("User is not active");

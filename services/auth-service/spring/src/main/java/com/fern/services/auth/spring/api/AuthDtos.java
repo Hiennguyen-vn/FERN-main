@@ -192,4 +192,55 @@ public final class AuthDtos {
       Set<String> aliases
   ) {
   }
+
+  /* ── Existing-user mutation DTOs ── */
+
+  public record AssignRoleRequest(
+      @NotBlank String outletId,
+      @NotBlank String roleCode
+  ) {
+    public long outletIdAsLong() { return Long.parseLong(outletId.trim()); }
+  }
+
+  public record RevokeRoleRequest(
+      @NotBlank String outletId,
+      @NotBlank String roleCode
+  ) {
+    public long outletIdAsLong() { return Long.parseLong(outletId.trim()); }
+  }
+
+  public record GrantPermissionRequest(
+      @NotBlank String outletId,
+      @NotBlank String permissionCode
+  ) {
+    public long outletIdAsLong() { return Long.parseLong(outletId.trim()); }
+  }
+
+  public record RevokePermissionRequest(
+      @NotBlank String outletId,
+      @NotBlank String permissionCode
+  ) {
+    public long outletIdAsLong() { return Long.parseLong(outletId.trim()); }
+  }
+
+  public record UpdateUserStatusRequest(
+      @NotBlank String status
+  ) {
+  }
+
+  public record UserRoleAssignment(
+      long userId,
+      String roleCode,
+      long outletId,
+      Instant createdAt
+  ) {
+  }
+
+  public record UserPermissionGrant(
+      long userId,
+      String permissionCode,
+      long outletId,
+      Instant createdAt
+  ) {
+  }
 }

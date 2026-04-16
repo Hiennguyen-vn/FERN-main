@@ -18,6 +18,27 @@ BEGIN;
      kitchen_staff   → single outlet (2000)
    ========================================================= */
 
+-- Ensure all IAM permission codes exist in core.permission
+INSERT INTO core.permission (code, name, description)
+VALUES
+  ('purchase.write', 'Purchase Write', 'Create purchase orders, goods receipts, and invoices')
+ON CONFLICT (code) DO NOTHING;
+
+-- Ensure all canonical roles exist in core.role before user_role inserts
+INSERT INTO core.role (code, name, description)
+VALUES
+  ('superadmin',          'Superadmin',        'Full chain-wide authority and emergency override'),
+  ('admin',               'Admin',             'IAM governance within scope'),
+  ('region_manager',      'Region Manager',    'Operational oversight across a region'),
+  ('outlet_manager',      'Outlet Manager',    'Store-level operations and approvals'),
+  ('cashier',             'Staff',             'POS/cashier operator'),
+  ('product_manager',     'Product Manager',   'Catalog and pricing management'),
+  ('procurement_officer', 'Procurement',       'Purchase order creation and processing'),
+  ('finance',             'Finance',           'Financial operations and payroll approval'),
+  ('hr',                  'HR',                'HR contracts, scheduling, payroll preparation'),
+  ('kitchen_staff',       'Kitchen Staff',     'Kitchen fulfillment, read-only outlet membership')
+ON CONFLICT (code) DO NOTHING;
+
 -- Same password hash as workflow users: Workflow#2026!
 -- Format: Base64(salt):Base64(HS256(salt + password))
 

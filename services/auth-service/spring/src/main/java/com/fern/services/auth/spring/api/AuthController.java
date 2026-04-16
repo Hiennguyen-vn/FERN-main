@@ -172,6 +172,46 @@ public class AuthController {
     return authService.listBusinessRoles();
   }
 
+  @PostMapping("/users/{userId}/roles")
+  public AuthDtos.UserRoleAssignment assignRole(
+      @PathVariable long userId,
+      @Valid @RequestBody AuthDtos.AssignRoleRequest request
+  ) {
+    return authService.assignRoleToUser(userId, request);
+  }
+
+  @PostMapping("/users/{userId}/roles/revoke")
+  public void revokeRole(
+      @PathVariable long userId,
+      @Valid @RequestBody AuthDtos.RevokeRoleRequest request
+  ) {
+    authService.revokeRoleFromUser(userId, request);
+  }
+
+  @PostMapping("/users/{userId}/permissions")
+  public AuthDtos.UserPermissionGrant grantPermission(
+      @PathVariable long userId,
+      @Valid @RequestBody AuthDtos.GrantPermissionRequest request
+  ) {
+    return authService.grantPermissionToUser(userId, request);
+  }
+
+  @PostMapping("/users/{userId}/permissions/revoke")
+  public void revokePermission(
+      @PathVariable long userId,
+      @Valid @RequestBody AuthDtos.RevokePermissionRequest request
+  ) {
+    authService.revokePermissionFromUser(userId, request);
+  }
+
+  @PutMapping("/users/{userId}/status")
+  public AuthDtos.UserSummary updateUserStatus(
+      @PathVariable long userId,
+      @Valid @RequestBody AuthDtos.UpdateUserStatusRequest request
+  ) {
+    return authService.updateUserStatus(userId, request);
+  }
+
   @PutMapping("/roles/{roleCode}/permissions")
   public AuthDtos.RolePermissionsResponse updateRolePermissions(
       @PathVariable String roleCode,

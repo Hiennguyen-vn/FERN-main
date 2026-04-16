@@ -423,6 +423,126 @@ public class AuthUserRepository extends BaseRepository {
     });
   }
 
+  public Instant assignRoleToUser(long userId, String roleCode, long outletId) {
+    return executeInTransaction(conn -> {
+      ensureUserExists(conn, userId);
+      Instant now = clock.instant();
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.user_role (user_id, role_code, outlet_id, created_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT (user_id, role_code, outlet_id) DO NOTHING
+          """
+      )) {
+        ps.setLong(1, userId);
+        ps.setString(2, roleCode);
+        ps.setLong(3, outletId);
+        ps.setTimestamp(4, Timestamp.from(now));
+        ps.executeUpdate();
+      }
+      return now;
+    });
+  }
+
+  public void revokeRoleFromUser(long userId, String roleCode, long outletId) {
+    executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          "DELETE FROM core.user_role WHERE user_id = ? AND role_code = ? AND outlet_id = ?"
+      )) {
+        ps.setLong(1, userId);
+        ps.setString(2, roleCode);
+        ps.setLong(3, outletId);
+        int deleted = ps.executeUpdate();
+        if (deleted == 0) {
+          throw ServiceException.notFound("Role assignment not found");
+        }
+      }
+      return null;
+    });
+  }
+
+  public Instant grantPermissionToUser(long userId, String permissionCode, long outletId) {
+    return executeInTransaction(conn -> {
+      ensureUserExists(conn, userId);
+      Instant now = clock.instant();
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.user_permission (user_id, permission_code, outlet_id, created_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT (user_id, permission_code, outlet_id) DO NOTHING
+          """
+      )) {
+        ps.setLong(1, userId);
+        ps.setString(2, permissionCode);
+        ps.setLong(3, outletId);
+        ps.setTimestamp(4, Timestamp.from(now));
+        ps.executeUpdate();
+      }
+      return now;
+    });
+  }
+
+  public void revokePermissionFromUser(long userId, String permissionCode, long outletId) {
+    executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          "DELETE FROM core.user_permission WHERE user_id = ? AND permission_code = ? AND outlet_id = ?"
+      )) {
+        ps.setLong(1, userId);
+        ps.setString(2, permissionCode);
+        ps.setLong(3, outletId);
+        int deleted = ps.executeUpdate();
+        if (deleted == 0) {
+          throw ServiceException.notFound("Permission grant not found");
+        }
+      }
+      return null;
+    });
+  }
+
+  public Set<Long> findOutletIdsByUserId(long userId) {
+    return queryOne(
+        """
+        SELECT array_agg(DISTINCT outlet_id) FROM (
+          SELECT outlet_id FROM core.user_role WHERE user_id = ?
+          UNION
+          SELECT outlet_id FROM core.user_permission WHERE user_id = ?
+        ) t
+        """,
+        rs -> {
+          try {
+            java.sql.Array arr = rs.getArray(1);
+            if (arr == null) return Set.<Long>of();
+            Long[] ids = (Long[]) arr.getArray();
+            Set<Long> result = new java.util.HashSet<>();
+            for (Long id : ids) if (id != null) result.add(id);
+            return result;
+          } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+          }
+        },
+        userId, userId
+    ).orElse(Set.of());
+  }
+
+  public AuthUserRecord updateUserStatus(long userId, String newStatus) {
+    return executeInTransaction(conn -> {
+      Instant now = clock.instant();
+      try (PreparedStatement ps = conn.prepareStatement(
+          "UPDATE core.app_user SET status = ?::user_status_enum, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
+      )) {
+        ps.setString(1, newStatus);
+        ps.setTimestamp(2, Timestamp.from(now));
+        ps.setLong(3, userId);
+        int updated = ps.executeUpdate();
+        if (updated == 0) {
+          throw ServiceException.notFound("User not found: " + userId);
+        }
+      }
+      return findByIdTransactional(conn, userId)
+          .orElseThrow(() -> new IllegalStateException("Updated user not found: " + userId));
+    });
+  }
+
   public Set<Long> findUserIdsByRoleCode(String roleCode) {
     return new LinkedHashSet<>(queryList(
         """
@@ -559,6 +679,19 @@ public class AuthUserRepository extends BaseRepository {
       ps.setTimestamp(1, Timestamp.from(updatedAt));
       ps.setString(2, roleCode);
       ps.executeUpdate();
+    }
+  }
+
+  private void ensureUserExists(Connection conn, long userId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        "SELECT 1 FROM core.app_user WHERE id = ? AND deleted_at IS NULL"
+    )) {
+      ps.setLong(1, userId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) {
+          throw ServiceException.notFound("User not found: " + userId);
+        }
+      }
     }
   }
 

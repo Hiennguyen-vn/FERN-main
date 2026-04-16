@@ -28,6 +28,7 @@ export interface AuthSession {
   user: FernUser;
   rolesByOutlet: Record<string, string[]>;
   permissionsByOutlet: Record<string, string[]>;
+  scopeAssignments?: AuthBusinessScopeView[];
   issuedAt?: string;
   expiresAt?: string;
 }
@@ -38,7 +39,12 @@ export interface AuthSessionRow {
   current?: boolean;
   issuedAt?: string | null;
   expiresAt?: string | null;
+  refreshedAt?: string | null;
   revokedAt?: string | null;
+  revokedByUserId?: string | null;
+  revokeReason?: string | null;
+  userAgent?: string | null;
+  clientIp?: string | null;
   [key: string]: unknown;
 }
 
@@ -70,6 +76,43 @@ export interface AuthPermissionOverrideView {
   permissionCode: string;
   permissionName?: string | null;
   assignedAt?: string | null;
+}
+
+export interface AuthBusinessScopeView {
+  scopeType: string;
+  scopeId?: string | null;
+  scopeCode?: string | null;
+  roles: string[];
+  outletIds: string[];
+}
+
+export interface AuthPermissionCatalogItem {
+  code: string;
+  name?: string | null;
+  description?: string | null;
+  module?: string | null;
+  published: boolean;
+  assignedRoleCount: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface AuthRoleCatalogItem {
+  code: string;
+  name?: string | null;
+  description?: string | null;
+  published: boolean;
+  assignedPermissionCount: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface AuthBusinessRoleCatalogItem {
+  code: string;
+  name?: string | null;
+  description?: string | null;
+  scopeType?: string | null;
+  aliases: string[];
 }
 
 export interface AuthUsersQuery {
@@ -108,6 +151,23 @@ export interface AuthOverridesQuery {
   offset?: number;
 }
 
+export interface AuthPermissionsQuery {
+  q?: string;
+  module?: string;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
+export interface AuthRolesQuery {
+  q?: string;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
 export interface CreateAuthUserPayload {
   username: string;
   password: string;
@@ -118,6 +178,12 @@ export interface CreateAuthUserPayload {
   permissionCodes?: string[];
   outletAccess?: Array<{
     outletId: string;
+    roles?: string[];
+    permissions?: string[];
+  }>;
+  scopeAssignments?: Array<{
+    scopeType: string;
+    scopeId: string;
     roles?: string[];
     permissions?: string[];
   }>;
@@ -151,6 +217,7 @@ function decodeAuthSession(value: unknown): AuthSession {
     user: decodeUser(record.user),
     rolesByOutlet: decodeRolesByOutlet(record.rolesByOutlet),
     permissionsByOutlet: decodeRolesByOutlet(record.permissionsByOutlet),
+    scopeAssignments: asRecordArray(record.scopeAssignments).map(decodeBusinessScope),
     issuedAt: asIsoDateTime(record.issuedAt) ?? undefined,
     expiresAt: asIsoDateTime(record.expiresAt) ?? undefined,
   };
@@ -165,7 +232,12 @@ function decodeSessionRow(value: unknown): AuthSessionRow {
     current: asBoolean(record.current),
     issuedAt: asIsoDateTime(record.issuedAt),
     expiresAt: asIsoDateTime(record.expiresAt),
+    refreshedAt: asIsoDateTime(record.refreshedAt),
     revokedAt: asIsoDateTime(record.revokedAt),
+    revokedByUserId: record.revokedByUserId === null || record.revokedByUserId === undefined ? null : asId(record.revokedByUserId),
+    revokeReason: asNullableString(record.revokeReason),
+    userAgent: asNullableString(record.userAgent),
+    clientIp: asNullableString(record.clientIp),
   };
 }
 
@@ -209,6 +281,55 @@ function decodeAuthPermissionOverride(value: unknown): AuthPermissionOverrideVie
   };
 }
 
+function decodeBusinessScope(value: unknown): AuthBusinessScopeView {
+  const record = asRecord(value) ?? {};
+  return {
+    scopeType: asString(record.scopeType),
+    scopeId: asNullableString(record.scopeId),
+    scopeCode: asNullableString(record.scopeCode),
+    roles: asStringArray(record.roles),
+    outletIds: asStringArray(record.outletIds),
+  };
+}
+
+function decodePermissionCatalogItem(value: unknown): AuthPermissionCatalogItem {
+  const record = asRecord(value) ?? {};
+  return {
+    code: asString(record.code),
+    name: asNullableString(record.name),
+    description: asNullableString(record.description),
+    module: asNullableString(record.module),
+    published: asBoolean(record.published),
+    assignedRoleCount: Number(record.assignedRoleCount ?? 0),
+    createdAt: asIsoDateTime(record.createdAt),
+    updatedAt: asIsoDateTime(record.updatedAt),
+  };
+}
+
+function decodeRoleCatalogItem(value: unknown): AuthRoleCatalogItem {
+  const record = asRecord(value) ?? {};
+  return {
+    code: asString(record.code),
+    name: asNullableString(record.name),
+    description: asNullableString(record.description),
+    published: asBoolean(record.published),
+    assignedPermissionCount: Number(record.assignedPermissionCount ?? 0),
+    createdAt: asIsoDateTime(record.createdAt),
+    updatedAt: asIsoDateTime(record.updatedAt),
+  };
+}
+
+function decodeBusinessRoleCatalogItem(value: unknown): AuthBusinessRoleCatalogItem {
+  const record = asRecord(value) ?? {};
+  return {
+    code: asString(record.code),
+    name: asNullableString(record.name),
+    description: asNullableString(record.description),
+    scopeType: asNullableString(record.scopeType),
+    aliases: asStringArray(record.aliases),
+  };
+}
+
 export const authApi = {
   login: async (username: string, password: string): Promise<AuthSession> =>
     decodeAuthSession(
@@ -235,6 +356,12 @@ export const authApi = {
     decodePaged(await apiRequest('/api/v1/auth/scopes', { token, query }), decodeAuthScope),
   overrides: async (token: string, query: AuthOverridesQuery): Promise<PagedResponse<AuthPermissionOverrideView>> =>
     decodePaged(await apiRequest('/api/v1/auth/overrides', { token, query }), decodeAuthPermissionOverride),
+  permissions: async (token: string, query: AuthPermissionsQuery): Promise<PagedResponse<AuthPermissionCatalogItem>> =>
+    decodePaged(await apiRequest('/api/v1/auth/permissions', { token, query }), decodePermissionCatalogItem),
+  roles: async (token: string, query: AuthRolesQuery): Promise<PagedResponse<AuthRoleCatalogItem>> =>
+    decodePaged(await apiRequest('/api/v1/auth/roles', { token, query }), decodeRoleCatalogItem),
+  businessRoles: async (token: string): Promise<AuthBusinessRoleCatalogItem[]> =>
+    decodeArray(await apiRequest('/api/v1/auth/business-roles', { token }), decodeBusinessRoleCatalogItem),
   createUser: async (token: string, payload: CreateAuthUserPayload): Promise<unknown> =>
     apiRequest('/api/v1/auth/users', { method: 'POST', token, body: payload }),
   replaceRolePermissions: async (token: string, roleCode: string, permissionCodes: string[]): Promise<unknown> =>
@@ -242,5 +369,35 @@ export const authApi = {
       method: 'PUT',
       token,
       body: { permissionCodes },
+    }),
+  assignRole: async (token: string, userId: string, outletId: string, roleCode: string): Promise<unknown> =>
+    apiRequest(`/api/v1/auth/users/${userId}/roles`, {
+      method: 'POST',
+      token,
+      body: { outletId: outletId, roleCode },
+    }),
+  revokeRole: async (token: string, userId: string, outletId: string, roleCode: string): Promise<unknown> =>
+    apiRequest(`/api/v1/auth/users/${userId}/roles/revoke`, {
+      method: 'POST',
+      token,
+      body: { outletId: outletId, roleCode },
+    }),
+  grantPermission: async (token: string, userId: string, outletId: string, permissionCode: string): Promise<unknown> =>
+    apiRequest(`/api/v1/auth/users/${userId}/permissions`, {
+      method: 'POST',
+      token,
+      body: { outletId: outletId, permissionCode },
+    }),
+  revokePermission: async (token: string, userId: string, outletId: string, permissionCode: string): Promise<unknown> =>
+    apiRequest(`/api/v1/auth/users/${userId}/permissions/revoke`, {
+      method: 'POST',
+      token,
+      body: { outletId: outletId, permissionCode },
+    }),
+  updateUserStatus: async (token: string, userId: string, status: string): Promise<unknown> =>
+    apiRequest(`/api/v1/auth/users/${userId}/status`, {
+      method: 'PUT',
+      token,
+      body: { status },
     }),
 };
