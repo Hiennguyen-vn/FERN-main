@@ -2,6 +2,12 @@ import { apiRequest, type PagedResponse } from '@/api/client';
 import { decodeArray, decodePaged } from '@/api/decoders';
 import { asDateOnly, asId, asNullableNumber, asNullableString, asRecord, asString } from '@/api/records';
 
+export interface RoleRequirementView {
+  workRole: string;
+  requiredCount: number;
+  isOptional: boolean;
+}
+
 export interface ShiftView {
   id: string;
   outletId?: string | null;
@@ -11,6 +17,9 @@ export interface ShiftView {
   startTime?: string | null;
   endTime?: string | null;
   breakMinutes?: number | null;
+  daypart?: string | null;
+  headcountRequired?: number | null;
+  roleRequirements?: RoleRequirementView[];
   [key: string]: unknown;
 }
 
@@ -19,6 +28,7 @@ export interface WorkShiftView {
   outletId?: string | null;
   shiftId?: string | null;
   userId?: string | null;
+  workRole?: string | null;
   scheduleStatus?: string | null;
   attendanceStatus?: string | null;
   approvalStatus?: string | null;
@@ -92,6 +102,7 @@ export interface CreateWorkShiftPayload {
   shiftId: string;
   userId: string;
   workDate: string;
+  workRole?: string | null;
   note?: string | null;
   scheduleStatus?: string | null;
   attendanceStatus?: string | null;
@@ -129,8 +140,18 @@ export interface TimeOffQuery {
   offset?: number;
 }
 
+function decodeRoleRequirement(value: unknown): RoleRequirementView {
+  const record = asRecord(value) ?? {};
+  return {
+    workRole: String(record.workRole ?? ''),
+    requiredCount: Number(record.requiredCount ?? 0),
+    isOptional: Boolean(record.isOptional),
+  };
+}
+
 function decodeShift(value: unknown): ShiftView {
   const record = asRecord(value) ?? {};
+  const rawRoles = record.roleRequirements;
   return {
     ...record,
     id: asId(record.id),
@@ -141,6 +162,9 @@ function decodeShift(value: unknown): ShiftView {
     startTime: asNullableString(record.startTime),
     endTime: asNullableString(record.endTime),
     breakMinutes: asNullableNumber(record.breakMinutes),
+    daypart: asNullableString(record.daypart),
+    headcountRequired: asNullableNumber(record.headcountRequired),
+    roleRequirements: Array.isArray(rawRoles) ? rawRoles.map(decodeRoleRequirement) : [],
   };
 }
 
@@ -152,6 +176,7 @@ function decodeWorkShift(value: unknown): WorkShiftView {
     outletId: asNullableString(record.outletId),
     shiftId: asNullableString(record.shiftId),
     userId: asNullableString(record.userId),
+    workRole: asNullableString(record.workRole),
     scheduleStatus: asNullableString(record.scheduleStatus),
     attendanceStatus: asNullableString(record.attendanceStatus),
     approvalStatus: asNullableString(record.approvalStatus),
@@ -202,6 +227,15 @@ export const hrApi = {
     ).items,
   shiftsPaged: async (token: string, query: ShiftsQuery): Promise<PagedResponse<ShiftView>> =>
     decodePaged(await apiRequest('/api/v1/hr/shifts', { token, query }), decodeShift),
+  shiftsAllByOutlet: async (token: string, outletId: string): Promise<ShiftView[]> =>
+    decodeArray(await apiRequest(`/api/v1/hr/shifts/outlet/${outletId}/all`, { token }), decodeShift),
+  shiftRoles: async (token: string, shiftId: string): Promise<RoleRequirementView[]> =>
+    decodeArray(await apiRequest(`/api/v1/hr/shifts/${shiftId}/roles`, { token }), decodeRoleRequirement),
+  setShiftRoles: async (token: string, shiftId: string, roles: RoleRequirementView[]): Promise<RoleRequirementView[]> =>
+    decodeArray(
+      await apiRequest(`/api/v1/hr/shifts/${shiftId}/roles`, { method: 'PUT', token, body: roles }),
+      decodeRoleRequirement,
+    ),
   workShifts: async (token: string, query: WorkShiftsQuery): Promise<WorkShiftView[]> =>
     decodePaged(await apiRequest('/api/v1/hr/work-shifts', { token, query }), decodeWorkShift).items,
   workShiftsPaged: async (token: string, query: WorkShiftsQuery): Promise<PagedResponse<WorkShiftView>> =>
@@ -227,6 +261,7 @@ export const hrApi = {
           shiftId: String(payload.shiftId),
           userId: String(payload.userId),
           workDate: payload.workDate,
+          workRole: payload.workRole ?? null,
           scheduleStatus: payload.scheduleStatus ?? null,
           attendanceStatus: payload.attendanceStatus ?? null,
           approvalStatus: payload.approvalStatus ?? null,

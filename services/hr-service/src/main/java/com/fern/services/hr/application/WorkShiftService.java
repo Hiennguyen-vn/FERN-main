@@ -26,6 +26,7 @@ public class WorkShiftService {
 
   private static final String HR_SCHEDULE_PERMISSION = "hr.schedule";
   private static final Set<String> ATTENDANCE_STATUSES = Set.of("pending", "present", "late", "absent", "leave");
+  private static final Set<String> VALID_WORK_ROLES = Set.of("cashier", "kitchen_staff", "prep", "support", "closing_support");
 
   private final WorkShiftRepository workShiftRepository;
   private final ShiftRepository shiftRepository;
@@ -55,6 +56,7 @@ public class WorkShiftService {
     if (workShiftRepository.existsAssignment(request.shiftId(), request.userId(), request.workDate())) {
       throw ServiceException.conflict("Work shift already exists for shift/user/date");
     }
+    validateWorkRole(request.workRole());
     RequestUserContext context = RequestUserContextHolder.get();
     long workShiftId = idGenerator.generateId();
     workShiftRepository.insert(
@@ -62,6 +64,7 @@ public class WorkShiftService {
         request.shiftId(),
         request.userId(),
         request.workDate(),
+        trimToNull(request.workRole()),
         defaultEnum(request.scheduleStatus(), "scheduled"),
         defaultEnum(request.attendanceStatus(), "pending"),
         defaultEnum(request.approvalStatus(), "pending"),
@@ -280,6 +283,16 @@ public class WorkShiftService {
     }
   }
 
+  private static void validateWorkRole(String workRole) {
+    String normalized = trimToNull(workRole);
+    if (normalized == null) {
+      return;
+    }
+    if (!VALID_WORK_ROLES.contains(normalized)) {
+      throw ServiceException.badRequest("Invalid work_role: " + normalized + ". Valid values: " + VALID_WORK_ROLES);
+    }
+  }
+
   private static String trimToNull(String value) {
     if (value == null) {
       return null;
@@ -295,6 +308,7 @@ public class WorkShiftService {
         record.userId(),
         record.outletId(),
         record.workDate(),
+        record.workRole(),
         record.scheduleStatus(),
         record.attendanceStatus(),
         record.approvalStatus(),

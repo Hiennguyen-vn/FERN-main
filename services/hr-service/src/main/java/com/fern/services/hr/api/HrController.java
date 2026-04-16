@@ -59,6 +59,11 @@ public class HrController {
     return shiftService.listShiftsByOutlet(outletId, q, sortBy, sortDir, limit, offset);
   }
 
+  @GetMapping("/shifts/outlet/{outletId}/all")
+  public List<ShiftDto> listAllShiftsByOutlet(@PathVariable long outletId) {
+    return shiftService.listAllShiftsByOutlet(outletId);
+  }
+
   @PutMapping("/shifts/{shiftId}")
   public ShiftDto updateShift(@PathVariable long shiftId, @Valid @RequestBody ShiftDto.Update request) {
     return shiftService.updateShift(shiftId, request);
@@ -68,6 +73,19 @@ public class HrController {
   public ResponseEntity<Void> deleteShift(@PathVariable long shiftId) {
     shiftService.deleteShift(shiftId);
     return ResponseEntity.noContent().build();
+  }
+
+  @GetMapping("/shifts/{shiftId}/roles")
+  public List<ShiftDto.RoleRequirement> getShiftRoles(@PathVariable long shiftId) {
+    return shiftService.getRoleRequirements(shiftId);
+  }
+
+  @PutMapping("/shifts/{shiftId}/roles")
+  public List<ShiftDto.RoleRequirement> setShiftRoles(
+      @PathVariable long shiftId,
+      @Valid @RequestBody List<ShiftDto.RoleRequirement> roles
+  ) {
+    return shiftService.setRoleRequirements(shiftId, roles);
   }
 
   @PostMapping("/work-shifts")

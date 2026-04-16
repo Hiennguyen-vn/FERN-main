@@ -12,11 +12,14 @@ import com.dorabets.common.spring.web.PagedResult;
 import com.dorabets.common.spring.web.QueryConventions;
 import com.fern.services.hr.api.ShiftDto;
 import com.fern.services.hr.infrastructure.ShiftRepository;
+import com.fern.services.hr.infrastructure.ShiftRoleRequirementRepository;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.LocalDate;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,19 +27,24 @@ import org.springframework.transaction.annotation.Transactional;
 public class ShiftService {
 
   private static final String HR_SCHEDULE_PERMISSION = "hr.schedule";
+  private static final Set<String> VALID_DAYPARTS = Set.of("opening", "breakfast", "lunch_peak", "afternoon", "closing");
+  private static final Set<String> VALID_WORK_ROLES = Set.of("cashier", "kitchen_staff", "prep", "support", "closing_support");
 
   private final ShiftRepository shiftRepository;
+  private final ShiftRoleRequirementRepository roleRequirementRepository;
   private final SnowflakeIdGenerator idGenerator;
   private final PermissionMatrixService permissionMatrixService;
   private final AuthorizationPolicyService authorizationPolicyService;
 
   public ShiftService(
       ShiftRepository shiftRepository,
+      ShiftRoleRequirementRepository roleRequirementRepository,
       SnowflakeIdGenerator idGenerator,
       PermissionMatrixService permissionMatrixService,
       AuthorizationPolicyService authorizationPolicyService
   ) {
     this.shiftRepository = shiftRepository;
+    this.roleRequirementRepository = roleRequirementRepository;
     this.idGenerator = idGenerator;
     this.permissionMatrixService = permissionMatrixService;
     this.authorizationPolicyService = authorizationPolicyService;
@@ -49,6 +57,8 @@ public class ShiftService {
     if (request.code() != null && shiftRepository.existsByOutletIdAndCode(request.outletId(), request.code())) {
       throw ServiceException.conflict("Shift code already exists for outlet " + request.outletId());
     }
+    String daypart = validateDaypart(request.daypart());
+    validateRoleRequirements(request.roleRequirements());
     long shiftId = idGenerator.generateId();
     shiftRepository.insert(
         shiftId,
@@ -57,8 +67,11 @@ public class ShiftService {
         request.name().trim(),
         request.startTime(),
         request.endTime(),
-        request.breakMinutes() == null ? 0 : request.breakMinutes()
+        request.breakMinutes() == null ? 0 : request.breakMinutes(),
+        daypart,
+        request.headcountRequired() == null ? 1 : request.headcountRequired()
     );
+    saveRoleRequirements(shiftId, request.roleRequirements());
     return getShift(shiftId);
   }
 
@@ -66,7 +79,8 @@ public class ShiftService {
     ShiftRepository.ShiftRecord record = shiftRepository.findById(shiftId)
         .orElseThrow(() -> ServiceException.notFound("Shift not found: " + shiftId));
     requireScheduleAccess(record.outletId(), false);
-    return toDto(record);
+    List<ShiftRoleRequirementRepository.RoleRequirementRecord> roles = roleRequirementRepository.findByShiftId(shiftId);
+    return toDto(record, roles);
   }
 
   public PagedResult<ShiftDto> listShiftsByOutlet(
@@ -81,16 +95,20 @@ public class ShiftService {
     if (outletId != null) {
       requireScheduleAccess(outletId, false);
     }
-    return shiftRepository.findByOutletId(
-            outletId,
-            scopedOutletIds,
-            QueryConventions.normalizeQuery(q),
-            sortBy,
-            sortDir,
-            QueryConventions.sanitizeLimit(limit, 50, 200),
-            QueryConventions.sanitizeOffset(offset)
-        )
-        .map(this::toDto);
+    PagedResult<ShiftRepository.ShiftRecord> page = shiftRepository.findByOutletId(
+        outletId,
+        scopedOutletIds,
+        QueryConventions.normalizeQuery(q),
+        sortBy,
+        sortDir,
+        QueryConventions.sanitizeLimit(limit, 50, 200),
+        QueryConventions.sanitizeOffset(offset)
+    );
+    List<Long> shiftIds = page.items().stream().map(ShiftRepository.ShiftRecord::id).toList();
+    Map<Long, List<ShiftRoleRequirementRepository.RoleRequirementRecord>> rolesByShift =
+        roleRequirementRepository.findByShiftIds(shiftIds).stream()
+            .collect(Collectors.groupingBy(ShiftRoleRequirementRepository.RoleRequirementRecord::shiftId));
+    return page.map(record -> toDto(record, rolesByShift.getOrDefault(record.id(), List.of())));
   }
 
   @Transactional
@@ -110,14 +128,21 @@ public class ShiftService {
     if (nextCode != null && shiftRepository.existsByOutletIdAndCodeExcluding(existing.outletId(), nextCode, shiftId)) {
       throw ServiceException.conflict("Shift code already exists for outlet " + existing.outletId());
     }
+    String daypart = request.daypart() != null ? validateDaypart(request.daypart()) : null;
+    validateRoleRequirements(request.roleRequirements());
     shiftRepository.update(
         shiftId,
         nextCode,
         trimToNull(request.name()),
         request.startTime(),
         request.endTime(),
-        request.breakMinutes()
+        request.breakMinutes(),
+        daypart,
+        request.headcountRequired()
     );
+    if (request.roleRequirements() != null) {
+      saveRoleRequirements(shiftId, request.roleRequirements());
+    }
     return getShift(shiftId);
   }
 
@@ -131,7 +156,57 @@ public class ShiftService {
 
   public List<ShiftDto> listShiftsForDate(Long outletId, LocalDate date) {
     requireScheduleAccess(outletId, false);
-    return shiftRepository.findAssignedByOutletAndDate(outletId, date).stream().map(this::toDto).toList();
+    List<ShiftRepository.ShiftRecord> records = shiftRepository.findAssignedByOutletAndDate(outletId, date);
+    List<Long> shiftIds = records.stream().map(ShiftRepository.ShiftRecord::id).toList();
+    Map<Long, List<ShiftRoleRequirementRepository.RoleRequirementRecord>> rolesByShift =
+        roleRequirementRepository.findByShiftIds(shiftIds).stream()
+            .collect(Collectors.groupingBy(ShiftRoleRequirementRepository.RoleRequirementRecord::shiftId));
+    return records.stream().map(r -> toDto(r, rolesByShift.getOrDefault(r.id(), List.of()))).toList();
+  }
+
+  public List<ShiftDto> listAllShiftsByOutlet(long outletId) {
+    requireScheduleAccess(outletId, false);
+    List<ShiftRepository.ShiftRecord> records = shiftRepository.findByOutletIdAll(outletId);
+    List<Long> shiftIds = records.stream().map(ShiftRepository.ShiftRecord::id).toList();
+    Map<Long, List<ShiftRoleRequirementRepository.RoleRequirementRecord>> rolesByShift =
+        roleRequirementRepository.findByShiftIds(shiftIds).stream()
+            .collect(Collectors.groupingBy(ShiftRoleRequirementRepository.RoleRequirementRecord::shiftId));
+    return records.stream().map(r -> toDto(r, rolesByShift.getOrDefault(r.id(), List.of()))).toList();
+  }
+
+  public List<ShiftDto.RoleRequirement> getRoleRequirements(long shiftId) {
+    ShiftRepository.ShiftRecord record = shiftRepository.findById(shiftId)
+        .orElseThrow(() -> ServiceException.notFound("Shift not found: " + shiftId));
+    requireScheduleAccess(record.outletId(), false);
+    return roleRequirementRepository.findByShiftId(shiftId).stream()
+        .map(r -> new ShiftDto.RoleRequirement(r.workRole(), r.requiredCount(), r.isOptional()))
+        .toList();
+  }
+
+  @Transactional
+  public List<ShiftDto.RoleRequirement> setRoleRequirements(long shiftId, List<ShiftDto.RoleRequirement> requirements) {
+    ShiftRepository.ShiftRecord record = shiftRepository.findById(shiftId)
+        .orElseThrow(() -> ServiceException.notFound("Shift not found: " + shiftId));
+    requireScheduleAccess(record.outletId(), true);
+    validateRoleRequirements(requirements);
+    saveRoleRequirements(shiftId, requirements);
+    return getRoleRequirements(shiftId);
+  }
+
+  private void saveRoleRequirements(long shiftId, List<ShiftDto.RoleRequirement> requirements) {
+    if (requirements == null || requirements.isEmpty()) {
+      return;
+    }
+    roleRequirementRepository.deleteByShiftId(shiftId);
+    for (ShiftDto.RoleRequirement req : requirements) {
+      roleRequirementRepository.insert(
+          idGenerator.generateId(),
+          shiftId,
+          req.workRole(),
+          req.requiredCount(),
+          req.isOptional()
+      );
+    }
   }
 
   private void requireScheduleAccess(Long outletId, boolean mutation) {
@@ -185,6 +260,28 @@ public class ShiftService {
     }
   }
 
+  private static String validateDaypart(String daypart) {
+    if (daypart == null || daypart.isBlank()) {
+      return null;
+    }
+    String normalized = daypart.trim().toLowerCase();
+    if (!VALID_DAYPARTS.contains(normalized)) {
+      throw ServiceException.badRequest("Invalid daypart: " + daypart + ". Valid values: " + VALID_DAYPARTS);
+    }
+    return normalized;
+  }
+
+  private static void validateRoleRequirements(List<ShiftDto.RoleRequirement> requirements) {
+    if (requirements == null) {
+      return;
+    }
+    for (ShiftDto.RoleRequirement req : requirements) {
+      if (req.workRole() == null || !VALID_WORK_ROLES.contains(req.workRole().trim().toLowerCase())) {
+        throw ServiceException.badRequest("Invalid work_role: " + req.workRole() + ". Valid values: " + VALID_WORK_ROLES);
+      }
+    }
+  }
+
   private static String trimToNull(String value) {
     if (value == null) {
       return null;
@@ -193,7 +290,10 @@ public class ShiftService {
     return trimmed.isEmpty() ? null : trimmed;
   }
 
-  private ShiftDto toDto(ShiftRepository.ShiftRecord record) {
+  private ShiftDto toDto(
+      ShiftRepository.ShiftRecord record,
+      List<ShiftRoleRequirementRepository.RoleRequirementRecord> roles
+  ) {
     return new ShiftDto(
         record.id(),
         record.outletId(),
@@ -202,6 +302,11 @@ public class ShiftService {
         record.startTime(),
         record.endTime(),
         record.breakMinutes(),
+        record.daypart(),
+        record.headcountRequired(),
+        roles.stream()
+            .map(r -> new ShiftDto.RoleRequirement(r.workRole(), r.requiredCount(), r.isOptional()))
+            .toList(),
         record.deletedAt(),
         record.createdAt(),
         record.updatedAt()

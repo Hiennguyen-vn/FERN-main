@@ -25,7 +25,7 @@ const HRModule = lazy(() => import("@/components/hr/HRModule").then((m) => ({ de
 const SettingsModule = lazy(() => import("@/components/settings/SettingsModule").then((m) => ({ default: m.SettingsModule })));
 const CRMModule = lazy(() => import("@/components/crm/CRMModule").then((m) => ({ default: m.CRMModule })));
 const PromotionsModule = lazy(() => import("@/components/promotions/PromotionsModule").then((m) => ({ default: m.PromotionsModule })));
-const SchedulingModule = lazy(() => import("@/components/scheduling/SchedulingModule").then((m) => ({ default: m.SchedulingModule })));
+// SchedulingModule absorbed into WorkforceModule — redirect kept for backward compat
 const WorkforceModule = lazy(() => import("@/components/workforce/WorkforceModule").then((m) => ({ default: m.WorkforceModule })));
 
 const queryClient = new QueryClient();
@@ -94,7 +94,7 @@ const App = () => (
               <Route path="/settings" element={<LazyRoute><SettingsModule /></LazyRoute>} />
               <Route path="/crm" element={<LazyRoute><CRMModule /></LazyRoute>} />
               <Route path="/promotions" element={<LazyRoute><PromotionsModule /></LazyRoute>} />
-              <Route path="/scheduling" element={<LazyRoute><SchedulingModule /></LazyRoute>} />
+              <Route path="/scheduling" element={<Navigate to="/workforce" replace />} />
               <Route path="/workforce" element={<LazyRoute><WorkforceModule /></LazyRoute>} />
             </Route>
 

@@ -32,6 +32,7 @@ public class WorkShiftRepository extends BaseRepository {
       long shiftId,
       long userId,
       LocalDate workDate,
+      String workRole,
       String scheduleStatus,
       String attendanceStatus,
       String approvalStatus,
@@ -51,6 +52,7 @@ public class WorkShiftRepository extends BaseRepository {
       long shiftId,
       long userId,
       LocalDate workDate,
+      String workRole,
       String scheduleStatus,
       String attendanceStatus,
       String approvalStatus,
@@ -60,15 +62,16 @@ public class WorkShiftRepository extends BaseRepository {
     execute(
         """
         INSERT INTO core.work_shift (
-          id, shift_id, user_id, work_date, schedule_status, attendance_status,
+          id, shift_id, user_id, work_date, work_role, schedule_status, attendance_status,
           approval_status, assigned_by_user_id, note
-        ) VALUES (?, ?, ?, ?, ?::shift_schedule_status_enum, ?::attendance_status_enum,
+        ) VALUES (?, ?, ?, ?, ?::core.work_role_enum, ?::shift_schedule_status_enum, ?::attendance_status_enum,
                   ?::approval_status_enum, ?, ?)
         """,
         id,
         shiftId,
         userId,
         Date.valueOf(workDate),
+        workRole,
         scheduleStatus,
         attendanceStatus,
         approvalStatus,
@@ -80,7 +83,7 @@ public class WorkShiftRepository extends BaseRepository {
   public Optional<WorkShiftRecord> findById(long id) {
     return queryOne(
         """
-        SELECT ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.schedule_status, ws.attendance_status,
+        SELECT ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.work_role, ws.schedule_status, ws.attendance_status,
                ws.approval_status, ws.actual_start_time, ws.actual_end_time, ws.assigned_by_user_id,
                ws.approved_by_user_id, ws.note, ws.created_at, ws.updated_at, s.outlet_id
         FROM core.work_shift ws
@@ -131,7 +134,7 @@ public class WorkShiftRepository extends BaseRepository {
       StringBuilder sql = new StringBuilder(
           """
           SELECT
-            ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.schedule_status, ws.attendance_status,
+            ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.work_role, ws.schedule_status, ws.attendance_status,
             ws.approval_status, ws.actual_start_time, ws.actual_end_time, ws.assigned_by_user_id,
             ws.approved_by_user_id, ws.note, ws.created_at, ws.updated_at, s.outlet_id,
             COUNT(*) OVER() AS total_count
@@ -196,7 +199,7 @@ public class WorkShiftRepository extends BaseRepository {
   public List<WorkShiftRecord> findByUserIdAndDateRange(long userId, LocalDate startDate, LocalDate endDate) {
     return queryList(
         """
-        SELECT ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.schedule_status, ws.attendance_status,
+        SELECT ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.work_role, ws.schedule_status, ws.attendance_status,
                ws.approval_status, ws.actual_start_time, ws.actual_end_time, ws.assigned_by_user_id,
                ws.approved_by_user_id, ws.note, ws.created_at, ws.updated_at, s.outlet_id
         FROM core.work_shift ws
@@ -214,7 +217,7 @@ public class WorkShiftRepository extends BaseRepository {
   public List<WorkShiftRecord> findByOutletIdAndDate(long outletId, LocalDate date) {
     return queryList(
         """
-        SELECT ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.schedule_status, ws.attendance_status,
+        SELECT ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.work_role, ws.schedule_status, ws.attendance_status,
                ws.approval_status, ws.actual_start_time, ws.actual_end_time, ws.assigned_by_user_id,
                ws.approved_by_user_id, ws.note, ws.created_at, ws.updated_at, s.outlet_id
         FROM core.work_shift ws
@@ -296,6 +299,7 @@ public class WorkShiftRepository extends BaseRepository {
           rs.getLong("shift_id"),
           rs.getLong("user_id"),
           rs.getDate("work_date").toLocalDate(),
+          rs.getString("work_role"),
           rs.getString("schedule_status"),
           rs.getString("attendance_status"),
           rs.getString("approval_status"),

@@ -35,6 +35,8 @@ public class ShiftRepository extends BaseRepository {
       LocalTime startTime,
       LocalTime endTime,
       int breakMinutes,
+      String daypart,
+      int headcountRequired,
       Instant deletedAt,
       Instant createdAt,
       Instant updatedAt
@@ -48,12 +50,14 @@ public class ShiftRepository extends BaseRepository {
       String name,
       LocalTime startTime,
       LocalTime endTime,
-      int breakMinutes
+      int breakMinutes,
+      String daypart,
+      int headcountRequired
   ) {
     execute(
         """
-        INSERT INTO core.shift (id, outlet_id, code, name, start_time, end_time, break_minutes)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO core.shift (id, outlet_id, code, name, start_time, end_time, break_minutes, daypart, headcount_required)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?::core.daypart_enum, ?)
         """,
         id,
         outletId,
@@ -61,14 +65,17 @@ public class ShiftRepository extends BaseRepository {
         name,
         Time.valueOf(startTime),
         Time.valueOf(endTime),
-        breakMinutes
+        breakMinutes,
+        daypart,
+        headcountRequired
     );
   }
 
   public Optional<ShiftRecord> findById(long id) {
     return queryOne(
         """
-        SELECT id, outlet_id, code, name, start_time, end_time, break_minutes, deleted_at, created_at, updated_at
+        SELECT id, outlet_id, code, name, start_time, end_time, break_minutes,
+               daypart, headcount_required, deleted_at, created_at, updated_at
         FROM core.shift
         WHERE id = ? AND deleted_at IS NULL
         """,
@@ -90,7 +97,8 @@ public class ShiftRepository extends BaseRepository {
       StringBuilder sql = new StringBuilder(
           """
           SELECT
-            id, outlet_id, code, name, start_time, end_time, break_minutes, deleted_at, created_at, updated_at,
+            id, outlet_id, code, name, start_time, end_time, break_minutes,
+            daypart, headcount_required, deleted_at, created_at, updated_at,
             COUNT(*) OVER() AS total_count
           FROM core.shift
           WHERE deleted_at IS NULL
@@ -161,7 +169,9 @@ public class ShiftRepository extends BaseRepository {
       String name,
       LocalTime startTime,
       LocalTime endTime,
-      Integer breakMinutes
+      Integer breakMinutes,
+      String daypart,
+      Integer headcountRequired
   ) {
     execute(
         """
@@ -171,6 +181,8 @@ public class ShiftRepository extends BaseRepository {
             start_time = COALESCE(?, start_time),
             end_time = COALESCE(?, end_time),
             break_minutes = COALESCE(?, break_minutes),
+            daypart = COALESCE(?::core.daypart_enum, daypart),
+            headcount_required = COALESCE(?, headcount_required),
             updated_at = NOW()
         WHERE id = ? AND deleted_at IS NULL
         """,
@@ -179,6 +191,8 @@ public class ShiftRepository extends BaseRepository {
         startTime == null ? null : Time.valueOf(startTime),
         endTime == null ? null : Time.valueOf(endTime),
         breakMinutes,
+        daypart,
+        headcountRequired,
         id
     );
   }
@@ -191,7 +205,7 @@ public class ShiftRepository extends BaseRepository {
     return queryList(
         """
         SELECT DISTINCT s.id, s.outlet_id, s.code, s.name, s.start_time, s.end_time,
-               s.break_minutes, s.deleted_at, s.created_at, s.updated_at
+               s.break_minutes, s.daypart, s.headcount_required, s.deleted_at, s.created_at, s.updated_at
         FROM core.shift s
         JOIN core.work_shift ws ON ws.shift_id = s.id
         WHERE s.outlet_id = ? AND ws.work_date = ? AND s.deleted_at IS NULL
@@ -200,6 +214,20 @@ public class ShiftRepository extends BaseRepository {
         this::mapShiftRecord,
         outletId,
         java.sql.Date.valueOf(date)
+    );
+  }
+
+  public List<ShiftRecord> findByOutletIdAll(long outletId) {
+    return queryList(
+        """
+        SELECT id, outlet_id, code, name, start_time, end_time, break_minutes,
+               daypart, headcount_required, deleted_at, created_at, updated_at
+        FROM core.shift
+        WHERE outlet_id = ? AND deleted_at IS NULL
+        ORDER BY start_time, name
+        """,
+        this::mapShiftRecord,
+        outletId
     );
   }
 
@@ -213,6 +241,8 @@ public class ShiftRepository extends BaseRepository {
           rs.getTime("start_time").toLocalTime(),
           rs.getTime("end_time").toLocalTime(),
           rs.getInt("break_minutes"),
+          rs.getString("daypart"),
+          rs.getInt("headcount_required"),
           toInstant(rs.getTimestamp("deleted_at")),
           rs.getTimestamp("created_at").toInstant(),
           rs.getTimestamp("updated_at").toInstant()

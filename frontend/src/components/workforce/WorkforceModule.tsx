@@ -1,64 +1,66 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
+  LayoutDashboard,
   RefreshCw,
-  Search,
   Timer,
-  TrendingUp,
-  UserCheck,
-  UserX,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   authApi,
   hrApi,
-  orgApi,
-  payrollApi,
   type AuthUserListItem,
-  type PayrollTimesheetView,
-  type ScopeOutlet,
+  type AuthUsersQuery,
   type ShiftView,
   type WorkShiftView,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
+import { collectPagedItems } from '@/lib/collect-paged-items';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
 import { EmptyState, ServiceUnavailablePage } from '@/components/shell/PermissionStates';
-import { useListQueryState } from '@/hooks/use-list-query-state';
-import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
-import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
-  approvalBadgeClass,
-  attendanceBadgeClass,
   formatHrEnumLabel,
-  getHrOutletDisplay,
-  getHrShiftDisplay,
   getHrUserDisplay,
-  scheduleBadgeClass,
-  shortHrRef,
 } from '@/components/hr/hr-display';
 import {
-  buildOvertimeExceptionStats,
-  compareOvertimeRows,
-  hasTimesheetException,
-  matchesOvertimeFocus,
-  type OvertimeFocus,
-  type OvertimeSortKey,
-} from '@/components/workforce/overtime-exceptions';
-import { planWorkShiftAssignments } from '@/components/workforce/work-shift-assignment';
-import { buildShiftScheduleLanes } from '@/components/workforce/shift-schedule-board';
+  computeDailyMetrics,
+  computeDaySummary,
+  computeRoleCoverage,
+  computeUnfilledSlots,
+  computeWeekCoverage,
+  deriveExceptions,
+  deriveLiveStatus,
+  formatClockTime,
+  formatShiftTime,
+  getDaypart,
+  getDaypartLabel,
+  getLiveStatusLabel,
+  getShiftProgress,
+  getWorkRoleLabel,
+  groupByDaypart,
+  liveStatusBadgeClass,
+  progressBadgeClass,
+  coverageTextClass,
+  severityBadgeClass,
+  DAYPART_ORDER,
+  type DaypartGroup,
+} from '@/components/workforce/daily-board';
+import type { LiveStatus, DaySummary, DerivedException } from '@/types/workforce';
 
-type WorkforceTab = 'attendance' | 'overtime' | 'leave';
+type WorkforceTab = 'schedule' | 'daily-board' | 'attendance' | 'review';
 
 const TABS: { key: WorkforceTab; label: string; icon: React.ElementType }[] = [
-  { key: 'attendance', label: 'Shift Schedule', icon: UserCheck },
-  { key: 'overtime', label: 'Overtime', icon: Timer },
-  { key: 'leave', label: 'Leave', icon: CalendarDays },
+  { key: 'daily-board', label: 'Daily Board', icon: LayoutDashboard },
+  { key: 'schedule', label: 'Schedule', icon: CalendarDays },
+  { key: 'attendance', label: 'Attendance', icon: Clock },
+  { key: 'review', label: 'Labor Review', icon: Timer },
 ];
 
 function normalizeNumeric(value: string | undefined) {
@@ -66,1645 +68,1254 @@ function normalizeNumeric(value: string | undefined) {
   return /^\d+$/.test(trimmed) ? trimmed : '';
 }
 
-function toNumber(value: unknown) {
-  const numeric = Number(value ?? 0);
-  return Number.isFinite(numeric) ? numeric : 0;
+function userDisplayName(user: AuthUserListItem): string {
+  return user.fullName || user.username || `User #${user.id}`;
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return '—';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString();
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
 }
 
-function formatTime(value: string | null | undefined) {
-  if (!value) return '—';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
-function formatShiftClock(value: string | null | undefined) {
-  const normalized = String(value ?? '').trim();
-  return normalized ? normalized.slice(0, 5) : '';
+function getWeekStart(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  d.setDate(diff);
+  return d.toISOString().slice(0, 10);
 }
 
-function getShiftBoardTitle(shift?: ShiftView, fallbackLabel?: string) {
-  const name = String(shift?.name ?? '').trim();
-  const code = String(shift?.code ?? '').trim();
-  if (name) return name;
-  if (code) return code;
-  return fallbackLabel || 'Shift unavailable';
+function getWeekDates(weekStart: string): string[] {
+  return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 }
 
-function getShiftBoardMeta(shift?: ShiftView, fallbackId?: string) {
-  if (!shift) {
-    return fallbackId ? `Shift unavailable · ID ${fallbackId}` : 'Shift unavailable';
-  }
-  const parts = [];
-  const timeRange = [formatShiftClock(shift.startTime), formatShiftClock(shift.endTime)].filter(Boolean).join(' - ');
-  if (timeRange) parts.push(timeRange);
-  const code = String(shift.code ?? '').trim();
-  if (code) parts.push(code);
-  parts.push(`Break ${Number(shift.breakMinutes ?? 0)} min`);
-  return parts.join(' · ');
+function formatDateShort(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return `${days[d.getDay()]} ${d.getDate()}`;
 }
 
-function getAttendanceBadgeLabel(value: string | null | undefined) {
-  switch (String(value ?? '').trim().toLowerCase()) {
-    case 'pending':
-      return 'Attendance pending';
-    case 'leave':
-      return 'On leave';
-    default:
-      return formatHrEnumLabel(value);
-  }
+function formatDateFull(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function getApprovalBadgeLabel(value: string | null | undefined) {
-  switch (String(value ?? '').trim().toLowerCase()) {
-    case 'pending':
-      return 'Review pending';
-    case 'approved':
-      return 'Review approved';
-    case 'rejected':
-      return 'Review rejected';
-    default:
-      return formatHrEnumLabel(value);
-  }
-}
-
-function getBoardIssueBadges(row: WorkShiftView) {
-  const badges: Array<{ label: string; className: string }> = [];
-  const scheduleStatus = String(row.scheduleStatus ?? '').trim().toLowerCase();
-  const attendanceStatus = String(row.attendanceStatus ?? '').trim().toLowerCase();
-  const approvalStatus = String(row.approvalStatus ?? '').trim().toLowerCase();
-
-  if (scheduleStatus === 'cancelled') {
-    badges.push({ label: 'Cancelled', className: scheduleBadgeClass(scheduleStatus) });
-  }
-  if (approvalStatus === 'pending') {
-    badges.push({ label: 'Needs review', className: approvalBadgeClass(approvalStatus) });
-  } else if (approvalStatus === 'rejected') {
-    badges.push({ label: 'Review rejected', className: approvalBadgeClass(approvalStatus) });
-  }
-  if (attendanceStatus === 'pending') {
-    badges.push({ label: 'Attendance pending', className: attendanceBadgeClass(attendanceStatus) });
-  } else if (attendanceStatus === 'late') {
-    badges.push({ label: 'Late', className: attendanceBadgeClass(attendanceStatus) });
-  } else if (attendanceStatus === 'absent') {
-    badges.push({ label: 'Absent', className: attendanceBadgeClass(attendanceStatus) });
-  } else if (attendanceStatus === 'leave') {
-    badges.push({ label: 'On leave', className: attendanceBadgeClass(attendanceStatus) });
-  }
-
-  return badges;
-}
-
-function formatPeriodLabel(name?: string | null, startDate?: string | null, endDate?: string | null, fallbackId?: string | null) {
-  const label = String(name ?? '').trim();
-  if (label) return label;
-  if (startDate && endDate) return `${startDate} → ${endDate}`;
-  return String(fallbackId || '—');
-}
+// ════════════════════════════════════════════════════════════
+// MAIN MODULE
+// ════════════════════════════════════════════════════════════
 
 export function WorkforceModule() {
   const { token, scope } = useShellRuntime();
   const outletId = normalizeNumeric(scope.outletId);
 
-  const [activeTab, setActiveTab] = useState<WorkforceTab>('attendance');
-  const [dateFilter, setDateFilter] = useState(new Date().toISOString().slice(0, 10));
+  const [activeTab, setActiveTab] = useState<WorkforceTab>('daily-board');
+  const [dateFilter, setDateFilter] = useState(todayStr());
+  const [weekStart, setWeekStart] = useState(() => getWeekStart(todayStr()));
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [busyKey, setBusyKey] = useState('');
-  const [assignmentUserQuery, setAssignmentUserQuery] = useState('');
-  const [assignmentSheetOpen, setAssignmentSheetOpen] = useState(false);
-  const [assignmentDraft, setAssignmentDraft] = useState({
-    userIds: [] as string[],
-    shiftId: '',
-    workDate: new Date().toISOString().slice(0, 10),
-    note: '',
-  });
-  const [users, setUsers] = useState<AuthUserListItem[]>([]);
-  const [outlets, setOutlets] = useState<ScopeOutlet[]>([]);
+
   const [shifts, setShifts] = useState<ShiftView[]>([]);
+  const [assignments, setAssignments] = useState<WorkShiftView[]>([]);
+  const [users, setUsers] = useState<AuthUserListItem[]>([]);
+  const [selectedTimecardId, setSelectedTimecardId] = useState<string | null>(null);
 
-  const [attendanceLoading, setAttendanceLoading] = useState(false);
-  const [attendanceError, setAttendanceError] = useState('');
-  const [workShifts, setWorkShifts] = useState<WorkShiftView[]>([]);
-  const [dailyAssignments, setDailyAssignments] = useState<WorkShiftView[]>([]);
-  const [attendanceTotal, setAttendanceTotal] = useState(0);
-  const [attendanceHasMore, setAttendanceHasMore] = useState(false);
+  // ── Data loading ──
 
-  const [overtimeLoading, setOvertimeLoading] = useState(false);
-  const [overtimeError, setOvertimeError] = useState('');
-  const [timesheets, setTimesheets] = useState<PayrollTimesheetView[]>([]);
-  const [timesheetsTotal, setTimesheetsTotal] = useState(0);
-  const [timesheetsHasMore, setTimesheetsHasMore] = useState(false);
-  const [overtimeFocus, setOvertimeFocus] = useState<OvertimeFocus>('all');
-
-  const [leaveLoading, setLeaveLoading] = useState(false);
-  const [leaveError, setLeaveError] = useState('');
-  const [leaveRequests, setLeaveRequests] = useState<WorkShiftView[]>([]);
-  const [leaveTotal, setLeaveTotal] = useState(0);
-  const [leaveHasMore, setLeaveHasMore] = useState(false);
-
-  const attendanceQuery = useListQueryState<{
-    outletId?: string;
-    startDate?: string;
-    endDate?: string;
-    scheduleStatus?: string;
-    attendanceStatus?: string;
-    approvalStatus?: string;
-  }>({
-    initialLimit: 100,
-    initialSortBy: 'userId',
-    initialSortDir: 'asc',
-    initialFilters: {
-      outletId: outletId || undefined,
-      startDate: dateFilter,
-      endDate: dateFilter,
-      scheduleStatus: undefined,
-      attendanceStatus: undefined,
-      approvalStatus: undefined,
-    },
-  });
-  const overtimeQuery = useListQueryState<{ outletId?: string }>({
-    initialLimit: 20,
-    initialSortBy: 'exceptionScore',
-    initialSortDir: 'desc',
-    initialFilters: { outletId: outletId || undefined },
-  });
-  const leaveQuery = useListQueryState<{
-    outletId?: string;
-    startDate?: string;
-    endDate?: string;
-    approvalStatus?: string;
-  }>({
-    initialLimit: 20,
-    initialSortBy: 'workDate',
-    initialSortDir: 'desc',
-    initialFilters: {
-      outletId: outletId || undefined,
-      startDate: dateFilter,
-      endDate: dateFilter,
-      approvalStatus: undefined,
-    },
-  });
-
-  const patchAttendanceFilters = attendanceQuery.patchFilters;
-  const patchOvertimeFilters = overtimeQuery.patchFilters;
-  const patchLeaveFilters = leaveQuery.patchFilters;
-  const setAttendancePage = attendanceQuery.setPage;
-  const setOvertimePage = overtimeQuery.setPage;
-  const overtimeSearchInput = overtimeQuery.searchInput;
-  const overtimeSortBy = overtimeQuery.sortBy;
-  const overtimeSortDir = overtimeQuery.sortDir;
-
-  const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
-  const outletsById = useMemo(() => new Map(outlets.map((outlet) => [outlet.id, outlet])), [outlets]);
-  const shiftsById = useMemo(() => new Map(shifts.map((shift) => [shift.id, shift])), [shifts]);
-  const currentOutletDisplay = useMemo(() => getHrOutletDisplay(outletsById, outletId), [outletsById, outletId]);
-  const selectedShiftDisplay = useMemo(
-    () => getHrShiftDisplay(shiftsById, assignmentDraft.shiftId),
-    [assignmentDraft.shiftId, shiftsById],
-  );
-  const assignableUsers = useMemo(
-    () => users.slice().sort((left, right) => (left.fullName || left.username).localeCompare(right.fullName || right.username)),
-    [users],
-  );
-  const shiftBoardLanes = useMemo(() => buildShiftScheduleLanes(
-    shifts.filter((shift) => String(shift.status || 'active').toLowerCase() !== 'inactive'),
-    dailyAssignments,
-  ), [dailyAssignments, shifts]);
-  const selectedLane = useMemo(() => {
-    if (shiftBoardLanes.length === 0) return null;
-    return shiftBoardLanes.find((lane) => lane.shiftId === assignmentDraft.shiftId)
-      ?? shiftBoardLanes.find((lane) => lane.isResolved)
-      ?? shiftBoardLanes[0];
-  }, [assignmentDraft.shiftId, shiftBoardLanes]);
-  const filteredAssignableUsers = useMemo(() => {
-    const query = assignmentUserQuery.trim().toLowerCase();
-    if (!query) return assignableUsers;
-    return assignableUsers.filter((user) => {
-      const haystack = [user.fullName, user.username, user.employeeCode]
-        .map((value) => String(value || '').toLowerCase())
-        .join(' ');
-      return haystack.includes(query);
-    });
-  }, [assignableUsers, assignmentUserQuery]);
-  const existingAssignmentKeys = useMemo(
-    () => new Set(dailyAssignments.map((row) => [String(row.shiftId || ''), String(row.userId || ''), String(row.workDate || '')].join(':'))),
-    [dailyAssignments],
-  );
-  const duplicateSelectedUserIds = useMemo(() => {
-    if (!assignmentDraft.shiftId || !assignmentDraft.workDate) return [];
-    return assignmentDraft.userIds.filter((userId) => existingAssignmentKeys.has([
-      String(assignmentDraft.shiftId || ''),
-      String(userId || ''),
-      String(assignmentDraft.workDate || ''),
-    ].join(':')));
-  }, [assignmentDraft.shiftId, assignmentDraft.userIds, assignmentDraft.workDate, existingAssignmentKeys]);
-  const existingAssignmentsForSelectedShift = useMemo(
-    () => dailyAssignments.filter((row) => String(row.shiftId || '') === String(assignmentDraft.shiftId || '')),
-    [assignmentDraft.shiftId, dailyAssignments],
-  );
-  const existingUserIdsForSelectedShift = useMemo(
-    () => new Set(existingAssignmentsForSelectedShift.map((row) => String(row.userId || '')).filter(Boolean)),
-    [existingAssignmentsForSelectedShift],
-  );
-  const selectableVisibleUsers = useMemo(
-    () => filteredAssignableUsers.filter((user) => !existingUserIdsForSelectedShift.has(user.id)),
-    [existingUserIdsForSelectedShift, filteredAssignableUsers],
-  );
-  const allVisibleUsersSelected = useMemo(
-    () => selectableVisibleUsers.length > 0
-      && selectableVisibleUsers.every((user) => assignmentDraft.userIds.includes(user.id)),
-    [assignmentDraft.userIds, selectableVisibleUsers],
-  );
-  const shiftBoardStats = useMemo(() => ({
-    shiftCount: shiftBoardLanes.filter((lane) => lane.isResolved).length,
-    employeeCount: new Set(dailyAssignments.map((row) => String(row.userId || '')).filter(Boolean)).size,
-    assignmentCount: dailyAssignments.length,
-    pendingReviewCount: dailyAssignments.filter((row) => String(row.approvalStatus || '').toLowerCase() === 'pending').length,
-  }), [dailyAssignments, shiftBoardLanes]);
-  const attendanceDetailState = useMemo(() => {
-    const searchTerm = attendanceQuery.searchInput.trim().toLowerCase();
-    const rows = dailyAssignments.filter((row) => {
-      const attendanceStatus = String(row.attendanceStatus || '').toLowerCase();
-      const scheduleStatus = String(row.scheduleStatus || '').toLowerCase();
-      const approvalStatus = String(row.approvalStatus || '').toLowerCase();
-      if (attendanceQuery.filters.attendanceStatus && attendanceStatus !== String(attendanceQuery.filters.attendanceStatus).toLowerCase()) {
-        return false;
-      }
-      if (attendanceQuery.filters.scheduleStatus && scheduleStatus !== String(attendanceQuery.filters.scheduleStatus).toLowerCase()) {
-        return false;
-      }
-      if (attendanceQuery.filters.approvalStatus && approvalStatus !== String(attendanceQuery.filters.approvalStatus).toLowerCase()) {
-        return false;
-      }
-      if (!searchTerm) return true;
-      const userDisplay = getHrUserDisplay(usersById, row.userId);
-      const shiftDisplay = getHrShiftDisplay(shiftsById, row.shiftId);
-      const haystack = [
-        row.id,
-        row.userId,
-        row.note,
-        userDisplay.primary,
-        userDisplay.secondary,
-        shiftDisplay.primary,
-        shiftDisplay.secondary,
-      ]
-        .map((value) => String(value ?? '').toLowerCase())
-        .join(' ');
-      return haystack.includes(searchTerm);
-    });
-
-    const sorted = rows.slice().sort((left, right) => {
-      const direction = attendanceQuery.sortDir === 'asc' ? 1 : -1;
-      switch (attendanceQuery.sortBy) {
-        case 'approvalStatus':
-          return String(left.approvalStatus || '').localeCompare(String(right.approvalStatus || '')) * direction
-            || String(left.workDate || '').localeCompare(String(right.workDate || '')) * -1;
-        case 'createdAt':
-          return (new Date(String(right.createdAt || '')).getTime() - new Date(String(left.createdAt || '')).getTime()) * (direction === 1 ? -1 : 1);
-        case 'workDate':
-          return String(left.workDate || '').localeCompare(String(right.workDate || '')) * direction
-            || String(left.id || '').localeCompare(String(right.id || '')) * -1;
-        case 'userId':
-        default: {
-          const leftUser = getHrUserDisplay(usersById, left.userId).primary;
-          const rightUser = getHrUserDisplay(usersById, right.userId).primary;
-          return leftUser.localeCompare(rightUser) * direction
-            || String(left.id || '').localeCompare(String(right.id || ''));
-        }
-      }
-    });
-
-    const total = sorted.length;
-    const offset = attendanceQuery.offset;
-    const limit = attendanceQuery.limit;
-    return {
-      total,
-      hasMore: offset + limit < total,
-      rows: sorted.slice(offset, offset + limit),
-    };
-  }, [
-    attendanceQuery.filters.approvalStatus,
-    attendanceQuery.filters.attendanceStatus,
-    attendanceQuery.filters.scheduleStatus,
-    attendanceQuery.limit,
-    attendanceQuery.offset,
-    attendanceQuery.searchInput,
-    attendanceQuery.sortBy,
-    attendanceQuery.sortDir,
-    dailyAssignments,
-    shiftsById,
-    usersById,
-  ]);
-
-  const loadAttendance = useCallback(async () => {
-    if (!token) return;
-    setAttendanceLoading(true);
-    setAttendanceError('');
+  const loadData = useCallback(async () => {
+    if (!token || !outletId) return;
+    setLoading(true);
+    setError('');
     try {
-      const byDate = outletId
-        ? await hrApi.workShiftsByOutletDate(token, outletId, dateFilter)
-        : [];
-      setWorkShifts(byDate || []);
-      setDailyAssignments(byDate || []);
-      setAttendanceTotal((byDate || []).length);
-      setAttendanceHasMore(false);
-    } catch (error: unknown) {
-      console.error('Workforce attendance load failed', error);
-      setWorkShifts([]);
-      setDailyAssignments([]);
-      setAttendanceTotal(0);
-      setAttendanceHasMore(false);
-      setAttendanceError(getErrorMessage(error, 'Unable to load attendance rows'));
+      const [shiftsData, usersData] = await Promise.all([
+        hrApi.shifts(token, outletId),
+        collectPagedItems<AuthUserListItem, AuthUsersQuery>(
+          (query) => authApi.users(token, query),
+          { sortBy: 'username', sortDir: 'asc' as const },
+          200,
+        ).catch(() => [] as AuthUserListItem[]),
+      ]);
+      setShifts(shiftsData);
+      setUsers(usersData);
+    } catch (err) {
+      setError(getErrorMessage(err));
     } finally {
-      setAttendanceLoading(false);
+      setLoading(false);
     }
-  }, [
-    dateFilter,
-    outletId,
-    token,
-  ]);
+  }, [token, outletId]);
 
-  const loadOvertime = useCallback(async () => {
-    if (!token) return;
-    setOvertimeLoading(true);
-    setOvertimeError('');
+  const loadAssignments = useCallback(async (startDate: string, endDate: string) => {
+    if (!token || !outletId) return;
     try {
-      const pageSize = 200;
-      let offset = 0;
-      let total = 0;
-      const collected: PayrollTimesheetView[] = [];
-
-      while (true) {
-        const page = await payrollApi.timesheets(token, {
-          outletId: outletId || undefined,
-          sortBy: 'payrollPeriodEndDate',
-          sortDir: 'desc',
-          limit: pageSize,
-          offset,
-        });
-        const items = page.items || [];
-        collected.push(...items);
-        total = page.total || page.totalCount || collected.length;
-
-        const hasMore = Boolean(page.hasMore || page.hasNextPage) && items.length > 0 && collected.length < total;
-        if (!hasMore) break;
-        offset += pageSize;
-      }
-
-      setTimesheets(collected);
-      setTimesheetsTotal(total || collected.length);
-      setTimesheetsHasMore(false);
-    } catch (error: unknown) {
-      console.error('Workforce overtime load failed', error);
-      setTimesheets([]);
-      setTimesheetsTotal(0);
-      setTimesheetsHasMore(false);
-      setOvertimeError(getErrorMessage(error, 'Unable to load overtime rows'));
-    } finally {
-      setOvertimeLoading(false);
-    }
-  }, [outletId, token]);
-
-  const loadLeave = useCallback(async () => {
-    if (!token) return;
-    setLeaveLoading(true);
-    setLeaveError('');
-    try {
-      const page = await hrApi.timeOffPaged(token, {
-        ...leaveQuery.query,
-        outletId: outletId || undefined,
-        startDate: dateFilter,
-        endDate: dateFilter,
-        approvalStatus: leaveQuery.filters.approvalStatus,
-      });
-      setLeaveRequests(page.items || []);
-      setLeaveTotal(page.total || page.totalCount || 0);
-      setLeaveHasMore(page.hasMore || page.hasNextPage || false);
-    } catch (error: unknown) {
-      console.error('Workforce leave load failed', error);
-      setLeaveRequests([]);
-      setLeaveTotal(0);
-      setLeaveHasMore(false);
-      setLeaveError(getErrorMessage(error, 'Unable to load leave requests'));
-    } finally {
-      setLeaveLoading(false);
-    }
-  }, [dateFilter, leaveQuery.filters.approvalStatus, leaveQuery.query, outletId, token]);
-
-  useEffect(() => {
-    patchAttendanceFilters({
-      outletId: outletId || undefined,
-      startDate: dateFilter,
-      endDate: dateFilter,
-    });
-    patchOvertimeFilters({ outletId: outletId || undefined });
-    patchLeaveFilters({
-      outletId: outletId || undefined,
-      startDate: dateFilter,
-      endDate: dateFilter,
-    });
-    setAttendancePage(0);
-    setAssignmentDraft((prev) => ({ ...prev, workDate: dateFilter }));
-  }, [dateFilter, outletId, patchAttendanceFilters, patchLeaveFilters, patchOvertimeFilters, setAttendancePage]);
-
-  useEffect(() => {
-    if (!token) return;
-    let active = true;
-    void Promise.allSettled([
-      orgApi.hierarchy(token),
-      authApi.users(token, {
-        outletId: outletId || undefined,
-        limit: 500,
+      const data = await hrApi.workShifts(token, {
+        outletId,
+        startDate,
+        endDate,
+        limit: 200,
         offset: 0,
-        sortBy: 'username',
+        sortBy: 'workDate',
         sortDir: 'asc',
-      }),
-      hrApi.shifts(token, outletId || undefined),
-    ]).then(([hierarchyResult, usersResult, shiftsResult]) => {
-      if (!active) return;
-      if (hierarchyResult.status === 'fulfilled') {
-        setOutlets(hierarchyResult.value.outlets || []);
-      }
-      if (usersResult.status === 'fulfilled') {
-        setUsers(usersResult.value.items || []);
-      }
-      if (shiftsResult.status === 'fulfilled') {
-        setShifts(shiftsResult.value || []);
-      }
-    }).catch((error: unknown) => {
-      console.error('Workforce support data load failed', error);
-    });
-    return () => {
-      active = false;
-    };
-  }, [outletId, token]);
-
-  useEffect(() => {
-    if (activeTab !== 'attendance') return;
-    void loadAttendance();
-  }, [activeTab, loadAttendance]);
-
-  useEffect(() => {
-    const preferredShiftId = shiftBoardLanes.find((lane) => lane.isResolved)?.shiftId ?? shiftBoardLanes[0]?.shiftId ?? '';
-    if (!preferredShiftId) {
-      if (assignmentDraft.shiftId) {
-        setAssignmentDraft((prev) => ({ ...prev, shiftId: '', userIds: [] }));
-      }
-      setAssignmentSheetOpen(false);
-      return;
-    }
-    if (!shiftBoardLanes.some((lane) => lane.shiftId === assignmentDraft.shiftId)) {
-      setAssignmentDraft((prev) => ({ ...prev, shiftId: preferredShiftId, userIds: [] }));
-      setAssignmentSheetOpen(false);
-    }
-  }, [assignmentDraft.shiftId, shiftBoardLanes]);
-
-  useEffect(() => {
-    if (activeTab !== 'overtime') return;
-    void loadOvertime();
-  }, [activeTab, loadOvertime]);
-
-  useEffect(() => {
-    if (activeTab !== 'overtime') return;
-    setOvertimePage(0);
-  }, [activeTab, overtimeFocus, overtimeSearchInput, overtimeSortBy, overtimeSortDir, setOvertimePage]);
-
-  useEffect(() => {
-    if (activeTab !== 'leave') return;
-    void loadLeave();
-  }, [activeTab, loadLeave]);
-
-  const attendanceStats = useMemo(() => {
-    const assigned = dailyAssignments.length;
-    const scheduled = dailyAssignments.filter((row) => String(row.scheduleStatus || '').toLowerCase() === 'scheduled').length;
-    const pendingAttendance = dailyAssignments.filter((row) => String(row.attendanceStatus || '').toLowerCase() === 'pending').length;
-    const pendingReview = dailyAssignments.filter((row) => String(row.approvalStatus || '').toLowerCase() === 'pending').length;
-    return { assigned, scheduled, pendingAttendance, pendingReview };
-  }, [dailyAssignments]);
-
-  const overtimeExceptionRows = useMemo(
-    () => timesheets.filter(hasTimesheetException),
-    [timesheets],
-  );
-
-  const overtimeFilteredRows = useMemo(() => {
-    const searchTerm = overtimeQuery.searchInput.trim().toLowerCase();
-    const sortBy = (overtimeQuery.sortBy || 'exceptionScore') as OvertimeSortKey | 'userId';
-    const sortDir = overtimeQuery.sortDir === 'asc' ? 'asc' : 'desc';
-
-    return overtimeExceptionRows
-      .filter((row) => matchesOvertimeFocus(row, overtimeFocus))
-      .filter((row) => {
-        if (!searchTerm) return true;
-        const userDisplay = getHrUserDisplay(usersById, row.userId);
-        const outletDisplay = getHrOutletDisplay(outletsById, row.outletId);
-        const haystack = [
-          row.id,
-          row.userId,
-          row.outletId,
-          userDisplay.primary,
-          userDisplay.secondary,
-          outletDisplay.primary,
-          outletDisplay.secondary,
-          formatPeriodLabel(
-            row.payrollPeriodName,
-            row.payrollPeriodStartDate,
-            row.payrollPeriodEndDate,
-            row.payrollPeriodId,
-          ),
-        ]
-          .map((value) => String(value ?? '').toLowerCase())
-          .join(' ');
-        return haystack.includes(searchTerm);
-      })
-      .sort((left, right) => {
-        if (sortBy === 'userId') {
-          const leftUser = getHrUserDisplay(usersById, left.userId).primary;
-          const rightUser = getHrUserDisplay(usersById, right.userId).primary;
-          return sortDir === 'asc'
-            ? leftUser.localeCompare(rightUser) || String(left.id || '').localeCompare(String(right.id || ''))
-            : rightUser.localeCompare(leftUser) || String(right.id || '').localeCompare(String(left.id || ''));
-        }
-        return compareOvertimeRows(left, right, sortBy, sortDir);
       });
-  }, [
-    overtimeExceptionRows,
-    overtimeFocus,
-    overtimeQuery.searchInput,
-    overtimeQuery.sortBy,
-    overtimeQuery.sortDir,
-    outletsById,
-    usersById,
-  ]);
+      setAssignments(data);
+    } catch (err) {
+      toast.error('Failed to load assignments: ' + getErrorMessage(err));
+    }
+  }, [token, outletId]);
 
-  const overtimeDetailState = useMemo(() => {
-    const total = overtimeFilteredRows.length;
-    const offset = overtimeQuery.offset;
-    const limit = overtimeQuery.limit;
-    return {
-      total,
-      hasMore: offset + limit < total,
-      rows: overtimeFilteredRows.slice(offset, offset + limit),
-    };
-  }, [overtimeFilteredRows, overtimeQuery.limit, overtimeQuery.offset]);
+  useEffect(() => { loadData(); }, [loadData]);
 
-  const overtimeStats = useMemo(
-    () => buildOvertimeExceptionStats(overtimeFilteredRows),
-    [overtimeFilteredRows],
+  useEffect(() => {
+    if (activeTab === 'daily-board' || activeTab === 'attendance') {
+      loadAssignments(dateFilter, dateFilter);
+    } else if (activeTab === 'schedule') {
+      const weekEnd = addDays(weekStart, 6);
+      loadAssignments(weekStart, weekEnd);
+    } else if (activeTab === 'review') {
+      const weekEnd = addDays(weekStart, 6);
+      loadAssignments(weekStart, weekEnd);
+    }
+  }, [activeTab, dateFilter, weekStart, loadAssignments]);
+
+  const userMap = useMemo(() => new Map(users.map((u) => [String(u.id), u])), [users]);
+  const getUserName = useCallback(
+    (userId: string | null | undefined) => {
+      const display = getHrUserDisplay(userMap, userId);
+      return display.primary;
+    },
+    [userMap],
   );
 
-  const leaveStats = useMemo(() => {
-    const pending = leaveRequests.filter((row) => String(row.approvalStatus || '').toLowerCase() === 'pending').length;
-    const approved = leaveRequests.filter((row) => String(row.approvalStatus || '').toLowerCase() === 'approved').length;
-    const rejected = leaveRequests.filter((row) => String(row.approvalStatus || '').toLowerCase() === 'rejected').length;
-    return { total: leaveRequests.length, pending, approved, rejected };
-  }, [leaveRequests]);
+  const refresh = useCallback(() => {
+    loadData();
+    if (activeTab === 'daily-board' || activeTab === 'attendance') {
+      loadAssignments(dateFilter, dateFilter);
+    } else {
+      loadAssignments(weekStart, addDays(weekStart, 6));
+    }
+  }, [loadData, loadAssignments, activeTab, dateFilter, weekStart]);
 
-  const reviewWorkShift = async (workShiftId: string, decision: 'approve' | 'reject', reload: () => Promise<void>) => {
-    if (!token) return;
-    const key = `${decision}:${workShiftId}`;
-    setBusyKey(key);
+  // ── Actions ──
+
+  const doUpdateAttendance = useCallback(async (workShiftId: string, payload: Record<string, unknown>) => {
+    if (!token || busyKey) return;
+    setBusyKey(workShiftId);
     try {
-      if (decision === 'approve') {
-        await hrApi.approveWorkShift(token, workShiftId);
-        toast.success('Request approved');
-      } else {
-        await hrApi.rejectWorkShift(token, workShiftId, { reason: 'Rejected from workforce review' });
-        toast.success('Request rejected');
-      }
-      await reload();
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, `Unable to ${decision} request`));
+      await hrApi.updateAttendance(token, workShiftId, payload);
+      toast.success('Attendance updated');
+      refresh();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
     } finally {
       setBusyKey('');
     }
-  };
+  }, [token, busyKey, refresh]);
 
-  const assignWorkShift = async () => {
-    if (!token) return;
-    if (!selectedLane?.isResolved) {
-      toast.error('Choose an active shift template before assigning employees');
-      return;
-    }
-    let plan;
+  const doApprove = useCallback(async (workShiftId: string) => {
+    if (!token || busyKey) return;
+    setBusyKey(workShiftId);
     try {
-      plan = planWorkShiftAssignments(
-        assignmentDraft,
-        dailyAssignments.map((row) => ({
-          shiftId: String(row.shiftId || ''),
-          userId: String(row.userId || ''),
-          workDate: String(row.workDate || ''),
-        })),
-      );
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, 'Unable to prepare shift assignments'));
-      return;
-    }
-    if (plan.payloads.length === 0 && plan.duplicateUserIds.length > 0) {
-      toast.error(
-        plan.duplicateUserIds.length === 1
-          ? 'Selected employee already has this shift on the chosen date'
-          : `${plan.duplicateUserIds.length} selected employees already have this shift on the chosen date`,
-      );
-      await loadAttendance();
-      return;
-    }
-    setBusyKey('assign-work-shift');
-    try {
-      const failures: string[] = [];
-      let successCount = 0;
-      for (const payload of plan.payloads) {
-        try {
-          await hrApi.createWorkShift(token, payload);
-          successCount += 1;
-        } catch (error: unknown) {
-          failures.push(getErrorMessage(error, `Unable to assign user ${payload.userId}`));
-        }
-      }
-      if (successCount > 0) {
-        toast.success(
-          successCount === 1
-            ? '1 shift assigned'
-            : `${successCount} shifts assigned`,
-        );
-      }
-      if (failures.length > 0) {
-        toast.error(
-          failures.length === 1
-            ? failures[0]
-            : `${failures.length} assignments failed. First error: ${failures[0]}`,
-        );
-      }
-      if (plan.duplicateUserIds.length > 0) {
-        toast.error(
-          plan.duplicateUserIds.length === 1
-            ? '1 selected employee was skipped because the assignment already exists'
-            : `${plan.duplicateUserIds.length} selected employees were skipped because the assignment already exists`,
-        );
-      }
-      setAssignmentDraft((prev) => ({
-        ...prev,
-        userIds: [],
-        note: '',
-      }));
-      await loadAttendance();
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, 'Unable to assign shift'));
+      await hrApi.approveWorkShift(token, workShiftId);
+      toast.success('Approved');
+      refresh();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
     } finally {
       setBusyKey('');
     }
-  };
+  }, [token, busyKey, refresh]);
 
-  const toggleAssignmentUser = (userId: string) => {
-    setAssignmentDraft((prev) => ({
-      ...prev,
-      userIds: prev.userIds.includes(userId)
-        ? prev.userIds.filter((value) => value !== userId)
-        : [...prev.userIds, userId],
-    }));
-  };
+  const doCreateAssignment = useCallback(async (shiftId: string, userId: string, workDate: string, workRole?: string) => {
+    if (!token || busyKey) return;
+    setBusyKey('assign');
+    try {
+      await hrApi.createWorkShift(token, { shiftId, userId, workDate, workRole });
+      toast.success('Staff assigned');
+      refresh();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusyKey('');
+    }
+  }, [token, busyKey, refresh]);
 
-  const toggleAllVisibleAssignmentUsers = () => {
-    setAssignmentDraft((prev) => {
-      const visibleIds = selectableVisibleUsers.map((user) => user.id);
-      if (visibleIds.length === 0) return prev;
-      const nextIds = allVisibleUsersSelected
-        ? prev.userIds.filter((id) => !visibleIds.includes(id))
-        : Array.from(new Set([...prev.userIds, ...visibleIds]));
-      return { ...prev, userIds: nextIds };
-    });
-  };
+  // ── Render ──
 
-  const openAssignmentSheet = (shiftId: string) => {
-    setAssignmentUserQuery('');
-    setAssignmentDraft((prev) => ({
-      ...prev,
-      shiftId,
-      workDate: dateFilter,
-      userIds: [],
-      note: '',
-    }));
-    setAssignmentSheetOpen(true);
-  };
-
-  if (!token) {
-    return <ServiceUnavailablePage state="service_unavailable" moduleName="Workforce" />;
+  if (!outletId) {
+    return <EmptyState title="Select an outlet" description="Choose an outlet from the sidebar to manage workforce." />;
+  }
+  if (error && !shifts.length) {
+    return <ServiceUnavailablePage service="Workforce" detail={error} />;
   }
 
   return (
-    <div className="flex h-full flex-col animate-fade-in">
-      <div className="flex shrink-0 items-center gap-0 border-b bg-card px-6">
+    <div className="space-y-4 p-4">
+      {/* Tab bar */}
+      <div className="flex items-center gap-2 border-b pb-2">
         {TABS.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             className={cn(
-              'flex items-center gap-1.5 border-b-2 px-4 py-3 text-xs font-medium transition-colors',
-              activeTab === tab.key
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground',
+              'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors',
+              activeTab === tab.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
             )}
           >
-            <tab.icon className="h-3.5 w-3.5" />
+            <tab.icon className="h-4 w-4" />
             {tab.label}
           </button>
         ))}
+        <div className="ml-auto">
+          <button onClick={refresh} disabled={loading} className="p-1.5 rounded hover:bg-muted">
+            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
-        {activeTab === 'attendance' ? (
-          <div className="space-y-4">
-            <section className="surface-elevated space-y-4 p-5">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-                <div className="space-y-1">
-                  <h2 className="text-sm font-semibold">Daily shift board</h2>
-                  <p className="text-xs text-muted-foreground">Plan assignments by time window for {formatDate(dateFilter)} at {currentOutletDisplay.primary}.</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    type="date"
-                    value={dateFilter}
-                    onChange={(event) => setDateFilter(event.target.value)}
-                    className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                  />
-                  <button
-                    onClick={() => void loadAttendance()}
-                    disabled={attendanceLoading}
-                    className="flex h-8 items-center gap-1 rounded border px-2.5 text-[11px] hover:bg-accent disabled:opacity-60"
-                  >
-                    <RefreshCw className={cn('h-3.5 w-3.5', attendanceLoading ? 'animate-spin' : '')} />
-                    Refresh
-                  </button>
-                  <Link
-                    to="/scheduling"
-                    className="flex h-8 items-center rounded border px-2.5 text-[11px] hover:bg-accent"
-                  >
-                    Manage shift templates
-                  </Link>
-                </div>
-              </div>
+      {activeTab === 'daily-board' && (
+        <DailyBoardTab
+          shifts={shifts}
+          assignments={assignments}
+          date={dateFilter}
+          onDateChange={setDateFilter}
+          getUserName={getUserName}
+          users={users}
+          busyKey={busyKey}
+          onUpdateAttendance={doUpdateAttendance}
+          onApprove={doApprove}
+          onAssign={doCreateAssignment}
+        />
+      )}
+      {activeTab === 'schedule' && (
+        <SchedulePlannerTab
+          shifts={shifts}
+          assignments={assignments}
+          weekStart={weekStart}
+          onWeekChange={setWeekStart}
+          getUserName={getUserName}
+          users={users}
+          busyKey={busyKey}
+          onAssign={doCreateAssignment}
+        />
+      )}
+      {activeTab === 'attendance' && (
+        <AttendanceTab
+          shifts={shifts}
+          assignments={assignments}
+          date={dateFilter}
+          onDateChange={setDateFilter}
+          getUserName={getUserName}
+          selectedId={selectedTimecardId}
+          onSelectId={setSelectedTimecardId}
+          busyKey={busyKey}
+          onUpdateAttendance={doUpdateAttendance}
+          onApprove={doApprove}
+        />
+      )}
+      {activeTab === 'review' && (
+        <LaborReviewTab
+          shifts={shifts}
+          assignments={assignments}
+          weekStart={weekStart}
+          onWeekChange={setWeekStart}
+          getUserName={getUserName}
+          busyKey={busyKey}
+          onApprove={doApprove}
+        />
+      )}
+    </div>
+  );
+}
 
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                {[
-                  { label: 'Shift Templates', value: shiftBoardStats.shiftCount, icon: Clock },
-                  { label: 'Employees Scheduled', value: shiftBoardStats.employeeCount, icon: UserCheck },
-                  { label: 'Assignments', value: shiftBoardStats.assignmentCount, icon: CheckCircle2 },
-                  { label: 'Needs Review', value: shiftBoardStats.pendingReviewCount, icon: AlertTriangle },
-                ].map((kpi) => (
-                  <div key={kpi.label} className="rounded-xl border bg-background/70 p-4">
-                    <div className="mb-2 flex items-center gap-1.5">
-                      <kpi.icon className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{kpi.label}</span>
-                    </div>
-                    <p className="text-xl font-semibold">{kpi.value}</p>
-                  </div>
-                ))}
-              </div>
+// ════════════════════════════════════════════════════════════
+// DAILY BOARD TAB
+// ════════════════════════════════════════════════════════════
 
-              {attendanceError ? <p className="text-xs text-destructive">{attendanceError}</p> : null}
+function DailyBoardTab({
+  shifts, assignments, date, onDateChange, getUserName, users, busyKey,
+  onUpdateAttendance, onApprove, onAssign,
+}: {
+  shifts: ShiftView[];
+  assignments: WorkShiftView[];
+  date: string;
+  onDateChange: (d: string) => void;
+  getUserName: (id: string | null | undefined) => string;
+  users: AuthUserListItem[];
+  busyKey: string;
+  onUpdateAttendance: (id: string, payload: Record<string, unknown>) => void;
+  onApprove: (id: string) => void;
+  onAssign: (shiftId: string, userId: string, workDate: string, workRole?: string) => void;
+}) {
+  const now = useMemo(() => new Date(), [assignments]);
+  const metrics = useMemo(() => computeDailyMetrics(shifts, assignments, date, now), [shifts, assignments, date, now]);
+  const daypartGroups = useMemo(() => groupByDaypart(shifts, assignments, date, now), [shifts, assignments, date, now]);
+  const exceptions = useMemo(() => deriveExceptions(shifts, assignments, date, now), [shifts, assignments, date, now]);
 
-              {shiftBoardLanes.length === 0 ? (
-                <EmptyState
-                  title="No shift templates"
-                  description="Create shift templates for this outlet before planning daily assignments."
-                />
-              ) : (
-                <div className="grid gap-4 xl:grid-cols-2">
-                  {shiftBoardLanes.map((lane) => {
-                    const shiftDisplay = getHrShiftDisplay(shiftsById, lane.shiftId);
-                    const laneTitle = getShiftBoardTitle(lane.shift, shiftDisplay.primary);
-                    const laneMeta = getShiftBoardMeta(lane.shift, lane.shiftId);
-                    const laneAssignments = lane.assignments.slice().sort((left, right) => {
-                      const leftDisplay = getHrUserDisplay(usersById, left.userId);
-                      const rightDisplay = getHrUserDisplay(usersById, right.userId);
-                      return leftDisplay.primary.localeCompare(rightDisplay.primary);
-                    });
-                    const previewAssignments = laneAssignments.slice(0, 4);
-                    const hiddenAssignmentsCount = Math.max(0, laneAssignments.length - previewAssignments.length);
-                    const isSelected = assignmentSheetOpen && assignmentDraft.shiftId === lane.shiftId;
-                    const isEmptyLane = laneAssignments.length === 0;
-                    return (
-                      <article
-                        key={lane.shiftId}
-                        className={cn(
-                          'rounded-2xl border bg-background/70 p-4',
-                          isSelected ? 'border-primary ring-1 ring-primary/20' : 'border-border',
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0 space-y-1">
-                            <p className="text-base font-semibold">{laneTitle}</p>
-                            <p className="text-xs text-muted-foreground">{laneMeta}</p>
-                          </div>
-                          <button
-                            onClick={() => openAssignmentSheet(lane.shiftId)}
-                            disabled={!lane.isResolved}
-                            className={cn(
-                              'h-8 rounded-md border px-2.5 text-[11px] font-medium',
-                              isSelected ? 'border-primary bg-primary/5 text-primary' : 'hover:bg-accent',
-                              !lane.isResolved ? 'opacity-50 cursor-not-allowed' : '',
-                            )}
-                          >
-                            {lane.isResolved ? (isSelected ? 'Assigning here' : 'Assign employees') : 'Unavailable'}
-                          </button>
-                        </div>
+  const [assignModal, setAssignModal] = useState<{ shiftId: string; workRole: string } | null>(null);
 
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          <span className="rounded-full border px-2 py-0.5 text-[10px] font-medium bg-muted/60 text-foreground border-border">
-                            {lane.summary.assignedCount} assigned
-                          </span>
-                          {lane.summary.pendingReviewCount > 0 ? (
-                            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', approvalBadgeClass('pending'))}>
-                              Needs review {lane.summary.pendingReviewCount}
-                            </span>
-                          ) : null}
-                          {lane.summary.attendancePendingCount > 0 ? (
-                            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', attendanceBadgeClass('pending'))}>
-                              Attendance pending {lane.summary.attendancePendingCount}
-                            </span>
-                          ) : null}
-                          {lane.summary.lateCount > 0 ? (
-                            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', attendanceBadgeClass('late'))}>
-                              Late {lane.summary.lateCount}
-                            </span>
-                          ) : null}
-                          {lane.summary.absentCount > 0 ? (
-                            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', attendanceBadgeClass('absent'))}>
-                              Absent {lane.summary.absentCount}
-                            </span>
-                          ) : null}
-                          {lane.summary.leaveCount > 0 ? (
-                            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', attendanceBadgeClass('leave'))}>
-                              Leave {lane.summary.leaveCount}
-                            </span>
-                          ) : null}
-                        </div>
+  return (
+    <div className="space-y-4">
+      {/* Date nav */}
+      <div className="flex items-center gap-3">
+        <button onClick={() => onDateChange(addDays(date, -1))} className="p-1 rounded hover:bg-muted"><ChevronLeft className="h-4 w-4" /></button>
+        <h2 className="text-lg font-semibold">{formatDateFull(date)}</h2>
+        <button onClick={() => onDateChange(addDays(date, 1))} className="p-1 rounded hover:bg-muted"><ChevronRight className="h-4 w-4" /></button>
+        {date !== todayStr() && (
+          <button onClick={() => onDateChange(todayStr())} className="text-xs text-muted-foreground hover:underline">Today</button>
+        )}
+      </div>
 
-                        {isEmptyLane ? (
-                          <div className="mt-4 rounded-xl border border-dashed bg-background/70 px-3 py-4 text-xs text-muted-foreground">
-                            No employees assigned to this shift yet
-                          </div>
-                        ) : (
-                          <div className="mt-4 rounded-xl border bg-background">
-                            <div className="divide-y">
-                              {previewAssignments.map((row) => {
-                                const userDisplay = getHrUserDisplay(usersById, row.userId);
-                                const issueBadges = getBoardIssueBadges(row);
-                                return (
-                                  <div key={String(row.id)} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                                    <div className="min-w-0">
-                                      <p className="text-xs font-medium">{userDisplay.primary}</p>
-                                      {userDisplay.secondary ? (
-                                        <p className="text-[11px] text-muted-foreground">{userDisplay.secondary}</p>
-                                      ) : null}
-                                    </div>
-                                    {issueBadges.length > 0 ? (
-                                      <div className="flex flex-wrap justify-end gap-1.5">
-                                        {issueBadges.map((badge) => (
-                                          <span
-                                            key={`${row.id}:${badge.label}`}
-                                            className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', badge.className)}
-                                          >
-                                            {badge.label}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                            {hiddenAssignmentsCount > 0 ? (
-                              <div className="border-t px-3 py-2 text-[11px] text-muted-foreground">
-                                +{hiddenAssignmentsCount} more employees in this shift
-                              </div>
-                            ) : null}
-                          </div>
-                        )}
-                      </article>
-                    );
-                  })}
+      {/* Summary strip */}
+      <div className="grid grid-cols-5 gap-3">
+        <MetricCard label="On Floor" value={`${metrics.onFloor}/${metrics.totalAssigned}`} variant={metrics.onFloor < metrics.totalAssigned ? 'warning' : 'default'} />
+        <MetricCard label="Coverage" value={`${metrics.coveragePercent}%`} variant={metrics.coveragePercent < 80 ? 'warning' : 'default'} />
+        <MetricCard label="Late" value={String(metrics.lateCount)} variant={metrics.lateCount > 0 ? 'warning' : 'default'} />
+        <MetricCard label="No-Show" value={String(metrics.noShowCount)} variant={metrics.noShowCount > 0 ? 'danger' : 'default'} />
+        <MetricCard label="Pending Review" value={String(metrics.pendingReview)} variant={metrics.pendingReview > 0 ? 'info' : 'default'} />
+      </div>
+
+      {/* Daypart sections */}
+      {daypartGroups.length === 0 && (
+        <EmptyState title="No shifts today" description="No shifts are configured for this outlet on this date." />
+      )}
+      {daypartGroups.map((group) => (
+        <DaypartSection
+          key={group.daypart}
+          group={group}
+          date={date}
+          now={now}
+          getUserName={getUserName}
+          busyKey={busyKey}
+          onUpdateAttendance={onUpdateAttendance}
+          onApprove={onApprove}
+          onAssignClick={(shiftId, workRole) => setAssignModal({ shiftId, workRole })}
+        />
+      ))}
+
+      {/* Exceptions queue */}
+      {exceptions.length > 0 && (
+        <div className="border rounded-lg p-3 space-y-2">
+          <h3 className="text-sm font-semibold flex items-center gap-1.5">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            Issues ({exceptions.length})
+          </h3>
+          {exceptions.map((ex, i) => (
+            <div key={i} className="flex items-center gap-2 text-sm py-1 border-t first:border-0">
+              <span className={cn('px-1.5 py-0.5 rounded text-xs font-medium', severityBadgeClass(ex.severity))}>
+                {ex.type === 'no_show' ? 'NO-SHOW' : ex.type === 'late' ? 'LATE' : 'UNFILLED'}
+              </span>
+              <span className="text-muted-foreground">
+                {ex.employeeId ? getUserName(ex.employeeId) : '—'}
+              </span>
+              <span className="text-muted-foreground">
+                {ex.shiftName}{ex.workRole ? ` / ${getWorkRoleLabel(ex.workRole)}` : ''}
+              </span>
+              <span className="text-xs text-muted-foreground ml-auto">{ex.detail}</span>
+              {ex.type === 'no_show' && ex.workShiftId && (
+                <button
+                  onClick={() => onUpdateAttendance(ex.workShiftId!, { attendanceStatus: 'absent' })}
+                  disabled={!!busyKey}
+                  className="text-xs text-red-600 hover:underline"
+                >
+                  Mark Absent
+                </button>
+              )}
+              {ex.type === 'unfilled' && (
+                <button
+                  onClick={() => setAssignModal({ shiftId: ex.shiftId, workRole: ex.workRole ?? '' })}
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  Assign
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Quick assign modal */}
+      {assignModal && (
+        <QuickAssignModal
+          users={users}
+          shiftId={assignModal.shiftId}
+          workRole={assignModal.workRole}
+          date={date}
+          busyKey={busyKey}
+          onAssign={(userId) => {
+            onAssign(assignModal.shiftId, userId, date, assignModal.workRole || undefined);
+            setAssignModal(null);
+          }}
+          onClose={() => setAssignModal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Daypart section component ──
+
+function DaypartSection({
+  group, date, now, getUserName, busyKey,
+  onUpdateAttendance, onApprove, onAssignClick,
+}: {
+  group: DaypartGroup;
+  date: string;
+  now: Date;
+  getUserName: (id: string | null | undefined) => string;
+  busyKey: string;
+  onUpdateAttendance: (id: string, payload: Record<string, unknown>) => void;
+  onApprove: (id: string) => void;
+  onAssignClick: (shiftId: string, workRole: string) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  const allProgress = group.shifts.map((s) => s.progress);
+  const overallProgress = allProgress.every((p) => p === 'completed')
+    ? 'completed'
+    : allProgress.some((p) => p === 'in_progress')
+      ? 'in_progress'
+      : 'not_started';
+
+  const totalRequired = group.shifts.reduce((sum, s) => sum + (Number(s.shift.headcountRequired) || 1), 0);
+  const totalAssigned = group.shifts.reduce((sum, s) => {
+    return sum + s.assignments.filter((a) => String(a.scheduleStatus ?? '').trim() !== 'cancelled').length;
+  }, 0);
+
+  return (
+    <div className="border rounded-lg">
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full flex items-center gap-2 p-3 text-left hover:bg-muted/50 transition-colors"
+      >
+        {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        <span className="font-semibold text-sm">{group.label}</span>
+        <span className="text-xs text-muted-foreground">
+          {group.shifts.map((s) => `${formatShiftTime(s.shift.startTime)}–${formatShiftTime(s.shift.endTime)}`).join(', ')}
+        </span>
+        <span className={cn('text-xs font-medium ml-2', coverageTextClass(totalAssigned, totalRequired))}>
+          {totalAssigned}/{totalRequired}
+        </span>
+        <span className={cn('ml-auto text-xs px-1.5 py-0.5 rounded', progressBadgeClass(overallProgress))}>
+          {overallProgress === 'completed' ? '✓ Completed' : overallProgress === 'in_progress' ? '● In Progress' : '○ Not Started'}
+        </span>
+      </button>
+      {!collapsed && (
+        <div className="px-3 pb-3 space-y-2">
+          {group.shifts.map(({ shift, assignments: shiftAssignments, roleCoverage, unfilled }) => (
+            <div key={shift.id} className="space-y-1.5">
+              {/* Role coverage bar */}
+              {roleCoverage.length > 0 && (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {roleCoverage.map((rc) => (
+                    <span key={rc.workRole} className={cn('font-medium', coverageTextClass(rc.assigned, rc.required))}>
+                      {getWorkRoleLabel(rc.workRole)} {rc.assigned}/{rc.required}
+                      {rc.assigned >= rc.required ? ' ✓' : ' ⚠'}
+                    </span>
+                  ))}
                 </div>
               )}
-            </section>
 
-            <section className="surface-elevated space-y-4 p-5">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-                <div className="space-y-1">
-                  <h2 className="text-sm font-semibold">Assignments for {formatDate(dateFilter)} ({attendanceDetailState.total})</h2>
-                  <p className="text-xs text-muted-foreground">Search persisted work shift rows, then review schedule or attendance state as needed.</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="relative min-w-[240px] flex-1 xl:w-72 xl:flex-none">
-                    <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                    <input
-                      value={attendanceQuery.searchInput}
-                      onChange={(event) => attendanceQuery.setSearchInput(event.target.value)}
-                      placeholder="Search employee, shift, note, assignment id"
-                      className="h-8 w-full rounded-md border border-input bg-background pl-9 pr-3 text-xs"
-                    />
-                  </div>
-                  <select
-                    value={attendanceQuery.filters.attendanceStatus || 'all'}
-                    onChange={(event) => attendanceQuery.setFilter('attendanceStatus', event.target.value === 'all' ? undefined : event.target.value)}
-                    className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                  >
-                    <option value="all">All attendance</option>
-                    <option value="pending">Attendance pending</option>
-                    <option value="present">Present</option>
-                    <option value="late">Late</option>
-                    <option value="absent">Absent</option>
-                    <option value="leave">Leave</option>
-                  </select>
-                  <select
-                    value={attendanceQuery.filters.scheduleStatus || 'all'}
-                    onChange={(event) => attendanceQuery.setFilter('scheduleStatus', event.target.value === 'all' ? undefined : event.target.value)}
-                    className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                  >
-                    <option value="all">All schedule states</option>
-                    <option value="scheduled">Scheduled</option>
-                    <option value="confirmed">Confirmed</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
-                  <select
-                    value={attendanceQuery.filters.approvalStatus || 'all'}
-                    onChange={(event) => attendanceQuery.setFilter('approvalStatus', event.target.value === 'all' ? undefined : event.target.value)}
-                    className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                  >
-                    <option value="all">All review states</option>
-                    <option value="pending">Pending review</option>
-                    <option value="approved">Approved</option>
-                    <option value="rejected">Rejected</option>
-                  </select>
-                  <select
-                    value={`${attendanceQuery.sortBy || 'userId'}:${attendanceQuery.sortDir}`}
-                    onChange={(event) => {
-                      const [field, direction] = event.target.value.split(':');
-                      attendanceQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
-                    }}
-                    className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                  >
-                    <option value="userId:asc">Employee A-Z</option>
-                    <option value="approvalStatus:asc">Pending review first</option>
-                    <option value="createdAt:desc">Last created</option>
-                    <option value="workDate:desc">Latest work date</option>
-                  </select>
+              {/* Assignment cards */}
+              {shiftAssignments
+                .filter((a) => String(a.scheduleStatus ?? '').trim() !== 'cancelled')
+                .map((a) => {
+                  const liveStatus = deriveLiveStatus(a, shift, date, now);
+                  return (
+                    <div key={a.id} className="flex items-center gap-2 py-1.5 px-2 rounded bg-muted/30 text-sm">
+                      <span className={cn('px-1.5 py-0.5 rounded text-xs font-medium', liveStatusBadgeClass(liveStatus))}>
+                        {getLiveStatusLabel(liveStatus)}
+                      </span>
+                      <span className="font-medium">{getUserName(a.userId)}</span>
+                      <span className="text-xs text-muted-foreground px-1.5 py-0.5 bg-muted rounded">
+                        {getWorkRoleLabel(a.workRole)}
+                      </span>
+                      {a.actualStartTime && (
+                        <span className="text-xs text-muted-foreground ml-auto">
+                          In: {formatClockTime(a.actualStartTime)}
+                          {a.actualEndTime ? ` Out: ${formatClockTime(a.actualEndTime)}` : ''}
+                        </span>
+                      )}
+                      {liveStatus === 'late' && (
+                        <button
+                          onClick={() => onUpdateAttendance(a.id, { note: 'Late acknowledged' })}
+                          disabled={!!busyKey}
+                          className="text-xs text-amber-600 hover:underline ml-1"
+                        >
+                          Ack
+                        </button>
+                      )}
+                      {String(a.approvalStatus ?? '').trim() === 'pending' && liveStatus === 'completed' && (
+                        <button
+                          onClick={() => onApprove(a.id)}
+                          disabled={!!busyKey}
+                          className="text-xs text-green-600 hover:underline ml-1"
+                        >
+                          Approve
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+
+              {/* Unfilled slots */}
+              {unfilled.map((slot, i) => (
+                <div key={`unfilled-${shift.id}-${slot.workRole}-${i}`} className="flex items-center gap-2 py-1.5 px-2 rounded border border-dashed border-red-300 bg-red-50/50 text-sm">
+                  <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">OPEN</span>
+                  <span className="text-muted-foreground">
+                    {getWorkRoleLabel(slot.workRole)} — {slot.gap} needed
+                  </span>
                   <button
-                    onClick={() => void loadAttendance()}
-                    disabled={attendanceLoading}
-                    className="flex h-8 items-center gap-1 rounded border px-2.5 text-[11px] hover:bg-accent disabled:opacity-60"
+                    onClick={() => onAssignClick(shift.id, slot.workRole)}
+                    className="ml-auto text-xs text-blue-600 hover:underline"
                   >
-                    <RefreshCw className={cn('h-3.5 w-3.5', attendanceLoading ? 'animate-spin' : '')} />
-                    Refresh
+                    Assign
                   </button>
                 </div>
-              </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b bg-muted/30">
-                      {['Record', 'Employee', 'Shift', 'Schedule', 'Attendance', 'Review', 'Note', 'Actions'].map((header) => (
-                        <th key={header} className="px-4 py-2.5 text-left text-[11px]">{header}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {attendanceLoading && attendanceDetailState.rows.length === 0 ? (
-                      <ListTableSkeleton columns={8} rows={6} />
-                    ) : attendanceDetailState.rows.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                          No assignments match the selected detail filters
-                        </td>
-                      </tr>
-                    ) : attendanceDetailState.rows.map((row) => {
-                      const workShiftId = String(row.id);
-                      const scheduleStatus = String(row.scheduleStatus || 'unknown').toLowerCase();
-                      const attendanceStatus = String(row.attendanceStatus || 'unknown').toLowerCase();
-                      const approvalStatus = String(row.approvalStatus || 'unknown').toLowerCase();
-                      const canReview = approvalStatus === 'pending';
-                      const userDisplay = getHrUserDisplay(usersById, row.userId);
-                      const shiftDisplay = getHrShiftDisplay(shiftsById, row.shiftId);
-                      const outletDisplay = getHrOutletDisplay(outletsById, row.outletId);
-                      return (
-                        <tr key={workShiftId} className="border-b last:border-0">
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-medium">{shortHrRef(workShiftId)}</span>
-                              <span className="text-[11px] text-muted-foreground">{formatDate(row.workDate)}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-medium">{userDisplay.primary}</span>
-                              {userDisplay.secondary ? (
-                                <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span>
-                              ) : null}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-medium">{shiftDisplay.primary}</span>
-                              {shiftDisplay.secondary ? (
-                                <span className="text-[11px] text-muted-foreground">{shiftDisplay.secondary}</span>
-                              ) : null}
-                              <span className="text-[11px] text-muted-foreground">{outletDisplay.primary}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', scheduleBadgeClass(scheduleStatus))}>
-                              {formatHrEnumLabel(scheduleStatus)}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', attendanceBadgeClass(attendanceStatus))}>
-                              {getAttendanceBadgeLabel(attendanceStatus)}
-                            </span>
-                            {(row.actualStartTime || row.actualEndTime) ? (
-                              <div className="mt-1 flex flex-col text-[11px] text-muted-foreground">
-                                <span>In {formatTime(row.actualStartTime)}</span>
-                                <span>Out {formatTime(row.actualEndTime)}</span>
-                              </div>
-                            ) : null}
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', approvalBadgeClass(approvalStatus))}>
-                              {getApprovalBadgeLabel(approvalStatus)}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(row.note || '—')}</td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                onClick={() => void reviewWorkShift(workShiftId, 'approve', loadAttendance)}
-                                disabled={!canReview || busyKey === `approve:${workShiftId}`}
-                                className="h-7 rounded border px-2.5 text-[10px] hover:bg-accent disabled:opacity-50"
-                              >
-                                {busyKey === `approve:${workShiftId}` ? 'Approving...' : 'Approve schedule'}
-                              </button>
-                              <button
-                                onClick={() => void reviewWorkShift(workShiftId, 'reject', loadAttendance)}
-                                disabled={!canReview || busyKey === `reject:${workShiftId}`}
-                                className="h-7 rounded border px-2.5 text-[10px] hover:bg-accent disabled:opacity-50"
-                              >
-                                {busyKey === `reject:${workShiftId}` ? 'Rejecting...' : 'Reject schedule'}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+// ════════════════════════════════════════════════════════════
+// SCHEDULE PLANNER TAB
+// ════════════════════════════════════════════════════════════
 
-              <ListPaginationControls
-                total={attendanceDetailState.total}
-                limit={attendanceQuery.limit}
-                offset={attendanceQuery.offset}
-                hasMore={attendanceDetailState.hasMore}
-                disabled={attendanceLoading}
-                onPageChange={attendanceQuery.setPage}
-                onLimitChange={attendanceQuery.setPageSize}
-              />
-            </section>
-          </div>
-        ) : null}
+function SchedulePlannerTab({
+  shifts, assignments, weekStart, onWeekChange, getUserName, users, busyKey, onAssign,
+}: {
+  shifts: ShiftView[];
+  assignments: WorkShiftView[];
+  weekStart: string;
+  onWeekChange: (ws: string) => void;
+  getUserName: (id: string | null | undefined) => string;
+  users: AuthUserListItem[];
+  busyKey: string;
+  onAssign: (shiftId: string, userId: string, workDate: string, workRole?: string) => void;
+}) {
+  const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
+  const [selectedCell, setSelectedCell] = useState<{ shiftId: string; date: string } | null>(null);
 
-        <Sheet
-          open={activeTab === 'attendance' && assignmentSheetOpen && Boolean(selectedLane)}
-          onOpenChange={(open) => {
-            setAssignmentSheetOpen(open);
-            if (!open) {
-              setAssignmentUserQuery('');
-              setAssignmentDraft((prev) => ({ ...prev, userIds: [], note: '' }));
-            }
-          }}
-        >
-          {selectedLane ? (
-            <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-xl">
-              <SheetHeader className="border-b px-6 py-5">
-                <SheetTitle className="text-base">Assign employees</SheetTitle>
-                <SheetDescription>
-                  {getShiftBoardTitle(selectedLane.shift, selectedShiftDisplay.primary)} · {getShiftBoardMeta(selectedLane.shift, selectedLane.shiftId)}
-                </SheetDescription>
-              </SheetHeader>
+  // Group shifts by daypart
+  const shiftsByDaypart = useMemo(() => {
+    const groups = new Map<string, ShiftView[]>();
+    for (const dp of DAYPART_ORDER) groups.set(dp, []);
+    for (const shift of [...shifts].sort((a, b) => String(a.startTime ?? '').localeCompare(String(b.startTime ?? '')))) {
+      const dp = getDaypart(shift);
+      const arr = groups.get(dp) ?? [];
+      arr.push(shift);
+      groups.set(dp, arr);
+    }
+    return [...groups.entries()].filter(([, arr]) => arr.length > 0);
+  }, [shifts]);
 
-              <div className="space-y-4 px-6 py-5">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl border bg-background p-3">
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Work date</p>
-                    <p className="mt-1 text-sm font-semibold">{formatDate(assignmentDraft.workDate)}</p>
-                  </div>
-                  <div className="rounded-xl border bg-background p-3">
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Already assigned</p>
-                    <p className="mt-1 text-sm font-semibold">{selectedLane.summary.assignedCount}</p>
-                  </div>
-                  <div className="rounded-xl border bg-background p-3">
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Outlet</p>
-                    <p className="mt-1 text-sm font-semibold">{currentOutletDisplay.primary}</p>
-                  </div>
-                </div>
+  // Totals
+  const totalShiftsWeek = shifts.length * 7;
+  const totalAssigned = weekDates.reduce((sum, d) => {
+    return sum + assignments.filter((a) => a.workDate === d && String(a.scheduleStatus ?? '').trim() !== 'cancelled').length;
+  }, 0);
+  const totalRequired = weekDates.reduce((sum, d) => {
+    return sum + shifts.reduce((s2, shift) => s2 + (Number(shift.headcountRequired) || 1), 0);
+  }, 0);
+  const totalGaps = totalRequired - totalAssigned;
 
-                <div className="rounded-2xl border bg-background">
-                  <div className="border-b px-4 py-4">
-                    <label className="space-y-1">
-                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Shared note</span>
-                      <input
-                        value={assignmentDraft.note}
-                        onChange={(event) => setAssignmentDraft((prev) => ({ ...prev, note: event.target.value }))}
-                        placeholder="Optional note for all selected employees"
-                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-xs"
-                      />
-                    </label>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', scheduleBadgeClass('scheduled'))}>Scheduled</span>
-                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', attendanceBadgeClass('pending'))}>Attendance pending</span>
-                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', approvalBadgeClass('pending'))}>Review pending</span>
-                    </div>
-                    <p className="mt-3 text-[11px] text-muted-foreground">
-                      Backend writes one `work_shift` record per selected employee. Existing duplicates are marked and skipped before submit.
-                    </p>
-                  </div>
+  return (
+    <div className="space-y-4">
+      {/* Week nav */}
+      <div className="flex items-center gap-3">
+        <button onClick={() => onWeekChange(addDays(weekStart, -7))} className="p-1 rounded hover:bg-muted"><ChevronLeft className="h-4 w-4" /></button>
+        <h2 className="text-lg font-semibold">Week of {formatDateFull(weekStart)}</h2>
+        <button onClick={() => onWeekChange(addDays(weekStart, 7))} className="p-1 rounded hover:bg-muted"><ChevronRight className="h-4 w-4" /></button>
+      </div>
 
-                  <div className="flex flex-col gap-3 border-b px-4 py-3 md:flex-row md:items-center md:justify-between">
-                    <div className="relative min-w-[240px] flex-1">
-                      <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                      <input
-                        value={assignmentUserQuery}
-                        onChange={(event) => setAssignmentUserQuery(event.target.value)}
-                        placeholder="Search employee name, username, employee code"
-                        className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-xs"
-                      />
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                      <span>{assignmentDraft.userIds.length} selected</span>
-                      <button
-                        onClick={toggleAllVisibleAssignmentUsers}
-                        type="button"
-                        disabled={selectableVisibleUsers.length === 0}
-                        className="rounded border px-2 py-1 hover:bg-accent"
+      <div className="text-sm text-muted-foreground">
+        Assigned: {totalAssigned}/{totalRequired} · Gaps: {totalGaps > 0 ? <span className="text-amber-600 font-medium">{totalGaps}</span> : '0'}
+      </div>
+
+      {/* Week grid */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr>
+              <th className="text-left p-2 border-b w-32"></th>
+              {weekDates.map((d) => (
+                <th key={d} className={cn('text-center p-2 border-b', d === todayStr() && 'bg-blue-50')}>
+                  {formatDateShort(d)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {shiftsByDaypart.map(([daypart, dpShifts]) => (
+              dpShifts.map((shift, si) => (
+                <tr key={shift.id}>
+                  {si === 0 && (
+                    <td rowSpan={dpShifts.length} className="p-2 border-b align-top font-medium text-xs text-muted-foreground uppercase">
+                      {getDaypartLabel(daypart as any)}
+                      <br />
+                      <span className="text-[10px] normal-case font-normal">
+                        {formatShiftTime(dpShifts[0]?.startTime)}–{formatShiftTime(dpShifts[dpShifts.length - 1]?.endTime)}
+                      </span>
+                    </td>
+                  )}
+                  {weekDates.map((d) => {
+                    const cov = computeWeekCoverage(shift, assignments, d);
+                    const isSelected = selectedCell?.shiftId === shift.id && selectedCell?.date === d;
+                    return (
+                      <td
+                        key={d}
+                        onClick={() => setSelectedCell({ shiftId: shift.id, date: d })}
+                        className={cn(
+                          'text-center p-2 border-b cursor-pointer hover:bg-muted/50 transition-colors',
+                          d === todayStr() && 'bg-blue-50/50',
+                          isSelected && 'ring-2 ring-primary ring-inset',
+                          cov.gap > 0 && 'bg-amber-50/50',
+                          cov.assigned === 0 && cov.required > 0 && 'bg-red-50/50',
+                        )}
                       >
-                        {allVisibleUsersSelected ? 'Clear visible' : 'Select visible'}
-                      </button>
-                    </div>
-                  </div>
+                        <span className={cn('font-medium text-xs', coverageTextClass(cov.assigned, cov.required))}>
+                          {cov.assigned}/{cov.required}
+                        </span>
+                        {cov.gap > 0 && <span className="text-xs text-amber-600 ml-0.5">⚠</span>}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-                  {duplicateSelectedUserIds.length > 0 ? (
-                    <div className="border-b px-4 py-2 text-[11px] text-amber-700">
-                      {duplicateSelectedUserIds.length} selected employees already have this shift on this date and will be skipped.
-                    </div>
-                  ) : null}
+      {/* Selected cell detail */}
+      {selectedCell && (
+        <ScheduleCellDetail
+          shift={shifts.find((s) => s.id === selectedCell.shiftId)!}
+          date={selectedCell.date}
+          assignments={assignments}
+          getUserName={getUserName}
+          users={users}
+          busyKey={busyKey}
+          onAssign={onAssign}
+          onClose={() => setSelectedCell(null)}
+        />
+      )}
+    </div>
+  );
+}
 
-                  <div className="max-h-[50vh] overflow-y-auto">
-                    {filteredAssignableUsers.length === 0 ? (
-                      <div className="px-4 py-8 text-center text-xs text-muted-foreground">No employees match this search</div>
-                    ) : (
-                      filteredAssignableUsers.map((user) => {
-                        const display = getHrUserDisplay(usersById, user.id);
-                        const checked = assignmentDraft.userIds.includes(user.id);
-                        const alreadyAssigned = existingUserIdsForSelectedShift.has(user.id);
-                        return (
-                          <label
-                            key={user.id}
-                            className={cn(
-                              'flex items-center justify-between gap-3 border-b px-4 py-3 last:border-b-0',
-                              alreadyAssigned ? 'bg-muted/30' : 'cursor-pointer hover:bg-accent/40',
-                            )}
-                          >
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-foreground">{display.primary}</p>
-                              <p className="truncate text-[11px] text-muted-foreground">
-                                {[display.secondary, currentOutletDisplay.primary].filter(Boolean).join(' · ')}
-                              </p>
-                              {alreadyAssigned ? (
-                                <p className="mt-1 text-[11px] text-amber-700">Already assigned to this shift on {formatDate(assignmentDraft.workDate)}</p>
-                              ) : null}
-                            </div>
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              disabled={alreadyAssigned}
-                              onChange={() => {
-                                if (!alreadyAssigned) toggleAssignmentUser(user.id);
-                              }}
-                              className="h-4 w-4 rounded border-input"
-                            />
-                          </label>
-                        );
-                      })
-                    )}
-                  </div>
+function ScheduleCellDetail({
+  shift, date, assignments, getUserName, users, busyKey, onAssign, onClose,
+}: {
+  shift: ShiftView;
+  date: string;
+  assignments: WorkShiftView[];
+  getUserName: (id: string | null | undefined) => string;
+  users: AuthUserListItem[];
+  busyKey: string;
+  onAssign: (shiftId: string, userId: string, workDate: string, workRole?: string) => void;
+  onClose: () => void;
+}) {
+  const [assignRole, setAssignRole] = useState('');
+  const [assignUserId, setAssignUserId] = useState('');
 
-                  <div className="flex flex-col gap-3 border-t px-4 py-4 md:flex-row md:items-center md:justify-between">
-                    <p className="text-[11px] text-muted-foreground">
-                      Use this panel to assign more employees to the same shift without leaving the board.
-                    </p>
-                    <button
-                      onClick={() => void assignWorkShift()}
-                      disabled={busyKey === 'assign-work-shift' || !selectedLane.isResolved || assignmentDraft.userIds.length === 0}
-                      className="h-10 rounded-md bg-primary px-4 text-[11px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                    >
-                      {busyKey === 'assign-work-shift'
-                        ? 'Assigning...'
-                        : assignmentDraft.userIds.length > 1
-                          ? `Assign ${assignmentDraft.userIds.length} Employees`
-                          : 'Assign Employees'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </SheetContent>
-          ) : null}
-        </Sheet>
+  if (!shift) return null;
 
-        {activeTab === 'overtime' ? (
-          <div className="space-y-4">
-            <section className="surface-elevated space-y-4 p-5">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-                <div className="space-y-1">
-                  <h2 className="text-sm font-semibold">Overtime, lateness, and absence ({overtimeDetailState.total})</h2>
-                  <p className="text-xs text-muted-foreground">
-                    Review payroll timesheet exceptions for {currentOutletDisplay.primary}. This view combines overtime,
-                    late events, and absent days from the selected outlet scope.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="relative min-w-[240px] flex-1 xl:w-72 xl:flex-none">
-                    <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                    <input
-                      value={overtimeQuery.searchInput}
-                      onChange={(event) => overtimeQuery.setSearchInput(event.target.value)}
-                      placeholder="Search employee, employee code, period, timesheet"
-                      className="h-8 w-full rounded-md border border-input bg-background pl-9 pr-3 text-xs"
-                    />
-                  </div>
-                  <select
-                    value={overtimeFocus}
-                    onChange={(event) => setOvertimeFocus(event.target.value as OvertimeFocus)}
-                    className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                  >
-                    <option value="all">All exceptions</option>
-                    <option value="overtime">Overtime only</option>
-                    <option value="late">Late only</option>
-                    <option value="absent">Absent only</option>
-                    <option value="mixed">Multi-signal</option>
-                  </select>
-                  <select
-                    value={`${overtimeQuery.sortBy || 'exceptionScore'}:${overtimeQuery.sortDir}`}
-                    onChange={(event) => {
-                      const [field, direction] = event.target.value.split(':');
-                      overtimeQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
-                    }}
-                    className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                  >
-                    <option value="exceptionScore:desc">Impact first</option>
-                    <option value="overtimeHours:desc">Most overtime</option>
-                    <option value="lateCount:desc">Most late</option>
-                    <option value="absentDays:desc">Most absent</option>
-                    <option value="payrollPeriodEndDate:desc">Latest period</option>
-                    <option value="userId:asc">Employee A-Z</option>
-                  </select>
+  const cellAssignments = assignments.filter(
+    (a) => String(a.shiftId ?? '') === shift.id && a.workDate === date && String(a.scheduleStatus ?? '').trim() !== 'cancelled',
+  );
+  const roles = shift.roleRequirements ?? [];
+
+  return (
+    <div className="border rounded-lg p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-sm">{shift.name} — {formatDateFull(date)}</h3>
+        <button onClick={onClose} className="text-xs text-muted-foreground hover:underline">Close</button>
+      </div>
+
+      {roles.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-xs font-medium text-muted-foreground uppercase">Role Coverage</div>
+          {roles.map((req) => {
+            const assigned = cellAssignments.filter((a) => String(a.workRole ?? '').trim() === req.workRole).length;
+            return (
+              <div key={req.workRole} className="flex items-center gap-2 text-sm">
+                <span className={cn('font-medium', coverageTextClass(assigned, req.requiredCount))}>
+                  {getWorkRoleLabel(req.workRole)}: {assigned}/{req.requiredCount}
+                </span>
+                {assigned < req.requiredCount && (
                   <button
-                    onClick={() => void loadOvertime()}
-                    disabled={overtimeLoading}
-                    className="flex h-8 items-center gap-1 rounded border px-2.5 text-[11px] hover:bg-accent disabled:opacity-60"
+                    onClick={() => setAssignRole(req.workRole)}
+                    className="text-xs text-blue-600 hover:underline"
                   >
-                    <RefreshCw className={cn('h-3.5 w-3.5', overtimeLoading ? 'animate-spin' : '')} />
-                    Refresh
+                    + Assign
                   </button>
-                </div>
+                )}
               </div>
+            );
+          })}
+        </div>
+      )}
 
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-                {[
-                  { label: 'Exception Rows', value: overtimeStats.rowCount, icon: AlertTriangle },
-                  { label: 'Employees Affected', value: overtimeStats.affectedEmployeeCount, icon: UserCheck },
-                  { label: 'OT Hours', value: overtimeStats.overtimeHours.toFixed(2), icon: Timer },
-                  { label: 'Late Events', value: overtimeStats.lateCount, icon: TrendingUp },
-                  { label: 'Absent Days', value: overtimeStats.absentDays.toFixed(2), icon: UserX },
-                ].map((kpi) => (
-                  <div key={kpi.label} className="rounded-xl border bg-background/70 p-4">
-                    <div className="mb-2 flex items-center gap-1.5">
-                      <kpi.icon className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{kpi.label}</span>
-                    </div>
-                    <p className="text-xl font-semibold">{kpi.value}</p>
-                  </div>
-                ))}
-              </div>
-
-              {overtimeError ? <p className="text-xs text-destructive">{overtimeError}</p> : null}
-
-              {overtimeStats.rowCount > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                    OT rows {overtimeStats.overtimeRowCount}
-                  </span>
-                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-                    Late rows {overtimeStats.lateRowCount}
-                  </span>
-                  <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-700">
-                    Absent rows {overtimeStats.absentRowCount}
-                  </span>
-                  <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700">
-                    Multi-signal rows {overtimeStats.mixedRowCount}
-                  </span>
-                </div>
-              ) : null}
-
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b bg-muted/30">
-                      {['Timesheet', 'Employee', 'Period', 'Workload', 'Signals'].map((header) => (
-                        <th key={header} className="px-4 py-2.5 text-left text-[11px]">
-                          {header}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {overtimeLoading && timesheets.length === 0 ? (
-                      <ListTableSkeleton columns={5} rows={6} />
-                    ) : overtimeDetailState.rows.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                          No exception rows match the selected filters
-                        </td>
-                      </tr>
-                    ) : overtimeDetailState.rows.map((row) => {
-                      const userDisplay = getHrUserDisplay(usersById, row.userId);
-                      const periodRange = row.payrollPeriodStartDate && row.payrollPeriodEndDate
-                        ? `${row.payrollPeriodStartDate} → ${row.payrollPeriodEndDate}`
-                        : null;
-                      return (
-                        <tr key={String(row.id)} className="border-b last:border-0">
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-medium">{shortHrRef(row.id)}</span>
-                              <span className="text-[11px] text-muted-foreground">{formatDate(row.updatedAt || row.createdAt)}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-medium">{userDisplay.primary}</span>
-                              {userDisplay.secondary ? (
-                                <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span>
-                              ) : null}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5 text-xs">
-                            <div className="flex flex-col">
-                              <span className="font-medium text-foreground">
-                                {formatPeriodLabel(
-                                  row.payrollPeriodName,
-                                  row.payrollPeriodStartDate,
-                                  row.payrollPeriodEndDate,
-                                  row.payrollPeriodId,
-                                )}
-                              </span>
-                              {periodRange ? (
-                                <span className="text-[11px] text-muted-foreground">{periodRange}</span>
-                              ) : null}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                            <div className="flex flex-col">
-                              <span>{toNumber(row.workDays).toFixed(2)} work days</span>
-                              <span>{toNumber(row.workHours).toFixed(2)} logged hours</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col gap-2">
-                              <div className="flex flex-wrap gap-2">
-                                {toNumber(row.overtimeHours) > 0 ? (
-                                  <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                                    +{toNumber(row.overtimeHours).toFixed(2)}h overtime
-                                  </span>
-                                ) : null}
-                                {toNumber(row.lateCount) > 0 ? (
-                                  <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', attendanceBadgeClass('late'))}>
-                                    {toNumber(row.lateCount)} late
-                                  </span>
-                                ) : null}
-                                {toNumber(row.absentDays) > 0 ? (
-                                  <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', attendanceBadgeClass('absent'))}>
-                                    {toNumber(row.absentDays).toFixed(2)} absent days
-                                  </span>
-                                ) : null}
-                              </div>
-                              {toNumber(row.overtimeHours) > 0 ? (
-                                <p className="text-[11px] text-muted-foreground">
-                                  OT multiplier ×{toNumber(row.overtimeRate).toFixed(2)}
-                                </p>
-                              ) : (
-                                <p className="text-[11px] text-muted-foreground">No overtime multiplier applied</p>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <ListPaginationControls
-                total={overtimeDetailState.total}
-                limit={overtimeQuery.limit}
-                offset={overtimeQuery.offset}
-                hasMore={overtimeDetailState.hasMore}
-                disabled={overtimeLoading}
-                onPageChange={overtimeQuery.setPage}
-                onLimitChange={overtimeQuery.setPageSize}
-              />
-            </section>
+      <div className="space-y-1">
+        <div className="text-xs font-medium text-muted-foreground uppercase">Assigned ({cellAssignments.length})</div>
+        {cellAssignments.map((a) => (
+          <div key={a.id} className="flex items-center gap-2 text-sm py-1">
+            <span>● {getUserName(a.userId)}</span>
+            {a.workRole && (
+              <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{getWorkRoleLabel(a.workRole)}</span>
+            )}
           </div>
-        ) : null}
+        ))}
+        {cellAssignments.length === 0 && <div className="text-xs text-muted-foreground">No staff assigned</div>}
+      </div>
 
-        {activeTab === 'leave' ? (
-          <div className="space-y-4">
-            <section className="surface-elevated space-y-4 p-5">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-                <div className="space-y-1">
-                  <h2 className="text-sm font-semibold">Leave requests ({leaveTotal})</h2>
-                  <p className="text-xs text-muted-foreground">Use the backend leave workflow to review daily time-off requests and their approval state.</p>
+      {/* Assign staff form — always visible */}
+      <div className="border-t pt-3 space-y-2">
+        <div className="text-xs font-medium text-muted-foreground uppercase">Assign Staff</div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
+            value={assignUserId}
+            onChange={(e) => setAssignUserId(e.target.value)}
+            className="text-sm border rounded px-2 py-1.5 min-w-[180px]"
+          >
+            <option value="">Select staff...</option>
+            {users.filter((u) => !cellAssignments.some((a) => String(a.userId) === String(u.id))).map((u) => (
+              <option key={u.id} value={u.id}>{userDisplayName(u)}</option>
+            ))}
+          </select>
+          {roles.length > 0 ? (
+            <select
+              value={assignRole}
+              onChange={(e) => setAssignRole(e.target.value)}
+              className="text-sm border rounded px-2 py-1.5 min-w-[140px]"
+            >
+              <option value="">Work role...</option>
+              {roles.map((req) => (
+                <option key={req.workRole} value={req.workRole}>{getWorkRoleLabel(req.workRole)}</option>
+              ))}
+            </select>
+          ) : (
+            <select
+              value={assignRole}
+              onChange={(e) => setAssignRole(e.target.value)}
+              className="text-sm border rounded px-2 py-1.5 min-w-[140px]"
+            >
+              <option value="">Work role (optional)...</option>
+              <option value="cashier">Cashier</option>
+              <option value="kitchen_staff">Kitchen</option>
+              <option value="prep">Prep</option>
+              <option value="support">Support</option>
+              <option value="closing_support">Closing</option>
+            </select>
+          )}
+          <button
+            onClick={() => {
+              if (assignUserId) {
+                onAssign(shift.id, assignUserId, date, assignRole || undefined);
+                setAssignUserId('');
+                setAssignRole('');
+              }
+            }}
+            disabled={!assignUserId || !!busyKey}
+            className="text-sm bg-primary text-primary-foreground px-3 py-1.5 rounded disabled:opacity-50 hover:bg-primary/90"
+          >
+            {busyKey === 'assign' ? 'Assigning...' : 'Assign'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// ATTENDANCE TAB
+// ════════════════════════════════════════════════════════════
+
+function AttendanceTab({
+  shifts, assignments, date, onDateChange, getUserName, selectedId, onSelectId,
+  busyKey, onUpdateAttendance, onApprove,
+}: {
+  shifts: ShiftView[];
+  assignments: WorkShiftView[];
+  date: string;
+  onDateChange: (d: string) => void;
+  getUserName: (id: string | null | undefined) => string;
+  selectedId: string | null;
+  onSelectId: (id: string | null) => void;
+  busyKey: string;
+  onUpdateAttendance: (id: string, payload: Record<string, unknown>) => void;
+  onApprove: (id: string) => void;
+}) {
+  const now = useMemo(() => new Date(), [assignments]);
+  const shiftMap = useMemo(() => new Map(shifts.map((s) => [s.id, s])), [shifts]);
+
+  // Sort: exceptions first
+  const sorted = useMemo(() => {
+    return [...assignments]
+      .filter((a) => String(a.scheduleStatus ?? '').trim() !== 'cancelled')
+      .sort((a, b) => {
+        const shiftA = shiftMap.get(String(a.shiftId ?? ''));
+        const shiftB = shiftMap.get(String(b.shiftId ?? ''));
+        const statusA = shiftA ? deriveLiveStatus(a, shiftA, date, now) : 'assigned';
+        const statusB = shiftB ? deriveLiveStatus(b, shiftB, date, now) : 'assigned';
+        const exOrder: Record<string, number> = { no_show: 0, late: 1, checked_in: 2, on_leave: 3, assigned: 4, confirmed: 4, completed: 5 };
+        return (exOrder[statusA] ?? 4) - (exOrder[statusB] ?? 4);
+      });
+  }, [assignments, shiftMap, date, now]);
+
+  const selected = selectedId ? assignments.find((a) => a.id === selectedId) : sorted[0];
+  const selectedShift = selected ? shiftMap.get(String(selected.shiftId ?? '')) : undefined;
+
+  return (
+    <div className="space-y-4">
+      {/* Date nav */}
+      <div className="flex items-center gap-3">
+        <button onClick={() => onDateChange(addDays(date, -1))} className="p-1 rounded hover:bg-muted"><ChevronLeft className="h-4 w-4" /></button>
+        <h2 className="text-lg font-semibold">{formatDateFull(date)}</h2>
+        <button onClick={() => onDateChange(addDays(date, 1))} className="p-1 rounded hover:bg-muted"><ChevronRight className="h-4 w-4" /></button>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        {/* Timecard list */}
+        <div className="col-span-1 space-y-1 border rounded-lg p-2 max-h-[600px] overflow-y-auto">
+          <div className="text-xs font-medium text-muted-foreground uppercase px-1 pb-1">Timecards ({sorted.length})</div>
+          {sorted.map((a) => {
+            const shift = shiftMap.get(String(a.shiftId ?? ''));
+            const liveStatus = shift ? deriveLiveStatus(a, shift, date, now) : ('assigned' as LiveStatus);
+            const isSelected = a.id === (selected?.id ?? sorted[0]?.id);
+            return (
+              <button
+                key={a.id}
+                onClick={() => onSelectId(a.id)}
+                className={cn(
+                  'w-full text-left p-2 rounded text-sm transition-colors',
+                  isSelected ? 'bg-primary/10 ring-1 ring-primary/30' : 'hover:bg-muted/50',
+                )}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className={cn('w-2 h-2 rounded-full', {
+                    'bg-green-500': liveStatus === 'checked_in',
+                    'bg-amber-500': liveStatus === 'late',
+                    'bg-red-500': liveStatus === 'no_show',
+                    'bg-gray-400': liveStatus === 'completed' || liveStatus === 'assigned',
+                    'bg-blue-400': liveStatus === 'on_leave',
+                  })} />
+                  <span className="font-medium truncate">{getUserName(a.userId)}</span>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="relative min-w-[240px] flex-1 xl:w-72 xl:flex-none">
-                    <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                    <input
-                      value={leaveQuery.searchInput}
-                      onChange={(event) => leaveQuery.setSearchInput(event.target.value)}
-                      placeholder="Search employee, shift, note"
-                      className="h-8 w-full rounded-md border border-input bg-background pl-9 pr-3 text-xs"
-                    />
-                  </div>
-                  <input
-                    type="date"
-                    value={dateFilter}
-                    onChange={(event) => setDateFilter(event.target.value)}
-                    className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                  />
-                  <select
-                    value={leaveQuery.filters.approvalStatus || 'all'}
-                    onChange={(event) => leaveQuery.setFilter('approvalStatus', event.target.value === 'all' ? undefined : event.target.value)}
-                    className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                  >
-                    <option value="all">All review states</option>
-                    <option value="pending">Pending review</option>
-                    <option value="approved">Approved</option>
-                    <option value="rejected">Rejected</option>
-                  </select>
-                  <select
-                    value={`${leaveQuery.sortBy || 'workDate'}:${leaveQuery.sortDir}`}
-                    onChange={(event) => {
-                      const [field, direction] = event.target.value.split(':');
-                      leaveQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
-                    }}
-                    className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                  >
-                    <option value="workDate:desc">Latest work date</option>
-                    <option value="approvalStatus:asc">Pending first</option>
-                    <option value="userId:asc">Employee A-Z</option>
-                    <option value="createdAt:desc">Last created</option>
-                  </select>
-                  <button
-                    onClick={() => void loadLeave()}
-                    disabled={leaveLoading}
-                    className="flex h-8 items-center gap-1 rounded border px-2.5 text-[11px] hover:bg-accent disabled:opacity-60"
-                  >
-                    <RefreshCw className={cn('h-3.5 w-3.5', leaveLoading ? 'animate-spin' : '')} />
-                    Refresh
-                  </button>
+                <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                  <span>{getWorkRoleLabel(a.workRole)}</span>
+                  <span>·</span>
+                  <span>{shift ? `${formatShiftTime(shift.startTime)}–${formatShiftTime(shift.endTime)}` : '—'}</span>
+                  <span>·</span>
+                  <span className={cn(liveStatusBadgeClass(liveStatus), 'px-1 rounded text-[10px]')}>
+                    {getLiveStatusLabel(liveStatus)}
+                  </span>
                 </div>
-              </div>
+              </button>
+            );
+          })}
+          {sorted.length === 0 && <div className="text-xs text-muted-foreground p-2">No timecards for this date</div>}
+        </div>
 
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                {[
-                  { label: 'Requests', value: leaveStats.total, icon: CalendarDays },
-                  { label: 'Pending Review', value: leaveStats.pending, icon: Clock },
-                  { label: 'Approved', value: leaveStats.approved, icon: CheckCircle2 },
-                  { label: 'Rejected', value: leaveStats.rejected, icon: AlertTriangle },
-                ].map((kpi) => (
-                  <div key={kpi.label} className="rounded-xl border bg-background/70 p-4">
-                    <div className="mb-2 flex items-center gap-1.5">
-                      <kpi.icon className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{kpi.label}</span>
-                    </div>
-                    <p className="text-xl font-semibold">{kpi.value}</p>
-                  </div>
-                ))}
-              </div>
+        {/* Detail panel */}
+        <div className="col-span-2 border rounded-lg p-4 space-y-3">
+          {selected && selectedShift ? (
+            <TimecardDetail
+              assignment={selected}
+              shift={selectedShift}
+              date={date}
+              now={now}
+              getUserName={getUserName}
+              busyKey={busyKey}
+              onUpdateAttendance={onUpdateAttendance}
+              onApprove={onApprove}
+            />
+          ) : (
+            <div className="text-sm text-muted-foreground">Select a timecard to view details</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
-              {leaveError ? <p className="text-xs text-destructive">{leaveError}</p> : null}
+function TimecardDetail({
+  assignment, shift, date, now, getUserName, busyKey, onUpdateAttendance, onApprove,
+}: {
+  assignment: WorkShiftView;
+  shift: ShiftView;
+  date: string;
+  now: Date;
+  getUserName: (id: string | null | undefined) => string;
+  busyKey: string;
+  onUpdateAttendance: (id: string, payload: Record<string, unknown>) => void;
+  onApprove: (id: string) => void;
+}) {
+  const liveStatus = deriveLiveStatus(assignment, shift, date, now);
+  const scheduledHours = (() => {
+    const s = String(shift.startTime ?? '').trim();
+    const e = String(shift.endTime ?? '').trim();
+    if (!s || !e) return 0;
+    const [sh, sm] = s.split(':').map(Number);
+    const [eh, em] = e.split(':').map(Number);
+    return ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+  })();
 
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b bg-muted/30">
-                      {['Request', 'Employee', 'Shift', 'Review', 'Note', 'Actions'].map((header) => (
-                        <th key={header} className="px-4 py-2.5 text-left text-[11px]">{header}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {leaveLoading && leaveRequests.length === 0 ? (
-                      <ListTableSkeleton columns={6} rows={6} />
-                    ) : leaveRequests.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                          No leave requests found for the selected date and filters
-                        </td>
-                      </tr>
-                    ) : leaveRequests.map((row) => {
-                      const workShiftId = String(row.id);
-                      const approvalStatus = String(row.approvalStatus || 'unknown').toLowerCase();
-                      const canReview = approvalStatus === 'pending';
-                      const userDisplay = getHrUserDisplay(usersById, row.userId);
-                      const shiftDisplay = getHrShiftDisplay(shiftsById, row.shiftId);
-                      const outletDisplay = getHrOutletDisplay(outletsById, row.outletId);
-                      return (
-                        <tr key={workShiftId} className="border-b last:border-0">
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-medium">{shortHrRef(workShiftId)}</span>
-                              <span className="text-[11px] text-muted-foreground">{formatDate(row.workDate)}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-medium">{userDisplay.primary}</span>
-                              {userDisplay.secondary ? (
-                                <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span>
-                              ) : null}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-medium">{shiftDisplay.primary}</span>
-                              {shiftDisplay.secondary ? (
-                                <span className="text-[11px] text-muted-foreground">{shiftDisplay.secondary}</span>
-                              ) : null}
-                              <span className="text-[11px] text-muted-foreground">{outletDisplay.primary}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col gap-1">
-                              <span className={cn('w-fit rounded-full border px-2 py-0.5 text-[10px] font-medium', attendanceBadgeClass('leave'))}>
-                                Leave
-                              </span>
-                              <span className={cn('w-fit rounded-full border px-2 py-0.5 text-[10px] font-medium', approvalBadgeClass(approvalStatus))}>
-                                {formatHrEnumLabel(approvalStatus)}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(row.note || '—')}</td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                onClick={() => void reviewWorkShift(workShiftId, 'approve', loadLeave)}
-                                disabled={!canReview || busyKey === `approve:${workShiftId}`}
-                                className="h-7 rounded border px-2.5 text-[10px] hover:bg-accent disabled:opacity-50"
-                              >
-                                {busyKey === `approve:${workShiftId}` ? 'Approving...' : 'Approve'}
-                              </button>
-                              <button
-                                onClick={() => void reviewWorkShift(workShiftId, 'reject', loadLeave)}
-                                disabled={!canReview || busyKey === `reject:${workShiftId}`}
-                                className="h-7 rounded border px-2.5 text-[10px] hover:bg-accent disabled:opacity-50"
-                              >
-                                {busyKey === `reject:${workShiftId}` ? 'Rejecting...' : 'Reject'}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+  const actualHours = (() => {
+    if (!assignment.actualStartTime) return 0;
+    const start = new Date(assignment.actualStartTime);
+    const end = assignment.actualEndTime ? new Date(assignment.actualEndTime) : now;
+    return Math.max(0, (end.getTime() - start.getTime()) / 3600000);
+  })();
 
-              <ListPaginationControls
-                total={leaveTotal}
-                limit={leaveQuery.limit}
-                offset={leaveQuery.offset}
-                hasMore={leaveHasMore}
-                disabled={leaveLoading}
-                onPageChange={leaveQuery.setPage}
-                onLimitChange={leaveQuery.setPageSize}
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold">{getUserName(assignment.userId)}</h3>
+        <span className={cn('px-2 py-0.5 rounded text-xs font-medium', liveStatusBadgeClass(liveStatus))}>
+          {getLiveStatusLabel(liveStatus)}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        <div className="text-muted-foreground">Shift</div>
+        <div>{shift.name} · {formatShiftTime(shift.startTime)}–{formatShiftTime(shift.endTime)}</div>
+        <div className="text-muted-foreground">Work Role</div>
+        <div>{getWorkRoleLabel(assignment.workRole)}</div>
+        <div className="text-muted-foreground">Scheduled</div>
+        <div>{formatShiftTime(shift.startTime)} — {formatShiftTime(shift.endTime)} ({scheduledHours.toFixed(1)}h)</div>
+        <div className="text-muted-foreground">Actual</div>
+        <div>
+          {assignment.actualStartTime ? formatClockTime(assignment.actualStartTime) : '—'}
+          {' — '}
+          {assignment.actualEndTime ? formatClockTime(assignment.actualEndTime) : '(in progress)'}
+          {assignment.actualStartTime && ` (${actualHours.toFixed(1)}h)`}
+        </div>
+        <div className="text-muted-foreground">Break Allowed</div>
+        <div>{shift.breakMinutes ?? 0} min</div>
+        <div className="text-muted-foreground">Attendance</div>
+        <div>{formatHrEnumLabel(assignment.attendanceStatus)}</div>
+        <div className="text-muted-foreground">Approval</div>
+        <div>{formatHrEnumLabel(assignment.approvalStatus)}</div>
+        {assignment.note && (
+          <>
+            <div className="text-muted-foreground">Note</div>
+            <div>{assignment.note}</div>
+          </>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 border-t pt-3">
+        {!assignment.actualStartTime && liveStatus !== 'no_show' && liveStatus !== 'on_leave' && (
+          <button
+            onClick={() => onUpdateAttendance(assignment.id, { attendanceStatus: 'present', actualStartTime: new Date().toISOString() })}
+            disabled={!!busyKey}
+            className="text-xs bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 disabled:opacity-50"
+          >
+            Clock In
+          </button>
+        )}
+        {assignment.actualStartTime && !assignment.actualEndTime && (
+          <button
+            onClick={() => onUpdateAttendance(assignment.id, { actualEndTime: new Date().toISOString() })}
+            disabled={!!busyKey}
+            className="text-xs bg-gray-600 text-white px-3 py-1.5 rounded hover:bg-gray-700 disabled:opacity-50"
+          >
+            Clock Out
+          </button>
+        )}
+        {String(assignment.approvalStatus ?? '').trim() === 'pending' && (
+          <button
+            onClick={() => onApprove(assignment.id)}
+            disabled={!!busyKey}
+            className="text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded disabled:opacity-50"
+          >
+            Approve
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// LABOR REVIEW TAB
+// ════════════════════════════════════════════════════════════
+
+function LaborReviewTab({
+  shifts, assignments, weekStart, onWeekChange, getUserName, busyKey, onApprove,
+}: {
+  shifts: ShiftView[];
+  assignments: WorkShiftView[];
+  weekStart: string;
+  onWeekChange: (ws: string) => void;
+  getUserName: (id: string | null | undefined) => string;
+  busyKey: string;
+  onApprove: (id: string) => void;
+}) {
+  const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
+
+  const daySummaries = useMemo(
+    () => weekDates.map((d) => computeDaySummary(shifts, assignments, d)),
+    [shifts, assignments, weekDates],
+  );
+
+  const totals = useMemo(() => {
+    return daySummaries.reduce(
+      (acc, d) => ({
+        scheduled: acc.scheduled + d.scheduledHours,
+        actual: acc.actual + d.actualHours,
+        overtime: acc.overtime + d.overtimeHours,
+        approved: acc.approved + d.approvedCount,
+        total: acc.total + d.totalCount,
+      }),
+      { scheduled: 0, actual: 0, overtime: 0, approved: 0, total: 0 },
+    );
+  }, [daySummaries]);
+
+  return (
+    <div className="space-y-4">
+      {/* Week nav */}
+      <div className="flex items-center gap-3">
+        <button onClick={() => onWeekChange(addDays(weekStart, -7))} className="p-1 rounded hover:bg-muted"><ChevronLeft className="h-4 w-4" /></button>
+        <h2 className="text-lg font-semibold">Week of {formatDateFull(weekStart)}</h2>
+        <button onClick={() => onWeekChange(addDays(weekStart, 7))} className="p-1 rounded hover:bg-muted"><ChevronRight className="h-4 w-4" /></button>
+      </div>
+
+      {/* Summary strip */}
+      <div className="grid grid-cols-4 gap-3">
+        <MetricCard label="Scheduled" value={`${totals.scheduled.toFixed(1)}h`} variant="default" />
+        <MetricCard label="Actual" value={`${totals.actual.toFixed(1)}h`} variant={totals.actual > totals.scheduled * 1.05 ? 'warning' : 'default'} />
+        <MetricCard label="Overtime" value={`${totals.overtime.toFixed(1)}h`} variant={totals.overtime > 0 ? 'warning' : 'default'} />
+        <MetricCard label="Approved" value={`${totals.approved}/${totals.total}`} variant={totals.approved < totals.total ? 'info' : 'default'} />
+      </div>
+
+      {/* Day breakdown */}
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr className="text-muted-foreground">
+            <th className="text-left p-2 border-b">Day</th>
+            <th className="text-right p-2 border-b">Scheduled</th>
+            <th className="text-right p-2 border-b">Actual</th>
+            <th className="text-right p-2 border-b">+/-</th>
+            <th className="text-right p-2 border-b">OT</th>
+            <th className="text-right p-2 border-b">Late</th>
+            <th className="text-right p-2 border-b">Absent</th>
+            <th className="text-right p-2 border-b">Approved</th>
+          </tr>
+        </thead>
+        <tbody>
+          {daySummaries.map((day) => {
+            const isExpanded = expandedDay === day.date;
+            const dayAssignments = assignments.filter(
+              (a) => a.workDate === day.date && String(a.scheduleStatus ?? '').trim() !== 'cancelled',
+            );
+            return (
+              <DayReviewRow
+                key={day.date}
+                day={day}
+                isExpanded={isExpanded}
+                onToggle={() => setExpandedDay(isExpanded ? null : day.date)}
+                dayAssignments={dayAssignments}
+                shifts={shifts}
+                getUserName={getUserName}
+                busyKey={busyKey}
+                onApprove={onApprove}
               />
-            </section>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {/* Payroll readiness */}
+      <div className="border rounded-lg p-3 text-sm">
+        {totals.approved >= totals.total && totals.total > 0 ? (
+          <div className="flex items-center gap-2 text-green-700">
+            <CheckCircle2 className="h-4 w-4" />
+            All shifts approved — ready for payroll
           </div>
-        ) : null}
+        ) : (
+          <div className="flex items-center gap-2 text-amber-700">
+            <AlertTriangle className="h-4 w-4" />
+            {totals.total - totals.approved} shifts pending approval
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DayReviewRow({
+  day, isExpanded, onToggle, dayAssignments, shifts, getUserName, busyKey, onApprove,
+}: {
+  day: DaySummary;
+  isExpanded: boolean;
+  onToggle: () => void;
+  dayAssignments: WorkShiftView[];
+  shifts: ShiftView[];
+  getUserName: (id: string | null | undefined) => string;
+  busyKey: string;
+  onApprove: (id: string) => void;
+}) {
+  const shiftMap = useMemo(() => new Map(shifts.map((s) => [s.id, s])), [shifts]);
+  const allApproved = day.approvedCount >= day.totalCount && day.totalCount > 0;
+
+  return (
+    <>
+      <tr
+        onClick={onToggle}
+        className={cn('cursor-pointer hover:bg-muted/50', isExpanded && 'bg-muted/30')}
+      >
+        <td className="p-2 border-b font-medium flex items-center gap-1">
+          {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          {formatDateShort(day.date)}
+        </td>
+        <td className="text-right p-2 border-b">{day.scheduledHours.toFixed(1)}h</td>
+        <td className="text-right p-2 border-b">{day.actualHours > 0 ? `${day.actualHours.toFixed(1)}h` : '—'}</td>
+        <td className={cn('text-right p-2 border-b', day.variance > 0 ? 'text-amber-600' : '')}>
+          {day.actualHours > 0 ? `${day.variance > 0 ? '+' : ''}${day.variance.toFixed(1)}h` : '—'}
+        </td>
+        <td className={cn('text-right p-2 border-b', day.overtimeHours > 0 ? 'text-amber-600' : '')}>
+          {day.overtimeHours > 0 ? `${day.overtimeHours.toFixed(1)}h` : '—'}
+        </td>
+        <td className={cn('text-right p-2 border-b', day.lateCount > 0 ? 'text-amber-600' : '')}>{day.lateCount || '—'}</td>
+        <td className={cn('text-right p-2 border-b', day.absentCount > 0 ? 'text-red-600' : '')}>{day.absentCount || '—'}</td>
+        <td className="text-right p-2 border-b">
+          {allApproved ? (
+            <span className="text-green-600">✓ {day.approvedCount}/{day.totalCount}</span>
+          ) : (
+            <span className="text-amber-600">{day.approvedCount}/{day.totalCount}</span>
+          )}
+        </td>
+      </tr>
+      {isExpanded && dayAssignments.map((a) => {
+        const shift = shiftMap.get(String(a.shiftId ?? ''));
+        return (
+          <tr key={a.id} className="bg-muted/20">
+            <td className="p-2 border-b pl-8">{getUserName(a.userId)}</td>
+            <td className="text-right p-2 border-b text-xs text-muted-foreground">{getWorkRoleLabel(a.workRole)}</td>
+            <td className="text-right p-2 border-b text-xs">
+              {a.actualStartTime ? formatClockTime(a.actualStartTime) : '—'}
+              {a.actualEndTime ? ` – ${formatClockTime(a.actualEndTime)}` : ''}
+            </td>
+            <td className="p-2 border-b" colSpan={2}></td>
+            <td className="text-right p-2 border-b text-xs">
+              {String(a.attendanceStatus ?? '').trim() === 'late' && <span className="text-amber-600">Late</span>}
+              {String(a.attendanceStatus ?? '').trim() === 'absent' && <span className="text-red-600">Absent</span>}
+            </td>
+            <td className="p-2 border-b"></td>
+            <td className="text-right p-2 border-b">
+              {String(a.approvalStatus ?? '').trim() === 'approved' ? (
+                <span className="text-green-600 text-xs">✓</span>
+              ) : (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onApprove(a.id); }}
+                  disabled={!!busyKey}
+                  className="text-xs text-blue-600 hover:underline disabled:opacity-50"
+                >
+                  Approve
+                </button>
+              )}
+            </td>
+          </tr>
+        );
+      })}
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// SHARED COMPONENTS
+// ════════════════════════════════════════════════════════════
+
+function MetricCard({ label, value, variant }: { label: string; value: string; variant: 'default' | 'warning' | 'danger' | 'info' }) {
+  return (
+    <div className={cn(
+      'rounded-lg border p-3 text-center',
+      variant === 'warning' && 'border-amber-300 bg-amber-50',
+      variant === 'danger' && 'border-red-300 bg-red-50',
+      variant === 'info' && 'border-blue-300 bg-blue-50',
+    )}>
+      <div className={cn(
+        'text-2xl font-bold',
+        variant === 'warning' && 'text-amber-700',
+        variant === 'danger' && 'text-red-700',
+        variant === 'info' && 'text-blue-700',
+      )}>
+        {value}
+      </div>
+      <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+function QuickAssignModal({
+  users, shiftId, workRole, date, busyKey, onAssign, onClose,
+}: {
+  users: AuthUserListItem[];
+  shiftId: string;
+  workRole: string;
+  date: string;
+  busyKey: string;
+  onAssign: (userId: string) => void;
+  onClose: () => void;
+}) {
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() => {
+    if (!search) return users;
+    const q = search.toLowerCase();
+    return users.filter((u) => userDisplayName(u).toLowerCase().includes(q));
+  }, [users, search]);
+
+  return (
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-background border rounded-lg p-4 w-80 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-semibold text-sm">
+          Quick Assign — {getWorkRoleLabel(workRole)}
+        </h3>
+        <input
+          type="text"
+          placeholder="Search staff..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full border rounded px-2 py-1 text-sm"
+          autoFocus
+        />
+        <div className="max-h-48 overflow-y-auto space-y-1">
+          {filtered.map((u) => (
+            <button
+              key={u.id}
+              onClick={() => setSelectedUserId(String(u.id))}
+              className={cn(
+                'w-full text-left px-2 py-1.5 rounded text-sm hover:bg-muted',
+                String(u.id) === selectedUserId && 'bg-primary/10 ring-1 ring-primary/30',
+              )}
+            >
+              {userDisplayName(u)}
+            </button>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="text-xs text-muted-foreground hover:underline">Cancel</button>
+          <button
+            onClick={() => selectedUserId && onAssign(selectedUserId)}
+            disabled={!selectedUserId || !!busyKey}
+            className="text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded disabled:opacity-50"
+          >
+            Assign
+          </button>
+        </div>
       </div>
     </div>
   );

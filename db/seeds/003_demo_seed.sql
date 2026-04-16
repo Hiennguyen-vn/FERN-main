@@ -90,21 +90,39 @@ ON CONFLICT (product_id, outlet_id, effective_from) DO NOTHING;
 
 INSERT INTO core.shift (
   id, outlet_id, code, name,
-  start_time, end_time, break_minutes
+  start_time, end_time, break_minutes,
+  daypart, headcount_required
 )
 VALUES
-  (9000, 2002, 'AM', 'Morning Shift', TIME '08:00', TIME '14:00', 30),
-  (9001, 2002, 'PM', 'Afternoon Shift', TIME '14:00', TIME '22:00', 30)
+  (9000, 2002, 'OPEN',  'Opening / Prep',    TIME '06:00', TIME '09:00', 0,  'opening',    2),
+  (9001, 2002, 'LUNCH', 'Lunch Peak',        TIME '11:00', TIME '15:00', 30, 'lunch_peak', 5),
+  (9002, 2002, 'AFT',   'Afternoon',         TIME '15:00', TIME '20:00', 30, 'afternoon',  3),
+  (9003, 2002, 'CLOSE', 'Closing',           TIME '20:00', TIME '23:00', 0,  'closing',    1)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO core.shift_role_requirement (id, shift_id, work_role, required_count, is_optional)
+VALUES
+  (9500, 9000, 'cashier',       1, false),
+  (9501, 9000, 'prep',          1, false),
+  (9502, 9001, 'cashier',       2, false),
+  (9503, 9001, 'kitchen_staff', 2, false),
+  (9504, 9001, 'support',       1, false),
+  (9505, 9002, 'cashier',       1, false),
+  (9506, 9002, 'kitchen_staff', 1, false),
+  (9507, 9002, 'support',       1, true),
+  (9508, 9003, 'closing_support', 1, false)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO core.work_shift (
-  id, shift_id, user_id, work_date,
+  id, shift_id, user_id, work_date, work_role,
   schedule_status, attendance_status, approval_status,
   assigned_by_user_id
 )
 VALUES
-  (9100, 9000, 3004, DATE '2024-07-01', 'scheduled', 'present', 'approved', 3003),
-  (9101, 9001, 3004, DATE '2024-07-01', 'scheduled', 'present', 'approved', 3003)
+  (9100, 9000, 3004, DATE '2024-07-01', 'cashier',       'scheduled', 'present',  'approved', 3003),
+  (9101, 9000, 3003, DATE '2024-07-01', 'prep',          'scheduled', 'present',  'approved', 3003),
+  (9102, 9001, 3004, DATE '2024-07-01', 'cashier',       'scheduled', 'present',  'approved', 3003),
+  (9103, 9001, 3003, DATE '2024-07-01', 'kitchen_staff', 'scheduled', 'late',     'approved', 3003)
 ON CONFLICT (id) DO NOTHING;
 
 /* ---------------------------------------------------------
