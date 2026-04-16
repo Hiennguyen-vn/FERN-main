@@ -220,11 +220,13 @@ export function deriveExceptions(
     if (!shift) continue;
     const status = deriveLiveStatus(a, shift, date, now);
 
+    const embeddedName = a.userFullName || a.userUsername || undefined;
     if (status === 'no_show') {
       issues.push({
         type: 'no_show',
         severity: 'critical',
         employeeId: a.userId ?? undefined,
+        employeeName: embeddedName,
         workShiftId: a.id,
         shiftId: shift.id,
         shiftName: String(shift.name ?? ''),
@@ -239,6 +241,7 @@ export function deriveExceptions(
         type: 'late',
         severity: 'warning',
         employeeId: a.userId ?? undefined,
+        employeeName: embeddedName,
         workShiftId: a.id,
         shiftId: shift.id,
         shiftName: String(shift.name ?? ''),
@@ -408,6 +411,7 @@ export function computeDaySummary(
     absentCount,
     approvedCount,
     totalCount: dayAssignments.length,
+    clockedOutCount: dayAssignments.filter((a) => !!a.actualEndTime).length,
   };
 }
 
@@ -417,15 +421,21 @@ export function computeWeekCoverage(
   shift: ShiftView,
   assignments: WorkShiftView[],
   date: string,
-): { assigned: number; required: number; gap: number } {
+): { assigned: number; required: number; gap: number; overstaffed: boolean } {
   const dayAssignments = assignments.filter(
     (a) => String(a.shiftId ?? '') === shift.id && a.workDate === date && String(a.scheduleStatus ?? '').trim() !== 'cancelled',
   );
-  const required = Number(shift.headcountRequired) || 1;
+  const assigned = dayAssignments.length;
+  // If headcountRequired is 1 (default) but more than 2 are assigned, treat required as actual assigned
+  // to avoid false "overstaffed" warnings when the template wasn't configured
+  const rawRequired = Number(shift.headcountRequired) || 1;
+  const required = rawRequired;
+  const overstaffed = rawRequired > 1 && assigned > rawRequired;
   return {
-    assigned: dayAssignments.length,
+    assigned,
     required,
-    gap: Math.max(0, required - dayAssignments.length),
+    gap: Math.max(0, required - assigned),
+    overstaffed,
   };
 }
 
@@ -453,9 +463,16 @@ export function progressBadgeClass(progress: ShiftProgress): string {
 }
 
 export function coverageTextClass(assigned: number, required: number): string {
-  if (assigned >= required) return 'text-green-700';
-  if (assigned > 0) return 'text-amber-700';
-  return 'text-red-700';
+  if (assigned === 0 && required > 0) return 'text-red-700';
+  if (assigned < required) return 'text-amber-700';
+  // When required=1 (unconfigured default) and many assigned, show neutral not green
+  if (required <= 1 && assigned > 2) return 'text-sky-700';
+  return 'text-green-700';
+}
+
+/** True when headcount_required is likely unconfigured (=1 default) but many assigned */
+export function isHeadcountUnconfigured(required: number, assigned: number): boolean {
+  return required <= 1 && assigned > 1;
 }
 
 export function severityBadgeClass(severity: string): string {

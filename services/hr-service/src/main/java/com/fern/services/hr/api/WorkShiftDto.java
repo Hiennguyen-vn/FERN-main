@@ -20,7 +20,9 @@ public record WorkShiftDto(
     Long approvedByUserId,
     String note,
     Instant createdAt,
-    Instant updatedAt
+    Instant updatedAt,
+    String userFullName,
+    String userUsername
 ) {
 
   public record Create(

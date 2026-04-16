@@ -41,7 +41,18 @@ export interface WorkShiftView {
   note?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+  userFullName?: string | null;
+  userUsername?: string | null;
   [key: string]: unknown;
+}
+
+export interface OutletStaffView {
+  id: string;
+  fullName?: string | null;
+  username?: string | null;
+  employeeCode?: string | null;
+  email?: string | null;
+  status?: string | null;
 }
 
 export interface ContractView {
@@ -189,6 +200,20 @@ function decodeWorkShift(value: unknown): WorkShiftView {
     note: asNullableString(record.note),
     createdAt: asNullableString(record.createdAt),
     updatedAt: asNullableString(record.updatedAt),
+    userFullName: asNullableString(record.userFullName),
+    userUsername: asNullableString(record.userUsername),
+  };
+}
+
+function decodeOutletStaff(value: unknown): OutletStaffView {
+  const record = asRecord(value) ?? {};
+  return {
+    id: String(record.id ?? ''),
+    fullName: asNullableString(record.fullName),
+    username: asNullableString(record.username),
+    employeeCode: asNullableString(record.employeeCode),
+    email: asNullableString(record.email),
+    status: asNullableString(record.status),
   };
 }
 
@@ -242,6 +267,8 @@ export const hrApi = {
     decodePaged(await apiRequest('/api/v1/hr/work-shifts', { token, query }), decodeWorkShift),
   workShiftsByOutletDate: async (token: string, outletId: string, date: string): Promise<WorkShiftView[]> =>
     decodeArray(await apiRequest(`/api/v1/hr/work-shifts/outlet/${outletId}/date/${date}`, { token }), decodeWorkShift),
+  outletStaff: async (token: string, outletId: string): Promise<OutletStaffView[]> =>
+    decodeArray(await apiRequest(`/api/v1/hr/outlet/${outletId}/staff`, { token }), decodeOutletStaff),
   timeOffPaged: async (token: string, query: TimeOffQuery): Promise<PagedResponse<WorkShiftView>> =>
     decodePaged(await apiRequest('/api/v1/hr/time-off', { token, query }), decodeWorkShift),
   contracts: async (token: string, query: ContractsQuery): Promise<ContractView[]> =>

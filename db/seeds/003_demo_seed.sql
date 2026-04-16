@@ -119,10 +119,20 @@ INSERT INTO core.work_shift (
   assigned_by_user_id
 )
 VALUES
-  (9100, 9000, 3004, DATE '2024-07-01', 'cashier',       'scheduled', 'present',  'approved', 3003),
-  (9101, 9000, 3003, DATE '2024-07-01', 'prep',          'scheduled', 'present',  'approved', 3003),
-  (9102, 9001, 3004, DATE '2024-07-01', 'cashier',       'scheduled', 'present',  'approved', 3003),
-  (9103, 9001, 3003, DATE '2024-07-01', 'kitchen_staff', 'scheduled', 'late',     'approved', 3003)
+  -- Historical (2024-07-01) demo data
+  (9100, 9000, 3003, DATE '2024-07-01', 'cashier',       'scheduled', 'present',  'approved', 3003),
+  (9101, 9000, 3002, DATE '2024-07-01', 'prep',          'scheduled', 'present',  'approved', 3003),
+  (9102, 9001, 3003, DATE '2024-07-01', 'cashier',       'scheduled', 'present',  'approved', 3003),
+  (9103, 9001, 3002, DATE '2024-07-01', 'kitchen_staff', 'scheduled', 'late',     'approved', 3003),
+  -- Current-week demo data (week of 2026-04-14)
+  (9110, 9000, 3003, DATE '2026-04-14', 'cashier',        'scheduled', 'present', 'approved', 3003),
+  (9111, 9000, 3002, DATE '2026-04-14', 'kitchen_staff',  'scheduled', 'present', 'pending',  3003),
+  (9112, 9001, 3003, DATE '2026-04-15', 'cashier',        'scheduled', 'pending', 'pending',  3003),
+  (9113, 9002, 3002, DATE '2026-04-15', 'cashier',        'scheduled', 'pending', 'pending',  3003),
+  (9114, 9000, 3003, DATE '2026-04-16', 'cashier',        'scheduled', 'pending', 'pending',  3003),
+  (9115, 9001, 3002, DATE '2026-04-16', 'kitchen_staff',  'scheduled', 'pending', 'pending',  3003),
+  (9116, 9002, 3003, DATE '2026-04-17', 'cashier',        'scheduled', 'pending', 'pending',  3003),
+  (9117, 9003, 3002, DATE '2026-04-17', 'closing_support','scheduled', 'pending', 'pending',  3003)
 ON CONFLICT (id) DO NOTHING;
 
 /* ---------------------------------------------------------

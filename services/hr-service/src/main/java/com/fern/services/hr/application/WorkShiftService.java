@@ -166,6 +166,11 @@ public class WorkShiftService {
     return workShiftRepository.findByOutletIdAndDate(outletId, date).stream().map(this::toDto).toList();
   }
 
+  public List<WorkShiftRepository.StaffSummary> listOutletStaff(long outletId) {
+    requireScheduleAccess(outletId, false);
+    return workShiftRepository.findDistinctStaffByOutlet(outletId);
+  }
+
   @Transactional
   public WorkShiftDto updateAttendance(long workShiftId, WorkShiftDto.AttendanceUpdate request) {
     WorkShiftRepository.WorkShiftRecord existing = workShiftRepository.findById(workShiftId)
@@ -318,7 +323,9 @@ public class WorkShiftService {
         record.approvedByUserId(),
         record.note(),
         record.createdAt(),
-        record.updatedAt()
+        record.updatedAt(),
+        record.userFullName(),
+        record.userUsername()
     );
   }
 }

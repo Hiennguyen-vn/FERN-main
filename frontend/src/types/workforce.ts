@@ -56,6 +56,7 @@ export interface DaySummary {
   absentCount: number;
   approvedCount: number;
   totalCount: number;
+  clockedOutCount: number;
 }
 
 // ── Legacy types (kept for backward compat) ──

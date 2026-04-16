@@ -43,7 +43,9 @@ public class WorkShiftRepository extends BaseRepository {
       String note,
       Instant createdAt,
       Instant updatedAt,
-      long outletId
+      long outletId,
+      String userFullName,
+      String userUsername
   ) {
   }
 
@@ -85,9 +87,11 @@ public class WorkShiftRepository extends BaseRepository {
         """
         SELECT ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.work_role, ws.schedule_status, ws.attendance_status,
                ws.approval_status, ws.actual_start_time, ws.actual_end_time, ws.assigned_by_user_id,
-               ws.approved_by_user_id, ws.note, ws.created_at, ws.updated_at, s.outlet_id
+               ws.approved_by_user_id, ws.note, ws.created_at, ws.updated_at, s.outlet_id,
+               u.full_name AS user_full_name, u.username AS user_username
         FROM core.work_shift ws
         JOIN core.shift s ON s.id = ws.shift_id
+        LEFT JOIN core.app_user u ON u.id = ws.user_id
         WHERE ws.id = ? AND s.deleted_at IS NULL
         """,
         this::mapWorkShiftRecord,
@@ -137,9 +141,11 @@ public class WorkShiftRepository extends BaseRepository {
             ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.work_role, ws.schedule_status, ws.attendance_status,
             ws.approval_status, ws.actual_start_time, ws.actual_end_time, ws.assigned_by_user_id,
             ws.approved_by_user_id, ws.note, ws.created_at, ws.updated_at, s.outlet_id,
+            u.full_name AS user_full_name, u.username AS user_username,
             COUNT(*) OVER() AS total_count
           FROM core.work_shift ws
           JOIN core.shift s ON s.id = ws.shift_id
+          LEFT JOIN core.app_user u ON u.id = ws.user_id
           WHERE s.deleted_at IS NULL
             AND ws.work_date BETWEEN ? AND ?
           """
@@ -201,9 +207,11 @@ public class WorkShiftRepository extends BaseRepository {
         """
         SELECT ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.work_role, ws.schedule_status, ws.attendance_status,
                ws.approval_status, ws.actual_start_time, ws.actual_end_time, ws.assigned_by_user_id,
-               ws.approved_by_user_id, ws.note, ws.created_at, ws.updated_at, s.outlet_id
+               ws.approved_by_user_id, ws.note, ws.created_at, ws.updated_at, s.outlet_id,
+               u.full_name AS user_full_name, u.username AS user_username
         FROM core.work_shift ws
         JOIN core.shift s ON s.id = ws.shift_id
+        LEFT JOIN core.app_user u ON u.id = ws.user_id
         WHERE ws.user_id = ? AND ws.work_date BETWEEN ? AND ? AND s.deleted_at IS NULL
         ORDER BY ws.work_date DESC, ws.created_at DESC
         """,
@@ -219,9 +227,11 @@ public class WorkShiftRepository extends BaseRepository {
         """
         SELECT ws.id, ws.shift_id, ws.user_id, ws.work_date, ws.work_role, ws.schedule_status, ws.attendance_status,
                ws.approval_status, ws.actual_start_time, ws.actual_end_time, ws.assigned_by_user_id,
-               ws.approved_by_user_id, ws.note, ws.created_at, ws.updated_at, s.outlet_id
+               ws.approved_by_user_id, ws.note, ws.created_at, ws.updated_at, s.outlet_id,
+               u.full_name AS user_full_name, u.username AS user_username
         FROM core.work_shift ws
         JOIN core.shift s ON s.id = ws.shift_id
+        LEFT JOIN core.app_user u ON u.id = ws.user_id
         WHERE s.outlet_id = ? AND ws.work_date = ? AND s.deleted_at IS NULL
         ORDER BY ws.created_at DESC
         """,
@@ -230,6 +240,46 @@ public class WorkShiftRepository extends BaseRepository {
         Date.valueOf(date)
     );
   }
+
+  /** Distinct staff who have ever worked at this outlet — used for assign dropdowns */
+  public List<StaffSummary> findDistinctStaffByOutlet(long outletId) {
+    return queryList(
+        """
+        SELECT DISTINCT u.id, u.full_name, u.username, u.employee_code, u.email, u.status
+        FROM core.work_shift ws
+        JOIN core.shift s ON s.id = ws.shift_id
+        JOIN core.app_user u ON u.id = ws.user_id
+        WHERE s.outlet_id = ?
+          AND s.deleted_at IS NULL
+          AND u.status = 'active'
+        ORDER BY u.full_name NULLS LAST, u.username
+        """,
+        rs -> {
+          try {
+            return new StaffSummary(
+                rs.getLong("id"),
+                rs.getString("full_name"),
+                rs.getString("username"),
+                rs.getString("employee_code"),
+                rs.getString("email"),
+                rs.getString("status")
+            );
+          } catch (SQLException e) {
+            throw new IllegalStateException("Unable to map staff summary row", e);
+          }
+        },
+        outletId
+    );
+  }
+
+  public record StaffSummary(
+      long id,
+      String fullName,
+      String username,
+      String employeeCode,
+      String email,
+      String status
+  ) {}
 
   public void updateAttendance(
       long id,
@@ -310,7 +360,9 @@ public class WorkShiftRepository extends BaseRepository {
           rs.getString("note"),
           rs.getTimestamp("created_at").toInstant(),
           rs.getTimestamp("updated_at").toInstant(),
-          rs.getLong("outlet_id")
+          rs.getLong("outlet_id"),
+          rs.getString("user_full_name"),
+          rs.getString("user_username")
       );
     } catch (SQLException e) {
       throw new IllegalStateException("Unable to map work shift row", e);

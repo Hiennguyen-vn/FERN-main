@@ -4,6 +4,7 @@ import com.dorabets.common.spring.web.PagedResult;
 import com.fern.services.hr.application.EmployeeContractService;
 import com.fern.services.hr.application.ShiftService;
 import com.fern.services.hr.application.WorkShiftService;
+import com.fern.services.hr.infrastructure.WorkShiftRepository;
 import jakarta.validation.Valid;
 import java.time.LocalDate;
 import java.util.List;
@@ -154,6 +155,11 @@ public class HrController {
         limit,
         offset
     );
+  }
+
+  @GetMapping("/outlet/{outletId}/staff")
+  public List<WorkShiftRepository.StaffSummary> listOutletStaff(@PathVariable long outletId) {
+    return workShiftService.listOutletStaff(outletId);
   }
 
   @GetMapping("/work-shifts/outlet/{outletId}/date/{date}")
