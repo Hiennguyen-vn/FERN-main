@@ -1418,19 +1418,19 @@ function TimecardDetail({
             </button>
           )}
 
-          {/* Approve — available once clock out is recorded */}
-          {isPending && hasClockOut && (
+          {/* Approve */}
+          {isPending && (
             <button
               onClick={() => onApprove(assignment.id)}
               disabled={!!busyKey}
               className="flex items-center gap-1.5 text-sm bg-primary text-primary-foreground px-3 py-1.5 rounded hover:bg-primary/90 disabled:opacity-50"
             >
-              <UserCheck className="h-3.5 w-3.5" /> Approve Hours
+              <UserCheck className="h-3.5 w-3.5" /> Approve
             </button>
           )}
 
           {/* Reject */}
-          {isPending && hasClockOut && !rejectOpen && (
+          {isPending && !rejectOpen && (
             <button
               onClick={() => setRejectOpen(true)}
               disabled={!!busyKey}
