@@ -63,6 +63,8 @@ class WorkShiftServiceTest {
         LocalTime.of(16, 0),
         30,
         null,
+        1,
+        null,
         Instant.parse("2026-03-27T00:00:00Z"),
         Instant.parse("2026-03-27T00:00:00Z")
     )));
@@ -73,6 +75,7 @@ class WorkShiftServiceTest {
         10L,
         200L,
         LocalDate.parse("2026-03-28"),
+        null,
         "scheduled",
         "pending",
         "pending",
@@ -83,7 +86,9 @@ class WorkShiftServiceTest {
         "note",
         Instant.parse("2026-03-27T00:00:00Z"),
         Instant.parse("2026-03-27T00:00:00Z"),
-        7L
+        7L,
+        null,
+        null
     )));
 
     WorkShiftService service = new WorkShiftService(
@@ -100,10 +105,11 @@ class WorkShiftServiceTest {
         null,
         null,
         null,
+        null,
         "note"
     ));
 
-    verify(workShiftRepository).insert(501L, 10L, 200L, LocalDate.parse("2026-03-28"), "scheduled", "pending", "pending", null, "note");
+    verify(workShiftRepository).insert(501L, 10L, 200L, LocalDate.parse("2026-03-28"), null, "scheduled", "pending", "pending", null, "note");
     assertEquals(501L, result.id());
     assertEquals("scheduled", result.scheduleStatus());
   }
@@ -118,6 +124,7 @@ class WorkShiftServiceTest {
         10L,
         200L,
         LocalDate.parse("2026-03-28"),
+        null,
         "scheduled",
         "pending",
         "pending",
@@ -128,12 +135,15 @@ class WorkShiftServiceTest {
         null,
         Instant.parse("2026-03-27T00:00:00Z"),
         Instant.parse("2026-03-27T00:00:00Z"),
-        7L
+        7L,
+        null,
+        null
     ))).thenReturn(java.util.Optional.of(new WorkShiftRepository.WorkShiftRecord(
         501L,
         10L,
         200L,
         LocalDate.parse("2026-03-28"),
+        null,
         "scheduled",
         "pending",
         "approved",
@@ -144,7 +154,9 @@ class WorkShiftServiceTest {
         null,
         Instant.parse("2026-03-27T00:00:00Z"),
         Instant.parse("2026-03-27T00:05:00Z"),
-        7L
+        7L,
+        null,
+        null
     )));
     when(authorizationPolicyService.resolveUserProfile(9L))
         .thenReturn(profile(9L, assignment(CanonicalRole.OUTLET_MANAGER, 7L)));
@@ -177,6 +189,7 @@ class WorkShiftServiceTest {
         10L,
         200L,
         LocalDate.parse("2026-03-28"),
+        null,
         "scheduled",
         "pending",
         "pending",
@@ -187,7 +200,9 @@ class WorkShiftServiceTest {
         null,
         Instant.parse("2026-03-27T00:00:00Z"),
         Instant.parse("2026-03-27T00:00:00Z"),
-        7L
+        7L,
+        null,
+        null
     )));
 
     WorkShiftService service = new WorkShiftService(
@@ -227,6 +242,7 @@ class WorkShiftServiceTest {
         10L,
         200L,
         LocalDate.parse("2026-03-28"),
+        null,
         "scheduled",
         "pending",
         "pending",
@@ -237,7 +253,9 @@ class WorkShiftServiceTest {
         null,
         Instant.parse("2026-03-27T00:00:00Z"),
         Instant.parse("2026-03-27T00:00:00Z"),
-        7L
+        7L,
+        null,
+        null
     )));
     when(authorizationPolicyService.resolveUserProfile(200L))
         .thenReturn(profile(200L));

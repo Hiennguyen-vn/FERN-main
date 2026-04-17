@@ -14,6 +14,7 @@ const routes = [
   '/iam',
   '/finance',
   '/hr',
+  '/org/overview',
   '/settings',
   '/promotions',
   '/scheduling',

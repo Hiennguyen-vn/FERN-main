@@ -47,6 +47,7 @@ class PayrollServiceTest {
   private AuthorizationPolicyService authorizationPolicyService;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
+  private final SalaryCalculator salaryCalculator = new SalaryCalculator(160);
 
   @AfterEach
   void clearContext() {
@@ -57,11 +58,149 @@ class PayrollServiceTest {
     return new PayrollService(
         payrollRepository,
         hrServiceClient,
+        salaryCalculator,
         idGenerator,
         eventPublisher,
         clock,
         authorizationPolicyService
     );
+  }
+
+  // ── calculateSalary tests ──────────────────────────────────────────────────
+
+  @Test
+  void calculateSalaryReturnsResultForHourlyWorker() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
+    ));
+    when(payrollRepository.findTimesheetScope(70L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetScopeRecord(70L, 11L, 1002L, "VN", 3012L, null)
+    ));
+    when(payrollRepository.findTimesheet(70L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetRecord(
+            70L, 11L, 3012L, null,
+            BigDecimal.ZERO, new BigDecimal("80"), BigDecimal.ZERO, new BigDecimal("1.5"),
+            0, BigDecimal.ZERO, null, Instant.now(), Instant.now()
+        )
+    ));
+    when(hrServiceClient.fetchLatestContract(3012L)).thenReturn(Optional.of(
+        new PayrollDtos.EmployeeContractSummary(3012L, "part_time", "hourly", new BigDecimal("50000"), "VND")
+    ));
+
+    PayrollDtos.CalculateSalaryResult result = service().calculateSalary(
+        new PayrollDtos.CalculateSalaryRequest(70L, "VND")
+    );
+
+    assertEquals(new BigDecimal("4000000.00"), result.netSalary());
+    assertEquals("hourly", result.breakdown().calculationMethod());
+  }
+
+  @Test
+  void calculateSalaryReturnsResultForFullTimeMonthlyWithOvertime() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
+    ));
+    when(payrollRepository.findTimesheetScope(71L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetScopeRecord(71L, 11L, 1002L, "VN", 3013L, null)
+    ));
+    when(payrollRepository.findTimesheet(71L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetRecord(
+            71L, 11L, 3013L, null,
+            new BigDecimal("22"), new BigDecimal("176"), new BigDecimal("8"), new BigDecimal("1.5"),
+            0, BigDecimal.ZERO, null, Instant.now(), Instant.now()
+        )
+    ));
+    when(hrServiceClient.fetchLatestContract(3013L)).thenReturn(Optional.of(
+        new PayrollDtos.EmployeeContractSummary(3013L, "full_time", "monthly", new BigDecimal("16000000"), "VND")
+    ));
+
+    PayrollDtos.CalculateSalaryResult result = service().calculateSalary(
+        new PayrollDtos.CalculateSalaryRequest(71L, "VND")
+    );
+
+    // overtimePay = 8 × (16000000/160) × 1.5 = 8 × 100000 × 1.5 = 1200000
+    assertEquals(new BigDecimal("17200000.00"), result.netSalary());
+    assertEquals("monthly_with_overtime", result.breakdown().calculationMethod());
+  }
+
+  @Test
+  void calculateSalaryThrows400WhenNoActiveContract() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
+    ));
+    when(payrollRepository.findTimesheetScope(72L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetScopeRecord(72L, 11L, 1002L, "VN", 3014L, null)
+    ));
+    when(payrollRepository.findTimesheet(72L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetRecord(
+            72L, 11L, 3014L, null,
+            BigDecimal.ZERO, new BigDecimal("80"), BigDecimal.ZERO, new BigDecimal("1.5"),
+            0, BigDecimal.ZERO, null, Instant.now(), Instant.now()
+        )
+    ));
+    when(hrServiceClient.fetchLatestContract(3014L)).thenReturn(Optional.empty());
+
+    ServiceException ex = assertThrows(ServiceException.class, () ->
+        service().calculateSalary(new PayrollDtos.CalculateSalaryRequest(72L, "VND"))
+    );
+    assertEquals(400, ex.getStatusCode());
+  }
+
+  @Test
+  void generatePayrollAutoCalculatesWhenSalaryFieldsAbsent() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
+    ));
+    when(payrollRepository.findTimesheetScope(80L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetScopeRecord(80L, 11L, 1002L, "VN", 3015L, null)
+    ));
+    when(payrollRepository.findPayrollByTimesheetId(80L)).thenReturn(Optional.empty());
+    when(payrollRepository.findTimesheet(80L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetRecord(
+            80L, 11L, 3015L, null,
+            BigDecimal.ZERO, new BigDecimal("80"), BigDecimal.ZERO, new BigDecimal("1.5"),
+            0, BigDecimal.ZERO, null, Instant.now(), Instant.now()
+        )
+    ));
+    when(hrServiceClient.fetchLatestContract(3015L)).thenReturn(Optional.of(
+        new PayrollDtos.EmployeeContractSummary(3015L, "part_time", "hourly", new BigDecimal("50000"), "VND")
+    ));
+    when(idGenerator.generateId()).thenReturn(999L);
+    when(payrollRepository.insertPayroll(eq(999L), eq(80L), eq("VND"), eq(new BigDecimal("50000")), eq(new BigDecimal("4000000.00")), any()))
+        .thenReturn(new PayrollRepository.PayrollRecord(
+            999L, 80L, "VND", new BigDecimal("50000"), new BigDecimal("4000000.00"),
+            "draft", null, null, null, null, Instant.now(), Instant.now()
+        ));
+
+    PayrollDtos.PayrollView result = service().generatePayroll(
+        new PayrollDtos.GeneratePayrollRequest(80L, "VND", null, null, null)
+    );
+
+    assertEquals(new BigDecimal("4000000.00"), result.netSalary());
+  }
+
+  @Test
+  void generatePayrollUsesManualOverrideWhenSalaryFieldsProvided() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
+    ));
+    when(payrollRepository.findTimesheetScope(81L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetScopeRecord(81L, 11L, 1002L, "VN", 3016L, null)
+    ));
+    when(payrollRepository.findPayrollByTimesheetId(81L)).thenReturn(Optional.empty());
+    when(idGenerator.generateId()).thenReturn(1000L);
+    when(payrollRepository.insertPayroll(eq(1000L), eq(81L), eq("VND"), eq(new BigDecimal("20000000")), eq(new BigDecimal("18000000")), any()))
+        .thenReturn(new PayrollRepository.PayrollRecord(
+            1000L, 81L, "VND", new BigDecimal("20000000"), new BigDecimal("18000000"),
+            "draft", null, null, null, null, Instant.now(), Instant.now()
+        ));
+
+    service().generatePayroll(
+        new PayrollDtos.GeneratePayrollRequest(81L, "VND", new BigDecimal("20000000"), new BigDecimal("18000000"), null)
+    );
+
+    // hr-service must NOT be called when both salary fields are provided
+    org.mockito.Mockito.verifyNoInteractions(hrServiceClient);
   }
 
   @Test

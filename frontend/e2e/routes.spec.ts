@@ -13,6 +13,7 @@ const ROUTES: [string, string][] = [
   ['/iam', 'IAM'],
   ['/finance', 'Finance'],
   ['/hr', 'HR'],
+  ['/org/overview', 'Organization'],
   ['/settings', 'Settings'],
   ['/crm', 'CRM'],
   ['/promotions', 'Promotions'],

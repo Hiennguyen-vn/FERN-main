@@ -26,7 +26,7 @@ export const FAMILY_TO_PATH: Record<ModuleFamily, string> = {
   promotions: '/promotions',
   scheduling: '/scheduling',
   workforce: '/workforce',
-  org: '/settings',
+  org: '/org/overview',
   'regional-ops': '/reports',
 };
 
@@ -34,6 +34,8 @@ export const PATH_TO_FAMILY: Record<string, string> = Object.fromEntries(
   Object.entries(FAMILY_TO_PATH).map(([family, path]) => [path, family]),
 );
 PATH_TO_FAMILY['/order'] = 'pos';
+PATH_TO_FAMILY['/org'] = 'org';
+PATH_TO_FAMILY['/settings'] = 'org';
 
 export const ROUTE_FAMILIES = Object.keys(FAMILY_TO_PATH) as ModuleFamily[];
 
@@ -46,7 +48,7 @@ export const MODULES: ModuleEntry[] = [
   { family: 'finance', label: 'Finance', icon: 'Landmark', path: '/finance', visible: true },
   { family: 'hr', label: 'HR', icon: 'Users', path: '/hr', visible: true },
   { family: 'workforce', label: 'Workforce', icon: 'Users', path: '/workforce', visible: true },
-  { family: 'org', label: 'Organization', icon: 'Building2', path: '/settings', visible: true },
+  { family: 'org', label: 'Organization', icon: 'Building2', path: '/org/overview', visible: true },
   { family: 'regional-ops', label: 'Regional Ops', icon: 'Map', path: '/reports', visible: true },
   { family: 'reports', label: 'Reports', icon: 'BarChart3', path: '/reports', visible: true },
   { family: 'audit', label: 'Audit', icon: 'ScrollText', path: '/audit', visible: true },

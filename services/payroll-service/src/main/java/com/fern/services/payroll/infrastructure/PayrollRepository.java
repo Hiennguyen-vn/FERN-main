@@ -735,6 +735,26 @@ public class PayrollRepository extends BaseRepository {
     });
   }
 
+  public PayrollRecord markPaid(long payrollId, String paymentRef) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          UPDATE core.payroll
+          SET status = 'paid',
+              payment_ref = COALESCE(?, payment_ref),
+              updated_at = NOW()
+          WHERE id = ?
+          """
+      )) {
+        ps.setString(1, paymentRef);
+        ps.setLong(2, payrollId);
+        ps.executeUpdate();
+      }
+      return findPayrollTransactional(conn, payrollId)
+          .orElseThrow(() -> new IllegalStateException("Payroll not found after mark-paid: " + payrollId));
+    });
+  }
+
   private Optional<PayrollRecord> findPayrollTransactional(Connection conn, long payrollId) throws Exception {
     try (PreparedStatement ps = conn.prepareStatement(
         """

@@ -69,7 +69,7 @@ export function FinanceModule() {
   const visibleTabs = useMemo((): Set<FinanceTab> => {
     const tabs = new Set<FinanceTab>(['overview'] as FinanceTab[]);
     if (isSuperadmin || isFinance || isRegionManager || isOutletManager) tabs.add('revenue');
-    if (isSuperadmin || isFinance || isHr || isOutletManager) tabs.add('labor');
+    if (isSuperadmin || isFinance || isHr) tabs.add('labor');
     if (isSuperadmin || isFinance || isOutletManager || isRegionManager) tabs.add('expenses');
     if (isSuperadmin || isFinance || isRegionManager) tabs.add('pl');
     if (isSuperadmin || isFinance || isRegionManager) tabs.add('prime-cost');
@@ -124,7 +124,7 @@ export function FinanceModule() {
       workspace = <FinancePLWorkspace {...sharedWorkspaceProps} />;
       break;
     case 'revenue':
-      workspace = <FinanceRevenueWorkspace {...sharedWorkspaceProps} onNavigate={navigateTo} />;
+      workspace = <FinanceRevenueWorkspace {...sharedWorkspaceProps} onNavigate={navigateTo} canViewLabor={visibleTabs.has('labor')} />;
       break;
     case 'labor':
       workspace = <FinanceLaborWorkspace {...sharedWorkspaceProps} />;
@@ -136,7 +136,7 @@ export function FinanceModule() {
       workspace = <FinancePrimeCostWorkspace {...sharedWorkspaceProps} />;
       break;
     case 'close':
-      workspace = <FinancePeriodCloseWorkspace {...sharedWorkspaceProps} onNavigate={navigateTo} />;
+      workspace = <FinancePeriodCloseWorkspace {...sharedWorkspaceProps} onNavigate={navigateTo} canViewLabor={visibleTabs.has('labor')} />;
       break;
     default:
       workspace = null;

@@ -53,6 +53,25 @@ public final class OrgDtos {
   ) {
   }
 
+  public record CreateRegionRequest(
+      @NotBlank String code,
+      Long parentRegionId,
+      @NotBlank String currencyCode,
+      @NotBlank String name,
+      String taxCode,
+      @NotBlank String timezoneName
+  ) {
+  }
+
+  public record UpdateRegionRequest(
+      Long parentRegionId,
+      @NotBlank String currencyCode,
+      @NotBlank String name,
+      String taxCode,
+      @NotBlank String timezoneName
+  ) {
+  }
+
   public record CreateOutletRequest(
       @NotNull Long regionId,
       @NotBlank String code,
@@ -63,6 +82,23 @@ public final class OrgDtos {
       String email,
       LocalDate openedAt,
       LocalDate closedAt
+  ) {
+  }
+
+  public record UpdateOutletRequest(
+      @NotBlank String code,
+      @NotBlank String name,
+      String address,
+      String phone,
+      String email,
+      LocalDate openedAt,
+      LocalDate closedAt
+  ) {
+  }
+
+  public record UpdateOutletStatusRequest(
+      @NotBlank String targetStatus,
+      String reason
   ) {
   }
 

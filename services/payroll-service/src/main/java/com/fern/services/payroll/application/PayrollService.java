@@ -28,6 +28,7 @@ public class PayrollService {
 
   private final PayrollRepository payrollRepository;
   private final HrServiceClient hrServiceClient;
+  private final SalaryCalculator salaryCalculator;
   private final SnowflakeIdGenerator idGenerator;
   private final TypedKafkaEventPublisher eventPublisher;
   private final Clock clock;
@@ -36,6 +37,7 @@ public class PayrollService {
   public PayrollService(
       PayrollRepository payrollRepository,
       HrServiceClient hrServiceClient,
+      SalaryCalculator salaryCalculator,
       SnowflakeIdGenerator idGenerator,
       TypedKafkaEventPublisher eventPublisher,
       Clock clock,
@@ -43,6 +45,7 @@ public class PayrollService {
   ) {
     this.payrollRepository = payrollRepository;
     this.hrServiceClient = hrServiceClient;
+    this.salaryCalculator = salaryCalculator;
     this.idGenerator = idGenerator;
     this.eventPublisher = eventPublisher;
     this.clock = clock;
@@ -300,6 +303,26 @@ public class PayrollService {
         ).map(this::toListDto);
   }
 
+  /**
+   * Calculates gross salary for a timesheet without persisting the result.
+   * Fetches the employee's latest active contract from hr-service and applies
+   * the salary formula based on employment type and work data.
+   */
+  public PayrollDtos.CalculateSalaryResult calculateSalary(PayrollDtos.CalculateSalaryRequest request) {
+    PayrollRepository.PayrollTimesheetScopeRecord scope = payrollRepository.findTimesheetScope(request.timesheetId())
+        .orElseThrow(() -> ServiceException.notFound("Payroll timesheet not found: " + request.timesheetId()));
+    requirePayrollPrepareAccess(scope.regionId());
+
+    PayrollRepository.PayrollTimesheetRecord timesheet = payrollRepository.findTimesheet(request.timesheetId())
+        .orElseThrow(() -> ServiceException.notFound("Payroll timesheet not found: " + request.timesheetId()));
+
+    PayrollDtos.EmployeeContractSummary contract = hrServiceClient.fetchLatestContract(scope.userId())
+        .orElseThrow(() -> ServiceException.badRequest(
+            "No active contract found for user " + scope.userId()));
+
+    return salaryCalculator.calculate(contract, timesheet, request.currencyCode().trim());
+  }
+
   public PayrollDtos.PayrollView generatePayroll(PayrollDtos.GeneratePayrollRequest request) {
     PayrollRepository.PayrollTimesheetScopeRecord timesheetScope = payrollRepository.findTimesheetScope(request.payrollTimesheetId())
         .orElseThrow(() -> ServiceException.notFound("Payroll timesheet not found: " + request.payrollTimesheetId()));
@@ -307,13 +330,30 @@ public class PayrollService {
     if (payrollRepository.findPayrollByTimesheetId(request.payrollTimesheetId()).isPresent()) {
       throw ServiceException.conflict("Payroll already exists for timesheet " + request.payrollTimesheetId());
     }
+
+    BigDecimal resolvedBase = request.baseSalaryAmount();
+    BigDecimal resolvedNet = request.netSalary();
+
+    if (resolvedBase == null || resolvedNet == null) {
+      PayrollRepository.PayrollTimesheetRecord timesheet = payrollRepository.findTimesheet(request.payrollTimesheetId())
+          .orElseThrow(() -> ServiceException.notFound("Payroll timesheet not found: " + request.payrollTimesheetId()));
+      PayrollDtos.EmployeeContractSummary contract = hrServiceClient.fetchLatestContract(timesheetScope.userId())
+          .orElseThrow(() -> ServiceException.badRequest(
+              "No active contract found for user " + timesheetScope.userId()
+                  + ". Provide baseSalaryAmount and netSalary manually or add an active contract."));
+      PayrollDtos.CalculateSalaryResult calc = salaryCalculator.calculate(
+          contract, timesheet, request.currencyCode().trim());
+      resolvedBase = resolvedBase != null ? resolvedBase : calc.baseSalaryAmount();
+      resolvedNet = resolvedNet != null ? resolvedNet : calc.netSalary();
+    }
+
     long payrollId = idGenerator.generateId();
     PayrollRepository.PayrollRecord record = payrollRepository.insertPayroll(
         payrollId,
         request.payrollTimesheetId(),
         request.currencyCode().trim(),
-        request.baseSalaryAmount(),
-        request.netSalary(),
+        resolvedBase,
+        resolvedNet,
         trimToNull(request.note())
     );
     return toDto(record);
@@ -382,6 +422,19 @@ public class PayrollService {
         )
     );
     return toDto(projection.payroll());
+  }
+
+  public PayrollDtos.PayrollView markPaid(long payrollId, String paymentRef) {
+    PayrollRepository.PayrollScopeRecord scope = payrollRepository.findPayrollScope(payrollId)
+        .orElseThrow(() -> ServiceException.notFound("Payroll not found: " + payrollId));
+    requirePayrollApproveAccess(scope.regionId());
+    PayrollRepository.PayrollRecord existing = payrollRepository.findPayroll(payrollId)
+        .orElseThrow(() -> ServiceException.notFound("Payroll not found: " + payrollId));
+    if (!"approved".equalsIgnoreCase(existing.status())) {
+      throw ServiceException.conflict("Only approved payroll runs can be marked as paid");
+    }
+    PayrollRepository.PayrollRecord paid = payrollRepository.markPaid(payrollId, trimToNull(paymentRef));
+    return toDto(paid);
   }
 
   public PayrollDtos.PayrollView rejectPayroll(long payrollId, String reason) {

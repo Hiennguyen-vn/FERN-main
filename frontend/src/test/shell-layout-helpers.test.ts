@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { AuthSession } from '@/api/fern-api';
 import { COOKIE_AUTH_TOKEN_SENTINEL } from '@/auth/session';
 import {
+  FAMILY_TO_PATH,
+  PATH_TO_FAMILY,
   buildShellUser,
   collectAccessibleFamilies,
   computeScopeTree,
@@ -74,5 +76,11 @@ describe('shell layout helpers', () => {
     expect(cashierModules.some((module) => module.family === 'finance')).toBe(false);
     expect(cashierActions.quickActions.some((action) => action.module === 'finance')).toBe(false);
     expect(financeActions.quickActions.some((action) => action.module === 'finance')).toBe(true);
+  });
+
+  it('maps organization family to the dedicated org route while keeping legacy settings redirects accessible', () => {
+    expect(FAMILY_TO_PATH.org).toBe('/org/overview');
+    expect(PATH_TO_FAMILY['/org']).toBe('org');
+    expect(PATH_TO_FAMILY['/settings']).toBe('org');
   });
 });

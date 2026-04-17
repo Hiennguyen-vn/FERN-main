@@ -3,22 +3,23 @@ import {
   Search,
   Clock,
   FileText,
+  DollarSign,
+  Users,
   Loader2,
-  CheckCircle2,
   AlertTriangle,
   RefreshCw,
+  CheckCircle2,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
-  authApi,
   hrApi,
   orgApi,
-  type AuthUsersQuery,
   type AuthUserListItem,
+  type HrEmployeeView,
+  type HrEmployeesQuery,
   type ShiftsQuery,
-  type ContractView,
   type ScopeOutlet,
   type ScopeRegion,
   type ShiftView,
@@ -28,14 +29,13 @@ import { hasHrCompensationAccess } from '@/auth/authorization';
 import { useAuth } from '@/auth/use-auth';
 import { getErrorMessage } from '@/api/decoders';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
-import { EmptyState, ServiceUnavailablePage } from '@/components/shell/PermissionStates';
+import { ServiceUnavailablePage } from '@/components/shell/PermissionStates';
 import { useListQueryState } from '@/hooks/use-list-query-state';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
 import {
   approvalBadgeClass,
   attendanceBadgeClass,
-  contractBadgeClass,
   formatHrEnumLabel,
   getHrOutletDisplay,
   getHrShiftDisplay,
@@ -43,12 +43,17 @@ import {
   shortHrRef,
 } from '@/components/hr/hr-display';
 import { PayrollPrepWorkspace } from '@/components/hr/PayrollPrepWorkspace';
+import { PayrollModule as PayrollWorkspace } from '@/components/hr/PayrollModule';
+import { ContractsWorkspace } from '@/components/hr/ContractsWorkspace';
+import { EmployeeProfileWorkspace } from '@/components/hr/EmployeeProfileWorkspace';
 import { collectPagedItems } from '@/lib/collect-paged-items';
 import { HR_TAB_ITEMS, type HrTab } from '@/components/hr/hr-workspace-config';
 
 const TAB_ICONS: Record<HrTab, React.ElementType> = {
   attendance: Clock,
+  employees: Users,
   contracts: FileText,
+  payroll: DollarSign,
   prep: FileText,
 };
 
@@ -57,25 +62,22 @@ function normalizeNumeric(value: string | undefined) {
   return /^\d+$/.test(trimmed) ? trimmed : '';
 }
 
-function toNumber(value: unknown) {
-  const numeric = Number(value ?? 0);
-  return Number.isFinite(numeric) ? numeric : 0;
-}
-
-function formatCurrency(value: unknown, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(toNumber(value));
-}
-
 function formatDate(value: string | null | undefined) {
   if (!value) return '—';
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString();
+  return parsed.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function formatDuration(startTime: string | null | undefined, endTime: string | null | undefined) {
+  if (!startTime || !endTime) return '—';
+  const start = new Date(startTime).getTime();
+  const end = new Date(endTime).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return '—';
+  const totalMinutes = Math.round((end - start) / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
 function formatTime(value: string | null | undefined) {
@@ -98,21 +100,9 @@ export function HRModule() {
   const [busyKey, setBusyKey] = useState('');
   const [rejectDialog, setRejectDialog] = useState<{ workShiftId: string; reason: string } | null>(null);
   const rejectReasonRef = useRef<HTMLInputElement>(null);
-  const [createContractDialog, setCreateContractDialog] = useState(false);
-  const [contractForm, setContractForm] = useState({
-    userId: '',
-    employmentType: 'indefinite',
-    salaryType: 'monthly',
-    baseSalary: '',
-    currencyCode: 'USD',
-    regionCode: '',
-    startDate: new Date().toISOString().slice(0, 10),
-    endDate: '',
-    taxCode: '',
-    bankAccount: '',
-  });
-  const [terminateDialog, setTerminateDialog] = useState<{ contractId: string; endDate: string } | null>(null);
   const [users, setUsers] = useState<AuthUserListItem[]>([]);
+  const [hrEmployees, setHrEmployees] = useState<HrEmployeeView[]>([]);
+  const [usersError, setUsersError] = useState('');
   const [regions, setRegions] = useState<ScopeRegion[]>([]);
   const [outlets, setOutlets] = useState<ScopeOutlet[]>([]);
   const [shifts, setShifts] = useState<ShiftView[]>([]);
@@ -122,13 +112,9 @@ export function HRModule() {
   const [workShifts, setWorkShifts] = useState<WorkShiftView[]>([]);
   const [attendanceTotal, setAttendanceTotal] = useState(0);
   const [attendanceHasMore, setAttendanceHasMore] = useState(false);
-
-  const [contractsLoading, setContractsLoading] = useState(false);
-  const [contractsError, setContractsError] = useState('');
-  const [contracts, setContracts] = useState<ContractView[]>([]);
-  const [contractsTotal, setContractsTotal] = useState(0);
-  const [contractsHasMore, setContractsHasMore] = useState(false);
-  const [contractExpiryStats, setContractExpiryStats] = useState({ active: 0, expiring: 0, terminated: 0 });
+  const [pendingCount, setPendingCount] = useState(0);
+  const [selectedAttendanceIds, setSelectedAttendanceIds] = useState<Set<string>>(new Set());
+  const [bulkAttendanceBusy, setBulkAttendanceBusy] = useState(false);
 
   const attendanceQuery = useListQueryState<{
     outletId?: string;
@@ -148,19 +134,12 @@ export function HRModule() {
       approvalStatus: undefined,
     },
   });
-  const contractsQuery = useListQueryState<{ outletId?: string; status?: string }>({
-    initialLimit: 20,
-    initialSortBy: 'startDate',
-    initialSortDir: 'desc',
-    initialFilters: { outletId: outletId || undefined, status: undefined },
-  });
   const patchAttendanceFilters = attendanceQuery.patchFilters;
-  const patchContractsFilters = contractsQuery.patchFilters;
   const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
   const outletsById = useMemo(() => new Map(outlets.map((outlet) => [outlet.id, outlet])), [outlets]);
   const shiftsById = useMemo(() => new Map(shifts.map((shift) => [shift.id, shift])), [shifts]);
   const visibleTabs = useMemo(
-    () => HR_TAB_ITEMS.filter((tab) => tab.key === 'attendance' || canAccessCompensation),
+    () => HR_TAB_ITEMS.filter((tab) => tab.key === 'attendance' || tab.key === 'employees' || canAccessCompensation),
     [canAccessCompensation],
   );
 
@@ -199,102 +178,54 @@ export function HRModule() {
     token,
   ]);
 
-  const loadContracts = useCallback(async () => {
-    if (!token) return;
-    setContractsLoading(true);
-    setContractsError('');
-
-    // Compute 30-day expiry window for the dedicated stats query
-    const expiryWindowEnd = new Date();
-    expiryWindowEnd.setDate(expiryWindowEnd.getDate() + 30);
-    const expiryWindowEndStr = expiryWindowEnd.toISOString().slice(0, 10);
-    const todayStr = new Date().toISOString().slice(0, 10);
-
-    try {
-      const [page, activeCount, expiringCount, terminatedCount] = await Promise.all([
-        hrApi.contractsPaged(token, {
-          ...contractsQuery.query,
-          outletId: outletId || undefined,
-          status: contractsQuery.filters.status,
-        }),
-        // Active contracts (total count only, limit=1 for efficiency)
-        hrApi.contractsPaged(token, { outletId: outletId || undefined, status: 'active', limit: 1, offset: 0 }),
-        // Expiring: active contracts whose end date falls within the next 30 days
-        hrApi.contractsPaged(token, {
-          outletId: outletId || undefined,
-          status: 'active',
-          endDateFrom: todayStr,
-          endDateTo: expiryWindowEndStr,
-          limit: 1,
-          offset: 0,
-        }),
-        // Terminated contracts
-        hrApi.contractsPaged(token, { outletId: outletId || undefined, status: 'terminated', limit: 1, offset: 0 }),
-      ]);
-      setContracts(page.items || []);
-      setContractsTotal(page.total || page.totalCount || 0);
-      setContractsHasMore(page.hasMore || page.hasNextPage || false);
-      setContractExpiryStats({
-        active: activeCount.total || activeCount.totalCount || 0,
-        expiring: expiringCount.total || expiringCount.totalCount || 0,
-        terminated: terminatedCount.total || terminatedCount.totalCount || 0,
-      });
-    } catch (error: unknown) {
-      console.error('HR contracts load failed', error);
-      setContracts([]);
-      setContractsTotal(0);
-      setContractsHasMore(false);
-      setContractsError(getErrorMessage(error, 'Unable to load contracts'));
-    } finally {
-      setContractsLoading(false);
-    }
-  }, [contractsQuery.filters.status, contractsQuery.query, outletId, token]);
-
   useEffect(() => {
     patchAttendanceFilters({
       outletId: outletId || undefined,
       startDate: startDateFilter,
       endDate: endDateFilter,
     });
-    patchContractsFilters({ outletId: outletId || undefined });
-  }, [startDateFilter, endDateFilter, outletId, patchAttendanceFilters, patchContractsFilters]);
+  }, [startDateFilter, endDateFilter, outletId, patchAttendanceFilters]);
 
   useEffect(() => {
     if (!token) return;
     let active = true;
     void Promise.allSettled([
       orgApi.hierarchy(token),
-      collectPagedItems<AuthUserListItem, AuthUsersQuery>(
-        (query) => authApi.users(token, query),
-        {
-          outletId: outletId || undefined,
-          sortBy: 'username',
-          sortDir: 'asc',
-        },
+      collectPagedItems<HrEmployeeView, HrEmployeesQuery>(
+        (query) => hrApi.employees(token, query),
+        { outletId: outletId || undefined, sortBy: 'fullName', sortDir: 'asc' },
         200,
       ),
       collectPagedItems<ShiftView, ShiftsQuery>(
         (query) => hrApi.shiftsPaged(token, query),
-        {
-          outletId: outletId || undefined,
-          sortBy: 'startTime',
-          sortDir: 'asc',
-        },
+        { outletId: outletId || undefined, sortBy: 'startTime', sortDir: 'asc' },
       ),
-    ]).then(([hierarchyResult, usersResult, shiftsResult]) => {
+    ]).then(([hierarchyResult, employeesResult, shiftsResult]) => {
       if (!active) return;
       if (hierarchyResult.status === 'fulfilled') {
         setRegions(hierarchyResult.value.regions || []);
         setOutlets(hierarchyResult.value.outlets || []);
       }
-      if (usersResult.status === 'fulfilled') {
-        setUsers(usersResult.value || []);
+      if (employeesResult.status === 'fulfilled') {
+        const emps = employeesResult.value || [];
+        setHrEmployees(emps);
+        // Derive AuthUserListItem[] for backward-compatible components
+        setUsers(emps.map((e) => ({
+          id: e.id,
+          username: e.username,
+          fullName: e.fullName,
+          employeeCode: e.employeeCode,
+          email: e.email,
+          status: e.status,
+        })));
+        setUsersError('');
+      } else {
+        console.error('[HR] employees load rejected:', employeesResult.reason);
+        setUsersError(getErrorMessage(employeesResult.reason, 'Unable to load employee list'));
       }
       if (shiftsResult.status === 'fulfilled') {
         setShifts(shiftsResult.value || []);
       }
-    }).catch((error: unknown) => {
-      console.error('HR support data load failed', error);
     });
     return () => {
       active = false;
@@ -307,20 +238,11 @@ export function HRModule() {
   }, [activeTab, loadAttendance]);
 
   useEffect(() => {
-    if (activeTab !== 'contracts') return;
-    void loadContracts();
-  }, [activeTab, loadContracts]);
-
-  useEffect(() => {
-    if (activeTab === 'attendance' || canAccessCompensation) {
+    if (activeTab === 'attendance' || activeTab === 'employees' || canAccessCompensation) {
       return;
     }
     setActiveTab('attendance');
   }, [activeTab, canAccessCompensation]);
-
-  // Contract stats come from dedicated API queries (not derived from the current page)
-  // so counts are accurate across all pages, not just the visible slice.
-  const contractStats = contractExpiryStats;
 
   const approveAttendance = async (workShiftId: string) => {
     if (!token) return;
@@ -358,66 +280,51 @@ export function HRModule() {
     }
   };
 
-  const submitCreateContract = async () => {
+  // Load pending count for badge
+  useEffect(() => {
     if (!token) return;
-    const base = parseFloat(contractForm.baseSalary);
-    if (!contractForm.userId.trim()) { toast.error('Select an employee'); return; }
-    if (!contractForm.startDate) { toast.error('Start date is required'); return; }
-    if (!base || base <= 0) { toast.error('Base salary must be a positive number'); return; }
-    if (!contractForm.currencyCode.trim() || contractForm.currencyCode.trim().length !== 3) {
-      toast.error('Enter a valid 3-letter currency code'); return;
-    }
-    setBusyKey('contract:create');
-    try {
-      await hrApi.createContract(token, {
-        userId: contractForm.userId.trim(),
-        employmentType: contractForm.employmentType,
-        salaryType: contractForm.salaryType,
-        baseSalary: base,
-        currencyCode: contractForm.currencyCode.trim(),
-        regionCode: contractForm.regionCode.trim() || null,
-        startDate: contractForm.startDate,
-        endDate: contractForm.endDate || null,
-        taxCode: contractForm.taxCode.trim() || null,
-        bankAccount: contractForm.bankAccount.trim() || null,
-      });
-      toast.success('Contract created');
-      setCreateContractDialog(false);
-      setContractForm({
-        userId: '',
-        employmentType: 'indefinite',
-        salaryType: 'monthly',
-        baseSalary: '',
-        currencyCode: 'USD',
-        regionCode: '',
-        startDate: new Date().toISOString().slice(0, 10),
-        endDate: '',
-        taxCode: '',
-        bankAccount: '',
-      });
-      await loadContracts();
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, 'Failed to create contract'));
-    } finally {
-      setBusyKey('');
+    void (async () => {
+      try {
+        const page = await hrApi.workShiftsPaged(token, { approvalStatus: 'pending', limit: 1, offset: 0 });
+        setPendingCount(page.total || page.totalCount || 0);
+      } catch { /* ignore */ }
+    })();
+  }, [token, workShifts]); // re-run after attendance changes
+
+  const toggleAttendanceSelect = (id: string) => {
+    setSelectedAttendanceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const pendingWorkShifts = useMemo(
+    () => workShifts.filter((ws) => String(ws.approvalStatus || '').toLowerCase() === 'pending'),
+    [workShifts],
+  );
+
+  const toggleAttendanceSelectAll = () => {
+    if (selectedAttendanceIds.size === pendingWorkShifts.length) {
+      setSelectedAttendanceIds(new Set());
+    } else {
+      setSelectedAttendanceIds(new Set(pendingWorkShifts.map((ws) => String(ws.id))));
     }
   };
 
-  const submitTerminateContract = async () => {
-    if (!terminateDialog || !token) return;
-    setBusyKey(`contract:terminate:${terminateDialog.contractId}`);
-    try {
-      await hrApi.terminateContract(token, terminateDialog.contractId, {
-        endDate: terminateDialog.endDate || null,
-      });
-      toast.success('Contract terminated');
-      setTerminateDialog(null);
-      await loadContracts();
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, 'Failed to terminate contract'));
-    } finally {
-      setBusyKey('');
-    }
+  const bulkApproveAttendance = async () => {
+    if (selectedAttendanceIds.size === 0 || !token) return;
+    setBulkAttendanceBusy(true);
+    const results = await Promise.allSettled(
+      Array.from(selectedAttendanceIds).map((id) => hrApi.approveWorkShift(token, id)),
+    );
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - succeeded;
+    if (succeeded > 0) toast.success(`${succeeded} record(s) approved`);
+    if (failed > 0) toast.error(`${failed} record(s) failed`);
+    setSelectedAttendanceIds(new Set());
+    setBulkAttendanceBusy(false);
+    await loadAttendance();
   };
 
   if (!token) {
@@ -443,6 +350,9 @@ export function HRModule() {
             >
               <Icon className="h-3.5 w-3.5" />
               {tab.label}
+              {tab.key === 'attendance' && pendingCount > 0 ? (
+                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-destructive text-destructive-foreground font-medium">{pendingCount}</span>
+              ) : null}
             </button>
           );
         })}
@@ -465,97 +375,45 @@ export function HRModule() {
 
         {activeTab === 'attendance' ? (
           <div className="space-y-4">
-            <div className="surface-elevated p-4 flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-1.5">
+            {/* Filter bar — 2 rows */}
+            <div className="surface-elevated p-4 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs text-muted-foreground">From</span>
-                <input
-                  type="date"
-                  value={startDateFilter}
-                  max={endDateFilter}
-                  onChange={(event) => setStartDateFilter(event.target.value)}
-                  className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                />
+                <input type="date" value={startDateFilter} max={endDateFilter} onChange={(e) => setStartDateFilter(e.target.value)} className="h-8 rounded-md border border-input bg-background px-3 text-xs" />
                 <span className="text-xs text-muted-foreground">To</span>
-                <input
-                  type="date"
-                  value={endDateFilter}
-                  min={startDateFilter}
-                  onChange={(event) => setEndDateFilter(event.target.value)}
-                  className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-                />
-                <button
-                  onClick={() => { setStartDateFilter(today); setEndDateFilter(today); }}
-                  className="h-8 px-2 rounded border text-[10px] text-muted-foreground hover:bg-accent"
-                  title="Reset to today"
-                >
-                  Today
-                </button>
-                <button
-                  onClick={() => {
-                    const d = new Date();
-                    const day = d.getDay();
-                    const mon = new Date(d); mon.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
-                    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
-                    setStartDateFilter(mon.toISOString().slice(0, 10));
-                    setEndDateFilter(sun.toISOString().slice(0, 10));
-                  }}
-                  className="h-8 px-2 rounded border text-[10px] text-muted-foreground hover:bg-accent"
-                  title="This week"
-                >
-                  This week
+                <input type="date" value={endDateFilter} min={startDateFilter} onChange={(e) => setEndDateFilter(e.target.value)} className="h-8 rounded-md border border-input bg-background px-3 text-xs" />
+                <button onClick={() => { setStartDateFilter(today); setEndDateFilter(today); }} className="h-8 px-2 rounded border text-[10px] text-muted-foreground hover:bg-accent" title="Reset to today">Today</button>
+                <button onClick={() => { const d = new Date(); const day = d.getDay(); const mon = new Date(d); mon.setDate(d.getDate() - (day === 0 ? 6 : day - 1)); const sun = new Date(mon); sun.setDate(mon.getDate() + 6); setStartDateFilter(mon.toISOString().slice(0, 10)); setEndDateFilter(sun.toISOString().slice(0, 10)); }} className="h-8 px-2 rounded border text-[10px] text-muted-foreground hover:bg-accent" title="This week">This week</button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative max-w-sm flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <input value={attendanceQuery.searchInput} onChange={(e) => attendanceQuery.setSearchInput(e.target.value)} placeholder="Search employee, shift, note" className="h-8 w-full rounded-md border border-input bg-background pl-9 pr-3 text-xs" />
+                </div>
+                <select value={attendanceQuery.filters.attendanceStatus || 'all'} onChange={(e) => attendanceQuery.setFilter('attendanceStatus', e.target.value === 'all' ? undefined : e.target.value)} className="h-8 rounded-md border border-input bg-background px-3 text-xs">
+                  <option value="all">All attendance</option>
+                  <option value="pending">Pending</option>
+                  <option value="present">Present</option>
+                  <option value="late">Late</option>
+                  <option value="absent">Absent</option>
+                  <option value="leave">Leave</option>
+                </select>
+                <select value={attendanceQuery.filters.approvalStatus || 'all'} onChange={(e) => attendanceQuery.setFilter('approvalStatus', e.target.value === 'all' ? undefined : e.target.value)} className="h-8 rounded-md border border-input bg-background px-3 text-xs">
+                  <option value="all">All review states</option>
+                  <option value="pending">Pending review</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+                <select value={`${attendanceQuery.sortBy || 'workDate'}:${attendanceQuery.sortDir}`} onChange={(e) => { const [f, d] = e.target.value.split(':'); attendanceQuery.applySort(f, d === 'asc' ? 'asc' : 'desc'); }} className="h-8 rounded-md border border-input bg-background px-3 text-xs">
+                  <option value="workDate:desc">Latest work date</option>
+                  <option value="approvalStatus:asc">Pending first</option>
+                  <option value="userId:asc">Employee A-Z</option>
+                  <option value="createdAt:desc">Last updated</option>
+                </select>
+                <button onClick={() => void loadAttendance()} disabled={attendanceLoading} className="h-8 px-2.5 rounded border text-xs flex items-center gap-1 hover:bg-accent disabled:opacity-60">
+                  <RefreshCw className={cn('h-3.5 w-3.5', attendanceLoading ? 'animate-spin' : '')} /> Refresh
                 </button>
               </div>
-              <div className="relative max-w-sm flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <input
-                  value={attendanceQuery.searchInput}
-                  onChange={(event) => attendanceQuery.setSearchInput(event.target.value)}
-                  placeholder="Search employee, shift, note"
-                  className="h-8 w-full rounded-md border border-input bg-background pl-9 pr-3 text-xs"
-                />
-              </div>
-              <select
-                value={attendanceQuery.filters.attendanceStatus || 'all'}
-                onChange={(event) => attendanceQuery.setFilter('attendanceStatus', event.target.value === 'all' ? undefined : event.target.value)}
-                className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-              >
-                <option value="all">All attendance</option>
-                <option value="pending">Pending</option>
-                <option value="present">Present</option>
-                <option value="late">Late</option>
-                <option value="absent">Absent</option>
-                <option value="leave">Leave</option>
-              </select>
-              <select
-                value={attendanceQuery.filters.approvalStatus || 'all'}
-                onChange={(event) => attendanceQuery.setFilter('approvalStatus', event.target.value === 'all' ? undefined : event.target.value)}
-                className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-              >
-                <option value="all">All review states</option>
-                <option value="pending">Pending review</option>
-                <option value="approved">Approved</option>
-                <option value="rejected">Rejected</option>
-              </select>
-              <select
-                value={`${attendanceQuery.sortBy || 'workDate'}:${attendanceQuery.sortDir}`}
-                onChange={(event) => {
-                  const [field, direction] = event.target.value.split(':');
-                  attendanceQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
-                }}
-                className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-              >
-                <option value="workDate:desc">Latest work date</option>
-                <option value="approvalStatus:asc">Pending first</option>
-                <option value="userId:asc">Employee A-Z</option>
-                <option value="createdAt:desc">Last updated</option>
-              </select>
-              <button
-                onClick={() => void loadAttendance()}
-                disabled={attendanceLoading}
-                className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
-              >
-                <RefreshCw className={cn('h-3.5 w-3.5', attendanceLoading ? 'animate-spin' : '')} /> Refresh
-              </button>
             </div>
 
             <div className="surface-elevated p-4 space-y-3">
@@ -566,20 +424,39 @@ export function HRModule() {
                   <p className="text-xs text-muted-foreground">Review shift records by attendance outcome and approval state for the selected date range.</p>
                 </div>
               </div>
-              <div className="overflow-x-auto">
+
+              {/* Bulk action bar */}
+              {selectedAttendanceIds.size > 0 ? (
+                <div className="flex items-center gap-3 p-3 rounded-md bg-primary/5 border border-primary/20">
+                  <span className="text-xs font-medium">{selectedAttendanceIds.size} selected</span>
+                  <button
+                    onClick={() => void bulkApproveAttendance()}
+                    disabled={bulkAttendanceBusy}
+                    className="h-7 px-2.5 rounded bg-primary text-[10px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
+                  >
+                    <CheckCircle2 className="h-3 w-3" /> Approve selected
+                  </button>
+                  <button onClick={() => setSelectedAttendanceIds(new Set())} className="text-[10px] text-muted-foreground hover:text-foreground ml-auto">Clear</button>
+                </div>
+              ) : null}
+
+              <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
                 <table className="w-full">
-                  <thead>
-                    <tr className="border-b bg-muted/30">
-                      {['Shift Record', 'Employee', 'Shift', 'Attendance', 'Review', 'Clock', 'Note', 'Actions'].map((header) => (
-                        <th key={header} className="text-left text-[11px] px-4 py-2.5">{header}</th>
+                  <thead className="sticky top-0 z-10">
+                    <tr className="border-b bg-card">
+                      <th className="px-2 py-2.5 w-8">
+                        <input type="checkbox" checked={selectedAttendanceIds.size === pendingWorkShifts.length && pendingWorkShifts.length > 0} onChange={toggleAttendanceSelectAll} className="rounded border-input" />
+                      </th>
+                      {['Shift Record', 'Employee', 'Shift', 'Attendance', 'Review', 'Clock', 'Duration', 'Note', 'Actions'].map((header) => (
+                        <th key={header} className="text-left text-xs px-4 py-2.5">{header}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {attendanceLoading && workShifts.length === 0 ? (
-                      <ListTableSkeleton columns={8} rows={6} />
+                      <ListTableSkeleton columns={10} rows={6} />
                     ) : workShifts.length === 0 ? (
-                      <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">No attendance records found</td></tr>
+                      <tr><td colSpan={10} className="px-4 py-8 text-center text-sm text-muted-foreground">No attendance records found</td></tr>
                     ) : workShifts.map((row) => {
                       const attendanceStatus = String(row.attendanceStatus || 'unknown').toLowerCase();
                       const approvalStatus = String(row.approvalStatus || 'unknown').toLowerCase();
@@ -589,7 +466,12 @@ export function HRModule() {
                       const shiftDisplay = getHrShiftDisplay(shiftsById, row.shiftId);
                       const outletDisplay = getHrOutletDisplay(outletsById, row.outletId);
                       return (
-                        <tr key={workShiftId} className="border-b last:border-0">
+                        <tr key={workShiftId} className={cn('border-b last:border-0', selectedAttendanceIds.has(workShiftId) ? 'bg-primary/5' : '')}>
+                          <td className="px-2 py-2.5">
+                            {canReview ? (
+                              <input type="checkbox" checked={selectedAttendanceIds.has(workShiftId)} onChange={() => toggleAttendanceSelect(workShiftId)} className="rounded border-input" />
+                            ) : <span className="block w-4" />}
+                          </td>
                           <td className="px-4 py-2.5">
                             <div className="flex flex-col">
                               <span className="text-xs font-medium">{shortHrRef(workShiftId)}</span>
@@ -599,29 +481,21 @@ export function HRModule() {
                           <td className="px-4 py-2.5">
                             <div className="flex flex-col">
                               <span className="text-xs font-medium">{userDisplay.primary}</span>
-                              {userDisplay.secondary ? (
-                                <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span>
-                              ) : null}
+                              {userDisplay.secondary ? <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span> : null}
                             </div>
                           </td>
                           <td className="px-4 py-2.5">
                             <div className="flex flex-col">
                               <span className="text-xs font-medium">{shiftDisplay.primary}</span>
-                              {shiftDisplay.secondary ? (
-                                <span className="text-[11px] text-muted-foreground">{shiftDisplay.secondary}</span>
-                              ) : null}
+                              {shiftDisplay.secondary ? <span className="text-[11px] text-muted-foreground">{shiftDisplay.secondary}</span> : null}
                               <span className="text-[11px] text-muted-foreground">{outletDisplay.primary}</span>
                             </div>
                           </td>
                           <td className="px-4 py-2.5">
-                            <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium', attendanceBadgeClass(attendanceStatus))}>
-                              {formatHrEnumLabel(attendanceStatus)}
-                            </span>
+                            <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium', attendanceBadgeClass(attendanceStatus))}>{formatHrEnumLabel(attendanceStatus)}</span>
                           </td>
                           <td className="px-4 py-2.5">
-                            <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium', approvalBadgeClass(approvalStatus))}>
-                              {formatHrEnumLabel(approvalStatus)}
-                            </span>
+                            <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium', approvalBadgeClass(approvalStatus))}>{formatHrEnumLabel(approvalStatus)}</span>
                           </td>
                           <td className="px-4 py-2.5 text-xs text-muted-foreground">
                             <div className="flex flex-col">
@@ -629,21 +503,14 @@ export function HRModule() {
                               <span>Out {formatTime(row.actualEndTime)}</span>
                             </div>
                           </td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(row.note || '—')}</td>
+                          <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground">{formatDuration(row.actualStartTime, row.actualEndTime)}</td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground max-w-[120px] truncate">{String(row.note || '—')}</td>
                           <td className="px-4 py-2.5">
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                onClick={() => void approveAttendance(workShiftId)}
-                                disabled={!canReview || busyKey === `attendance:approve:${workShiftId}`}
-                                className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent disabled:opacity-50"
-                              >
+                            <div className="flex flex-wrap gap-1.5">
+                              <button onClick={() => void approveAttendance(workShiftId)} disabled={!canReview || busyKey === `attendance:approve:${workShiftId}`} className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent disabled:opacity-50">
                                 {busyKey === `attendance:approve:${workShiftId}` ? 'Approving...' : 'Approve'}
                               </button>
-                              <button
-                                onClick={() => openRejectDialog(workShiftId)}
-                                disabled={!canReview || busyKey === `attendance:reject:${workShiftId}`}
-                                className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent disabled:opacity-50"
-                              >
+                              <button onClick={() => openRejectDialog(workShiftId)} disabled={!canReview || busyKey === `attendance:reject:${workShiftId}`} className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent disabled:opacity-50">
                                 {busyKey === `attendance:reject:${workShiftId}` ? 'Rejecting...' : 'Reject'}
                               </button>
                             </div>
@@ -667,6 +534,27 @@ export function HRModule() {
           </div>
         ) : null}
 
+        {activeTab === 'employees' ? (
+          <EmployeeProfileWorkspace
+            token={token}
+            users={users}
+            hrEmployees={hrEmployees}
+            usersError={usersError}
+            outlets={outlets}
+            regions={regions}
+            scopeOutletId={outletId || undefined}
+          />
+        ) : null}
+
+        {activeTab === 'payroll' ? (
+          <PayrollWorkspace
+            token={token}
+            users={users}
+            outlets={outlets}
+            scopeRegionId={normalizeNumeric(scope.regionId)}
+          />
+        ) : null}
+
         {activeTab === 'prep' ? (
           <PayrollPrepWorkspace
             token={token}
@@ -679,359 +567,22 @@ export function HRModule() {
         ) : null}
 
         {activeTab === 'contracts' ? (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {[
-                { label: 'Active Contracts', value: contractStats.active, icon: CheckCircle2 },
-                { label: 'Expiring Soon', value: contractStats.expiring, icon: AlertTriangle },
-                { label: 'Terminated', value: contractStats.terminated, icon: FileText },
-              ].map((kpi) => (
-                <div key={kpi.label} className="surface-elevated p-4">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <kpi.icon className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{kpi.label}</span>
-                  </div>
-                  <p className="text-xl font-semibold">{kpi.value}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="surface-elevated p-4 space-y-3">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold">Contracts ({contractsTotal})</h3>
-                  <p className="text-xs text-muted-foreground">Track employment terms, salary basis, and expiry risk from the active contract register.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                    <input
-                      className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
-                      placeholder="Search contracts"
-                      value={contractsQuery.searchInput}
-                      onChange={(event) => contractsQuery.setSearchInput(event.target.value)}
-                    />
-                  </div>
-                  <select
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                    value={contractsQuery.filters.status || 'all'}
-                    onChange={(event) => contractsQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
-                  >
-                    <option value="all">All statuses</option>
-                    <option value="draft">Draft</option>
-                    <option value="active">Active</option>
-                    <option value="expired">Expired</option>
-                    <option value="terminated">Terminated</option>
-                  </select>
-                  <select
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                    value={`${contractsQuery.sortBy || 'startDate'}:${contractsQuery.sortDir}`}
-                    onChange={(event) => {
-                      const [field, direction] = event.target.value.split(':');
-                      contractsQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
-                    }}
-                  >
-                    <option value="startDate:desc">Latest start date</option>
-                    <option value="endDate:asc">Ending soon</option>
-                    <option value="status:asc">Status A-Z</option>
-                    <option value="createdAt:desc">Last created</option>
-                  </select>
-                  <button
-                    onClick={() => void loadContracts()}
-                    disabled={contractsLoading}
-                    className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
-                  >
-                    <RefreshCw className={cn('h-3.5 w-3.5', contractsLoading ? 'animate-spin' : '')} /> Refresh
-                  </button>
-                  <button
-                    onClick={() => setCreateContractDialog(true)}
-                    className="h-8 px-3 rounded bg-primary text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
-                  >
-                    + New Contract
-                  </button>
-                </div>
-              </div>
-
-              {contractsError ? <p className="text-xs text-destructive">{contractsError}</p> : null}
-
-              {contracts.length === 0 && !contractsLoading ? (
-                <EmptyState
-                  title="No contracts available"
-                  description="No contract rows were returned for the current scope and filters."
-                />
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b bg-muted/30">
-                        {['Contract', 'User', 'Employment Type', 'Salary Type', 'Base Salary', 'Start Date', 'End Date', 'Status', 'Actions'].map((header) => (
-                          <th key={header} className={cn('text-[11px] px-4 py-2.5', header === 'Base Salary' ? 'text-right' : 'text-left')}>
-                            {header}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {contractsLoading && contracts.length === 0 ? (
-                        <ListTableSkeleton columns={8} rows={6} />
-                      ) : contracts.map((contract) => {
-                        const status = String(contract.status || 'unknown').toLowerCase();
-                        const userDisplay = getHrUserDisplay(usersById, contract.userId);
-                        return (
-                          <tr key={String(contract.id)} className="border-b last:border-0">
-                            <td className="px-4 py-2.5">
-                              <div className="flex flex-col">
-                                <span className="text-xs font-medium">{shortHrRef(contract.id)}</span>
-                                <span className="text-[11px] text-muted-foreground">{String(contract.regionCode || '—')}</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-2.5">
-                              <div className="flex flex-col">
-                                <span className="text-xs font-medium">{userDisplay.primary}</span>
-                                {userDisplay.secondary ? (
-                                  <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span>
-                                ) : null}
-                              </div>
-                            </td>
-                            <td className="px-4 py-2.5 text-xs">{formatHrEnumLabel(contract.employmentType)}</td>
-                            <td className="px-4 py-2.5 text-xs">{formatHrEnumLabel(contract.salaryType)}</td>
-                            <td className="px-4 py-2.5 text-right text-sm font-mono">{formatCurrency(contract.baseSalary, String(contract.currencyCode || 'USD'))}</td>
-                            <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDate(contract.startDate)}</td>
-                            <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDate(contract.endDate)}</td>
-                            <td className="px-4 py-2.5 text-xs">
-                              <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium', contractBadgeClass(status))}>
-                                {formatHrEnumLabel(status)}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2.5">
-                              {status === 'active' || status === 'draft' ? (
-                                <button
-                                  onClick={() => setTerminateDialog({ contractId: String(contract.id), endDate: new Date().toISOString().slice(0, 10) })}
-                                  disabled={busyKey === `contract:terminate:${contract.id}`}
-                                  className="h-7 px-2.5 rounded border border-destructive/50 text-[10px] text-destructive hover:bg-destructive/10 disabled:opacity-50"
-                                >
-                                  Terminate
-                                </button>
-                              ) : (
-                                <span className="text-[10px] text-muted-foreground">—</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              <ListPaginationControls
-                total={contractsTotal}
-                limit={contractsQuery.limit}
-                offset={contractsQuery.offset}
-                hasMore={contractsHasMore}
-                disabled={contractsLoading}
-                onPageChange={contractsQuery.setPage}
-                onLimitChange={contractsQuery.setPageSize}
-              />
-            </div>
-          </div>
+          <ContractsWorkspace
+            token={token}
+            outletId={outletId || undefined}
+            users={users}
+            outlets={outlets}
+            regions={regions}
+          />
         ) : null}
 
-        {(attendanceLoading || contractsLoading) ? (
+        {attendanceLoading ? (
           <div className="hidden">
             <Loader2 className="h-4 w-4 animate-spin" />
           </div>
         ) : null}
       </div>
     </div>
-
-    {createContractDialog ? (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-        <div className="w-full max-w-lg rounded-xl border border-border bg-card shadow-xl">
-          <div className="flex items-center justify-between border-b px-5 py-4">
-            <div>
-              <h3 className="text-base font-semibold">New Employee Contract</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">Create an employment contract for an employee.</p>
-            </div>
-            <button type="button" onClick={() => setCreateContractDialog(false)} className="rounded p-1 hover:bg-accent">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="px-5 py-5 space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Employee ID <span className="text-destructive">*</span></label>
-              <select
-                value={contractForm.userId}
-                onChange={(e) => setContractForm((prev) => ({ ...prev, userId: e.target.value }))}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="">— Select employee —</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>{u.fullName || u.username} {u.employeeCode ? `(${u.employeeCode})` : ''}</option>
-                ))}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium">Employment Type</label>
-                <select
-                  value={contractForm.employmentType}
-                  onChange={(e) => setContractForm((prev) => ({ ...prev, employmentType: e.target.value }))}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  <option value="indefinite">Indefinite</option>
-                  <option value="fixed_term">Fixed Term</option>
-                  <option value="probation">Probation</option>
-                  <option value="seasonal">Seasonal</option>
-                  <option value="part_time">Part Time</option>
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium">Salary Type</label>
-                <select
-                  value={contractForm.salaryType}
-                  onChange={(e) => setContractForm((prev) => ({ ...prev, salaryType: e.target.value }))}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="hourly">Hourly</option>
-                  <option value="daily">Daily</option>
-                </select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium">Base Salary <span className="text-destructive">*</span></label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={contractForm.baseSalary}
-                  onChange={(e) => setContractForm((prev) => ({ ...prev, baseSalary: e.target.value }))}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  placeholder="e.g. 5000"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium">Currency <span className="text-destructive">*</span></label>
-                <input
-                  type="text"
-                  maxLength={3}
-                  value={contractForm.currencyCode}
-                  onChange={(e) => setContractForm((prev) => ({ ...prev, currencyCode: e.target.value.toUpperCase() }))}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm uppercase"
-                  placeholder="USD"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium">Start Date <span className="text-destructive">*</span></label>
-                <input
-                  type="date"
-                  value={contractForm.startDate}
-                  onChange={(e) => setContractForm((prev) => ({ ...prev, startDate: e.target.value }))}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium">End Date <span className="text-muted-foreground text-[10px]">(leave blank for indefinite)</span></label>
-                <input
-                  type="date"
-                  value={contractForm.endDate}
-                  onChange={(e) => setContractForm((prev) => ({ ...prev, endDate: e.target.value }))}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium">Region Code</label>
-                <input
-                  type="text"
-                  value={contractForm.regionCode}
-                  onChange={(e) => setContractForm((prev) => ({ ...prev, regionCode: e.target.value }))}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  placeholder="e.g. VN"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium">Tax Code</label>
-                <input
-                  type="text"
-                  value={contractForm.taxCode}
-                  onChange={(e) => setContractForm((prev) => ({ ...prev, taxCode: e.target.value }))}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  placeholder="Employee tax ID"
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Bank Account</label>
-              <input
-                type="text"
-                value={contractForm.bankAccount}
-                onChange={(e) => setContractForm((prev) => ({ ...prev, bankAccount: e.target.value }))}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                placeholder="Account number for salary payment"
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 border-t px-5 py-4">
-            <button type="button" onClick={() => setCreateContractDialog(false)} className="h-9 rounded-md border border-border px-4 text-sm">
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void submitCreateContract()}
-              disabled={busyKey === 'contract:create'}
-              className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60"
-            >
-              {busyKey === 'contract:create' ? 'Creating...' : 'Create contract'}
-            </button>
-          </div>
-        </div>
-      </div>
-    ) : null}
-
-    {terminateDialog ? (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-        <div className="w-full max-w-sm rounded-xl border border-border bg-card shadow-xl">
-          <div className="flex items-center justify-between border-b px-5 py-4">
-            <h3 className="text-base font-semibold">Terminate Contract</h3>
-            <button type="button" onClick={() => setTerminateDialog(null)} className="rounded p-1 hover:bg-accent">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="px-5 py-5 space-y-4">
-            <p className="text-sm text-muted-foreground">This action will mark the contract as terminated. The employee will lose access linked to this contract.</p>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Effective end date</label>
-              <input
-                type="date"
-                value={terminateDialog.endDate}
-                onChange={(e) => setTerminateDialog((prev) => prev ? { ...prev, endDate: e.target.value } : prev)}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              />
-              <p className="text-[11px] text-muted-foreground">Leave as today if terminating immediately.</p>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 border-t px-5 py-4">
-            <button type="button" onClick={() => setTerminateDialog(null)} className="h-9 rounded-md border border-border px-4 text-sm">
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void submitTerminateContract()}
-              disabled={!!busyKey}
-              className="h-9 rounded-md bg-destructive px-4 text-sm font-medium text-destructive-foreground disabled:opacity-60"
-            >
-              {busyKey ? 'Terminating...' : 'Confirm terminate'}
-            </button>
-          </div>
-        </div>
-      </div>
-    ) : null}
 
     {rejectDialog ? (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

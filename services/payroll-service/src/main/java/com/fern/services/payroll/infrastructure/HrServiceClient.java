@@ -4,9 +4,11 @@ import com.dorabets.common.spring.auth.SpringInternalServiceAuth;
 import com.fern.services.payroll.api.PayrollDtos;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -71,5 +73,28 @@ public class HrServiceClient {
       return List.of();
     }
     return page.items();
+  }
+
+  /**
+   * Fetches the latest active employee contract for a user from hr-service.
+   * Returns {@link Optional#empty()} when hr-service returns 404 (no active contract).
+   * All other non-2xx responses propagate as {@link org.springframework.web.client.RestClientException}.
+   */
+  public Optional<PayrollDtos.EmployeeContractSummary> fetchLatestContract(long userId) {
+    String url = hrServiceBaseUrl + "/api/v1/hr/contracts/user/" + userId + "/latest";
+
+    HttpHeaders internalHeaders = new HttpHeaders();
+    internalAuth.apply(internalHeaders, SERVICE_NAME, null);
+
+    try {
+      PayrollDtos.EmployeeContractSummary contract = restClient.get()
+          .uri(url)
+          .headers(h -> h.addAll(internalHeaders))
+          .retrieve()
+          .body(PayrollDtos.EmployeeContractSummary.class);
+      return Optional.ofNullable(contract);
+    } catch (HttpClientErrorException.NotFound e) {
+      return Optional.empty();
+    }
   }
 }

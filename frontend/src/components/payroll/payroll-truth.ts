@@ -148,9 +148,6 @@ export function buildContractDrivenPayrollRoster({
   return ([...latestActiveContractByUserId.entries()]
     .map(([userId, contract]) => {
       const user = usersById.get(userId);
-      if (!user) {
-        return null;
-      }
       const userScopes = scopesByUserId.get(userId) || [];
       const outletLabels = userScopes
         .map((scope) => {
@@ -159,15 +156,22 @@ export function buildContractDrivenPayrollRoster({
         })
         .filter((label, index, labels) => labels.indexOf(label) === index);
 
+      // Use contract outlet as fallback when scopes are unavailable
+      if (outletLabels.length === 0 && contract.outletId) {
+        const outlet = outletsById.get(normalizeValue(contract.outletId));
+        if (outlet) {
+          outletLabels.push(`${outlet.code} · ${outlet.name}`);
+        }
+      }
+
       return {
         userId,
-        fullName: user.fullName || user.username,
-        employeeCode: user.employeeCode,
+        fullName: user?.fullName || user?.username || `Employee ${userId.slice(-6)}`,
+        employeeCode: user?.employeeCode,
         preferredOutletId: normalizeValue(contract.outletId) || normalizeValue(userScopes[0]?.outletId),
         outletLabels,
         contract,
       } satisfies PayrollRosterEntry;
-    })
-    .filter(Boolean) as PayrollRosterEntry[])
+    }))
     .sort((left, right) => left.fullName.localeCompare(right.fullName));
 }

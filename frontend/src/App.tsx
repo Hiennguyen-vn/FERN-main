@@ -22,6 +22,7 @@ const AuditModule = lazy(() => import("@/components/audit/AuditModule").then((m)
 const IAMModule = lazy(() => import("@/components/iam/IAMModule").then((m) => ({ default: m.IAMModule })));
 const FinanceModule = lazy(() => import("@/components/finance/FinanceModule").then((m) => ({ default: m.FinanceModule })));
 const HRModule = lazy(() => import("@/components/hr/HRModule").then((m) => ({ default: m.HRModule })));
+const OrgModule = lazy(() => import("@/components/org/OrgModule").then((m) => ({ default: m.OrgModule })));
 const SettingsModule = lazy(() => import("@/components/settings/SettingsModule").then((m) => ({ default: m.SettingsModule })));
 const CRMModule = lazy(() => import("@/components/crm/CRMModule").then((m) => ({ default: m.CRMModule })));
 const PromotionsModule = lazy(() => import("@/components/promotions/PromotionsModule").then((m) => ({ default: m.PromotionsModule })));
@@ -91,6 +92,8 @@ const App = () => (
               <Route path="/iam" element={<LazyRoute><IAMModule /></LazyRoute>} />
               <Route path="/finance" element={<LazyRoute><FinanceModule /></LazyRoute>} />
               <Route path="/hr" element={<LazyRoute><HRModule /></LazyRoute>} />
+              <Route path="/org" element={<Navigate to="/org/overview" replace />} />
+              <Route path="/org/*" element={<LazyRoute><OrgModule /></LazyRoute>} />
               <Route path="/settings" element={<LazyRoute><SettingsModule /></LazyRoute>} />
               <Route path="/crm" element={<LazyRoute><CRMModule /></LazyRoute>} />
               <Route path="/promotions" element={<LazyRoute><PromotionsModule /></LazyRoute>} />

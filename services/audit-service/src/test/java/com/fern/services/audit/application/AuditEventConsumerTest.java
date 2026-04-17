@@ -11,6 +11,7 @@ import com.dorabets.idempotency.model.IdempotencyResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.auth.RoleUpdatedEvent;
 import com.fern.events.core.EventEnvelope;
+import com.fern.events.org.RegionCreatedEvent;
 import com.fern.events.product.ProductPriceChangedEvent;
 import com.fern.events.sales.SaleCompletedEvent;
 import com.fern.events.sales.SaleCompletedLineItem;
@@ -147,5 +148,41 @@ class AuditEventConsumerTest {
     verify(auditRepository).append(captor.capture());
     assertEquals("product_price", captor.getValue().entityName());
     assertEquals("501", captor.getValue().entityId());
+  }
+
+  @Test
+  void consumeMapsRegionCreatedIntoRegionAuditEntry() throws Exception {
+    AuditEventConsumer consumer = new AuditEventConsumer(
+        auditRepository,
+        idempotencyGuard,
+        objectMapper,
+        snowflakeIdGenerator
+    );
+    RegionCreatedEvent payload = new RegionCreatedEvent(
+        88L,
+        "VN-CENTRAL",
+        1L,
+        "VND",
+        "Central",
+        "VAT",
+        "Asia/Ho_Chi_Minh",
+        Instant.parse("2026-03-27T00:00:00Z"),
+        7L
+    );
+    String rawMessage = objectMapper.writeValueAsString(
+        EventEnvelope.create("org.region.created", "88", payload, "org-service")
+    );
+
+    when(snowflakeIdGenerator.generateId()).thenReturn(780L);
+    when(idempotencyGuard.execute(eq("audit-service"), any(), eq(rawMessage), any(), any()))
+        .thenAnswer(invocation -> ((Supplier<IdempotencyResult>) invocation.getArgument(4)).get());
+
+    consumer.consume(rawMessage);
+
+    ArgumentCaptor<AuditRepository.AuditEntry> captor = ArgumentCaptor.forClass(AuditRepository.AuditEntry.class);
+    verify(auditRepository).append(captor.capture());
+    assertEquals("insert", captor.getValue().action());
+    assertEquals("region", captor.getValue().entityName());
+    assertEquals("88", captor.getValue().entityId());
   }
 }

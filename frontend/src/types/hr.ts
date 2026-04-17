@@ -28,6 +28,20 @@ export interface AttendanceRecord {
 export type ContractType = 'probation' | 'fixed_term' | 'indefinite' | 'seasonal' | 'part_time';
 export type ContractStatus = 'active' | 'expiring_soon' | 'expired' | 'terminated' | 'pending_renewal';
 
+// Salary component types (Phase 2 — allowances & deductions)
+export type SalaryComponentType = 'allowance' | 'deduction';
+export type SalaryCalculationType = 'fixed' | 'percentage';
+
+export interface SalaryComponent {
+  id: string;
+  contractId: string;
+  type: SalaryComponentType;
+  name: string;
+  calculationType: SalaryCalculationType;
+  amount: number; // fixed amount or percentage of base salary
+  currencyCode: string;
+}
+
 export interface EmployeeContract {
   id: string;
   employeeId: string;

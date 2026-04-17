@@ -1,21 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Calendar,
+  CheckCircle2,
   Clock,
   FileText,
   Plus,
   RefreshCw,
   Sparkles,
-  Users,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
-  authApi,
   hrApi,
   payrollApi,
-  type AuthScopesQuery,
   type AuthScopeView,
   type AuthUserListItem,
+  type CalculateSalaryResult,
   type ContractView,
   type PayrollPeriodView,
   type PayrollPeriodsQuery,
@@ -37,7 +35,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  contractBadgeClass,
   formatHrEnumLabel,
   getHrOutletDisplay,
   getHrUserDisplay,
@@ -64,60 +61,43 @@ interface PayrollPrepWorkspaceProps {
 }
 
 function toNumber(value: unknown) {
-  const numeric = Number(value ?? 0);
-  return Number.isFinite(numeric) ? numeric : 0;
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
 }
 
-function formatCurrency(value: unknown, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', {
+function formatCurrency(value: unknown, currency = 'VND') {
+  return new Intl.NumberFormat('vi-VN', {
     style: 'currency',
     currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   }).format(toNumber(value));
 }
 
 function formatDate(value?: string | null) {
-  if (!value) {
-    return '—';
-  }
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(date);
+  if (!value) return '—';
+  const d = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return value;
+  return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
 }
 
-function formatDateRange(startDate?: string | null, endDate?: string | null) {
-  if (!startDate && !endDate) {
-    return 'Window unavailable';
-  }
-  return `${formatDate(startDate)} → ${formatDate(endDate)}`;
+function formatDateRange(s?: string | null, e?: string | null) {
+  if (!s && !e) return '—';
+  return `${formatDate(s)} – ${formatDate(e)}`;
 }
 
 function formatMonthYear(value?: string | null) {
-  if (!value) {
-    return 'Payroll prep';
-  }
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return 'Payroll prep';
-  }
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'long',
-    year: 'numeric',
-  }).format(date);
+  if (!value) return 'Payroll prep';
+  const d = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return 'Payroll prep';
+  return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(d);
 }
 
 function formatDateInput(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  const y = date.getFullYear();
+  const m = `${date.getMonth() + 1}`.padStart(2, '0');
+  const d = `${date.getDate()}`.padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function normalizeValue(value: string | number | null | undefined) {
@@ -126,17 +106,13 @@ function normalizeValue(value: string | number | null | undefined) {
 
 function getRegionName(regionsById: Map<string, ScopeRegion>, regionId?: string | number | null) {
   const key = normalizeValue(regionId);
-  if (!key) {
-    return 'Selected region';
-  }
+  if (!key) return 'Selected region';
   return regionsById.get(key)?.name || `Region ${key}`;
 }
 
 function buildPeriodHeadline(period: PayrollPeriodView | null, regionName: string) {
-  const explicitName = normalizeValue(period?.name);
-  if (explicitName) {
-    return explicitName;
-  }
+  const name = normalizeValue(period?.name);
+  if (name) return name;
   return `${formatMonthYear(period?.startDate || period?.endDate || period?.payDate)} · ${regionName}`;
 }
 
@@ -171,13 +147,315 @@ function buildDefaultTimesheetForm(outletId = '') {
 function buildDefaultRunForm() {
   return {
     payrollTimesheetId: '',
-    currencyCode: 'USD',
+    currencyCode: 'VND',
     baseSalaryAmount: '',
     netSalary: '',
     note: '',
   };
 }
 
+/* ------------------------------------------------------------------ */
+/*  Field helper                                                        */
+/* ------------------------------------------------------------------ */
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <div className="mt-1">{children}</div>
+    </div>
+  );
+}
+
+const inputCls = 'h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
+
+/* ------------------------------------------------------------------ */
+/*  Step 2 — full-width review component                               */
+/* ------------------------------------------------------------------ */
+interface Step2Props {
+  timesheetRows: { ts: PayrollTimesheetView; run: PayrollRunView | undefined }[];
+  payrollRoster: { userId: string; fullName: string; employeeCode: string; preferredOutletId: string; outletLabels: string[]; contract: ContractView }[];
+  timesheets: PayrollTimesheetView[];
+  workspaceLoading: boolean;
+  busyKey: string;
+  selectedPeriod: PayrollPeriodView | null;
+  timesheetForm: ReturnType<typeof buildDefaultTimesheetForm>;
+  setTimesheetForm: React.Dispatch<React.SetStateAction<ReturnType<typeof buildDefaultTimesheetForm>>>;
+  selectedEmployee: { fullName: string; employeeCode: string; outletLabels: string[]; contract: ContractView } | undefined;
+  selectedRegionOutlets: ScopeOutlet[];
+  usersById: Map<string, AuthUserListItem>;
+  outletsById: Map<string, ScopeOutlet>;
+  summary: { rosterCount: number; timesheetCount: number; draftRuns: number; approvedRuns: number };
+  createTimesheet: () => Promise<void>;
+  importFromAttendance: () => Promise<void>;
+  onNext: () => void;
+}
+
+function Step2ReviewTimesheets({
+  timesheetRows,
+  payrollRoster,
+  timesheets,
+  workspaceLoading,
+  busyKey,
+  selectedPeriod,
+  timesheetForm,
+  setTimesheetForm,
+  selectedEmployee,
+  selectedRegionOutlets,
+  usersById,
+  outletsById,
+  summary,
+  createTimesheet,
+  importFromAttendance,
+  onNext,
+}: Step2Props) {
+  const [addOpen, setAddOpen] = useState(false);
+
+  // Build a set of userIds that already have a timesheet
+  const coveredUserIds = useMemo(
+    () => new Set(timesheets.map((ts) => normalizeValue(ts.userId))),
+    [timesheets],
+  );
+
+  const missingCount = payrollRoster.filter((e) => !coveredUserIds.has(e.userId)).length;
+
+  // Merge roster missing entries with timesheet rows for the table
+  type ReviewRow =
+    | { kind: 'ts'; ts: PayrollTimesheetView; run: PayrollRunView | undefined }
+    | { kind: 'missing'; userId: string; fullName: string; outletLabel: string };
+
+  const reviewRows = useMemo<ReviewRow[]>(() => {
+    const rows: ReviewRow[] = timesheetRows.map(({ ts, run }) => ({ kind: 'ts', ts, run }));
+    for (const entry of payrollRoster) {
+      if (!coveredUserIds.has(entry.userId)) {
+        rows.push({ kind: 'missing', userId: entry.userId, fullName: entry.fullName, outletLabel: entry.outletLabels[0] || '—' });
+      }
+    }
+    return rows;
+  }, [timesheetRows, payrollRoster, coveredUserIds]);
+
+  return (
+    <div className="flex flex-col flex-1 overflow-hidden">
+      {/* Toolbar */}
+      <div className="border-b px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">Review imported timesheets</p>
+          <p className="text-[11px] text-muted-foreground">
+            {summary.timesheetCount} of {summary.rosterCount} employees have timesheets
+            {missingCount > 0 ? ` · ${missingCount} missing` : ''}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setAddOpen((v) => !v)}
+            className={cn(
+              'inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors hover:bg-accent',
+              addOpen ? 'bg-accent' : '',
+            )}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add manually
+          </button>
+          <button
+            onClick={onNext}
+            className="inline-flex h-8 items-center gap-2 rounded-md bg-primary px-4 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+          >
+            Next: Generate Runs →
+          </button>
+        </div>
+      </div>
+
+      {/* Inline add form — collapsed by default */}
+      {addOpen ? (
+        <div className="border-b bg-muted/20 px-6 py-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+            <div className="sm:col-span-2 lg:col-span-2 xl:col-span-2">
+              <Field label="Employee">
+                <select
+                  value={timesheetForm.userId}
+                  onChange={(e) => setTimesheetForm((cur) => ({ ...cur, userId: e.target.value }))}
+                  className={inputCls}
+                >
+                  <option value="">Select employee</option>
+                  {payrollRoster.map((entry) => (
+                    <option key={entry.userId} value={entry.userId}>
+                      {entry.fullName}{entry.employeeCode ? ` · ${entry.employeeCode}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {selectedEmployee ? (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {formatHrEnumLabel(selectedEmployee.contract.employmentType)}
+                  {selectedEmployee.outletLabels.length > 0 ? ` · ${selectedEmployee.outletLabels.join(', ')}` : ''}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="sm:col-span-2 lg:col-span-2 xl:col-span-1">
+              <Field label="Outlet">
+                <select
+                  value={timesheetForm.outletId}
+                  onChange={(e) => setTimesheetForm((cur) => ({ ...cur, outletId: e.target.value }))}
+                  className={inputCls}
+                >
+                  <option value="">Select outlet</option>
+                  {selectedRegionOutlets.map((o) => (
+                    <option key={o.id} value={o.id}>{o.code} · {o.name}</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 sm:col-span-2 lg:col-span-4 xl:col-span-2">
+              <Field label="Work days">
+                <input type="number" value={timesheetForm.workDays} onChange={(e) => setTimesheetForm((c) => ({ ...c, workDays: e.target.value }))} className={inputCls} />
+              </Field>
+              <Field label="Work hours">
+                <input type="number" value={timesheetForm.workHours} onChange={(e) => setTimesheetForm((c) => ({ ...c, workHours: e.target.value }))} className={inputCls} />
+              </Field>
+              <Field label="OT hours">
+                <input type="number" value={timesheetForm.overtimeHours} onChange={(e) => setTimesheetForm((c) => ({ ...c, overtimeHours: e.target.value }))} className={inputCls} />
+              </Field>
+              <Field label="OT rate">
+                <input type="number" value={timesheetForm.overtimeRate} onChange={(e) => setTimesheetForm((c) => ({ ...c, overtimeRate: e.target.value }))} className={inputCls} />
+              </Field>
+              <Field label="Late count">
+                <input type="number" value={timesheetForm.lateCount} onChange={(e) => setTimesheetForm((c) => ({ ...c, lateCount: e.target.value }))} className={inputCls} />
+              </Field>
+              <Field label="Absent days">
+                <input type="number" value={timesheetForm.absentDays} onChange={(e) => setTimesheetForm((c) => ({ ...c, absentDays: e.target.value }))} className={inputCls} />
+              </Field>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              onClick={() => void importFromAttendance()}
+              disabled={busyKey === 'import-timesheet' || !selectedPeriod}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-medium hover:bg-accent disabled:opacity-60"
+            >
+              <Clock className="h-3.5 w-3.5" />
+              {busyKey === 'import-timesheet' ? 'Importing…' : 'From Attendance'}
+            </button>
+            <button
+              onClick={() => void createTimesheet()}
+              disabled={busyKey === 'create-timesheet' || !selectedPeriod}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              {busyKey === 'create-timesheet' ? 'Saving…' : 'Save manually'}
+            </button>
+            <button
+              onClick={() => setAddOpen(false)}
+              className="ml-auto inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium hover:bg-accent"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Full-width timesheet table */}
+      <div className="flex-1 overflow-y-auto">
+        <table className="w-full">
+          <thead className="sticky top-0 z-10">
+            <tr className="border-b bg-background">
+              <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Employee</th>
+              <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Outlet</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-medium text-muted-foreground">Work Days</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-medium text-muted-foreground">Work Hours</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-medium text-muted-foreground">OT Hours</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-medium text-muted-foreground">Late</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-medium text-muted-foreground">Absent</th>
+              <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Status</th>
+              <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {workspaceLoading && reviewRows.length === 0 ? (
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">Loading…</td></tr>
+            ) : reviewRows.length === 0 ? (
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">No timesheets yet — run the bulk import in Step 1 or add manually above</td></tr>
+            ) : reviewRows.map((row) => {
+              if (row.kind === 'missing') {
+                return (
+                  <tr key={`missing-${row.userId}`} className="border-b last:border-0 bg-amber-50/40 hover:bg-amber-50/60">
+                    <td className="px-4 py-2.5">
+                      <p className="text-xs font-medium text-muted-foreground">{row.fullName}</p>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{row.outletLabel}</td>
+                    <td colSpan={6} className="px-4 py-2.5">
+                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                        Missing
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <button
+                        onClick={() => { setTimesheetForm((c) => ({ ...c, userId: row.userId })); setAddOpen(true); }}
+                        className="text-[11px] text-primary hover:underline"
+                      >
+                        Add
+                      </button>
+                    </td>
+                  </tr>
+                );
+              }
+              const { ts, run } = row;
+              return (
+                <tr key={ts.id} className="border-b last:border-0 hover:bg-muted/20">
+                  <td className="px-4 py-2.5">
+                    <p className="text-xs font-medium">{getHrUserDisplay(usersById, ts.userId).primary}</p>
+                    <p className="text-[10px] text-muted-foreground">{shortHrRef(ts.id)}</p>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground">{getHrOutletDisplay(outletsById, ts.outletId).primary}</td>
+                  <td className="px-4 py-2.5 text-right text-xs tabular-nums">{toNumber(ts.workDays)}</td>
+                  <td className="px-4 py-2.5 text-right text-xs tabular-nums">{toNumber(ts.workHours).toFixed(1)}</td>
+                  <td className="px-4 py-2.5 text-right text-xs tabular-nums">{toNumber(ts.overtimeHours).toFixed(1)}</td>
+                  <td className="px-4 py-2.5 text-right text-xs tabular-nums">{toNumber(ts.lateCount ?? 0)}</td>
+                  <td className="px-4 py-2.5 text-right text-xs tabular-nums">{toNumber(ts.absentDays ?? 0)}</td>
+                  <td className="px-4 py-2.5">
+                    {run ? (
+                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize', payrollBadgeClass(run.status))}>
+                        {formatHrEnumLabel(run.status)}
+                      </span>
+                    ) : (
+                      <span className="inline-flex rounded-full border border-muted bg-muted/30 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        No run
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className="text-[11px] text-muted-foreground">—</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Bottom action bar */}
+      <div className="border-t px-6 py-3 flex items-center justify-between bg-background">
+        <p className="text-[11px] text-muted-foreground">
+          {summary.timesheetCount} of {summary.rosterCount} employees have timesheets
+          {missingCount > 0 ? (
+            <span className="ml-1.5 inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+              {missingCount} missing
+            </span>
+          ) : null}
+        </p>
+        <button
+          onClick={onNext}
+          className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+        >
+          Next: Generate Runs →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
 export function PayrollPrepWorkspace({
   token,
   users,
@@ -206,42 +484,45 @@ export function PayrollPrepWorkspace({
   const [timesheetForm, setTimesheetForm] = useState(buildDefaultTimesheetForm(scopeOutletId || ''));
   const [runForm, setRunForm] = useState(buildDefaultRunForm());
   const [busyKey, setBusyKey] = useState('');
+  const [prepStep, setPrepStep] = useState<1 | 2 | 3>(1);
+  const [bulkProgress, setBulkProgress] = useState<{ total: number; done: number; failed: number } | null>(null);
+  const [salaryCalc, setSalaryCalc] = useState<CalculateSalaryResult | null>(null);
 
-  const usersById = useMemo(
-    () => new Map(users.map((user) => [user.id, user])),
-    [users],
-  );
-  const regionsById = useMemo(
-    () => new Map(regions.map((region) => [region.id, region])),
-    [regions],
-  );
-  const outletsById = useMemo(
-    () => new Map(outlets.map((outlet) => [outlet.id, outlet])),
-    [outlets],
-  );
+  // Reset step on period change; auto-advance to step 2 when timesheets already loaded
+  const prevPeriodIdRef = useRef('');
+  useEffect(() => {
+    if (selectedPeriodId !== prevPeriodIdRef.current) {
+      prevPeriodIdRef.current = selectedPeriodId;
+      setPrepStep(1);
+    }
+  }, [selectedPeriodId]);
+
+  const prevLoadingRef = useRef(false);
+  useEffect(() => {
+    if (!workspaceLoading && prevLoadingRef.current && timesheets.length > 0 && prepStep === 1) {
+      setPrepStep(2);
+    }
+    prevLoadingRef.current = workspaceLoading;
+  }, [workspaceLoading, timesheets.length, prepStep]);
+
+  /* ---- derived maps ---- */
+  const usersById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+  const regionsById = useMemo(() => new Map(regions.map((r) => [r.id, r])), [regions]);
+  const outletsById = useMemo(() => new Map(outlets.map((o) => [o.id, o])), [outlets]);
 
   const inferredRegionId = useMemo(() => {
-    if (scopeRegionId) {
-      return scopeRegionId;
-    }
-    if (!scopeOutletId) {
-      return '';
-    }
-    return outlets.find((outlet) => outlet.id === scopeOutletId)?.regionId || '';
+    if (scopeRegionId) return scopeRegionId;
+    if (!scopeOutletId) return '';
+    return outlets.find((o) => o.id === scopeOutletId)?.regionId || '';
   }, [outlets, scopeOutletId, scopeRegionId]);
 
   const selectedPeriod = useMemo(
-    () => periods.find((period) => period.id === selectedPeriodId) ?? null,
+    () => periods.find((p) => p.id === selectedPeriodId) ?? null,
     [periods, selectedPeriodId],
   );
 
   const selectedRegionId = useMemo(
-    () =>
-      normalizeValue(
-        selectedPeriod?.regionId ||
-          periodForm.regionId ||
-          inferredRegionId,
-      ),
+    () => normalizeValue(selectedPeriod?.regionId || periodForm.regionId || inferredRegionId),
     [inferredRegionId, periodForm.regionId, selectedPeriod?.regionId],
   );
 
@@ -251,19 +532,14 @@ export function PayrollPrepWorkspace({
   );
 
   const selectedRegionCodes = useMemo(
-    () =>
-      selectedRegionScopeIds
-        .map((regionId) => regionsById.get(regionId)?.code)
-        .filter((code): code is string => Boolean(code)),
+    () => selectedRegionScopeIds.map((id) => regionsById.get(id)?.code).filter((c): c is string => Boolean(c)),
     [regionsById, selectedRegionScopeIds],
   );
 
   const availablePeriodRegions = useMemo(() => {
-    if (!inferredRegionId) {
-      return regions;
-    }
-    const allowedRegionIds = new Set(collectRegionScopeIds(regions, inferredRegionId));
-    return regions.filter((region) => allowedRegionIds.has(region.id));
+    if (!inferredRegionId) return regions;
+    const allowed = new Set(collectRegionScopeIds(regions, inferredRegionId));
+    return regions.filter((r) => allowed.has(r.id));
   }, [inferredRegionId, regions]);
 
   const selectedRegionName = useMemo(
@@ -272,55 +548,38 @@ export function PayrollPrepWorkspace({
   );
 
   const selectedRegionOutlets = useMemo(() => {
-    if (selectedRegionScopeIds.length === 0) {
-      return outlets;
-    }
+    if (selectedRegionScopeIds.length === 0) return outlets;
     const allowed = new Set(selectedRegionScopeIds);
-    return outlets.filter((outlet) => allowed.has(outlet.regionId));
+    return outlets.filter((o) => allowed.has(o.regionId));
   }, [outlets, selectedRegionScopeIds]);
 
   const payrollRoster = useMemo(
-    () =>
-      buildContractDrivenPayrollRoster({
-        users,
-        scopes: authScopes,
-        contracts,
-        outletsById,
-        selectedRegionCodes,
-      }),
+    () => buildContractDrivenPayrollRoster({ users, scopes: authScopes, contracts, outletsById, selectedRegionCodes }),
     [authScopes, contracts, outletsById, selectedRegionCodes, users],
   );
 
   const contractsByUserId = useMemo(
-    () => new Map(payrollRoster.map((entry) => [entry.userId, entry.contract])),
+    () => new Map(payrollRoster.map((e) => [e.userId, e.contract])),
     [payrollRoster],
   );
 
   const selectedEmployee = useMemo(
-    () => payrollRoster.find((entry) => entry.userId === timesheetForm.userId),
+    () => payrollRoster.find((e) => e.userId === timesheetForm.userId),
     [payrollRoster, timesheetForm.userId],
   );
 
   const runsByTimesheetId = useMemo(
-    () =>
-      new Map(
-        runs
-          .filter((run) => normalizeValue(run.payrollTimesheetId))
-          .map((run) => [String(run.payrollTimesheetId), run]),
-      ),
+    () => new Map(runs.filter((r) => normalizeValue(r.payrollTimesheetId)).map((r) => [String(r.payrollTimesheetId), r])),
     [runs],
   );
 
   const availableRunTimesheets = useMemo(
-    () =>
-      timesheets
-        .filter((timesheet) => !runsByTimesheetId.has(String(timesheet.id)))
-        .sort((left, right) => normalizeValue(left.userId).localeCompare(normalizeValue(right.userId))),
+    () => timesheets.filter((ts) => !runsByTimesheetId.has(String(ts.id))).sort((a, b) => normalizeValue(a.userId).localeCompare(normalizeValue(b.userId))),
     [runsByTimesheetId, timesheets],
   );
 
   const selectedRunSource = useMemo(
-    () => timesheets.find((timesheet) => timesheet.id === runForm.payrollTimesheetId) ?? null,
+    () => timesheets.find((ts) => ts.id === runForm.payrollTimesheetId) ?? null,
     [runForm.payrollTimesheetId, timesheets],
   );
 
@@ -330,48 +589,27 @@ export function PayrollPrepWorkspace({
   );
 
   const timesheetRows = useMemo(
-    () =>
-      timesheets
-        .map((timesheet) => ({
-          timesheet,
-          run: runsByTimesheetId.get(String(timesheet.id)),
-        }))
-        .sort((left, right) => normalizeValue(left.timesheet.userId).localeCompare(normalizeValue(right.timesheet.userId))),
+    () => timesheets.map((ts) => ({ ts, run: runsByTimesheetId.get(String(ts.id)) })).sort((a, b) => normalizeValue(a.ts.userId).localeCompare(normalizeValue(b.ts.userId))),
     [runsByTimesheetId, timesheets],
   );
 
-  const summary = useMemo(() => {
-    const draftRuns = runs.filter((run) => normalizeValue(run.status).toLowerCase() === 'draft').length;
-    const approvedRuns = runs.filter((run) => normalizeValue(run.status).toLowerCase() === 'approved').length;
-    return {
-      rosterCount: payrollRoster.length,
-      timesheetCount: timesheets.length,
-      draftRuns,
-      approvedRuns,
-    };
-  }, [payrollRoster.length, runs, timesheets.length]);
+  const summary = useMemo(() => ({
+    rosterCount: payrollRoster.length,
+    timesheetCount: timesheets.length,
+    draftRuns: runs.filter((r) => normalizeValue(r.status).toLowerCase() === 'draft').length,
+    approvedRuns: runs.filter((r) => normalizeValue(r.status).toLowerCase() === 'approved').length,
+  }), [payrollRoster.length, runs, timesheets.length]);
 
+  /* ---- loaders ---- */
   const loadDirectory = useCallback(async () => {
     setDirectoryLoading(true);
     setDirectoryError('');
     try {
-      const [scopeItems, activeContracts] = await Promise.all([
-        collectPagedItems<AuthScopeView, AuthScopesQuery>(
-          (query) => authApi.scopes(token, query),
-          {
-            status: 'active',
-            sortBy: 'username',
-            sortDir: 'asc',
-          },
-          200,
-        ),
-        hrApi.contractsActive(token),
-      ]);
-      setAuthScopes(scopeItems);
-      setContracts(activeContracts || []);
+      const active = await hrApi.contractsActive(token);
+      setContracts(active || []);
+      setAuthScopes([]);
     } catch (error: unknown) {
-      console.error('Payroll prep directory load failed', error);
-      setDirectoryError(getErrorMessage(error, 'Unable to load payroll prep roster'));
+      setDirectoryError(getErrorMessage(error, 'Unable to load roster'));
     } finally {
       setDirectoryLoading(false);
     }
@@ -382,22 +620,12 @@ export function PayrollPrepWorkspace({
     setPeriodsError('');
     try {
       const items = await collectPagedItems<PayrollPeriodView, PayrollPeriodsQuery>(
-        (query) => payrollApi.periods(token, query),
-        {
-          regionId: inferredRegionId || undefined,
-          sortBy: 'startDate',
-          sortDir: 'desc',
-        },
+        (q) => payrollApi.periods(token, q),
+        { regionId: inferredRegionId || undefined, sortBy: 'startDate', sortDir: 'desc' },
       );
       setPeriods(items);
-      setSelectedPeriodId((current) => {
-        if (current && items.some((period) => period.id === current)) {
-          return current;
-        }
-        return items[0]?.id || '';
-      });
+      setSelectedPeriodId((cur) => (cur && items.some((p) => p.id === cur)) ? cur : (items[0]?.id || ''));
     } catch (error: unknown) {
-      console.error('Payroll prep period load failed', error);
       setPeriods([]);
       setSelectedPeriodId('');
       setPeriodsError(getErrorMessage(error, 'Unable to load payroll periods'));
@@ -407,134 +635,96 @@ export function PayrollPrepWorkspace({
   }, [inferredRegionId, token]);
 
   const loadWorkspace = useCallback(async () => {
-    if (!selectedPeriodId) {
-      setTimesheets([]);
-      setRuns([]);
-      setWorkspaceError('');
-      return;
-    }
+    if (!selectedPeriodId) { setTimesheets([]); setRuns([]); return; }
     setWorkspaceLoading(true);
     setWorkspaceError('');
     try {
-      const [timesheetItems, runItems] = await Promise.all([
+      const [tsItems, runItems] = await Promise.all([
         collectPagedItems<PayrollTimesheetView, PayrollTimesheetsQuery>(
-          (query) => payrollApi.timesheets(token, query),
-          {
-            payrollPeriodId: selectedPeriodId,
-            outletId: scopeOutletId || undefined,
-            sortBy: 'userId',
-            sortDir: 'asc',
-          },
+          (q) => payrollApi.timesheets(token, q),
+          { payrollPeriodId: selectedPeriodId, outletId: scopeOutletId || undefined, sortBy: 'userId', sortDir: 'asc' },
         ),
         collectPagedItems<PayrollRunView, PayrollRunsQuery>(
-          (query) => payrollApi.runs(token, query),
-          {
-            payrollPeriodId: selectedPeriodId,
-            outletId: scopeOutletId || undefined,
-            sortBy: 'userId',
-            sortDir: 'asc',
-          },
+          (q) => payrollApi.runs(token, q),
+          { payrollPeriodId: selectedPeriodId, outletId: scopeOutletId || undefined, sortBy: 'userId', sortDir: 'asc' },
         ),
       ]);
-      setTimesheets(timesheetItems);
+      setTimesheets(tsItems);
       setRuns(runItems);
     } catch (error: unknown) {
-      console.error('Payroll prep workspace load failed', error);
-      setTimesheets([]);
-      setRuns([]);
-      setWorkspaceError(getErrorMessage(error, 'Unable to load payroll prep workspace'));
+      setTimesheets([]); setRuns([]);
+      setWorkspaceError(getErrorMessage(error, 'Unable to load workspace'));
     } finally {
       setWorkspaceLoading(false);
     }
   }, [scopeOutletId, selectedPeriodId, token]);
 
-  useEffect(() => {
-    void loadDirectory();
-  }, [loadDirectory]);
+  useEffect(() => { void loadDirectory(); }, [loadDirectory]);
+  useEffect(() => { void loadPeriods(); }, [loadPeriods]);
+  useEffect(() => { void loadWorkspace(); }, [loadWorkspace]);
 
   useEffect(() => {
-    void loadPeriods();
-  }, [loadPeriods]);
-
-  useEffect(() => {
-    void loadWorkspace();
-  }, [loadWorkspace]);
-
-  useEffect(() => {
-    if (timesheetForm.userId && payrollRoster.some((entry) => entry.userId === timesheetForm.userId)) {
-      return;
-    }
-    setTimesheetForm((current) => ({
-      ...current,
-      userId: '',
-    }));
+    if (timesheetForm.userId && payrollRoster.some((e) => e.userId === timesheetForm.userId)) return;
+    setTimesheetForm((cur) => ({ ...cur, userId: '' }));
   }, [payrollRoster, timesheetForm.userId]);
 
   useEffect(() => {
     const defaultOutletId =
-      (scopeOutletId && selectedRegionOutlets.some((outlet) => outlet.id === scopeOutletId) ? scopeOutletId : '') ||
-      (selectedEmployee?.preferredOutletId && selectedRegionOutlets.some((outlet) => outlet.id === selectedEmployee.preferredOutletId)
-        ? selectedEmployee.preferredOutletId
-        : '') ||
+      (scopeOutletId && selectedRegionOutlets.some((o) => o.id === scopeOutletId) ? scopeOutletId : '') ||
+      (selectedEmployee?.preferredOutletId && selectedRegionOutlets.some((o) => o.id === selectedEmployee.preferredOutletId) ? selectedEmployee.preferredOutletId : '') ||
       '';
-    setTimesheetForm((current) => {
-      if (current.outletId && selectedRegionOutlets.some((outlet) => outlet.id === current.outletId)) {
-        return current;
-      }
-      return {
-        ...current,
-        outletId: defaultOutletId,
-      };
+    setTimesheetForm((cur) => {
+      if (cur.outletId && selectedRegionOutlets.some((o) => o.id === cur.outletId)) return cur;
+      return { ...cur, outletId: defaultOutletId };
     });
   }, [scopeOutletId, selectedEmployee?.preferredOutletId, selectedRegionOutlets]);
 
   useEffect(() => {
-    setRunForm((current) => {
-      if (
-        current.payrollTimesheetId &&
-        availableRunTimesheets.some((timesheet) => timesheet.id === current.payrollTimesheetId)
-      ) {
-        return current;
-      }
-      return {
-        ...current,
-        payrollTimesheetId: String(availableRunTimesheets[0]?.id || ''),
-      };
+    setRunForm((cur) => {
+      if (cur.payrollTimesheetId && availableRunTimesheets.some((ts) => ts.id === cur.payrollTimesheetId)) return cur;
+      return { ...cur, payrollTimesheetId: String(availableRunTimesheets[0]?.id || '') };
     });
   }, [availableRunTimesheets]);
 
   useEffect(() => {
-    setRunForm((current) => {
-      if (!selectedRunSource?.userId) {
-        return current;
-      }
-      const nextCurrency = String(selectedRunContract?.currencyCode || current.currencyCode || 'USD').toUpperCase();
-      const nextBaseSalary = selectedRunContract?.baseSalary != null ? String(selectedRunContract.baseSalary) : current.baseSalaryAmount;
-      if (current.currencyCode === nextCurrency && current.baseSalaryAmount === nextBaseSalary) {
-        return current;
-      }
-      return {
-        ...current,
-        currencyCode: nextCurrency,
-        baseSalaryAmount: nextBaseSalary,
-      };
+    setRunForm((cur) => {
+      if (!selectedRunSource?.userId) return cur;
+      const nextCurrency = String(selectedRunContract?.currencyCode || cur.currencyCode || 'VND').toUpperCase();
+      if (cur.currencyCode === nextCurrency) return cur;
+      return { ...cur, currencyCode: nextCurrency };
     });
-  }, [selectedRunContract?.baseSalary, selectedRunContract?.currencyCode, selectedRunSource?.userId]);
+    setSalaryCalc(null);
+  }, [selectedRunContract?.currencyCode, selectedRunSource?.userId]);
 
+  // Auto-calculate salary when a timesheet is selected
+  useEffect(() => {
+    if (!runForm.payrollTimesheetId || !runForm.currencyCode) { setSalaryCalc(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await payrollApi.calculateSalary(token, {
+          timesheetId: runForm.payrollTimesheetId,
+          currencyCode: runForm.currencyCode,
+        });
+        if (!cancelled) {
+          setSalaryCalc(result);
+          setRunForm((cur) => ({
+            ...cur,
+            baseSalaryAmount: result.baseSalaryAmount != null ? String(result.baseSalaryAmount) : cur.baseSalaryAmount,
+            netSalary: result.netSalary != null ? String(result.netSalary) : cur.netSalary,
+          }));
+        }
+      } catch {
+        if (!cancelled) setSalaryCalc(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [runForm.payrollTimesheetId, runForm.currencyCode, token]);
+
+  /* ---- actions ---- */
   const createPeriod = async () => {
-    if (!periodForm.regionId || !periodForm.startDate || !periodForm.endDate) {
-      toast.error('Region and payroll window are required');
-      return;
-    }
-    if (periodForm.endDate < periodForm.startDate) {
-      toast.error('End date must be on or after start date');
-      return;
-    }
-    if (periodForm.payDate && periodForm.payDate < periodForm.endDate) {
-      toast.error('Pay date must be on or after the end date');
-      return;
-    }
-
+    if (!periodForm.regionId || !periodForm.startDate || !periodForm.endDate) { toast.error('Region and dates are required'); return; }
+    if (periodForm.endDate < periodForm.startDate) { toast.error('End date must be after start date'); return; }
     setBusyKey('create-period');
     try {
       await payrollApi.createPeriod(token, {
@@ -550,26 +740,16 @@ export function PayrollPrepWorkspace({
       setPeriodForm(buildDefaultPeriodForm(periodForm.regionId));
       await loadPeriods();
     } catch (error: unknown) {
-      toast.error(getErrorMessage(error, 'Unable to create payroll period'));
+      toast.error(getErrorMessage(error, 'Unable to create period'));
     } finally {
       setBusyKey('');
     }
   };
 
   const createTimesheet = async () => {
-    if (!selectedPeriod) {
-      toast.error('Choose a payroll period first');
-      return;
-    }
-    if (!timesheetForm.userId) {
-      toast.error('Select an employee from the active contract roster');
-      return;
-    }
-    if (!timesheetForm.outletId) {
-      toast.error('Select an outlet before creating the timesheet');
-      return;
-    }
-
+    if (!selectedPeriod) { toast.error('Choose a payroll period first'); return; }
+    if (!timesheetForm.userId) { toast.error('Select an employee'); return; }
+    if (!timesheetForm.outletId) { toast.error('Select an outlet'); return; }
     setBusyKey('create-timesheet');
     try {
       await payrollApi.createTimesheet(token, {
@@ -583,30 +763,20 @@ export function PayrollPrepWorkspace({
         lateCount: Math.max(0, Math.trunc(toNumber(timesheetForm.lateCount))),
         absentDays: toNumber(timesheetForm.absentDays),
       });
-      toast.success('Timesheet logged');
+      toast.success('Timesheet saved');
       setTimesheetForm(buildDefaultTimesheetForm(timesheetForm.outletId));
       await loadWorkspace();
     } catch (error: unknown) {
-      toast.error(getErrorMessage(error, 'Unable to create timesheet'));
+      toast.error(getErrorMessage(error, 'Unable to save timesheet'));
     } finally {
       setBusyKey('');
     }
   };
 
   const importFromAttendance = async () => {
-    if (!selectedPeriod) {
-      toast.error('Choose a payroll period first');
-      return;
-    }
-    if (!timesheetForm.userId) {
-      toast.error('Select an employee from the active contract roster');
-      return;
-    }
-    if (!timesheetForm.outletId) {
-      toast.error('Select an outlet before importing attendance');
-      return;
-    }
-
+    if (!selectedPeriod) { toast.error('Choose a payroll period first'); return; }
+    if (!timesheetForm.userId) { toast.error('Select an employee'); return; }
+    if (!timesheetForm.outletId) { toast.error('Select an outlet'); return; }
     setBusyKey('import-timesheet');
     try {
       await payrollApi.importFromAttendance(token, {
@@ -626,616 +796,632 @@ export function PayrollPrepWorkspace({
   };
 
   const generateRun = async () => {
-    if (!runForm.payrollTimesheetId) {
-      toast.error('Select a timesheet first');
-      return;
-    }
-    if (toNumber(runForm.baseSalaryAmount) <= 0) {
-      toast.error('Base salary must be greater than zero');
-      return;
-    }
-    if (toNumber(runForm.netSalary) <= 0) {
-      toast.error('Net salary is still a manual input in phase 1');
-      return;
-    }
-
+    if (!runForm.payrollTimesheetId) { toast.error('Select a timesheet'); return; }
     setBusyKey('generate-run');
     try {
+      const base = runForm.baseSalaryAmount ? toNumber(runForm.baseSalaryAmount) : undefined;
+      const net = runForm.netSalary ? toNumber(runForm.netSalary) : undefined;
       await payrollApi.generateRun(token, {
         payrollTimesheetId: runForm.payrollTimesheetId,
         currencyCode: runForm.currencyCode,
-        baseSalaryAmount: toNumber(runForm.baseSalaryAmount),
-        netSalary: toNumber(runForm.netSalary),
+        baseSalaryAmount: base && base > 0 ? base : null,
+        netSalary: net && net > 0 ? net : null,
         note: runForm.note.trim() || null,
       });
-      toast.success('Draft payroll run generated');
+      toast.success('Draft run created');
       setRunForm(buildDefaultRunForm());
+      setSalaryCalc(null);
       await loadWorkspace();
     } catch (error: unknown) {
-      toast.error(getErrorMessage(error, 'Unable to generate payroll run'));
+      toast.error(getErrorMessage(error, 'Unable to generate run'));
     } finally {
       setBusyKey('');
     }
   };
 
+  const bulkGenerateAll = async () => {
+    if (availableRunTimesheets.length === 0) { toast.success('All timesheets already have runs'); return; }
+    setBulkProgress({ total: availableRunTimesheets.length, done: 0, failed: 0 });
+    let done = 0; let failed = 0;
+    for (const ts of availableRunTimesheets) {
+      const contract = contractsByUserId.get(String(ts.userId));
+      const currency = String(contract?.currencyCode || 'VND').toUpperCase();
+      try {
+        await payrollApi.generateRun(token, {
+          payrollTimesheetId: String(ts.id),
+          currencyCode: currency,
+          baseSalaryAmount: null,
+          netSalary: null,
+          note: null,
+        });
+        done += 1;
+      } catch { failed += 1; }
+      setBulkProgress({ total: availableRunTimesheets.length, done: done + failed, failed });
+    }
+    setBulkProgress(null);
+    if (done > 0) toast.success(`${done} draft run(s) generated`);
+    if (failed > 0) toast.error(`${failed} failed — employees may be missing active contracts`);
+    await loadWorkspace();
+  };
+
+  const bulkImportAll = async () => {
+    if (!selectedPeriodId || payrollRoster.length === 0) return;
+    const toImport = payrollRoster.filter((e) => !timesheets.some((ts) => normalizeValue(ts.userId) === e.userId));
+    if (toImport.length === 0) { toast.success('All employees already have timesheets'); setPrepStep(2); return; }
+    setBulkProgress({ total: toImport.length, done: 0, failed: 0 });
+    let done = 0; let failed = 0;
+    for (const entry of toImport) {
+      try {
+        await payrollApi.importFromAttendance(token, {
+          payrollPeriodId: selectedPeriodId,
+          userId: entry.userId,
+          outletId: entry.preferredOutletId || undefined,
+          overtimeRate: 1.5,
+        });
+        done += 1;
+      } catch { failed += 1; }
+      setBulkProgress({ total: toImport.length, done: done + failed, failed });
+    }
+    setBulkProgress(null);
+    if (done > 0) toast.success(`${done} timesheet(s) imported`);
+    if (failed > 0) toast.error(`${failed} failed`);
+    await loadWorkspace();
+    setPrepStep(2);
+  };
+
+  /* ================================================================== */
+  /*  RENDER                                                              */
+  /* ================================================================== */
+
+  const STEPS = [
+    { step: 1 as const, label: 'Import Attendance', icon: Clock },
+    { step: 2 as const, label: 'Review Timesheets', icon: FileText },
+    { step: 3 as const, label: 'Generate Runs', icon: Sparkles },
+  ];
+
   return (
     <>
-      <div className="grid gap-5 xl:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="surface-elevated overflow-hidden">
-          <div className="border-b px-5 py-4">
-            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-              <Calendar className="h-3.5 w-3.5" />
-              <span>Payroll windows</span>
+      <div className="grid h-full xl:grid-cols-[260px_minmax(0,1fr)]">
+        {/* ── Sidebar: period list ── */}
+        <aside className="surface-elevated flex flex-col overflow-hidden border-r">
+          <div className="border-b px-4 py-4">
+            <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Payroll Windows</p>
+            <div className="mt-3 flex gap-2">
+              <button
+                onClick={() => setPeriodDialogOpen(true)}
+                className="inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                New period
+              </button>
+              <button
+                onClick={() => { void loadDirectory(); void loadPeriods(); void loadWorkspace(); }}
+                disabled={directoryLoading || periodsLoading || workspaceLoading}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border hover:bg-accent disabled:opacity-50"
+              >
+                <RefreshCw className={cn('h-3.5 w-3.5', (directoryLoading || periodsLoading || workspaceLoading) && 'animate-spin')} />
+              </button>
             </div>
-            <h3 className="mt-2 text-lg font-semibold">Payroll prep</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Build labor input from active contracts, then create draft payroll runs for Finance to review.
-            </p>
           </div>
 
-          {periodsError ? <p className="border-b px-5 py-3 text-xs text-destructive">{periodsError}</p> : null}
+          {periodsError ? <p className="border-b px-4 py-2 text-xs text-destructive">{periodsError}</p> : null}
 
-          <div className="flex items-center gap-2 border-b px-5 py-3">
-            <button
-              onClick={() => setPeriodDialogOpen(true)}
-              className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              New period
-            </button>
-            <button
-              onClick={() => {
-                void loadDirectory();
-                void loadPeriods();
-                void loadWorkspace();
-              }}
-              disabled={directoryLoading || periodsLoading || workspaceLoading}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
-            >
-              <RefreshCw className={cn('h-3.5 w-3.5', directoryLoading || periodsLoading || workspaceLoading ? 'animate-spin' : '')} />
-              Refresh
-            </button>
+          <div className="flex-1 overflow-y-auto">
+            {periodsLoading && periods.length === 0 ? (
+              <p className="px-4 py-8 text-center text-xs text-muted-foreground">Loading…</p>
+            ) : periods.length === 0 ? (
+              <p className="px-4 py-8 text-center text-xs text-muted-foreground">No payroll windows yet</p>
+            ) : periods.map((period) => {
+              const state = inferPeriodWindowState(period);
+              const active = period.id === selectedPeriodId;
+              return (
+                <button
+                  key={period.id}
+                  type="button"
+                  onClick={() => setSelectedPeriodId(period.id)}
+                  className={cn(
+                    'w-full border-b px-4 py-3.5 text-left transition-colors hover:bg-accent/30',
+                    active ? 'bg-primary/5 border-l-2 border-l-primary' : '',
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-semibold leading-snug">
+                        {buildPeriodHeadline(period, getRegionName(regionsById, period.regionId))}
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">{formatDateRange(period.startDate, period.endDate)}</p>
+                      {period.payDate ? <p className="mt-0.5 text-[10px] text-muted-foreground">Pay {formatDate(period.payDate)}</p> : null}
+                    </div>
+                    <span className={cn('mt-0.5 shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-medium', periodWindowBadgeClass(state))}>
+                      {periodWindowLabel(state)}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
           </div>
+        </aside>
 
-          {periodsLoading && periods.length === 0 ? (
-            <div className="px-5 py-10 text-sm text-muted-foreground">Loading payroll windows…</div>
-          ) : periods.length === 0 ? (
-            <div className="px-5 py-10">
+        {/* ── Main content ── */}
+        <section className="flex flex-col overflow-hidden">
+          {!selectedPeriod ? (
+            <div className="flex flex-1 items-center justify-center px-8 py-16">
               <EmptyState
-                title="No payroll windows in scope"
-                description="Create a payroll period before importing attendance or generating draft payroll runs."
+                title="Select a payroll window"
+                description="Choose a period from the left panel to begin preparing payroll."
               />
             </div>
           ) : (
-            <div className="max-h-[calc(100vh-20rem)] overflow-y-auto">
-              {periods.map((period) => {
-                const state = inferPeriodWindowState(period);
-                const selected = period.id === selectedPeriodId;
-                return (
-                  <button
-                    key={period.id}
-                    type="button"
-                    onClick={() => setSelectedPeriodId(period.id)}
-                    className={cn(
-                      'w-full border-b px-5 py-4 text-left transition-colors hover:bg-accent/30',
-                      selected ? 'bg-accent/40' : 'bg-background',
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">
-                          {buildPeriodHeadline(period, getRegionName(regionsById, period.regionId))}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">{formatDateRange(period.startDate, period.endDate)}</p>
-                        <p className="mt-1 text-[11px] text-muted-foreground">Pay date {formatDate(period.payDate)}</p>
-                      </div>
-                      <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium', periodWindowBadgeClass(state))}>
-                        {periodWindowLabel(state)}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </aside>
-
-        <section className="space-y-5">
-          {selectedPeriod ? (
             <>
-              <div className="surface-elevated overflow-hidden">
-                <div className="border-b px-5 py-5">
-                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                    <div>
-                      <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                        <Sparkles className="h-3.5 w-3.5" />
-                        <span>Preparation desk</span>
-                      </div>
-                      <h3 className="mt-2 text-2xl font-semibold tracking-tight">
-                        {buildPeriodHeadline(selectedPeriod, selectedRegionName)}
-                      </h3>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        This is the only workspace that prepares payroll in phase 1. Finance approves later; salary values remain manual inputs until backend calculation moves server-side.
-                      </p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <span className={cn('inline-flex rounded-full border px-2.5 py-1 text-[11px] font-medium', periodWindowBadgeClass(inferPeriodWindowState(selectedPeriod)))}>
-                          {periodWindowLabel(inferPeriodWindowState(selectedPeriod))}
-                        </span>
-                        <span className="inline-flex rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-                          {selectedRegionName}
-                        </span>
-                        <span className="inline-flex rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-                          {formatDateRange(selectedPeriod.startDate, selectedPeriod.endDate)}
-                        </span>
-                      </div>
+              {/* Period header */}
+              <div className="border-b px-6 py-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', periodWindowBadgeClass(inferPeriodWindowState(selectedPeriod)))}>
+                        {periodWindowLabel(inferPeriodWindowState(selectedPeriod))}
+                      </span>
+                      <span className="text-xs text-muted-foreground">{selectedRegionName}</span>
+                      <span className="text-xs text-muted-foreground">{formatDateRange(selectedPeriod.startDate, selectedPeriod.endDate)}</span>
                     </div>
-
-                    <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
-                      <span>{summary.rosterCount} rostered</span>
-                      <span>·</span>
-                      <span>{summary.timesheetCount} timesheets</span>
-                      <span>·</span>
-                      <span>{summary.draftRuns} draft runs</span>
-                      <span>·</span>
-                      <span>{summary.approvedRuns} approved</span>
-                    </div>
+                    <h2 className="mt-1 text-xl font-semibold tracking-tight">
+                      {buildPeriodHeadline(selectedPeriod, selectedRegionName)}
+                    </h2>
+                  </div>
+                  {/* Summary chips */}
+                  <div className="flex flex-wrap gap-3">
+                    {[
+                      { label: 'Rostered', value: summary.rosterCount },
+                      { label: 'Timesheets', value: summary.timesheetCount },
+                      { label: 'Draft runs', value: summary.draftRuns },
+                      { label: 'Approved', value: summary.approvedRuns },
+                    ].map((chip) => (
+                      <div key={chip.label} className="rounded-lg border bg-background px-3 py-1.5 text-center">
+                        <p className="text-base font-semibold leading-tight">{chip.value}</p>
+                        <p className="text-[10px] text-muted-foreground">{chip.label}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
-                {directoryError ? <p className="border-b px-5 py-3 text-xs text-destructive">{directoryError}</p> : null}
-                {workspaceError ? <p className="border-b px-5 py-3 text-xs text-destructive">{workspaceError}</p> : null}
+                {directoryError ? <p className="mt-2 text-xs text-destructive">{directoryError}</p> : null}
+                {workspaceError ? <p className="mt-2 text-xs text-destructive">{workspaceError}</p> : null}
+              </div>
 
-                <div className="grid gap-5 px-5 py-5 xl:grid-cols-2">
-                  <section className="space-y-4">
-                    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                      <Users className="h-3.5 w-3.5" />
-                      <span>Timesheet capture</span>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="md:col-span-2">
-                        <label className="text-xs text-muted-foreground">Employee from active contracts</label>
-                        <select
-                          value={timesheetForm.userId}
-                          onChange={(event) => setTimesheetForm((current) => ({ ...current, userId: event.target.value }))}
-                          className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        >
-                          <option value="">Select employee</option>
-                          {payrollRoster.map((entry) => (
-                            <option key={entry.userId} value={entry.userId}>
-                              {entry.fullName}{entry.employeeCode ? ` · ${entry.employeeCode}` : ''}
-                            </option>
-                          ))}
-                        </select>
-                        <p className="mt-1 text-[11px] text-muted-foreground">
-                          Only employees with an active HR contract in scope appear here.
+              {/* Step bar */}
+              <div className="flex items-center gap-0 border-b bg-muted/20 px-6 py-0">
+                {STEPS.map((s, i) => {
+                  const done = prepStep > s.step;
+                  const active = prepStep === s.step;
+                  return (
+                    <button
+                      key={s.step}
+                      onClick={() => setPrepStep(s.step)}
+                      className={cn(
+                        'flex items-center gap-2 border-b-2 px-4 py-3 text-xs font-medium transition-colors',
+                        active ? 'border-primary text-primary' : done ? 'border-transparent text-emerald-600' : 'border-transparent text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {done ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                      ) : (
+                        <span className={cn('flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold', active ? 'bg-primary text-primary-foreground' : 'bg-muted-foreground/20 text-muted-foreground')}>
+                          {s.step}
+                        </span>
+                      )}
+                      {s.label}
+                      {i < STEPS.length - 1 ? <span className="ml-4 text-muted-foreground/30">›</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* ── STEP 1: Import Attendance ── */}
+              {prepStep === 1 ? (
+                <div className="flex-1 overflow-y-auto">
+                  <div className="px-6 py-5 space-y-4">
+                    {/* Action bar */}
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold">Import attendance data</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {timesheets.length > 0
+                            ? `${timesheets.length} of ${payrollRoster.length} employees have timesheets`
+                            : `${payrollRoster.length} employees in this period`}
                         </p>
                       </div>
-
-                      <div className="md:col-span-2">
-                        <label className="text-xs text-muted-foreground">Outlet</label>
-                        <select
-                          value={timesheetForm.outletId}
-                          onChange={(event) => setTimesheetForm((current) => ({ ...current, outletId: event.target.value }))}
-                          className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => void bulkImportAll()}
+                          disabled={!!bulkProgress || payrollRoster.length === 0}
+                          className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                         >
-                          <option value="">Select outlet</option>
-                          {selectedRegionOutlets.map((outlet) => (
-                            <option key={outlet.id} value={outlet.id}>
-                              {outlet.code} · {outlet.name}
-                            </option>
-                          ))}
-                        </select>
-                        <p className="mt-1 text-[11px] text-muted-foreground">
-                          Outlet is required in phase 1 so approved payroll can materialize into the finance ledger.
-                        </p>
-                      </div>
-
-                      <div>
-                        <label className="text-xs text-muted-foreground">Work days</label>
-                        <input
-                          type="number"
-                          value={timesheetForm.workDays}
-                          onChange={(event) => setTimesheetForm((current) => ({ ...current, workDays: event.target.value }))}
-                          className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-muted-foreground">Work hours</label>
-                        <input
-                          type="number"
-                          value={timesheetForm.workHours}
-                          onChange={(event) => setTimesheetForm((current) => ({ ...current, workHours: event.target.value }))}
-                          className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-muted-foreground">Overtime hours</label>
-                        <input
-                          type="number"
-                          value={timesheetForm.overtimeHours}
-                          onChange={(event) => setTimesheetForm((current) => ({ ...current, overtimeHours: event.target.value }))}
-                          className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-muted-foreground">Overtime rate</label>
-                        <input
-                          type="number"
-                          value={timesheetForm.overtimeRate}
-                          onChange={(event) => setTimesheetForm((current) => ({ ...current, overtimeRate: event.target.value }))}
-                          className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-muted-foreground">Late count</label>
-                        <input
-                          type="number"
-                          value={timesheetForm.lateCount}
-                          onChange={(event) => setTimesheetForm((current) => ({ ...current, lateCount: event.target.value }))}
-                          className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-muted-foreground">Absent days</label>
-                        <input
-                          type="number"
-                          value={timesheetForm.absentDays}
-                          onChange={(event) => setTimesheetForm((current) => ({ ...current, absentDays: event.target.value }))}
-                          className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        />
+                          <Clock className="h-3.5 w-3.5" />
+                          {bulkProgress ? `Importing ${bulkProgress.done}/${bulkProgress.total}…` : 'Import All from Attendance'}
+                        </button>
+                        <button
+                          onClick={() => setPrepStep(2)}
+                          className="inline-flex h-9 items-center gap-2 rounded-md border px-4 text-sm font-medium hover:bg-accent"
+                        >
+                          Enter manually
+                        </button>
                       </div>
                     </div>
 
-                    {selectedEmployee ? (
-                      <div className="rounded-xl border border-border bg-background/70 px-4 py-3 text-sm">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium">{selectedEmployee.fullName}</span>
-                          <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium', contractBadgeClass(selectedEmployee.contract.status))}>
-                            {formatHrEnumLabel(selectedEmployee.contract.status)}
-                          </span>
+                    {/* Progress bar */}
+                    {bulkProgress ? (
+                      <div className="space-y-1">
+                        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className="h-full bg-primary rounded-full transition-all"
+                            style={{ width: `${(bulkProgress.done / bulkProgress.total) * 100}%` }}
+                          />
                         </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {selectedEmployee.employeeCode || selectedEmployee.contract.employmentType || 'Contract roster'}
-                          {selectedEmployee.outletLabels.length > 0 ? ` · ${selectedEmployee.outletLabels.join(', ')}` : ''}
+                        <p className="text-[11px] text-muted-foreground">
+                          {bulkProgress.done}/{bulkProgress.total} processed
+                          {bulkProgress.failed > 0 ? ` · ${bulkProgress.failed} failed` : ''}
                         </p>
                       </div>
                     ) : null}
 
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() => void importFromAttendance()}
-                        disabled={busyKey === 'import-timesheet' || !selectedPeriod}
-                        className="inline-flex h-10 items-center gap-2 rounded-md border border-border px-4 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
-                      >
-                        <Clock className="h-4 w-4" />
-                        {busyKey === 'import-timesheet' ? 'Importing…' : 'Import attendance'}
-                      </button>
-                      <button
-                        onClick={() => void createTimesheet()}
-                        disabled={busyKey === 'create-timesheet' || !selectedPeriod}
-                        className="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
-                      >
-                        <FileText className="h-4 w-4" />
-                        {busyKey === 'create-timesheet' ? 'Saving…' : 'Log manual timesheet'}
-                      </button>
-                    </div>
-                  </section>
-
-                  <section className="space-y-4">
-                    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                      <Sparkles className="h-3.5 w-3.5" />
-                      <span>Draft run generator</span>
-                    </div>
-                    <div className="grid gap-3">
-                      <div>
-                        <label className="text-xs text-muted-foreground">Timesheet without run</label>
-                        <select
-                          value={runForm.payrollTimesheetId}
-                          onChange={(event) => setRunForm((current) => ({ ...current, payrollTimesheetId: event.target.value }))}
-                          className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        >
-                          <option value="">Select timesheet</option>
-                          {availableRunTimesheets.map((timesheet) => {
-                            const userDisplay = getHrUserDisplay(usersById, timesheet.userId);
+                    {/* Roster table */}
+                    <div className="rounded-lg border overflow-hidden">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b bg-muted/40">
+                            <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Employee</th>
+                            <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Code</th>
+                            <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Outlet</th>
+                            <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Contract type</th>
+                            <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Timesheet</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {payrollRoster.length === 0 ? (
+                            <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-muted-foreground">No employees in roster for this period</td></tr>
+                          ) : payrollRoster.map((entry) => {
+                            const has = timesheets.some((ts) => normalizeValue(ts.userId) === entry.userId);
                             return (
-                              <option key={timesheet.id} value={timesheet.id}>
-                                {userDisplay.primary} · {toNumber(timesheet.workHours).toFixed(2)} hrs
-                              </option>
+                              <tr key={entry.userId} className="border-b last:border-0 hover:bg-muted/20">
+                                <td className="px-4 py-2.5 text-sm font-medium">{entry.fullName}</td>
+                                <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{entry.employeeCode || '—'}</td>
+                                <td className="px-4 py-2.5 text-xs text-muted-foreground">{entry.outletLabels[0] || '—'}</td>
+                                <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatHrEnumLabel(entry.contract.employmentType)}</td>
+                                <td className="px-4 py-2.5">
+                                  {has ? (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200">
+                                      <CheckCircle2 className="h-3 w-3" /> Imported
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground border">
+                                      Pending
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
                             );
                           })}
-                        </select>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => setPrepStep(2)}
+                        className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                      >
+                        Next: Review Timesheets →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ── STEP 2: Review Timesheets ── */}
+              {prepStep === 2 ? (
+                <Step2ReviewTimesheets
+                  timesheetRows={timesheetRows}
+                  payrollRoster={payrollRoster}
+                  timesheets={timesheets}
+                  workspaceLoading={workspaceLoading}
+                  busyKey={busyKey}
+                  selectedPeriod={selectedPeriod}
+                  timesheetForm={timesheetForm}
+                  setTimesheetForm={setTimesheetForm}
+                  selectedEmployee={selectedEmployee}
+                  selectedRegionOutlets={selectedRegionOutlets}
+                  usersById={usersById}
+                  outletsById={outletsById}
+                  summary={summary}
+                  createTimesheet={createTimesheet}
+                  importFromAttendance={importFromAttendance}
+                  onNext={() => setPrepStep(3)}
+                />
+              ) : null}
+
+              {/* ── STEP 3: Generate Runs ── */}
+              {prepStep === 3 ? (
+                <div className="flex-1 overflow-y-auto">
+                  <div className="grid xl:grid-cols-[380px_minmax(0,1fr)] h-full divide-x">
+                    {/* Left: generate run form */}
+                    <div className="px-5 py-5 space-y-4 overflow-y-auto">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold">Generate draft run</h3>
+                        <button
+                          onClick={() => void bulkGenerateAll()}
+                          disabled={!!bulkProgress || availableRunTimesheets.length === 0}
+                          className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                        >
+                          <Sparkles className="h-3 w-3" />
+                          {bulkProgress ? `${bulkProgress.done}/${bulkProgress.total}…` : `Generate All (${availableRunTimesheets.length})`}
+                        </button>
                       </div>
 
-                      {selectedRunSource ? (
-                        <div className="rounded-xl border border-border bg-background/70 px-4 py-3 text-sm">
-                          <p className="font-medium">{getHrUserDisplay(usersById, selectedRunSource.userId).primary}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {getHrOutletDisplay(outletsById, selectedRunSource.outletId).primary}
-                            {' · '}
-                            {toNumber(selectedRunSource.workHours).toFixed(2)} hrs
-                            {' · '}
-                            {toNumber(selectedRunSource.overtimeHours).toFixed(2)} OT
+                      {bulkProgress ? (
+                        <div className="space-y-1">
+                          <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                            <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${(bulkProgress.done / bulkProgress.total) * 100}%` }} />
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            {bulkProgress.done}/{bulkProgress.total} processed{bulkProgress.failed > 0 ? ` · ${bulkProgress.failed} failed` : ''}
                           </p>
                         </div>
                       ) : null}
 
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <div>
-                          <label className="text-xs text-muted-foreground">Currency</label>
-                          <input
-                            value={runForm.currencyCode}
-                            onChange={(event) => setRunForm((current) => ({ ...current, currencyCode: event.target.value.toUpperCase() }))}
-                            className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-muted-foreground">Base salary</label>
-                          <input
-                            type="number"
-                            value={runForm.baseSalaryAmount}
-                            onChange={(event) => setRunForm((current) => ({ ...current, baseSalaryAmount: event.target.value }))}
-                            className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                          />
-                        </div>
-                        <div className="md:col-span-2">
-                          <label className="text-xs text-muted-foreground">Net salary</label>
-                          <input
-                            type="number"
-                            value={runForm.netSalary}
-                            onChange={(event) => setRunForm((current) => ({ ...current, netSalary: event.target.value }))}
-                            className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                          />
-                        </div>
-                        <div className="md:col-span-2">
-                          <label className="text-xs text-muted-foreground">Run note</label>
-                          <textarea
-                            value={runForm.note}
-                            onChange={(event) => setRunForm((current) => ({ ...current, note: event.target.value }))}
-                            className="mt-1 min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            placeholder="Optional note for Finance"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-xs text-blue-900">
-                        Base salary is prefilled from the active contract when available. Net salary is still a manual input in phase 1 because backend payroll calculation has not moved server-side yet.
-                      </div>
-
-                      <div>
-                        <button
-                          onClick={() => void generateRun()}
-                          disabled={busyKey === 'generate-run' || !selectedPeriod}
-                          className="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+                      <Field label="Timesheet (no run yet)">
+                        <select
+                          value={runForm.payrollTimesheetId}
+                          onChange={(e) => setRunForm((c) => ({ ...c, payrollTimesheetId: e.target.value }))}
+                          className={inputCls}
                         >
-                          <Sparkles className="h-4 w-4" />
-                          {busyKey === 'generate-run' ? 'Generating…' : 'Generate draft run'}
-                        </button>
-                      </div>
-                    </div>
-                  </section>
-                </div>
-              </div>
+                          <option value="">Select timesheet</option>
+                          {availableRunTimesheets.map((ts) => {
+                            const user = getHrUserDisplay(usersById, ts.userId);
+                            return (
+                              <option key={ts.id} value={ts.id}>
+                                {user.primary} · {toNumber(ts.workHours).toFixed(1)} hrs
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </Field>
 
-              <div className="grid gap-5 xl:grid-cols-2">
-                <section className="surface-elevated overflow-hidden">
-                  <div className="border-b px-5 py-4">
-                    <h4 className="text-sm font-semibold">Timesheets in this period</h4>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Each timesheet can create at most one payroll run. Once a draft exists, Finance takes over approval.
-                    </p>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b bg-muted/30">
-                          {['Employee', 'Outlet', 'Labor input', 'Run link'].map((header) => (
-                            <th key={header} className="px-4 py-2.5 text-left text-[11px]">{header}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {workspaceLoading && timesheetRows.length === 0 ? (
-                          <tr>
-                            <td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                              Loading timesheets…
-                            </td>
-                          </tr>
-                        ) : timesheetRows.length === 0 ? (
-                          <tr>
-                            <td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                              No timesheets in this period yet.
-                            </td>
-                          </tr>
-                        ) : timesheetRows.map(({ timesheet, run }) => (
-                          <tr key={timesheet.id} className="border-b last:border-0">
-                            <td className="px-4 py-2.5">
-                              <div className="flex flex-col">
-                                <span className="text-xs font-medium">{getHrUserDisplay(usersById, timesheet.userId).primary}</span>
-                                <span className="text-[11px] text-muted-foreground">{getHrUserDisplay(usersById, timesheet.userId).secondary}</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-2.5">
-                              <div className="flex flex-col">
-                                <span className="text-xs font-medium">{getHrOutletDisplay(outletsById, timesheet.outletId).primary}</span>
-                                <span className="text-[11px] text-muted-foreground">{shortHrRef(timesheet.id)}</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                              {toNumber(timesheet.workHours).toFixed(2)} hrs
-                              {' · '}
-                              {toNumber(timesheet.overtimeHours).toFixed(2)} OT
-                              {' · '}
-                              {toNumber(timesheet.lateCount)} late
-                              {' · '}
-                              {toNumber(timesheet.absentDays).toFixed(2)} absent
-                            </td>
-                            <td className="px-4 py-2.5">
-                              {run ? (
-                                <div className="flex flex-col gap-1">
-                                  <span className={cn('inline-flex w-fit rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize', payrollBadgeClass(run.status))}>
-                                    {formatHrEnumLabel(run.status)}
-                                  </span>
-                                  <span className="text-[11px] text-muted-foreground">
-                                    {shortHrRef(run.id)} · {formatCurrency(run.netSalary, String(run.currencyCode || 'USD'))}
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">No run yet</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
+                      {selectedRunSource ? (
+                        <div className="rounded-lg border bg-muted/30 px-3 py-2.5 text-xs space-y-1">
+                          <p className="font-medium">{getHrUserDisplay(usersById, selectedRunSource.userId).primary}</p>
+                          <p className="text-muted-foreground">
+                            {getHrOutletDisplay(outletsById, selectedRunSource.outletId).primary}
+                          </p>
+                          <div className="flex gap-3 text-muted-foreground">
+                            <span>{toNumber(selectedRunSource.workDays)} days</span>
+                            <span>{toNumber(selectedRunSource.workHours).toFixed(1)} hrs</span>
+                            <span>{toNumber(selectedRunSource.overtimeHours).toFixed(1)} OT hrs</span>
+                          </div>
+                        </div>
+                      ) : null}
 
-                <section className="surface-elevated overflow-hidden">
-                  <div className="border-b px-5 py-4">
-                    <h4 className="text-sm font-semibold">Runs in this period</h4>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      HR can monitor state here, but Finance is the only workspace that approves draft payroll runs.
-                    </p>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b bg-muted/30">
-                          {['Run', 'Employee', 'Status', 'Net salary'].map((header) => (
-                            <th key={header} className={cn('px-4 py-2.5 text-[11px]', header === 'Net salary' ? 'text-right' : 'text-left')}>
-                              {header}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {workspaceLoading && runs.length === 0 ? (
-                          <tr>
-                            <td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                              Loading runs…
-                            </td>
-                          </tr>
-                        ) : runs.length === 0 ? (
-                          <tr>
-                            <td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                              No payroll runs in this period yet.
-                            </td>
-                          </tr>
-                        ) : runs.map((run) => (
-                          <tr key={run.id} className="border-b last:border-0">
-                            <td className="px-4 py-2.5 text-xs font-medium">{shortHrRef(run.id)}</td>
-                            <td className="px-4 py-2.5">
-                              <div className="flex flex-col">
-                                <span className="text-xs font-medium">{getHrUserDisplay(usersById, run.userId).primary}</span>
-                                <span className="text-[11px] text-muted-foreground">{getHrOutletDisplay(outletsById, run.outletId).primary}</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-2.5">
-                              <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize', payrollBadgeClass(run.status))}>
-                                {formatHrEnumLabel(run.status)}
+                      {/* Salary calculation breakdown */}
+                      {salaryCalc ? (
+                        <div className="rounded-lg border bg-background p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Auto-calculated</span>
+                            <span className="text-[10px] text-muted-foreground capitalize">
+                              {formatHrEnumLabel(salaryCalc.employmentType)} · {formatHrEnumLabel(salaryCalc.salaryType)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-muted-foreground">Base pay</span>
+                            <span className="font-mono">{formatCurrency(salaryCalc.breakdown?.basePay, salaryCalc.currencyCode || 'VND')}</span>
+                          </div>
+                          {toNumber(salaryCalc.breakdown?.overtimePay) > 0 ? (
+                            <div className="flex justify-between text-xs">
+                              <span className="text-muted-foreground">
+                                Overtime ({toNumber(salaryCalc.breakdown?.overtimeHours).toFixed(1)}h × {toNumber(salaryCalc.breakdown?.overtimeRate)}×)
                               </span>
-                            </td>
-                            <td className="px-4 py-2.5 text-right text-sm font-mono">
-                              {formatCurrency(run.netSalary, String(run.currencyCode || 'USD'))}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                              <span className="font-mono text-emerald-600">+{formatCurrency(salaryCalc.breakdown?.overtimePay, salaryCalc.currencyCode || 'VND')}</span>
+                            </div>
+                          ) : null}
+                          <div className="flex justify-between text-sm font-semibold border-t pt-1.5">
+                            <span>Net salary</span>
+                            <span className="font-mono">{formatCurrency(salaryCalc.netSalary, salaryCalc.currencyCode || 'VND')}</span>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">
+                            {salaryCalc.breakdown?.calculationMethod === 'monthly_with_overtime'
+                              ? 'Full monthly salary + overtime premium'
+                              : salaryCalc.breakdown?.calculationMethod === 'daily'
+                                ? 'Work days × daily rate'
+                                : 'Work hours × hourly rate'}
+                          </p>
+                        </div>
+                      ) : selectedRunSource ? (
+                        <p className="text-[11px] text-muted-foreground">Calculating salary…</p>
+                      ) : null}
+
+                      <Field label="Currency">
+                        <input
+                          value={runForm.currencyCode}
+                          onChange={(e) => setRunForm((c) => ({ ...c, currencyCode: e.target.value.toUpperCase() }))}
+                          className={inputCls}
+                        />
+                      </Field>
+
+                      {/* Manual override section — collapsed by default */}
+                      <details className="group">
+                        <summary className="text-[11px] text-muted-foreground cursor-pointer hover:text-foreground select-none">
+                          Override salary manually
+                        </summary>
+                        <div className="mt-2 grid grid-cols-2 gap-3">
+                          <Field label="Base salary">
+                            <input
+                              type="number"
+                              value={runForm.baseSalaryAmount}
+                              onChange={(e) => setRunForm((c) => ({ ...c, baseSalaryAmount: e.target.value }))}
+                              placeholder="Auto from contract"
+                              className={inputCls}
+                            />
+                          </Field>
+                          <Field label="Net salary">
+                            <input
+                              type="number"
+                              value={runForm.netSalary}
+                              onChange={(e) => setRunForm((c) => ({ ...c, netSalary: e.target.value }))}
+                              placeholder="Auto calculated"
+                              className={inputCls}
+                            />
+                          </Field>
+                        </div>
+                        <p className="mt-1 text-[10px] text-muted-foreground">Leave empty to auto-calculate from contract.</p>
+                      </details>
+
+                      <Field label="Note (optional)">
+                        <textarea
+                          value={runForm.note}
+                          onChange={(e) => setRunForm((c) => ({ ...c, note: e.target.value }))}
+                          rows={2}
+                          placeholder="Note for Finance"
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                      </Field>
+
+                      <button
+                        onClick={() => void generateRun()}
+                        disabled={busyKey === 'generate-run' || !selectedPeriod || !runForm.payrollTimesheetId}
+                        className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        {busyKey === 'generate-run' ? 'Generating…' : 'Generate Draft Run'}
+                      </button>
+                    </div>
+
+                    {/* Right: runs list */}
+                    <div className="flex flex-col overflow-hidden">
+                      <div className="border-b px-5 py-3 flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold">Payroll runs ({runs.length})</p>
+                          <p className="text-[11px] text-muted-foreground">{summary.draftRuns} draft · {summary.approvedRuns} approved</p>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{availableRunTimesheets.length} pending</span>
+                      </div>
+                      <div className="flex-1 overflow-y-auto">
+                        <table className="w-full">
+                          <thead className="sticky top-0 z-10">
+                            <tr className="border-b bg-background">
+                              <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Employee</th>
+                              <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Outlet</th>
+                              <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Type</th>
+                              <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Status</th>
+                              <th className="px-4 py-2.5 text-right text-[11px] font-medium text-muted-foreground">Base</th>
+                              <th className="px-4 py-2.5 text-right text-[11px] font-medium text-muted-foreground">Net salary</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {workspaceLoading && runs.length === 0 ? (
+                              <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-muted-foreground">Loading…</td></tr>
+                            ) : runs.length === 0 ? (
+                              <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-muted-foreground">No runs yet</td></tr>
+                            ) : runs.map((run) => {
+                              const runContract = contractsByUserId.get(String(run.userId));
+                              return (
+                                <tr key={run.id} className="border-b last:border-0 hover:bg-muted/20">
+                                  <td className="px-4 py-2.5">
+                                    <p className="text-xs font-medium">{getHrUserDisplay(usersById, run.userId).primary}</p>
+                                    <p className="text-[10px] text-muted-foreground">{shortHrRef(run.id)}</p>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-xs text-muted-foreground">{getHrOutletDisplay(outletsById, run.outletId).primary}</td>
+                                  <td className="px-4 py-2.5 text-[10px] text-muted-foreground capitalize">{formatHrEnumLabel(runContract?.employmentType)}</td>
+                                  <td className="px-4 py-2.5">
+                                    <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize', payrollBadgeClass(run.status))}>
+                                      {formatHrEnumLabel(run.status)}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right font-mono text-xs text-muted-foreground">
+                                    {formatCurrency(run.baseSalaryAmount, String(run.currencyCode || 'VND'))}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right font-mono text-sm font-semibold">
+                                    {formatCurrency(run.netSalary, String(run.currencyCode || 'VND'))}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      {/* Runs summary footer */}
+                      {runs.length > 0 ? (
+                        <div className="border-t px-5 py-2.5 flex items-center justify-between bg-background">
+                          <span className="text-[11px] text-muted-foreground">{runs.length} run(s)</span>
+                          <span className="text-sm font-mono font-semibold">
+                            Total: {formatCurrency(runs.reduce((s, r) => s + toNumber(r.netSalary), 0), runs[0]?.currencyCode || 'VND')}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                </section>
-              </div>
+                </div>
+              ) : null}
             </>
-          ) : (
-            <div className="surface-elevated px-5 py-10">
-              <EmptyState
-                title="Choose a payroll window"
-                description="Pick a payroll period from the left before importing labor or generating draft payroll runs."
-              />
-            </div>
           )}
         </section>
       </div>
 
+      {/* ── Create Period Dialog ── */}
       <Dialog open={periodDialogOpen} onOpenChange={setPeriodDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create payroll period</DialogTitle>
+            <DialogTitle>New payroll period</DialogTitle>
             <DialogDescription>
-              Periods anchor timesheets and draft payroll runs. Create the window here before preparing labor input.
+              Define the payroll window for a region. Timesheets and runs will be scoped to this period.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 py-2">
-            <div>
-              <label className="text-xs text-muted-foreground">Region</label>
+            <Field label="Region">
               <select
                 value={periodForm.regionId}
-                onChange={(event) => setPeriodForm((current) => ({ ...current, regionId: event.target.value }))}
-                className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                onChange={(e) => setPeriodForm((c) => ({ ...c, regionId: e.target.value }))}
+                className={inputCls}
               >
                 <option value="">Select region</option>
-                {availablePeriodRegions.map((region) => (
-                  <option key={region.id} value={region.id}>
-                    {region.name}
-                  </option>
+                {availablePeriodRegions.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
               </select>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Name</label>
+            </Field>
+            <Field label="Name (optional)">
               <input
                 value={periodForm.name}
-                onChange={(event) => setPeriodForm((current) => ({ ...current, name: event.target.value }))}
-                className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                onChange={(e) => setPeriodForm((c) => ({ ...c, name: e.target.value }))}
+                className={inputCls}
                 placeholder={`${formatMonthYear(periodForm.startDate)} ${getRegionName(regionsById, periodForm.regionId || inferredRegionId)} payroll`}
               />
+            </Field>
+            <div className="grid grid-cols-3 gap-3">
+              <Field label="Start date">
+                <input type="date" value={periodForm.startDate} onChange={(e) => setPeriodForm((c) => ({ ...c, startDate: e.target.value }))} className={inputCls} />
+              </Field>
+              <Field label="End date">
+                <input type="date" value={periodForm.endDate} onChange={(e) => setPeriodForm((c) => ({ ...c, endDate: e.target.value }))} className={inputCls} />
+              </Field>
+              <Field label="Pay date">
+                <input type="date" value={periodForm.payDate} onChange={(e) => setPeriodForm((c) => ({ ...c, payDate: e.target.value }))} className={inputCls} />
+              </Field>
             </div>
-            <div className="grid gap-3 md:grid-cols-3">
-              <div>
-                <label className="text-xs text-muted-foreground">Start date</label>
-                <input
-                  type="date"
-                  value={periodForm.startDate}
-                  onChange={(event) => setPeriodForm((current) => ({ ...current, startDate: event.target.value }))}
-                  className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground">End date</label>
-                <input
-                  type="date"
-                  value={periodForm.endDate}
-                  onChange={(event) => setPeriodForm((current) => ({ ...current, endDate: event.target.value }))}
-                  className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground">Pay date</label>
-                <input
-                  type="date"
-                  value={periodForm.payDate}
-                  onChange={(event) => setPeriodForm((current) => ({ ...current, payDate: event.target.value }))}
-                  className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Note</label>
+            <Field label="Note">
               <textarea
                 value={periodForm.note}
-                onChange={(event) => setPeriodForm((current) => ({ ...current, note: event.target.value }))}
-                className="mt-1 min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                placeholder="Optional note for this payroll window"
+                onChange={(e) => setPeriodForm((c) => ({ ...c, note: e.target.value }))}
+                rows={2}
+                placeholder="Optional note"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
-            </div>
+            </Field>
           </div>
 
           <DialogFooter>
             <button
               type="button"
               onClick={() => setPeriodDialogOpen(false)}
-              className="inline-flex h-10 items-center rounded-md border border-border px-4 text-sm font-medium transition-colors hover:bg-accent"
+              className="inline-flex h-10 items-center rounded-md border px-4 text-sm font-medium hover:bg-accent"
             >
               Cancel
             </button>
@@ -1243,7 +1429,7 @@ export function PayrollPrepWorkspace({
               type="button"
               onClick={() => void createPeriod()}
               disabled={busyKey === 'create-period'}
-              className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+              className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
             >
               {busyKey === 'create-period' ? 'Creating…' : 'Create period'}
             </button>

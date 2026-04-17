@@ -124,14 +124,19 @@ public final class PayrollDtos {
   public record GeneratePayrollRequest(
       @NotNull Long payrollTimesheetId,
       @NotBlank String currencyCode,
-      @NotNull @DecimalMin(value = "0.00") BigDecimal baseSalaryAmount,
-      @NotNull @DecimalMin(value = "0.00") BigDecimal netSalary,
+      @DecimalMin(value = "0.00") BigDecimal baseSalaryAmount,
+      @DecimalMin(value = "0.00") BigDecimal netSalary,
       String note
   ) {
   }
 
   public record PayrollDecisionRequest(
       String reason
+  ) {
+  }
+
+  public record MarkPaidRequest(
+      String paymentRef
   ) {
   }
 
@@ -160,6 +165,55 @@ public final class PayrollDtos {
       java.util.List<WorkShiftSummaryItem> items,
       long total,
       boolean hasMore
+  ) {
+  }
+
+  /**
+   * Minimal projection of an employee contract returned by hr-service.
+   * Used exclusively by the salary calculation engine — not exposed to API callers directly.
+   */
+  public record EmployeeContractSummary(
+      long userId,
+      String employmentType,
+      String salaryType,
+      BigDecimal baseSalary,
+      String currencyCode
+  ) {
+  }
+
+  /**
+   * Itemised breakdown of how netSalary was derived.
+   */
+  public record SalaryBreakdown(
+      BigDecimal basePay,
+      BigDecimal overtimePay,
+      BigDecimal overtimeHours,
+      BigDecimal overtimeRate,
+      BigDecimal standardHoursPerMonth,
+      String calculationMethod
+  ) {
+  }
+
+  /**
+   * Request body for POST /payroll/calculate-salary.
+   * Returns a salary calculation preview without persisting anything.
+   */
+  public record CalculateSalaryRequest(
+      @NotNull Long timesheetId,
+      @NotBlank String currencyCode
+  ) {
+  }
+
+  /**
+   * Result of the salary calculation preview endpoint.
+   */
+  public record CalculateSalaryResult(
+      BigDecimal baseSalaryAmount,
+      BigDecimal netSalary,
+      String salaryType,
+      String employmentType,
+      String currencyCode,
+      SalaryBreakdown breakdown
   ) {
   }
 

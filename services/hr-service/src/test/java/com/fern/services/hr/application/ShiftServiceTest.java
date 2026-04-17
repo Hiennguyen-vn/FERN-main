@@ -2,7 +2,6 @@ package com.fern.services.hr.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -17,6 +16,7 @@ import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.auth.ScopeType;
 import com.fern.services.hr.api.ShiftDto;
 import com.fern.services.hr.infrastructure.ShiftRepository;
+import com.fern.services.hr.infrastructure.ShiftRoleRequirementRepository;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Instant;
 import java.time.LocalTime;
@@ -33,6 +33,8 @@ class ShiftServiceTest {
 
   @Mock
   private ShiftRepository shiftRepository;
+  @Mock
+  private ShiftRoleRequirementRepository roleRequirementRepository;
   @Mock
   private SnowflakeIdGenerator idGenerator;
   @Mock
@@ -60,6 +62,7 @@ class ShiftServiceTest {
     ));
     when(idGenerator.generateId()).thenReturn(101L);
     when(shiftRepository.existsByOutletIdAndCode(10L, "MORNING")).thenReturn(false);
+    when(roleRequirementRepository.findByShiftId(101L)).thenReturn(List.of());
     when(shiftRepository.findById(101L)).thenReturn(java.util.Optional.of(
         new ShiftRepository.ShiftRecord(
             101L,
@@ -70,24 +73,35 @@ class ShiftServiceTest {
             LocalTime.of(16, 0),
             30,
             null,
+            1,
+            null,
             Instant.parse("2026-03-27T00:00:00Z"),
             Instant.parse("2026-03-27T00:00:00Z")
         )
     ));
 
-    ShiftService service = new ShiftService(shiftRepository, idGenerator, permissionMatrixService, authorizationPolicyService);
+    ShiftService service = new ShiftService(
+        shiftRepository,
+        roleRequirementRepository,
+        idGenerator,
+        permissionMatrixService,
+        authorizationPolicyService
+    );
     ShiftDto result = service.createShift(new ShiftDto.Create(
         10L,
         "MORNING",
         "Morning Shift",
         LocalTime.of(8, 0),
         LocalTime.of(16, 0),
-        30
+        30,
+        null,
+        null,
+        null
     ));
 
     assertEquals(101L, result.id());
     assertEquals(10L, result.outletId());
-    verify(shiftRepository).insert(101L, 10L, "MORNING", "Morning Shift", LocalTime.of(8, 0), LocalTime.of(16, 0), 30);
+    verify(shiftRepository).insert(101L, 10L, "MORNING", "Morning Shift", LocalTime.of(8, 0), LocalTime.of(16, 0), 30, null, 1);
   }
 
   @Test
@@ -104,7 +118,13 @@ class ShiftServiceTest {
         null
     ));
 
-    ShiftService service = new ShiftService(shiftRepository, idGenerator, permissionMatrixService, authorizationPolicyService);
+    ShiftService service = new ShiftService(
+        shiftRepository,
+        roleRequirementRepository,
+        idGenerator,
+        permissionMatrixService,
+        authorizationPolicyService
+    );
 
     assertThrows(ServiceException.class, () -> service.createShift(new ShiftDto.Create(
         10L,
@@ -112,7 +132,10 @@ class ShiftServiceTest {
         "Broken Shift",
         LocalTime.of(16, 0),
         LocalTime.of(8, 0),
-        0
+        0,
+        null,
+        null,
+        null
     )));
   }
 
@@ -134,8 +157,15 @@ class ShiftServiceTest {
     when(permissionMatrixService.load(9L)).thenReturn(new com.dorabets.common.spring.auth.PermissionMatrix(9L, java.util.Map.of(), java.util.Map.of()));
     when(shiftRepository.findByOutletId(null, Set.of(10L), null, null, null, 20, 0))
         .thenReturn(com.dorabets.common.spring.web.PagedResult.of(List.of(), 20, 0, 0));
+    when(roleRequirementRepository.findByShiftIds(List.of())).thenReturn(List.of());
 
-    ShiftService service = new ShiftService(shiftRepository, idGenerator, permissionMatrixService, authorizationPolicyService);
+    ShiftService service = new ShiftService(
+        shiftRepository,
+        roleRequirementRepository,
+        idGenerator,
+        permissionMatrixService,
+        authorizationPolicyService
+    );
 
     service.listShiftsByOutlet(
         null,

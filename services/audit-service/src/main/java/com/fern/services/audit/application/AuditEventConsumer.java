@@ -121,6 +121,7 @@ public class AuditEventConsumer {
     return switch (eventType) {
       case "product.price.changed", "product.recipe.updated" -> textValue(payload, "productId");
       case "org.outlet.created", "org.outlet.updated" -> textValue(payload, "outletId");
+      case "org.region.created", "org.region.updated" -> textValue(payload, "regionId");
       case "auth.user.created" -> textValue(payload, "userId");
       case "auth.role.updated" -> textValue(payload, "roleCode");
       case "auth.user-role-changed" -> textValue(payload, "userRoleId");
@@ -143,8 +144,8 @@ public class AuditEventConsumer {
 
   private String mapAction(String eventType) {
     return switch (eventType) {
-      case "auth.user.created", "org.outlet.created", "finance.expense-record-created" -> "insert";
-      case "auth.role.updated", "auth.user-role-changed", "org.outlet.updated",
+      case "auth.user.created", "org.outlet.created", "org.region.created", "finance.expense-record-created" -> "insert";
+      case "auth.role.updated", "auth.user-role-changed", "org.outlet.updated", "org.region.updated",
           "org.exchange_rate.updated", "product.price.changed", "product.recipe.updated",
           "inventory.stock.low-threshold" -> "update";
       case "procurement.invoice-approved", "payroll.payroll-approved" -> "approve";
@@ -159,6 +160,7 @@ public class AuditEventConsumer {
       case "auth.role.updated" -> "role";
       case "auth.user-role-changed" -> "user_role";
       case "org.outlet.created", "org.outlet.updated" -> "outlet";
+      case "org.region.created", "org.region.updated" -> "region";
       case "org.exchange_rate.updated" -> "exchange_rate";
       case "product.price.changed" -> "product_price";
       case "product.recipe.updated" -> "recipe";

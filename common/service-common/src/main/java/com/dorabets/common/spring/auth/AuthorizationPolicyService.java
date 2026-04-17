@@ -333,18 +333,15 @@ public class AuthorizationPolicyService {
     return true;
   }
 
-  /**
-   * Full unfiltered org read — superadmin only.
-   * Admin and region_manager use scoped access via {@link #resolveOrgReadableOutletIds}.
-   * See business rules §5.1 and §8.1 (admin is governance-only, scoped).
-   */
   public boolean hasAdministrativeOrgAccess(RequestUserContext context) {
     if (context.internalService()) {
       return true;
     }
     long userId = context.requireUserId();
     BusinessUserProfile profile = resolveUserProfile(userId);
-    return profile.hasGlobalRole(CanonicalRole.SUPERADMIN);
+    return profile.hasGlobalRole(CanonicalRole.SUPERADMIN)
+        || profile.canonicalRoles().contains(CanonicalRole.ADMIN)
+        || profile.canonicalRoles().contains(CanonicalRole.REGION_MANAGER);
   }
 
   /**

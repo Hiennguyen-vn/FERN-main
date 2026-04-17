@@ -7,6 +7,7 @@ import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
@@ -48,10 +49,12 @@ public class OrgRepository extends BaseRepository {
         """
         SELECT CONCAT(
                  'hierarchy:',
-                 COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at))::bigint::text FROM core.region), '0'),
+                 COALESCE((SELECT FLOOR(EXTRACT(EPOCH FROM MAX(updated_at)) * 1000)::bigint::text FROM core.region), '0'),
                  ':',
                  COALESCE((
-                   SELECT EXTRACT(EPOCH FROM MAX(GREATEST(updated_at, COALESCE(deleted_at, updated_at))))::bigint::text
+                   SELECT FLOOR(
+                     EXTRACT(EPOCH FROM MAX(GREATEST(updated_at, COALESCE(deleted_at, updated_at)))) * 1000
+                   )::bigint::text
                    FROM core.outlet
                  ), '0'),
                  ':',
@@ -86,7 +89,17 @@ public class OrgRepository extends BaseRepository {
     if (regionId == null) {
       return queryList(
           """
-          SELECT id, region_id, code, name, status, address, phone, email, opened_at, closed_at
+          SELECT
+            id,
+            region_id,
+            code,
+            name,
+            CASE WHEN deleted_at IS NOT NULL THEN 'archived' ELSE status::text END AS lifecycle_status,
+            address,
+            phone,
+            email,
+            opened_at,
+            closed_at
           FROM core.outlet
           WHERE deleted_at IS NULL
           ORDER BY code
@@ -96,7 +109,17 @@ public class OrgRepository extends BaseRepository {
     }
     return queryList(
         """
-        SELECT id, region_id, code, name, status, address, phone, email, opened_at, closed_at
+        SELECT
+          id,
+          region_id,
+          code,
+          name,
+          CASE WHEN deleted_at IS NOT NULL THEN 'archived' ELSE status::text END AS lifecycle_status,
+          address,
+          phone,
+          email,
+          opened_at,
+          closed_at
         FROM core.outlet
         WHERE deleted_at IS NULL AND region_id = ?
         ORDER BY code
@@ -109,9 +132,41 @@ public class OrgRepository extends BaseRepository {
   public Optional<OrgDtos.OutletView> findOutletById(long outletId) {
     return queryOne(
         """
-        SELECT id, region_id, code, name, status, address, phone, email, opened_at, closed_at
+        SELECT
+          id,
+          region_id,
+          code,
+          name,
+          CASE WHEN deleted_at IS NOT NULL THEN 'archived' ELSE status::text END AS lifecycle_status,
+          address,
+          phone,
+          email,
+          opened_at,
+          closed_at
         FROM core.outlet
         WHERE id = ? AND deleted_at IS NULL
+        """,
+        this::mapOutlet,
+        outletId
+    );
+  }
+
+  public Optional<OrgDtos.OutletView> findManagedOutletById(long outletId) {
+    return queryOne(
+        """
+        SELECT
+          id,
+          region_id,
+          code,
+          name,
+          CASE WHEN deleted_at IS NOT NULL THEN 'archived' ELSE status::text END AS lifecycle_status,
+          address,
+          phone,
+          email,
+          opened_at,
+          closed_at
+        FROM core.outlet
+        WHERE id = ?
         """,
         this::mapOutlet,
         outletId
@@ -175,8 +230,176 @@ public class OrgRepository extends BaseRepository {
         }
         throw e;
       }
-      return findOutletByIdTransactional(conn, outletId)
+      return findOutletByIdTransactional(conn, outletId, false)
           .orElseThrow(() -> new IllegalStateException("Created outlet not found: " + outletId));
+    });
+  }
+
+  public OrgDtos.RegionView createRegion(OrgDtos.CreateRegionRequest request) {
+    return executeInTransaction(conn -> {
+      Long parentRegionId = request.parentRegionId();
+      if (parentRegionId != null && !regionExists(conn, parentRegionId)) {
+        throw ServiceException.notFound("Parent region not found: " + parentRegionId);
+      }
+      ensureCurrencyExists(conn, request.currencyCode());
+      long regionId = snowflakeIdGenerator.generateId();
+      Instant now = clock.instant();
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.region (
+            id, code, parent_region_id, currency_code, name, tax_code, timezone_name, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """
+      )) {
+        ps.setLong(1, regionId);
+        ps.setString(2, request.code().trim());
+        if (parentRegionId == null) {
+          ps.setNull(3, java.sql.Types.BIGINT);
+        } else {
+          ps.setLong(3, parentRegionId);
+        }
+        ps.setString(4, request.currencyCode().trim());
+        ps.setString(5, request.name().trim());
+        ps.setString(6, trimToNull(request.taxCode()));
+        ps.setString(7, request.timezoneName().trim());
+        ps.setTimestamp(8, Timestamp.from(now));
+        ps.setTimestamp(9, Timestamp.from(now));
+        ps.executeUpdate();
+      } catch (SQLException e) {
+        if ("23505".equals(e.getSQLState())) {
+          throw ServiceException.conflict("Region code already exists");
+        }
+        throw e;
+      }
+      return findRegionByIdTransactional(conn, regionId)
+          .orElseThrow(() -> new IllegalStateException("Created region not found: " + regionId));
+    });
+  }
+
+  public OrgDtos.RegionView updateRegion(long regionId, OrgDtos.UpdateRegionRequest request) {
+    return executeInTransaction(conn -> {
+      if (!regionExists(conn, regionId)) {
+        throw ServiceException.notFound("Region not found: " + regionId);
+      }
+      Long parentRegionId = request.parentRegionId();
+      if (parentRegionId != null && !regionExists(conn, parentRegionId)) {
+        throw ServiceException.notFound("Parent region not found: " + parentRegionId);
+      }
+      ensureCurrencyExists(conn, request.currencyCode());
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          UPDATE core.region
+          SET parent_region_id = ?,
+              currency_code = ?,
+              name = ?,
+              tax_code = ?,
+              timezone_name = ?,
+              updated_at = ?
+          WHERE id = ?
+          """
+      )) {
+        if (parentRegionId == null) {
+          ps.setNull(1, java.sql.Types.BIGINT);
+        } else {
+          ps.setLong(1, parentRegionId);
+        }
+        ps.setString(2, request.currencyCode().trim());
+        ps.setString(3, request.name().trim());
+        ps.setString(4, trimToNull(request.taxCode()));
+        ps.setString(5, request.timezoneName().trim());
+        ps.setTimestamp(6, Timestamp.from(clock.instant()));
+        ps.setLong(7, regionId);
+        if (ps.executeUpdate() == 0) {
+          throw ServiceException.notFound("Region not found: " + regionId);
+        }
+      }
+      return findRegionByIdTransactional(conn, regionId)
+          .orElseThrow(() -> new IllegalStateException("Updated region not found: " + regionId));
+    });
+  }
+
+  public OrgDtos.OutletView updateOutlet(long outletId, OrgDtos.UpdateOutletRequest request) {
+    return executeInTransaction(conn -> {
+      OrgDtos.OutletView existing = findOutletByIdTransactional(conn, outletId, true)
+          .orElseThrow(() -> ServiceException.notFound("Outlet not found: " + outletId));
+      if ("archived".equalsIgnoreCase(existing.status())) {
+        throw ServiceException.conflict("Archived outlet cannot be updated");
+      }
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          UPDATE core.outlet
+          SET code = ?,
+              name = ?,
+              address = ?,
+              phone = ?,
+              email = ?,
+              opened_at = ?,
+              closed_at = ?,
+              updated_at = ?
+          WHERE id = ?
+          """
+      )) {
+        ps.setString(1, request.code().trim());
+        ps.setString(2, request.name().trim());
+        ps.setString(3, trimToNull(request.address()));
+        ps.setString(4, trimToNull(request.phone()));
+        ps.setString(5, trimToNull(request.email()));
+        ps.setObject(6, request.openedAt());
+        ps.setObject(7, request.closedAt());
+        ps.setTimestamp(8, Timestamp.from(clock.instant()));
+        ps.setLong(9, outletId);
+        ps.executeUpdate();
+      } catch (SQLException e) {
+        if ("23505".equals(e.getSQLState())) {
+          throw ServiceException.conflict("Outlet code already exists");
+        }
+        throw e;
+      }
+      return findOutletByIdTransactional(conn, outletId, true)
+          .orElseThrow(() -> new IllegalStateException("Updated outlet not found: " + outletId));
+    });
+  }
+
+  public OrgDtos.OutletView updateOutletStatus(long outletId, String targetStatus) {
+    return executeInTransaction(conn -> {
+      OrgDtos.OutletView existing = findOutletByIdTransactional(conn, outletId, true)
+          .orElseThrow(() -> ServiceException.notFound("Outlet not found: " + outletId));
+      if ("archived".equalsIgnoreCase(existing.status())) {
+        throw ServiceException.conflict("Archived outlet cannot change status");
+      }
+      Instant now = clock.instant();
+      if ("archived".equalsIgnoreCase(targetStatus)) {
+        try (PreparedStatement ps = conn.prepareStatement(
+            """
+            UPDATE core.outlet
+            SET deleted_at = ?,
+                updated_at = ?
+            WHERE id = ?
+            """
+        )) {
+          Timestamp timestamp = Timestamp.from(now);
+          ps.setTimestamp(1, timestamp);
+          ps.setTimestamp(2, timestamp);
+          ps.setLong(3, outletId);
+          ps.executeUpdate();
+        }
+      } else {
+        try (PreparedStatement ps = conn.prepareStatement(
+            """
+            UPDATE core.outlet
+            SET status = ?::location_status_enum,
+                updated_at = ?
+            WHERE id = ?
+            """
+        )) {
+          ps.setString(1, normalizeStatus(targetStatus));
+          ps.setTimestamp(2, Timestamp.from(now));
+          ps.setLong(3, outletId);
+          ps.executeUpdate();
+        }
+      }
+      return findOutletByIdTransactional(conn, outletId, true)
+          .orElseThrow(() -> new IllegalStateException("Updated outlet not found: " + outletId));
     });
   }
 
@@ -235,13 +458,58 @@ public class OrgRepository extends BaseRepository {
     }
   }
 
-  private Optional<OrgDtos.OutletView> findOutletByIdTransactional(Connection conn, long outletId) throws Exception {
+  private Optional<OrgDtos.RegionView> findRegionByIdTransactional(Connection conn, long regionId) throws Exception {
     try (PreparedStatement ps = conn.prepareStatement(
         """
-        SELECT id, region_id, code, name, status, address, phone, email, opened_at, closed_at
-        FROM core.outlet
-        WHERE id = ? AND deleted_at IS NULL
+        SELECT id, code, parent_region_id, currency_code, name, tax_code, timezone_name
+        FROM core.region
+        WHERE id = ?
         """
+    )) {
+      ps.setLong(1, regionId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) {
+          return Optional.of(mapRegion(rs));
+        }
+        return Optional.empty();
+      }
+    }
+  }
+
+  private Optional<OrgDtos.OutletView> findOutletByIdTransactional(Connection conn, long outletId, boolean includeArchived)
+      throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        includeArchived
+            ? """
+              SELECT
+                id,
+                region_id,
+                code,
+                name,
+                CASE WHEN deleted_at IS NOT NULL THEN 'archived' ELSE status::text END AS lifecycle_status,
+                address,
+                phone,
+                email,
+                opened_at,
+                closed_at
+              FROM core.outlet
+              WHERE id = ?
+              """
+            : """
+              SELECT
+                id,
+                region_id,
+                code,
+                name,
+                CASE WHEN deleted_at IS NOT NULL THEN 'archived' ELSE status::text END AS lifecycle_status,
+                address,
+                phone,
+                email,
+                opened_at,
+                closed_at
+              FROM core.outlet
+              WHERE id = ? AND deleted_at IS NULL
+              """
     )) {
       ps.setLong(1, outletId);
       try (ResultSet rs = ps.executeQuery()) {
@@ -277,7 +545,7 @@ public class OrgRepository extends BaseRepository {
           rs.getLong("region_id"),
           rs.getString("code"),
           rs.getString("name"),
-          rs.getString("status"),
+          rs.getString("lifecycle_status"),
           rs.getString("address"),
           rs.getString("phone"),
           rs.getString("email"),
@@ -308,7 +576,11 @@ public class OrgRepository extends BaseRepository {
     if (status == null || status.isBlank()) {
       return "draft";
     }
-    return status.trim();
+    String normalized = status.trim().toLowerCase();
+    if (!List.of("draft", "active", "inactive", "closed").contains(normalized)) {
+      throw ServiceException.badRequest("Unsupported outlet status: " + status);
+    }
+    return normalized;
   }
 
   private static String trimToNull(String value) {

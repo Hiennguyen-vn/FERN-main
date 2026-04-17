@@ -39,6 +39,7 @@ const ROUTE_META: Record<string, { title: string; breadcrumbs: string[] }> = {
   '/iam': { title: 'Access Management', breadcrumbs: ['Administration', 'IAM'] },
   '/finance': { title: 'Finance', breadcrumbs: ['Finance & People', 'Finance'] },
   '/hr': { title: 'Human Resources', breadcrumbs: ['Finance & People', 'HR'] },
+  '/org': { title: 'Organization', breadcrumbs: ['Administration', 'Organization'] },
   '/settings': { title: 'Settings', breadcrumbs: ['Administration', 'Settings'] },
   '/crm': { title: 'CRM', breadcrumbs: ['Customer', 'CRM'] },
   '/promotions': { title: 'Promotions', breadcrumbs: ['Sales', 'Promotions'] },
@@ -188,6 +189,7 @@ export default function ShellLayout() {
   const meta = ROUTE_META[basePath] || { title: 'OpsCenter', breadcrumbs: [] };
   const activeFamily = PATH_TO_FAMILY[basePath] as ModuleFamily | undefined;
   const defaultPath = visibleModules[0]?.path || '/dashboard';
+  const showScopeBar = activeFamily !== 'org';
 
   useEffect(() => {
     if (!activeFamily) return;
@@ -232,11 +234,13 @@ export default function ShellLayout() {
           notificationCount={hierarchyQuery.isError ? 1 : 0}
         />
 
-        <ScopeBar
-          currentScope={currentScope}
-          scopeTree={scopeTree}
-          onScopeChange={handleScopeChange}
-        />
+        {showScopeBar ? (
+          <ScopeBar
+            currentScope={currentScope}
+            scopeTree={scopeTree}
+            onScopeChange={handleScopeChange}
+          />
+        ) : null}
 
         <main className="flex-1 overflow-y-auto flex flex-col">
           <Outlet context={{ scope: currentScope, user: shellUser }} />

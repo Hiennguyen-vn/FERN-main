@@ -2,6 +2,7 @@ package com.fern.services.hr.api;
 
 import com.dorabets.common.spring.web.PagedResult;
 import com.fern.services.hr.application.EmployeeContractService;
+import com.fern.services.hr.application.HrEmployeeService;
 import com.fern.services.hr.application.ShiftService;
 import com.fern.services.hr.application.WorkShiftService;
 import com.fern.services.hr.infrastructure.WorkShiftRepository;
@@ -27,15 +28,18 @@ public class HrController {
   private final ShiftService shiftService;
   private final WorkShiftService workShiftService;
   private final EmployeeContractService contractService;
+  private final HrEmployeeService employeeService;
 
   public HrController(
       ShiftService shiftService,
       WorkShiftService workShiftService,
-      EmployeeContractService contractService
+      EmployeeContractService contractService,
+      HrEmployeeService employeeService
   ) {
     this.shiftService = shiftService;
     this.workShiftService = workShiftService;
     this.contractService = contractService;
+    this.employeeService = employeeService;
   }
 
   @PostMapping("/shifts")
@@ -156,6 +160,28 @@ public class HrController {
         offset
     );
   }
+
+  // ── Employee directory (HR-scoped, no IAM read required) ──
+
+  @GetMapping("/employees")
+  public PagedResult<HrEmployeeDto> listEmployees(
+      @RequestParam(name = "q", required = false) String q,
+      @RequestParam(required = false) String status,
+      @RequestParam(required = false) Long outletId,
+      @RequestParam(required = false) String sortBy,
+      @RequestParam(required = false) String sortDir,
+      @RequestParam(defaultValue = "100") int limit,
+      @RequestParam(defaultValue = "0") int offset
+  ) {
+    return employeeService.listEmployees(q, status, outletId, sortBy, sortDir, limit, offset);
+  }
+
+  @GetMapping("/employees/{userId}")
+  public HrEmployeeDto getEmployee(@PathVariable long userId) {
+    return employeeService.getEmployee(userId);
+  }
+
+  // ── Outlet staff ──
 
   @GetMapping("/outlet/{outletId}/staff")
   public List<WorkShiftRepository.StaffSummary> listOutletStaff(@PathVariable long outletId) {

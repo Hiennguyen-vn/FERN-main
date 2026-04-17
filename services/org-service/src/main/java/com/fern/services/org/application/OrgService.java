@@ -7,6 +7,9 @@ import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.events.org.ExchangeRateUpdatedEvent;
 import com.fern.events.org.OutletCreatedEvent;
+import com.fern.events.org.OutletUpdatedEvent;
+import com.fern.events.org.RegionCreatedEvent;
+import com.fern.events.org.RegionUpdatedEvent;
 import com.fern.services.org.api.OrgDtos;
 import com.fern.services.org.infrastructure.OrgRepository;
 import java.time.Clock;
@@ -70,6 +73,58 @@ public class OrgService {
     return region;
   }
 
+  public OrgDtos.RegionView createRegion(OrgDtos.CreateRegionRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    requireMutationAccess(context);
+    validateRegionHierarchy(null, request.parentRegionId());
+    OrgDtos.RegionView region = orgRepository.createRegion(request);
+    orgHierarchyCacheService.evict();
+    kafkaEventPublisher.publish(
+        "fern.org.region-created",
+        Long.toString(region.id()),
+        "org.region.created",
+        new RegionCreatedEvent(
+            region.id(),
+            region.code(),
+            region.parentRegionId(),
+            region.currencyCode(),
+            region.name(),
+            region.taxCode(),
+            region.timezoneName(),
+            clock.instant(),
+            context.userId()
+        )
+    );
+    return region;
+  }
+
+  public OrgDtos.RegionView updateRegion(String code, OrgDtos.UpdateRegionRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    requireMutationAccess(context);
+    OrgDtos.RegionView existing = orgRepository.findRegionByCode(code)
+        .orElseThrow(() -> ServiceException.notFound("Region not found: " + code));
+    validateRegionHierarchy(existing.id(), request.parentRegionId());
+    OrgDtos.RegionView region = orgRepository.updateRegion(existing.id(), request);
+    orgHierarchyCacheService.evict();
+    kafkaEventPublisher.publish(
+        "fern.org.region-updated",
+        Long.toString(region.id()),
+        "org.region.updated",
+        new RegionUpdatedEvent(
+            region.id(),
+            region.code(),
+            region.parentRegionId(),
+            region.currencyCode(),
+            region.name(),
+            region.taxCode(),
+            region.timezoneName(),
+            clock.instant(),
+            context.userId()
+        )
+    );
+    return region;
+  }
+
   public List<OrgDtos.OutletView> listOutlets(Long regionId) {
     OrgHierarchyCacheService.CachedHierarchy hierarchy = cachedHierarchy();
     RequestUserContext context = RequestUserContextHolder.get();
@@ -128,6 +183,8 @@ public class OrgService {
   public OrgDtos.OutletView createOutlet(OrgDtos.CreateOutletRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
     requireMutationAccess(context);
+    validateOutletDates(request.openedAt(), request.closedAt());
+    String status = normalizeCreateStatus(request.status());
     OrgDtos.OutletView outlet = orgRepository.createOutlet(request);
     orgHierarchyCacheService.evict();
     kafkaEventPublisher.publish(
@@ -139,12 +196,40 @@ public class OrgService {
             outlet.regionId(),
             outlet.code(),
             outlet.name(),
-            outlet.status(),
+            status,
             outlet.openedAt(),
             clock.instant(),
             context.userId()
         )
     );
+    return outlet;
+  }
+
+  public OrgDtos.OutletView updateOutlet(long outletId, OrgDtos.UpdateOutletRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    requireMutationAccess(context);
+    validateOutletDates(request.openedAt(), request.closedAt());
+    OrgDtos.OutletView existing = orgRepository.findManagedOutletById(outletId)
+        .orElseThrow(() -> ServiceException.notFound("Outlet not found: " + outletId));
+    if ("archived".equalsIgnoreCase(existing.status())) {
+      throw ServiceException.conflict("Archived outlet cannot be updated");
+    }
+    OrgDtos.OutletView outlet = orgRepository.updateOutlet(outletId, request);
+    orgHierarchyCacheService.evict();
+    publishOutletUpdated(outlet, null, context.userId());
+    return outlet;
+  }
+
+  public OrgDtos.OutletView updateOutletStatus(long outletId, OrgDtos.UpdateOutletStatusRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    requireMutationAccess(context);
+    String targetStatus = normalizeLifecycleStatus(request.targetStatus());
+    OrgDtos.OutletView existing = orgRepository.findManagedOutletById(outletId)
+        .orElseThrow(() -> ServiceException.notFound("Outlet not found: " + outletId));
+    validateStatusTransition(existing.status(), targetStatus, request.reason());
+    OrgDtos.OutletView outlet = orgRepository.updateOutletStatus(outletId, targetStatus);
+    orgHierarchyCacheService.evict();
+    publishOutletUpdated(outlet, trimToNull(request.reason()), context.userId());
     return outlet;
   }
 
@@ -197,6 +282,77 @@ public class OrgService {
     }
   }
 
+  private void validateRegionHierarchy(Long regionId, Long parentRegionId) {
+    if (parentRegionId == null) {
+      return;
+    }
+    Map<Long, OrgDtos.RegionView> regionsById = new LinkedHashMap<>();
+    orgRepository.listRegions().forEach(region -> regionsById.put(region.id(), region));
+    if (!regionsById.containsKey(parentRegionId)) {
+      throw ServiceException.notFound("Parent region not found: " + parentRegionId);
+    }
+    if (regionId == null) {
+      return;
+    }
+    if (regionId.equals(parentRegionId)) {
+      throw ServiceException.badRequest("parentRegionId cannot equal the current region");
+    }
+    Long currentId = parentRegionId;
+    while (currentId != null) {
+      if (regionId.equals(currentId)) {
+        throw ServiceException.badRequest("parentRegionId would create a cycle");
+      }
+      OrgDtos.RegionView current = regionsById.get(currentId);
+      currentId = current == null ? null : current.parentRegionId();
+    }
+  }
+
+  private void validateOutletDates(LocalDate openedAt, LocalDate closedAt) {
+    if (openedAt != null && closedAt != null && closedAt.isBefore(openedAt)) {
+      throw ServiceException.badRequest("closedAt must be on or after openedAt");
+    }
+  }
+
+  private String normalizeCreateStatus(String status) {
+    String normalized = normalizeLifecycleStatus(status == null || status.isBlank() ? "draft" : status);
+    if ("archived".equals(normalized)) {
+      throw ServiceException.badRequest("Outlet cannot be created in archived status");
+    }
+    return normalized;
+  }
+
+  private String normalizeLifecycleStatus(String status) {
+    if (status == null || status.isBlank()) {
+      throw ServiceException.badRequest("targetStatus is required");
+    }
+    String normalized = status.trim().toLowerCase();
+    if (!Set.of("draft", "active", "inactive", "closed", "archived").contains(normalized)) {
+      throw ServiceException.badRequest("Unsupported outlet status: " + status);
+    }
+    return normalized;
+  }
+
+  private void validateStatusTransition(String currentStatus, String targetStatus, String reason) {
+    String normalizedCurrent = normalizeLifecycleStatus(currentStatus);
+    if (normalizedCurrent.equals(targetStatus)) {
+      return;
+    }
+    if (Set.of("inactive", "closed", "archived").contains(targetStatus) && trimToNull(reason) == null) {
+      throw ServiceException.badRequest("reason is required for this status change");
+    }
+    boolean allowed = switch (normalizedCurrent) {
+      case "draft" -> Set.of("active", "inactive", "closed").contains(targetStatus);
+      case "active" -> Set.of("inactive", "closed").contains(targetStatus);
+      case "inactive" -> Set.of("active", "closed").contains(targetStatus);
+      case "closed" -> "archived".equals(targetStatus);
+      case "archived" -> false;
+      default -> false;
+    };
+    if (!allowed) {
+      throw ServiceException.conflict("Unsupported outlet status transition: " + normalizedCurrent + " -> " + targetStatus);
+    }
+  }
+
   private Set<Long> visibleRegionIds(
       OrgHierarchyCacheService.CachedHierarchy hierarchy,
       Set<Long> outletIds
@@ -230,5 +386,36 @@ public class OrgService {
       return;
     }
     throw ServiceException.forbidden("Administrative org access is required");
+  }
+
+  private void publishOutletUpdated(OrgDtos.OutletView outlet, String reason, Long actorUserId) {
+    kafkaEventPublisher.publish(
+        "fern.org.outlet-updated",
+        Long.toString(outlet.id()),
+        "org.outlet.updated",
+        new OutletUpdatedEvent(
+            outlet.id(),
+            outlet.regionId(),
+            outlet.code(),
+            outlet.status(),
+            outlet.name(),
+            outlet.address(),
+            outlet.phone(),
+            outlet.email(),
+            outlet.openedAt(),
+            outlet.closedAt(),
+            reason,
+            clock.instant(),
+            actorUserId
+        )
+    );
+  }
+
+  private String trimToNull(String value) {
+    if (value == null) {
+      return null;
+    }
+    String trimmed = value.trim();
+    return trimmed.isEmpty() ? null : trimmed;
   }
 }

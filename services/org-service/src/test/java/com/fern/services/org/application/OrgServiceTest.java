@@ -14,6 +14,9 @@ import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.events.org.ExchangeRateUpdatedEvent;
 import com.fern.events.org.OutletCreatedEvent;
+import com.fern.events.org.OutletUpdatedEvent;
+import com.fern.events.org.RegionCreatedEvent;
+import com.fern.events.org.RegionUpdatedEvent;
 import com.fern.services.org.api.OrgDtos;
 import com.fern.services.org.infrastructure.OrgRepository;
 import java.math.BigDecimal;
@@ -51,16 +54,14 @@ class OrgServiceTest {
 
   @Test
   void listRegionsUsesCachedHierarchy() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null
-    ));
-    when(authorizationPolicyService.hasAdministrativeOrgAccess(any())).thenReturn(true);
+    RequestUserContextHolder.set(adminContext());
+    when(authorizationPolicyService.resolveOrgReadableOutletIds(any())).thenReturn(null);
     OrgDtos.RegionView region = new OrgDtos.RegionView(1L, "VN", null, "VND", "Vietnam", null, "Asia/Ho_Chi_Minh");
     when(orgHierarchyCacheService.getOrLoad(any(), any())).thenReturn(
         new OrgHierarchyCacheService.CachedHierarchy(List.of(region), List.of())
     );
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    OrgService service = service();
     List<OrgDtos.RegionView> result = service.listRegions();
 
     assertEquals(1, result.size());
@@ -69,12 +70,11 @@ class OrgServiceTest {
 
   @Test
   void listOutletsFiltersToScopedOutletsForNonAdmin() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        12L, "manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
-    ));
+    RequestUserContextHolder.set(outletManagerContext());
+    when(authorizationPolicyService.resolveOrgReadableOutletIds(any())).thenReturn(Set.of(2000L));
     when(orgHierarchyCacheService.getOrLoad(any(), any())).thenReturn(sampleHierarchy());
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    OrgService service = service();
     List<OrgDtos.OutletView> result = service.listOutlets(null);
 
     assertEquals(1, result.size());
@@ -83,36 +83,23 @@ class OrgServiceTest {
 
   @Test
   void getOutletRejectsOutOfScopeOutletForNonAdmin() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        12L, "manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
-    ));
-    OrgDtos.OutletView outlet = new OrgDtos.OutletView(
-        2001L,
-        101L,
-        "US-NYC-001",
-        "New York Flagship Outlet",
-        "active",
-        "5th Avenue",
-        "123",
-        "ny@example.com",
-        LocalDate.parse("2026-01-01"),
-        null
-    );
+    RequestUserContextHolder.set(outletManagerContext());
+    when(authorizationPolicyService.resolveOrgReadableOutletIds(any())).thenReturn(Set.of(2000L));
+    OrgDtos.OutletView outlet = outletView(2001L, 101L, "US-NYC-001", "New York Flagship Outlet", "active");
     when(orgRepository.findOutletById(2001L)).thenReturn(Optional.of(outlet));
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    OrgService service = service();
 
     assertThrows(ServiceException.class, () -> service.getOutlet(2001L));
   }
 
   @Test
   void getHierarchyOnlyReturnsVisibleRegionTreeForScopedUser() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        12L, "manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
-    ));
+    RequestUserContextHolder.set(outletManagerContext());
+    when(authorizationPolicyService.resolveOrgReadableOutletIds(any())).thenReturn(Set.of(2000L));
     when(orgHierarchyCacheService.getOrLoad(any(), any())).thenReturn(sampleHierarchy());
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    OrgService service = service();
     OrgDtos.OrgHierarchyView result = service.getHierarchy();
 
     assertEquals(Set.of(1L, 10L), result.regions().stream().map(OrgDtos.RegionView::id).collect(java.util.stream.Collectors.toSet()));
@@ -121,32 +108,96 @@ class OrgServiceTest {
 
   @Test
   void getRegionAllowsAncestorOfScopedOutletButRejectsUnrelatedRegion() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        12L, "manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
-    ));
+    RequestUserContextHolder.set(outletManagerContext());
+    when(authorizationPolicyService.resolveOrgReadableOutletIds(any())).thenReturn(Set.of(2000L));
     when(orgHierarchyCacheService.getOrLoad(any(), any())).thenReturn(sampleHierarchy());
     when(orgRepository.findRegionByCode("VN")).thenReturn(Optional.of(sampleHierarchy().regions().getFirst()));
     when(orgRepository.findRegionByCode("US")).thenReturn(Optional.of(sampleHierarchy().regions().get(2)));
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    OrgService service = service();
 
     assertEquals("VN", service.getRegion("VN").code());
     assertThrows(ServiceException.class, () -> service.getRegion("US"));
   }
 
   @Test
-  void createOutletEvictsCacheAndPublishesEvent() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        7L,
-        "admin",
-        "sess-admin",
-        Set.of("admin"),
-        Set.of(),
-        Set.of(),
-        true,
-        false,
-        null
+  void createRegionEvictsCacheAndPublishesEvent() {
+    RequestUserContextHolder.set(adminContext());
+    when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
+    when(orgRepository.listRegions()).thenReturn(sampleHierarchy().regions());
+    OrgDtos.CreateRegionRequest request = new OrgDtos.CreateRegionRequest(
+        "VN-HN",
+        1L,
+        "VND",
+        "Hanoi",
+        "VAT",
+        "Asia/Ho_Chi_Minh"
+    );
+    OrgDtos.RegionView region = new OrgDtos.RegionView(55L, "VN-HN", 1L, "VND", "Hanoi", "VAT", "Asia/Ho_Chi_Minh");
+    when(orgRepository.createRegion(request)).thenReturn(region);
+
+    OrgService service = service();
+    OrgDtos.RegionView result = service.createRegion(request);
+
+    verify(orgHierarchyCacheService).evict();
+    verify(kafkaEventPublisher).publish(
+        eq("fern.org.region-created"),
+        eq("55"),
+        eq("org.region.created"),
+        any(RegionCreatedEvent.class)
+    );
+    assertEquals(55L, result.id());
+  }
+
+  @Test
+  void updateRegionRejectsCycles() {
+    RequestUserContextHolder.set(adminContext());
+    when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
+    OrgDtos.RegionView existing = sampleHierarchy().regions().getFirst();
+    when(orgRepository.findRegionByCode("VN")).thenReturn(Optional.of(existing));
+    when(orgRepository.listRegions()).thenReturn(sampleHierarchy().regions());
+
+    OrgService service = service();
+
+    assertThrows(ServiceException.class, () -> service.updateRegion(
+        "VN",
+        new OrgDtos.UpdateRegionRequest(10L, "VND", "Vietnam", "VAT", "Asia/Ho_Chi_Minh")
     ));
+  }
+
+  @Test
+  void updateRegionPublishesUpdateEvent() {
+    RequestUserContextHolder.set(adminContext());
+    when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
+    OrgDtos.RegionView existing = sampleHierarchy().regions().get(1);
+    when(orgRepository.findRegionByCode("VN-HCM")).thenReturn(Optional.of(existing));
+    when(orgRepository.listRegions()).thenReturn(sampleHierarchy().regions());
+    OrgDtos.UpdateRegionRequest request = new OrgDtos.UpdateRegionRequest(
+        1L,
+        "VND",
+        "Ho Chi Minh City",
+        "VAT",
+        "Asia/Ho_Chi_Minh"
+    );
+    OrgDtos.RegionView updated = new OrgDtos.RegionView(10L, "VN-HCM", 1L, "VND", "Ho Chi Minh City", "VAT", "Asia/Ho_Chi_Minh");
+    when(orgRepository.updateRegion(10L, request)).thenReturn(updated);
+
+    OrgService service = service();
+    OrgDtos.RegionView result = service.updateRegion("VN-HCM", request);
+
+    verify(orgHierarchyCacheService).evict();
+    verify(kafkaEventPublisher).publish(
+        eq("fern.org.region-updated"),
+        eq("10"),
+        eq("org.region.updated"),
+        any(RegionUpdatedEvent.class)
+    );
+    assertEquals("Ho Chi Minh City", result.name());
+  }
+
+  @Test
+  void createOutletEvictsCacheAndPublishesEvent() {
+    RequestUserContextHolder.set(adminContext());
     when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
     OrgDtos.CreateOutletRequest request = new OrgDtos.CreateOutletRequest(
         1L,
@@ -159,21 +210,10 @@ class OrgServiceTest {
         LocalDate.parse("2026-03-27"),
         null
     );
-    OrgDtos.OutletView outlet = new OrgDtos.OutletView(
-        101L,
-        1L,
-        "VN-HCM-001",
-        "District 1 Outlet",
-        "active",
-        "1 Street",
-        "123",
-        "outlet@example.com",
-        LocalDate.parse("2026-03-27"),
-        null
-    );
+    OrgDtos.OutletView outlet = outletView(101L, 1L, "VN-HCM-001", "District 1 Outlet", "active");
     when(orgRepository.createOutlet(request)).thenReturn(outlet);
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    OrgService service = service();
     OrgDtos.OutletView result = service.createOutlet(request);
 
     verify(orgHierarchyCacheService).evict();
@@ -187,12 +227,70 @@ class OrgServiceTest {
   }
 
   @Test
-  void upsertExchangeRateRejectsOutOfOrderCurrencyCodes() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null
-    ));
+  void updateOutletRejectsArchivedRecords() {
+    RequestUserContextHolder.set(adminContext());
     when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    when(orgRepository.findManagedOutletById(2000L)).thenReturn(Optional.of(outletView(2000L, 10L, "VN-HCM-001", "Saigon Central Outlet", "archived")));
+
+    OrgService service = service();
+
+    assertThrows(ServiceException.class, () -> service.updateOutlet(
+        2000L,
+        new OrgDtos.UpdateOutletRequest(
+            "VN-HCM-001",
+            "Saigon Central Outlet",
+            "1 Nguyen Hue",
+            "123",
+            "hcm@example.com",
+            LocalDate.parse("2026-01-01"),
+            null
+        )
+    ));
+  }
+
+  @Test
+  void updateOutletStatusRejectsInvalidTransitions() {
+    RequestUserContextHolder.set(adminContext());
+    when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
+    when(orgRepository.findManagedOutletById(2000L)).thenReturn(Optional.of(outletView(2000L, 10L, "VN-HCM-001", "Saigon Central Outlet", "active")));
+
+    OrgService service = service();
+
+    assertThrows(ServiceException.class, () -> service.updateOutletStatus(
+        2000L,
+        new OrgDtos.UpdateOutletStatusRequest("archived", "Manual archive")
+    ));
+  }
+
+  @Test
+  void updateOutletStatusPublishesUpdateEvent() {
+    RequestUserContextHolder.set(adminContext());
+    when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
+    when(orgRepository.findManagedOutletById(2000L)).thenReturn(Optional.of(outletView(2000L, 10L, "VN-HCM-001", "Saigon Central Outlet", "closed")));
+    OrgDtos.OutletView archivedOutlet = outletView(2000L, 10L, "VN-HCM-001", "Saigon Central Outlet", "archived");
+    when(orgRepository.updateOutletStatus(2000L, "archived")).thenReturn(archivedOutlet);
+
+    OrgService service = service();
+    OrgDtos.OutletView result = service.updateOutletStatus(
+        2000L,
+        new OrgDtos.UpdateOutletStatusRequest("archived", "Store closed permanently")
+    );
+
+    verify(orgHierarchyCacheService).evict();
+    verify(kafkaEventPublisher).publish(
+        eq("fern.org.outlet-updated"),
+        eq("2000"),
+        eq("org.outlet.updated"),
+        any(OutletUpdatedEvent.class)
+    );
+    assertEquals("archived", result.status());
+  }
+
+  @Test
+  void upsertExchangeRateRejectsOutOfOrderCurrencyCodes() {
+    RequestUserContextHolder.set(adminContext());
+    when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
+    OrgService service = service();
 
     assertThrows(ServiceException.class, () -> service.upsertExchangeRate(new OrgDtos.UpdateExchangeRateRequest(
         "USD",
@@ -205,9 +303,7 @@ class OrgServiceTest {
 
   @Test
   void upsertExchangeRatePublishesUpdateEvent() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null
-    ));
+    RequestUserContextHolder.set(adminContext());
     when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
     OrgDtos.UpdateExchangeRateRequest request = new OrgDtos.UpdateExchangeRateRequest(
         "EUR",
@@ -226,7 +322,7 @@ class OrgServiceTest {
     );
     when(orgRepository.upsertExchangeRate(request)).thenReturn(exchangeRate);
 
-    OrgService service = new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    OrgService service = service();
     OrgDtos.ExchangeRateView result = service.upsertExchangeRate(request);
 
     verify(kafkaEventPublisher).publish(
@@ -238,6 +334,33 @@ class OrgServiceTest {
     assertEquals(new BigDecimal("1.10"), result.rate());
   }
 
+  private OrgService service() {
+    return new OrgService(orgRepository, orgHierarchyCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+  }
+
+  private RequestUserContext adminContext() {
+    return new RequestUserContext(7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null);
+  }
+
+  private RequestUserContext outletManagerContext() {
+    return new RequestUserContext(12L, "manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null);
+  }
+
+  private OrgDtos.OutletView outletView(long id, long regionId, String code, String name, String status) {
+    return new OrgDtos.OutletView(
+        id,
+        regionId,
+        code,
+        name,
+        status,
+        "1 Nguyen Hue",
+        "123",
+        "outlet@example.com",
+        LocalDate.parse("2026-01-01"),
+        null
+    );
+  }
+
   private OrgHierarchyCacheService.CachedHierarchy sampleHierarchy() {
     List<OrgDtos.RegionView> regions = List.of(
         new OrgDtos.RegionView(1L, "VN", null, "VND", "Vietnam", "VAT", "Asia/Ho_Chi_Minh"),
@@ -246,18 +369,7 @@ class OrgServiceTest {
         new OrgDtos.RegionView(101L, "US-NYC", 100L, "USD", "New York", "SALES", "America/New_York")
     );
     List<OrgDtos.OutletView> outlets = List.of(
-        new OrgDtos.OutletView(
-            2000L,
-            10L,
-            "VN-HCM-001",
-            "Saigon Central Outlet",
-            "active",
-            "1 Nguyen Hue",
-            "123",
-            "hcm@example.com",
-            LocalDate.parse("2026-01-01"),
-            null
-        ),
+        outletView(2000L, 10L, "VN-HCM-001", "Saigon Central Outlet", "active"),
         new OrgDtos.OutletView(
             2001L,
             101L,

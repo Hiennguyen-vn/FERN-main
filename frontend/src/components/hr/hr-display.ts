@@ -33,7 +33,8 @@ export function getHrUserDisplay(
 
   const user = usersById.get(key);
   if (!user) {
-    return { primary: `User ${key}`, secondary: undefined as string | undefined };
+    const shortId = key.length > 8 ? `...${key.slice(-6)}` : key;
+    return { primary: `Employee ${shortId}`, secondary: key };
   }
 
   return {

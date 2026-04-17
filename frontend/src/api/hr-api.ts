@@ -2,6 +2,83 @@ import { apiRequest, type PagedResponse } from '@/api/client';
 import { decodeArray, decodePaged } from '@/api/decoders';
 import { asDateOnly, asId, asNullableNumber, asNullableString, asRecord, asString } from '@/api/records';
 
+/* ------------------------------------------------------------------ */
+/*  HR Employee (directory endpoint, no IAM required)                   */
+/* ------------------------------------------------------------------ */
+
+export interface HrEmployeeActiveContract {
+  contractId: string;
+  employmentType?: string | null;
+  salaryType?: string | null;
+  baseSalary?: number | null;
+  currencyCode?: string | null;
+  regionCode?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  contractStatus?: string | null;
+}
+
+export interface HrEmployeeView {
+  id: string;
+  username: string;
+  fullName: string;
+  employeeCode?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  status?: string | null;
+  gender?: string | null;
+  dob?: string | null;
+  createdAt?: string | null;
+  activeContract?: HrEmployeeActiveContract | null;
+}
+
+export interface HrEmployeesQuery {
+  q?: string;
+  status?: string;
+  outletId?: string;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
+function decodeActiveContract(value: unknown): HrEmployeeActiveContract | null {
+  if (!value) return null;
+  const record = asRecord(value) ?? {};
+  return {
+    contractId: asId(record.contractId),
+    employmentType: asNullableString(record.employmentType),
+    salaryType: asNullableString(record.salaryType),
+    baseSalary: asNullableNumber(record.baseSalary),
+    currencyCode: asNullableString(record.currencyCode),
+    regionCode: asNullableString(record.regionCode),
+    startDate: asDateOnly(record.startDate),
+    endDate: asDateOnly(record.endDate),
+    contractStatus: asNullableString(record.contractStatus),
+  };
+}
+
+function decodeHrEmployee(value: unknown): HrEmployeeView {
+  const record = asRecord(value) ?? {};
+  return {
+    id: asId(record.id),
+    username: String(record.username ?? ''),
+    fullName: String(record.fullName ?? record.username ?? ''),
+    employeeCode: asNullableString(record.employeeCode),
+    email: asNullableString(record.email),
+    phone: asNullableString(record.phone),
+    status: asNullableString(record.status),
+    gender: asNullableString(record.gender),
+    dob: asDateOnly(record.dob),
+    createdAt: asNullableString(record.createdAt),
+    activeContract: decodeActiveContract(record.activeContract),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Shifts, Work-Shifts, Contracts                                     */
+/* ------------------------------------------------------------------ */
+
 export interface RoleRequirementView {
   workRole: string;
   requiredCount: number;
@@ -64,9 +141,14 @@ export interface ContractView {
   baseSalary?: number | null;
   currencyCode?: string | null;
   regionCode?: string | null;
+  taxCode?: string | null;
+  bankAccount?: string | null;
+  hireDate?: string | null;
   status?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   [key: string]: unknown;
 }
 
@@ -229,13 +311,25 @@ function decodeContract(value: unknown): ContractView {
     baseSalary: asNullableNumber(record.baseSalary),
     currencyCode: asNullableString(record.currencyCode ? asString(record.currencyCode).toUpperCase() : null),
     regionCode: asNullableString(record.regionCode),
+    taxCode: asNullableString(record.taxCode),
+    bankAccount: asNullableString(record.bankAccount),
+    hireDate: asDateOnly(record.hireDate),
     status: asNullableString(record.status),
     startDate: asDateOnly(record.startDate),
     endDate: asDateOnly(record.endDate),
+    createdAt: asNullableString(record.createdAt),
+    updatedAt: asNullableString(record.updatedAt),
   };
 }
 
 export const hrApi = {
+  // ── Employee directory ──
+  employees: async (token: string, query: HrEmployeesQuery): Promise<PagedResponse<HrEmployeeView>> =>
+    decodePaged(await apiRequest('/api/v1/hr/employees', { token, query }), decodeHrEmployee),
+  employee: async (token: string, userId: string): Promise<HrEmployeeView> =>
+    decodeHrEmployee(await apiRequest(`/api/v1/hr/employees/${userId}`, { token })),
+
+  // ── Shifts ──
   shifts: async (token: string, outletId?: string): Promise<ShiftView[]> =>
     decodePaged(
       await apiRequest('/api/v1/hr/shifts', {
@@ -319,6 +413,26 @@ export const hrApi = {
           endDate: payload.endDate ?? null,
           taxCode: payload.taxCode ?? null,
           bankAccount: payload.bankAccount ?? null,
+        },
+      }),
+    ),
+  updateContract: async (token: string, contractId: string, payload: Partial<CreateContractPayload>): Promise<ContractView> =>
+    decodeContract(
+      await apiRequest(`/api/v1/hr/contracts/${contractId}`, {
+        method: 'PUT',
+        token,
+        body: {
+          ...(payload.userId !== undefined && { userId: String(payload.userId) }),
+          ...(payload.outletId !== undefined && { outletId: payload.outletId ? String(payload.outletId) : null }),
+          ...(payload.employmentType !== undefined && { employmentType: payload.employmentType }),
+          ...(payload.salaryType !== undefined && { salaryType: payload.salaryType }),
+          ...(payload.baseSalary !== undefined && { baseSalary: payload.baseSalary }),
+          ...(payload.currencyCode !== undefined && { currencyCode: payload.currencyCode.toUpperCase() }),
+          ...(payload.regionCode !== undefined && { regionCode: payload.regionCode ?? null }),
+          ...(payload.startDate !== undefined && { startDate: payload.startDate }),
+          ...(payload.endDate !== undefined && { endDate: payload.endDate ?? null }),
+          ...(payload.taxCode !== undefined && { taxCode: payload.taxCode ?? null }),
+          ...(payload.bankAccount !== undefined && { bankAccount: payload.bankAccount ?? null }),
         },
       }),
     ),

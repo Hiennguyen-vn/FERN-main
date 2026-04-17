@@ -126,9 +126,32 @@ export interface CreatePayrollTimesheetPayload {
 export interface GeneratePayrollRunPayload {
   payrollTimesheetId: string;
   currencyCode: string;
-  baseSalaryAmount: number;
-  netSalary: number;
+  baseSalaryAmount?: number | null;
+  netSalary?: number | null;
   note?: string | null;
+}
+
+export interface CalculateSalaryPayload {
+  timesheetId: string;
+  currencyCode: string;
+}
+
+export interface SalaryBreakdownView {
+  basePay?: number | null;
+  overtimePay?: number | null;
+  overtimeHours?: number | null;
+  overtimeRate?: number | null;
+  standardHoursPerMonth?: number | null;
+  calculationMethod?: string | null;
+}
+
+export interface CalculateSalaryResult {
+  baseSalaryAmount?: number | null;
+  netSalary?: number | null;
+  salaryType?: string | null;
+  employmentType?: string | null;
+  currencyCode?: string | null;
+  breakdown?: SalaryBreakdownView | null;
 }
 
 export interface ImportFromAttendancePayload {
@@ -244,6 +267,33 @@ export const payrollApi = {
     ),
   runs: async (token: string, query: PayrollRunsQuery): Promise<PagedResponse<PayrollRunView>> =>
     decodePaged(await apiRequest('/api/v1/payroll', { token, query }), decodePayrollRun),
+  calculateSalary: async (token: string, payload: CalculateSalaryPayload): Promise<CalculateSalaryResult> => {
+    const raw = await apiRequest('/api/v1/payroll/calculate-salary', {
+      method: 'POST',
+      token,
+      body: {
+        timesheetId: asString(payload.timesheetId),
+        currencyCode: asString(payload.currencyCode).toUpperCase(),
+      },
+    });
+    const record = asRecord(raw) ?? {};
+    const bk = asRecord(record.breakdown);
+    return {
+      baseSalaryAmount: asNullableNumber(record.baseSalaryAmount),
+      netSalary: asNullableNumber(record.netSalary),
+      salaryType: asNullableString(record.salaryType),
+      employmentType: asNullableString(record.employmentType),
+      currencyCode: asNullableString(record.currencyCode),
+      breakdown: bk ? {
+        basePay: asNullableNumber(bk.basePay),
+        overtimePay: asNullableNumber(bk.overtimePay),
+        overtimeHours: asNullableNumber(bk.overtimeHours),
+        overtimeRate: asNullableNumber(bk.overtimeRate),
+        standardHoursPerMonth: asNullableNumber(bk.standardHoursPerMonth),
+        calculationMethod: asNullableString(bk.calculationMethod),
+      } : null,
+    };
+  },
   generateRun: async (token: string, payload: GeneratePayrollRunPayload): Promise<PayrollRunView> =>
     decodePayrollRun(
       await apiRequest('/api/v1/payroll', {
@@ -252,8 +302,8 @@ export const payrollApi = {
         body: {
           payrollTimesheetId: asString(payload.payrollTimesheetId),
           currencyCode: asString(payload.currencyCode).toUpperCase(),
-          baseSalaryAmount: payload.baseSalaryAmount,
-          netSalary: payload.netSalary,
+          baseSalaryAmount: payload.baseSalaryAmount ?? null,
+          netSalary: payload.netSalary ?? null,
           note: payload.note ?? null,
         },
       }),
@@ -262,6 +312,8 @@ export const payrollApi = {
     apiRequest(`/api/v1/payroll/${payrollId}/approve`, { method: 'POST', token }),
   rejectRun: async (token: string, payrollId: string, payload: { reason: string }): Promise<unknown> =>
     apiRequest(`/api/v1/payroll/${payrollId}/reject`, { method: 'POST', token, body: payload }),
+  markPaid: async (token: string, payrollId: string, paymentRef?: string): Promise<unknown> =>
+    apiRequest(`/api/v1/payroll/${payrollId}/mark-paid`, { method: 'POST', token, body: paymentRef ? { paymentRef } : undefined }),
   importFromAttendance: async (
     token: string,
     payload: ImportFromAttendancePayload,

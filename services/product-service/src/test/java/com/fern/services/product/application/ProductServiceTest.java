@@ -17,6 +17,7 @@ import com.fern.events.product.ProductPriceChangedEvent;
 import com.fern.events.product.ProductRecipeUpdatedEvent;
 import com.fern.services.product.api.ProductDtos;
 import com.fern.services.product.infrastructure.ProductRepository;
+import com.fern.services.product.infrastructure.PublishRepository;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
@@ -42,6 +43,8 @@ class ProductServiceTest {
   private TypedKafkaEventPublisher kafkaEventPublisher;
   @Mock
   private AuthorizationPolicyService authorizationPolicyService;
+  @Mock
+  private PublishRepository publishRepository;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
 
@@ -68,7 +71,14 @@ class ProductServiceTest {
     when(productRepository.listPrices(7L, null, businessDate, null, null, null, 50, 0))
         .thenReturn(PagedResult.of(prices, 50, 0, 1));
 
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    ProductService service = new ProductService(
+        productRepository,
+        productPriceCacheService,
+        kafkaEventPublisher,
+        authorizationPolicyService,
+        publishRepository,
+        clock
+    );
     PagedResult<ProductDtos.PriceView> result = service.listPrices(7L, null, businessDate, null, null, null, null, null);
 
     assertEquals(1, result.items().size());
@@ -91,7 +101,14 @@ class ProductServiceTest {
     ProductDtos.ProductView product = new ProductDtos.ProductView(11L, "CF-01", "Cold Brew", "coffee", "draft", null, "Coffee");
     when(productRepository.createProduct(request, 10L)).thenReturn(product);
 
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    ProductService service = new ProductService(
+        productRepository,
+        productPriceCacheService,
+        kafkaEventPublisher,
+        authorizationPolicyService,
+        publishRepository,
+        clock
+    );
     ProductDtos.ProductView result = service.createProduct(request);
 
     verify(productRepository).createProduct(request, 10L);
@@ -115,7 +132,14 @@ class ProductServiceTest {
     );
     when(productPriceCacheService.getOrLoad(eq(11L), eq(7L), eq(businessDate), any())).thenReturn(price);
 
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    ProductService service = new ProductService(
+        productRepository,
+        productPriceCacheService,
+        kafkaEventPublisher,
+        authorizationPolicyService,
+        publishRepository,
+        clock
+    );
     ProductDtos.PriceView result = service.findPrice(11L, 7L, businessDate);
 
     assertEquals(new BigDecimal("4.50"), result.priceValue());
@@ -127,7 +151,14 @@ class ProductServiceTest {
         21L, "manager", "sess-21", Set.of("outlet_manager"), Set.of(), Set.of(7L), true, false, null
     ));
     when(authorizationPolicyService.canReadCatalogForOutlet(any(), eq(9L))).thenReturn(false);
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    ProductService service = new ProductService(
+        productRepository,
+        productPriceCacheService,
+        kafkaEventPublisher,
+        authorizationPolicyService,
+        publishRepository,
+        clock
+    );
 
     assertThrows(ServiceException.class, () -> service.findPrice(11L, 9L, LocalDate.parse("2026-03-27")));
   }
@@ -155,7 +186,14 @@ class ProductServiceTest {
     when(productRepository.findPrice(11L, 7L, LocalDate.parse("2026-03-27"))).thenReturn(Optional.of(previous));
     when(productRepository.upsertPrice(request, 10L)).thenReturn(saved);
 
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    ProductService service = new ProductService(
+        productRepository,
+        productPriceCacheService,
+        kafkaEventPublisher,
+        authorizationPolicyService,
+        publishRepository,
+        clock
+    );
     ProductDtos.PriceView result = service.upsertPrice(request);
 
     verify(productPriceCacheService).evict(11L, 7L, LocalDate.parse("2026-03-27"));
@@ -191,7 +229,14 @@ class ProductServiceTest {
     );
     when(productRepository.upsertRecipe(11L, request, 10L)).thenReturn(recipe);
 
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    ProductService service = new ProductService(
+        productRepository,
+        productPriceCacheService,
+        kafkaEventPublisher,
+        authorizationPolicyService,
+        publishRepository,
+        clock
+    );
     ProductDtos.RecipeView result = service.upsertRecipe(11L, request);
 
     verify(kafkaEventPublisher).publish(
@@ -206,7 +251,14 @@ class ProductServiceTest {
   @Test
   void resolveRecipeThrowsWhenMissing() {
     when(productRepository.findRecipe(11L, null)).thenReturn(Optional.empty());
-    ProductService service = new ProductService(productRepository, productPriceCacheService, kafkaEventPublisher, authorizationPolicyService, clock);
+    ProductService service = new ProductService(
+        productRepository,
+        productPriceCacheService,
+        kafkaEventPublisher,
+        authorizationPolicyService,
+        publishRepository,
+        clock
+    );
 
     assertThrows(ServiceException.class, () -> service.resolveRecipe(11L, null));
   }

@@ -39,6 +39,7 @@ interface Props {
   regions: ScopeRegion[];
   outlets: ScopeOutlet[];
   onNavigate: (tab: FinanceTab) => void;
+  canViewLabor: boolean;
 }
 
 const MIX_COLORS = [
@@ -63,6 +64,7 @@ export function FinanceRevenueWorkspace({
   regions,
   outlets,
   onNavigate,
+  canViewLabor,
 }: Props) {
   const [selectedPeriodKey, setSelectedPeriodKey] = useState('');
   const [channelFilter, setChannelFilter] = useState<RevenueChannelFilter>('all');
@@ -479,12 +481,14 @@ export function FinanceRevenueWorkspace({
       ) : null}
 
       <div className="flex flex-wrap gap-3">
-        <button
-          onClick={() => onNavigate('labor')}
-          className="rounded-md border px-4 py-2 text-sm transition-colors hover:bg-accent"
-        >
-          View Labor & Payroll
-        </button>
+        {canViewLabor ? (
+          <button
+            onClick={() => onNavigate('labor')}
+            className="rounded-md border px-4 py-2 text-sm transition-colors hover:bg-accent"
+          >
+            View Labor & Payroll
+          </button>
+        ) : null}
         <button
           onClick={() => onNavigate('prime-cost')}
           className="rounded-md border px-4 py-2 text-sm transition-colors hover:bg-accent"

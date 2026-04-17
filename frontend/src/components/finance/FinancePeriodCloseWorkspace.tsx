@@ -47,6 +47,7 @@ interface Props {
   regions: ScopeRegion[];
   outlets: ScopeOutlet[];
   onNavigate: (tab: FinanceTab) => void;
+  canViewLabor: boolean;
 }
 
 interface OutletCloseRow {
@@ -154,6 +155,7 @@ export function FinancePeriodCloseWorkspace({
   regions,
   outlets,
   onNavigate,
+  canViewLabor,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -657,12 +659,14 @@ export function FinancePeriodCloseWorkspace({
                             <li className="flex items-center gap-1.5">
                               <AlertTriangle className="h-3 w-3" />
                               {row.payrollPending} payroll run(s) pending approval
-                              <button
-                                onClick={() => onNavigate('labor')}
-                                className="ml-1 underline hover:no-underline"
-                              >
-                                → Review payroll
-                              </button>
+                              {canViewLabor ? (
+                                <button
+                                  onClick={() => onNavigate('labor')}
+                                  className="ml-1 underline hover:no-underline"
+                                >
+                                  → Review payroll
+                                </button>
+                              ) : null}
                             </li>
                           ) : null}
                           {row.payrollTotal === 0 ? (

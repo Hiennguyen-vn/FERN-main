@@ -291,7 +291,9 @@ public class FinanceRepository extends BaseRepository {
     return queryOne(
         """
         SELECT p.id AS payroll_id,
-               COALESCE(pt.outlet_id, 0) AS outlet_id,
+               COALESCE(pt.outlet_id,
+                 (SELECT o.id FROM core.outlet o WHERE o.region_id = pp.region_id ORDER BY o.id LIMIT 1)
+               ) AS outlet_id,
                COALESCE(pp.pay_date, pp.end_date) AS business_date,
                p.currency_code,
                p.net_salary

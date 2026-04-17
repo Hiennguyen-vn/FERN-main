@@ -77,6 +77,18 @@ public class PayrollController {
     return payrollService.listTimesheets(payrollPeriodId, userId, outletId, q, sortBy, sortDir, limit, offset);
   }
 
+  /**
+   * Calculates gross salary for a timesheet without persisting the result.
+   * Fetches the employee's latest active contract from hr-service and applies
+   * the salary formula based on employment type and work data.
+   */
+  @PostMapping("/calculate-salary")
+  public PayrollDtos.CalculateSalaryResult calculateSalary(
+      @Valid @RequestBody PayrollDtos.CalculateSalaryRequest request
+  ) {
+    return payrollService.calculateSalary(request);
+  }
+
   @PostMapping
   public ResponseEntity<PayrollDtos.PayrollView> generatePayroll(
       @Valid @RequestBody PayrollDtos.GeneratePayrollRequest request
@@ -107,6 +119,14 @@ public class PayrollController {
   @PostMapping("/{payrollId}/approve")
   public PayrollDtos.PayrollView approvePayroll(@PathVariable long payrollId) {
     return payrollService.approvePayroll(payrollId);
+  }
+
+  @PostMapping("/{payrollId}/mark-paid")
+  public PayrollDtos.PayrollView markPaid(
+      @PathVariable long payrollId,
+      @RequestBody(required = false) PayrollDtos.MarkPaidRequest request
+  ) {
+    return payrollService.markPaid(payrollId, request == null ? null : request.paymentRef());
   }
 
   @PostMapping("/{payrollId}/reject")

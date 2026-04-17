@@ -35,6 +35,20 @@ public class OrgController {
     return orgService.getRegion(code);
   }
 
+  @PostMapping("/regions")
+  @ResponseStatus(HttpStatus.CREATED)
+  public OrgDtos.RegionView createRegion(@Valid @RequestBody OrgDtos.CreateRegionRequest request) {
+    return orgService.createRegion(request);
+  }
+
+  @PutMapping("/regions/{code}")
+  public OrgDtos.RegionView updateRegion(
+      @PathVariable String code,
+      @Valid @RequestBody OrgDtos.UpdateRegionRequest request
+  ) {
+    return orgService.updateRegion(code, request);
+  }
+
   @GetMapping("/outlets")
   public List<OrgDtos.OutletView> outlets(@RequestParam(name = "regionId", required = false) Long regionId) {
     return orgService.listOutlets(regionId);
@@ -63,6 +77,22 @@ public class OrgController {
   @ResponseStatus(HttpStatus.CREATED)
   public OrgDtos.OutletView createOutlet(@Valid @RequestBody OrgDtos.CreateOutletRequest request) {
     return orgService.createOutlet(request);
+  }
+
+  @PutMapping("/outlets/{outletId}")
+  public OrgDtos.OutletView updateOutlet(
+      @PathVariable long outletId,
+      @Valid @RequestBody OrgDtos.UpdateOutletRequest request
+  ) {
+    return orgService.updateOutlet(outletId, request);
+  }
+
+  @PostMapping("/outlets/{outletId}/status")
+  public OrgDtos.OutletView updateOutletStatus(
+      @PathVariable long outletId,
+      @Valid @RequestBody OrgDtos.UpdateOutletStatusRequest request
+  ) {
+    return orgService.updateOutletStatus(outletId, request);
   }
 
   @PutMapping("/exchange-rates")

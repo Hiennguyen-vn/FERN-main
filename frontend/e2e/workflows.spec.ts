@@ -62,11 +62,17 @@ test.describe('Key workflows', () => {
     expect(body).toMatch(/shift|contract|attendance|hr/i);
   });
 
-  test('Settings shows org hierarchy', async ({ page }) => {
-    await navigateTo(page, '/settings');
+  test('Organization shows org hierarchy', async ({ page }) => {
+    await navigateTo(page, '/org/overview');
     await page.waitForTimeout(2000);
     const body = await page.locator('body').innerText();
     expect(body).toMatch(/outlet|region|setting|organization/i);
+  });
+
+  test('Legacy settings route redirects to organization', async ({ page }) => {
+    await navigateTo(page, '/settings');
+    await page.waitForTimeout(1000);
+    await expect(page).toHaveURL(/\/org\/overview$/);
   });
 
   test('Reports shows revenue or inventory data', async ({ page }) => {

@@ -358,6 +358,19 @@ export function FinancePayrollReviewWorkspace({
     }
   };
 
+  const markPaid = async (payrollId: string) => {
+    setBusyKey(`paid:${payrollId}`);
+    try {
+      await payrollApi.markPaid(token, payrollId);
+      toast.success('Payroll run marked as paid.');
+      await loadWorkspace();
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, 'Unable to mark as paid'));
+    } finally {
+      setBusyKey('');
+    }
+  };
+
   const rejectRun = async (payrollId: string) => {
     if (!rejectReason.trim()) {
       toast.error('Please provide a reason for rejection');
@@ -638,12 +651,21 @@ export function FinancePayrollReviewWorkspace({
                                 )}
                               </div>
                             ) : row.runStatus === 'approved' ? (
-                              <div className="flex items-center gap-1.5 text-xs text-green-700">
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                                Approved
-                                {row.run.approvedAt && (
-                                  <span className="text-muted-foreground">{formatDateTimeUtil(row.run.approvedAt)}</span>
-                                )}
+                              <div className="space-y-1.5">
+                                <div className="flex items-center gap-1.5 text-xs text-green-700">
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Approved
+                                  {row.run.approvedAt && (
+                                    <span className="text-muted-foreground">{formatDateTimeUtil(row.run.approvedAt)}</span>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={() => void markPaid(String(row.run?.id))}
+                                  disabled={!!busyKey}
+                                  className="inline-flex h-7 items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+                                >
+                                  {busyKey === `paid:${row.run?.id}` ? 'Processing…' : 'Mark as Paid'}
+                                </button>
                               </div>
                             ) : row.runStatus === 'rejected' ? (
                               <div className="flex items-center gap-1.5 text-xs text-red-700">

@@ -22,6 +22,10 @@ info:
     name: ${spring.application.name}
     description: Payroll period, timesheet, and approval service bootstrap.
 
+payroll:
+  salary:
+    standardHoursPerMonth: 160
+
 dependencies:
   postgres:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/fern}
