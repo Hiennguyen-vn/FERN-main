@@ -124,21 +124,27 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
 
   useEffect(() => { void loadDetail(); }, [loadDetail]);
 
-  // Load prices across all outlets (separate effect to avoid infinite loop)
+  // Load prices across all outlets (parallel, capture per-outlet errors)
   useEffect(() => {
-    if (!token || outlets.length === 0) { setAllPrices([]); return; }
+    if (!token || outlets.length === 0) { setAllPrices([]); setPriceFetchErrors([]); return; }
     let cancelled = false;
     (async () => {
+      const settled = await Promise.allSettled(outlets.map(outlet =>
+        productApi.pricesPaged(token, { outletId: outlet.id, limit: 200, offset: 0 })
+          .then(ps => ({ outlet, items: (ps.items || []).filter((p: PriceView) => String(p.productId) === pid) }))
+      ));
+      if (cancelled) return;
       const results: PriceView[] = [];
-      for (const outlet of outlets) {
-        if (cancelled) break;
-        try {
-          const ps = await productApi.pricesPaged(token, { outletId: outlet.id, limit: 200, offset: 0 });
-          const filtered = (ps.items || []).filter((p: PriceView) => String(p.productId) === pid);
-          results.push(...filtered.map(p => ({ ...p, outletId: outlet.id } as PriceView)));
-        } catch { /* skip outlet */ }
-      }
-      if (!cancelled) setAllPrices(results);
+      const errors: string[] = [];
+      settled.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          results.push(...r.value.items.map(p => ({ ...p, outletId: r.value.outlet.id } as PriceView)));
+        } else {
+          errors.push(outlets[i].id);
+        }
+      });
+      setAllPrices(results);
+      setPriceFetchErrors(errors);
     })();
     return () => { cancelled = true; };
   }, [token, pid, outlets, priceRefreshKey]);
@@ -156,6 +162,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
       if (!editForm.name?.trim()) issues.push('Product name is required');
       if (!recipe) issues.push('At least one active recipe is required');
       if (priceCount === 0) issues.push('At least one outlet price is required');
+      if (priceFetchErrors.length > 0) issues.push(`Price data incomplete for ${priceFetchErrors.length} outlet(s) — refresh before activating`);
       if (issues.length > 0) { toast.error(`Cannot activate: ${issues.join('; ')}`); return; }
     }
     setSaving('product');
@@ -171,7 +178,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
     if (!canManageCatalog) return;
     const allowed = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowed.includes(file.type)) {
-      toast.error('Định dạng không hỗ trợ. Dùng JPG/PNG/WEBP.');
+      toast.error('Unsupported format. Use JPG/PNG/WEBP.');
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
@@ -197,7 +204,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
     if (!canManageCatalog) return;
     const allowed = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowed.includes(file.type)) {
-      toast.error('Định dạng không hỗ trợ. Dùng JPG/PNG/WEBP.');
+      toast.error('Unsupported format. Use JPG/PNG/WEBP.');
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
@@ -229,13 +236,23 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
         const regionOutlets = outletsForRegion(priceTargetRegionId);
         if (regionOutlets.length === 0) { toast.error('No outlets in selected region'); setSaving(''); return; }
         let success = 0;
+        const failed: string[] = [];
         for (const outlet of regionOutlets) {
           try {
             await productApi.upsertPrice(token, { productId: pid, outletId: outlet.id, currencyCode: currencyForOutlet(outlet.id), priceAmount: Number(priceForm.amount), effectiveFrom: priceForm.effectiveFrom });
             success++;
-          } catch { /* continue */ }
+          } catch {
+            failed.push(outletLabel(outlet.id));
+          }
         }
-        toast.success(`Price set at ${success}/${regionOutlets.length} outlets in ${regionLabel(priceTargetRegionId)}`);
+        const rLabel = regionLabel(priceTargetRegionId);
+        if (failed.length === 0) {
+          toast.success(`Price set at all ${success} outlets in ${rLabel}`);
+        } else if (success > 0) {
+          toast.error(`Partial: ${success}/${regionOutlets.length} in ${rLabel}. Failed: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? ` +${failed.length - 3} more` : ''}`);
+        } else {
+          toast.error(`Price set failed for all outlets in ${rLabel}`);
+        }
       } else if (priceTargetOutletId) {
         await productApi.upsertPrice(token, { productId: pid, outletId: priceTargetOutletId, currencyCode: currencyForOutlet(priceTargetOutletId), priceAmount: Number(priceForm.amount), effectiveFrom: priceForm.effectiveFrom });
         toast.success(`Price set at ${outletLabel(priceTargetOutletId)}`);
