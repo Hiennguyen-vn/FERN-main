@@ -182,7 +182,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      toast.error('File vượt quá 5MB.');
+      toast.error('File exceeds 5MB.');
       return;
     }
     setUploadingImage(true);
@@ -190,10 +190,10 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
       const { uploadUrl, finalUrl } = await productApi.presignProductImageUpload(token, pid, file.type, file.size);
       await productApi.uploadProductImageToS3(uploadUrl, file);
       await productApi.updateProduct(token, pid, { imageUrl: finalUrl });
-      toast.success('Đã cập nhật ảnh');
+      toast.success('Image updated');
       onProductUpdated();
     } catch (e) {
-      toast.error(getErrorMessage(e, 'Upload thất bại'));
+      toast.error(getErrorMessage(e, 'Upload failed'));
     } finally {
       setUploadingImage(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -208,7 +208,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      toast.error('File vượt quá 5MB.');
+      toast.error('File exceeds 5MB.');
       return;
     }
     setUploadingImage(true);
@@ -216,9 +216,9 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
       const { uploadUrl, finalUrl } = await productApi.presignProductImageUpload(token, pid, file.type, file.size);
       await productApi.uploadProductImageToS3(uploadUrl, file);
       setEditForm((f) => ({ ...f, imageUrl: finalUrl }));
-      toast.success('Tải ảnh lên thành công. Nhấn Save để lưu.');
+      toast.success('Image uploaded. Click Save to apply.');
     } catch (e) {
-      toast.error(getErrorMessage(e, 'Upload thất bại'));
+      toast.error(getErrorMessage(e, 'Upload failed'));
     } finally {
       setUploadingImage(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -364,6 +364,14 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
                     <p className="text-[10px] text-amber-600 flex items-center gap-1">
                       <AlertTriangle className="h-2.5 w-2.5" />
                       {outlets.length} outlet pricing missing — click to set price by region or outlet
+                    </p>
+                  </div>
+                ) : null}
+                {priceFetchErrors.length > 0 ? (
+                  <div className="px-3 py-2 border-t bg-amber-50/50">
+                    <p className="text-[10px] text-amber-600 flex items-center gap-1">
+                      <AlertTriangle className="h-2.5 w-2.5" />
+                      Could not load prices for {priceFetchErrors.length} outlet(s) — data may be incomplete
                     </p>
                   </div>
                 ) : null}

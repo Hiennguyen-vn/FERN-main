@@ -30,6 +30,8 @@ export function ScopeOverrideExplorer({ token, outletId }: ScopeOverrideExplorer
   const [rows, setRows] = useState<OverrideRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [priceFetchFailedCount, setPriceFetchFailedCount] = useState(0);
+  const [totalOutletsScanned, setTotalOutletsScanned] = useState(0);
   const [entityFilter, setEntityFilter] = useState<'all' | 'price' | 'availability'>('all');
 
   const load = useCallback(async () => {
@@ -62,26 +64,32 @@ export function ScopeOverrideExplorer({ token, outletId }: ScopeOverrideExplorer
         ? [outletMap.get(outletId)].filter((o): o is OrgOutlet => !!o)
         : Array.from(outletMap.values());
 
-      for (const outlet of targetOutlets.slice(0, 30)) {
-        try {
-          const prices = await productApi.pricesPaged(token, { outletId: outlet.id, limit: 100, offset: 0 });
-          for (const price of prices.items) {
-            const prod = prodMap.get(String(price.productId));
-            const region = resolveRegion(outlet.regionId);
-            overrides.push({
-              productId: String(price.productId),
-              productName: prod ? String(prod.name || prod.code) : String(price.productId),
-              outletId: outlet.id,
-              outletCode: outlet.code,
-              outletName: outlet.name,
-              regionName: region?.name || '',
-              field: 'price',
-              value: `${Number(price.priceValue ?? price.priceAmount ?? 0).toLocaleString()} ${price.currencyCode || ''}`,
-              source: 'base',
-            });
-          }
-        } catch { /* skip */ }
-      }
+      setTotalOutletsScanned(targetOutlets.length);
+      const settled = await Promise.allSettled(targetOutlets.map(outlet =>
+        productApi.pricesPaged(token, { outletId: outlet.id, limit: 100, offset: 0 })
+          .then(ps => ({ outlet, items: ps.items }))
+      ));
+      let failed = 0;
+      settled.forEach(r => {
+        if (r.status === 'rejected') { failed++; return; }
+        const { outlet, items } = r.value;
+        const region = resolveRegion(outlet.regionId);
+        for (const price of items) {
+          const prod = prodMap.get(String(price.productId));
+          overrides.push({
+            productId: String(price.productId),
+            productName: prod ? String(prod.name || prod.code) : String(price.productId),
+            outletId: outlet.id,
+            outletCode: outlet.code,
+            outletName: outlet.name,
+            regionName: region?.name || '',
+            field: 'price',
+            value: `${Number(price.priceValue ?? price.priceAmount ?? 0).toLocaleString()} ${price.currencyCode || ''}`,
+            source: 'base',
+          });
+        }
+      });
+      setPriceFetchFailedCount(failed);
 
       // Load availability
       try {
@@ -159,6 +167,16 @@ export function ScopeOverrideExplorer({ token, outletId }: ScopeOverrideExplorer
         <SourceBadge source="inherited" />
         <SourceBadge source="overridden" />
       </div>
+
+      {/* Partial failure banner */}
+      {!loading && priceFetchFailedCount > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 flex items-center gap-2">
+          <AlertTriangle className="h-3.5 w-3.5 text-amber-600 flex-shrink-0" />
+          <p className="text-[11px] text-amber-700">
+            Could not load prices for {priceFetchFailedCount}/{totalOutletsScanned} outlet(s). Results may be incomplete.
+          </p>
+        </div>
+      )}
 
       {/* Error state */}
       {error && !loading && (

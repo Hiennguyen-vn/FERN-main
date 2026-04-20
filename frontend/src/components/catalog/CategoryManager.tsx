@@ -72,7 +72,7 @@ export function CategoryManager({ token }: CategoryManagerProps) {
   const saveEdit = async () => {
     if (!editingCode) return;
     if (!editForm.name.trim()) { toast.error('Name is required'); return; }
-    if (activeType !== 'product') { toast.error('Item category editing not yet supported'); return; }
+    if (activeType !== 'product') return;
     setBusy('edit');
     try {
       await productApi.updateProductCategory(token, editingCode, editForm);
@@ -87,7 +87,7 @@ export function CategoryManager({ token }: CategoryManagerProps) {
   };
 
   const toggleActive = async (cat: CategoryView) => {
-    if (activeType !== 'product') { toast.error('Item category toggle not yet supported'); return; }
+    if (activeType !== 'product') return;
     setBusy(`toggle:${cat.code}`);
     try {
       await productApi.updateProductCategory(token, cat.code, { isActive: !cat.isActive });
@@ -135,9 +135,11 @@ export function CategoryManager({ token }: CategoryManagerProps) {
           <button onClick={() => void load()} disabled={loading} className="h-8 w-8 rounded border flex items-center justify-center hover:bg-accent disabled:opacity-60">
             <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
           </button>
-          <button onClick={() => setCreating(true)} className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-xs font-medium inline-flex items-center gap-1">
-            <Plus className="h-3 w-3" />Add
-          </button>
+          {activeType === 'product' && (
+            <button onClick={() => setCreating(true)} className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-xs font-medium inline-flex items-center gap-1">
+              <Plus className="h-3 w-3" />Add
+            </button>
+          )}
         </div>
       </div>
 
