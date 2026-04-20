@@ -32,7 +32,6 @@ const attemptedScopeRecoverySessions = new Set<string>();
 const ROUTE_META: Record<string, { title: string; breadcrumbs: string[] }> = {
   '/dashboard': { title: 'Outlet Control Center', breadcrumbs: ['Home', 'Dashboard'] },
   '/pos': { title: 'Point of Sale', breadcrumbs: ['POS'] },
-  '/order': { title: 'Customer Order Queue', breadcrumbs: ['POS', 'Customer Orders'] },
   '/inventory': { title: 'Inventory', breadcrumbs: ['Operations', 'Inventory'] },
   '/procurement': { title: 'Procurement', breadcrumbs: ['Operations', 'Procurement'] },
   '/catalog': { title: 'Catalog', breadcrumbs: ['Operations', 'Catalog'] },
@@ -131,10 +130,10 @@ export default function ShellLayout() {
   const scopeTree = useMemo<ScopeOption[]>(() => {
     const data = hierarchyQuery.data;
     if (data && data.outlets.length > 0) {
-      return computeScopeTree(data.regions, data.outlets);
+      return computeScopeTree(data.regions, data.outlets, session?.scopeAssignments);
     }
     return [{ id: 'system', name: 'All Regions', level: 'system', children: [] }];
-  }, [hierarchyQuery.data]);
+  }, [hierarchyQuery.data, session?.scopeAssignments]);
 
   // Auto-select: find first leaf region (one that directly contains outlets)
   // and auto-select the appropriate scope level.

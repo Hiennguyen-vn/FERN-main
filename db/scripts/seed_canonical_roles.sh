@@ -57,11 +57,10 @@ INSERT INTO tmp_canonical_accounts VALUES
   (3,  'region_manager', :'prefix' || '.region',         'Canon Region Manager', 'CANON-REGION',         :'prefix' || '.region@fern.local'),
   (4,  'outlet_manager', :'prefix' || '.manager',        'Canon Outlet Manager', 'CANON-MANAGER',        :'prefix' || '.manager@fern.local'),
   (5,  'staff',          :'prefix' || '.staff',          'Canon Staff',          'CANON-STAFF',          :'prefix' || '.staff@fern.local'),
-  (6,  'product_manager',:'prefix' || '.product',        'Canon Product Manager','CANON-PRODUCT',        :'prefix' || '.product@fern.local'),
-  (7,  'procurement',    :'prefix' || '.procurement',    'Canon Procurement',    'CANON-PROCUREMENT',    :'prefix' || '.procurement@fern.local'),
-  (8,  'finance',        :'prefix' || '.finance',        'Canon Finance',        'CANON-FINANCE',        :'prefix' || '.finance@fern.local'),
-  (9,  'kitchen_staff',  :'prefix' || '.kitchen',        'Canon Kitchen Staff',  'CANON-KITCHEN',        :'prefix' || '.kitchen@fern.local'),
-  (10, 'hr',             :'prefix' || '.hr',             'Canon HR',             'CANON-HR',             :'prefix' || '.hr@fern.local');
+  (6,  'procurement',    :'prefix' || '.procurement',    'Canon Procurement',    'CANON-PROCUREMENT',    :'prefix' || '.procurement@fern.local'),
+  (7,  'finance',        :'prefix' || '.finance',        'Canon Finance',        'CANON-FINANCE',        :'prefix' || '.finance@fern.local'),
+  (8,  'kitchen_staff',  :'prefix' || '.kitchen',        'Canon Kitchen Staff',  'CANON-KITCHEN',        :'prefix' || '.kitchen@fern.local'),
+  (9,  'hr',             :'prefix' || '.hr',             'Canon HR',             'CANON-HR',             :'prefix' || '.hr@fern.local');
 
 -- Upsert app_user
 INSERT INTO core.app_user (id, username, password_hash, full_name, employee_code, email, status)
@@ -92,19 +91,18 @@ WHERE ui.account_key = 'superadmin'
 ON CONFLICT DO NOTHING;
 
 -- ── REGION: role fans out across all outlets in region ───────────
--- region_manager, product_manager, finance, hr
+-- region_manager, finance, hr
 INSERT INTO core.user_role (user_id, role_code, outlet_id)
 SELECT ui.user_id,
        CASE ui.account_key
          WHEN 'region_manager'  THEN 'region_manager'
-         WHEN 'product_manager' THEN 'product_manager'
          WHEN 'finance'         THEN 'finance'
          WHEN 'hr'              THEN 'hr'
        END,
        o.id
 FROM tmp_user_ids ui
 JOIN core.outlet o ON o.region_id = (:'region_id')::BIGINT
-WHERE ui.account_key IN ('region_manager','product_manager','finance','hr')
+WHERE ui.account_key IN ('region_manager','finance','hr')
 ON CONFLICT DO NOTHING;
 
 -- ── OUTLET: role bound to primary outlet ─────────────────────────

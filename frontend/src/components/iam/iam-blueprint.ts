@@ -147,7 +147,6 @@ const ROLE_ORDER = [
   'outlet_manager',
   'finance',
   'hr',
-  'product_manager',
   'procurement',
   'staff',
   'kitchen_staff',
@@ -184,13 +183,13 @@ const ROLE_REFERENCE_COPY: Record<string, Omit<RoleReference, 'assignedPermissio
     code: 'region_manager',
     name: 'Region Manager',
     scopeType: 'region',
-    description: 'Regional operational oversight.',
-    aliases: ['regional_manager'],
-    badge: 'READ OVERSIGHT',
+    description: 'Regional operational oversight and catalog management.',
+    aliases: ['regional_manager', 'product_manager'],
+    badge: 'CATALOG OWNER',
     tone: 'info',
-    purpose: 'Operational oversight and read access across a region.',
-    capabilities: ['Region-scoped operational read.', 'Audit visibility for assigned region.'],
-    limits: ['No business writes or approvals.'],
+    purpose: 'Operational oversight and catalog governance across a region.',
+    capabilities: ['Catalog read and mutate within region.', 'Region-scoped operational read.', 'Audit visibility for assigned region.'],
+    limits: ['No sales, procurement, inventory, finance, or HR writes/approvals.'],
   },
   outlet_manager: {
     code: 'outlet_manager',
@@ -214,18 +213,6 @@ const ROLE_REFERENCE_COPY: Record<string, Omit<RoleReference, 'assignedPermissio
     purpose: 'POS/cashier operator. Sales order flow only.',
     capabilities: ['Sales write at assigned outlet.', 'Basic outlet reads via membership.'],
     limits: ['No procurement, inventory write, finance, HR, or catalog mutation.'],
-  },
-  product_manager: {
-    code: 'product_manager',
-    name: 'Product Manager',
-    scopeType: 'region',
-    description: 'Regional menu, catalog, and pricing owner.',
-    aliases: [],
-    badge: 'CATALOG ONLY',
-    tone: 'success',
-    purpose: 'Catalog/menu/pricing management within a region.',
-    capabilities: ['Catalog read and mutate within region.'],
-    limits: ['No sales, procurement, inventory write, finance, HR, or audit.'],
   },
   procurement: {
     code: 'procurement',
@@ -339,8 +326,8 @@ const PERMISSION_REFERENCE_COPY: Record<string, PermissionReference> = {
 const CAPABILITY_CATALOG: CapabilityDescriptor[] = [
   { id: 'org.read', domain: 'Organization', capability: 'Org read', suggestedRole: 'admin' },
   { id: 'org.mutate', domain: 'Organization', capability: 'Org mutate', suggestedRole: 'admin' },
-  { id: 'catalog.read', domain: 'Catalog', capability: 'Catalog read', suggestedRole: 'product_manager' },
-  { id: 'catalog.mutate', domain: 'Catalog', capability: 'Catalog mutate', suggestedRole: 'product_manager', suggestedPermission: 'product.catalog.write' },
+  { id: 'catalog.read', domain: 'Catalog', capability: 'Catalog read', suggestedRole: 'region_manager' },
+  { id: 'catalog.mutate', domain: 'Catalog', capability: 'Catalog mutate', suggestedRole: 'region_manager', suggestedPermission: 'product.catalog.write' },
   { id: 'sales.read', domain: 'Sales', capability: 'Sales read', suggestedRole: 'staff' },
   { id: 'sales.write', domain: 'Sales', capability: 'Sales write', suggestedRole: 'staff', suggestedPermission: 'sales.order.write' },
   { id: 'procurement.read', domain: 'Procurement', capability: 'Procurement read', suggestedRole: 'procurement' },
@@ -361,10 +348,9 @@ const CAPABILITY_CATALOG: CapabilityDescriptor[] = [
 const ROLE_GRANTS: Record<string, string[]> = {
   superadmin: CAPABILITY_CATALOG.map((item) => item.id),
   admin: ['org.read', 'org.mutate', 'audit.read'],
-  region_manager: ['org.read', 'catalog.read', 'sales.read', 'procurement.read', 'inventory.read', 'finance.read', 'audit.read', 'report.read'],
+  region_manager: ['org.read', 'catalog.read', 'catalog.mutate', 'sales.read', 'procurement.read', 'inventory.read', 'finance.read', 'audit.read', 'report.read'],
   outlet_manager: ['org.read', 'catalog.read', 'sales.read', 'sales.write', 'procurement.read', 'procurement.write', 'procurement.approve', 'inventory.read', 'inventory.write', 'finance.read', 'finance.write', 'hr.schedule', 'hr.contracts', 'report.read'],
   staff: ['org.read', 'catalog.read', 'sales.read', 'sales.write', 'inventory.read', 'report.read'],
-  product_manager: ['org.read', 'catalog.read', 'catalog.mutate', 'sales.read', 'inventory.read', 'report.read'],
   procurement: ['org.read', 'catalog.read', 'sales.read', 'procurement.read', 'procurement.write', 'inventory.read', 'report.read'],
   finance: ['org.read', 'catalog.read', 'sales.read', 'procurement.read', 'inventory.read', 'finance.read', 'finance.write', 'payroll.approve', 'report.read'],
   hr: ['org.read', 'catalog.read', 'sales.read', 'procurement.read', 'inventory.read', 'payroll.prepare', 'hr.schedule', 'hr.contracts', 'report.read'],
@@ -390,7 +376,7 @@ const ROLE_LIMITATIONS: Partial<Record<string, Record<string, string>>> = {
     'catalog.mutate': 'Admin manages IAM and organization structure, but cannot mutate the product catalog.',
   },
   region_manager: {
-    'sales.write': 'Region Manager is an oversight role. It does not grant business writes or approvals.',
+    'sales.write': 'Region Manager owns regional catalog governance, but cannot operate sales transactions.',
     'procurement.approve': 'Region Manager can review operations but cannot approve procurement transactions.',
   },
   procurement: {
@@ -401,9 +387,6 @@ const ROLE_LIMITATIONS: Partial<Record<string, Record<string, string>>> = {
   },
   hr: {
     'payroll.approve': 'HR prepares payroll, but approval is reserved for Finance.',
-  },
-  product_manager: {
-    'sales.write': 'Product Manager is limited to catalog and pricing operations.',
   },
   staff: {
     'procurement.write': 'Staff is limited to sales/POS operations at the assigned outlet.',

@@ -546,12 +546,6 @@ export function FinanceRevenueWorkspace({
             View Labor & Payroll
           </button>
         ) : null}
-        <button
-          onClick={() => onNavigate('prime-cost')}
-          className="rounded-md border px-4 py-2 text-sm transition-colors hover:bg-accent"
-        >
-          Open Prime Cost
-        </button>
       </div>
     </div>
   );

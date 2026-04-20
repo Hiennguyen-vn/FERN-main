@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Package, Leaf, BookOpen, DollarSign, Search, RefreshCw, Plus, Save, Trash2, Pause,
+  Package, Leaf, BookOpen, DollarSign, Search, RefreshCw, Plus, Save, Trash2,
   Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
-  productApi, salesApi,
-  type ItemView, type PriceView, type ProductView, type PromotionView, type RecipeView,
+  productApi,
+  type ItemView, type PriceView, type ProductView, type RecipeView,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
 import { useAuth } from '@/auth/use-auth';
@@ -22,15 +22,13 @@ import { ProductListPanel } from '@/components/catalog/ProductListPanel';
 import { ProductDetailPanel } from '@/components/catalog/ProductDetailPanel';
 import { CatalogControlTower } from '@/components/catalog/CatalogControlTower';
 import { IngredientDrawer } from '@/components/catalog/IngredientDrawer';
-import { LayoutDashboard, FolderTree, GitBranch, Rocket, History } from 'lucide-react';
+import { LayoutDashboard, FolderTree, Tag } from 'lucide-react';
 import { CategoryManager } from '@/components/catalog/CategoryManager';
-import { ScopeOverrideExplorer } from '@/components/catalog/ScopeOverrideExplorer';
-import { PublishCenter } from '@/components/catalog/PublishCenter';
-import { ChangeHistory } from '@/components/catalog/ChangeHistory';
+import { PromotionsModule } from '@/components/promotions/PromotionsModule';
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
-type CatTab = 'overview' | 'products' | 'ingredients' | 'recipes' | 'pricing' | 'categories' | 'overrides' | 'publish' | 'history';
+type CatTab = 'overview' | 'products' | 'ingredients' | 'recipes' | 'pricing' | 'promotions' | 'categories';
 
 const TABS: { key: CatTab; label: string; icon: React.ElementType }[] = [
   { key: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -38,10 +36,8 @@ const TABS: { key: CatTab; label: string; icon: React.ElementType }[] = [
   { key: 'ingredients', label: 'Ingredients', icon: Leaf },
   { key: 'recipes', label: 'Recipes', icon: BookOpen },
   { key: 'pricing', label: 'Pricing', icon: DollarSign },
+  { key: 'promotions', label: 'Promotions', icon: Tag },
   { key: 'categories', label: 'Categories', icon: FolderTree },
-  { key: 'overrides', label: 'Overrides', icon: GitBranch },
-  { key: 'publish', label: 'Publish', icon: Rocket },
-  { key: 'history', label: 'History', icon: History },
 ];
 
 const READ_ONLY_TABS = TABS.filter((tab) => ['products', 'recipes', 'pricing'].includes(tab.key));
@@ -99,18 +95,12 @@ export function CatalogModule() {
   const [pricesTotal, setPricesTotal] = useState(0);
   const [pricesHasMore, setPricesHasMore] = useState(false);
   const [priceForm, setPriceForm] = useState({ productId: '', priceAmount: '0', effectiveFrom: new Date().toISOString().slice(0, 10) });
-  const [promotions, setPromotions] = useState<PromotionView[]>([]);
-  const [promotionsLoading, setPromotionsLoading] = useState(false);
-  const [promotionsTotal, setPromotionsTotal] = useState(0);
-  const [promotionsHasMore, setPromotionsHasMore] = useState(false);
 
   // Query states
   const itemsQuery = useListQueryState({ initialLimit: 25, initialSortBy: 'name', initialSortDir: 'asc' as const });
   const recipesQuery = useListQueryState({ initialLimit: 25, initialSortBy: 'name', initialSortDir: 'asc' as const });
   const pricesQuery = useListQueryState<{ outletId?: string }>({ initialLimit: 25, initialSortBy: 'effectiveFrom', initialSortDir: 'desc' as const, initialFilters: { outletId: outletId || undefined } });
-  const promotionsQuery = useListQueryState<{ outletId?: string; status?: string }>({ initialLimit: 25, initialSortBy: 'effectiveFrom', initialSortDir: 'desc' as const, initialFilters: { outletId: outletId || undefined, status: undefined } });
   const patchPriceFilters = pricesQuery.patchFilters;
-  const patchPromotionFilters = promotionsQuery.patchFilters;
   const canManageCatalog = hasCatalogMutationAccess(session);
   const visibleTabs = canManageCatalog ? TABS : READ_ONLY_TABS;
 
@@ -146,15 +136,6 @@ export function CatalogModule() {
     } catch (e) { toast.error(getErrorMessage(e, 'Failed to load prices')); } finally { setPricesLoading(false); }
   }, [token, outletId, pricesQuery.debouncedSearch, pricesQuery.sortBy, pricesQuery.sortDir, pricesQuery.limit, pricesQuery.offset]);
 
-  const loadPromotions = useCallback(async () => {
-    if (!token || !outletId) return;
-    setPromotionsLoading(true);
-    try {
-      const r = await salesApi.promotions(token, { outletId, status: promotionsQuery.filters.status, q: promotionsQuery.debouncedSearch || undefined, sortBy: promotionsQuery.sortBy, sortDir: promotionsQuery.sortDir, limit: promotionsQuery.limit, offset: promotionsQuery.offset });
-      setPromotions(r.items); setPromotionsTotal(r.totalCount); setPromotionsHasMore(r.items.length >= promotionsQuery.limit);
-    } catch { /* optional */ } finally { setPromotionsLoading(false); }
-  }, [token, outletId, promotionsQuery.filters.status, promotionsQuery.debouncedSearch, promotionsQuery.sortBy, promotionsQuery.sortDir, promotionsQuery.limit, promotionsQuery.offset]);
-
   const loadOptions = useCallback(async () => {
     if (!token) return;
     try { const [p, i] = await Promise.all([productApi.products(token), productApi.items(token)]); setProductOptions(p); setItemOptions(i); } catch { /* */ }
@@ -166,11 +147,9 @@ export function CatalogModule() {
   useEffect(() => {
     if (activeTab !== 'pricing') return;
     void loadPricing();
-    if (canManageCatalog) void loadPromotions();
     void loadOptions();
-  }, [activeTab, canManageCatalog, loadPricing, loadPromotions, loadOptions]);
+  }, [activeTab, loadPricing, loadOptions]);
   useEffect(() => { patchPriceFilters({ outletId: outletId || undefined }); }, [outletId, patchPriceFilters]);
-  useEffect(() => { patchPromotionFilters({ outletId: outletId || undefined }); }, [outletId, patchPromotionFilters]);
   useEffect(() => {
     if (visibleTabs.some((tab) => tab.key === activeTab)) return;
     setActiveTab('products');
@@ -206,13 +185,31 @@ export function CatalogModule() {
   const addRecipeLine = () => setRecipeLines(p => [...p, { key: nextKey(), itemId: '', qtyRequired: '0', uomCode: 'g' }]);
   const removeRecipeLine = (key: string) => setRecipeLines(p => p.filter(l => l.key !== key));
   const updateRecipeLine = (key: string, patch: Partial<RecipeLineDraft>) => setRecipeLines(p => p.map(l => l.key === key ? { ...l, ...patch } : l));
-  const updateLineItem = (key: string, itemId: string) => { const uom = resolveUom(itemId); setRecipeLines(p => p.map(l => l.key === key ? { ...l, itemId, uomCode: uom } : l)); };
+  const updateLineItem = (key: string, itemId: string) => {
+    if (itemId && recipeLines.some(l => l.key !== key && l.itemId === itemId)) {
+      const dupName = itemOptions.find(i => String(i.id) === itemId);
+      toast.error(`Duplicate ingredient: ${dupName ? String(dupName.name || dupName.code) : itemId}`);
+      return;
+    }
+    const uom = resolveUom(itemId);
+    setRecipeLines(p => p.map(l => l.key === key ? { ...l, itemId, uomCode: uom } : l));
+  };
 
   const saveRecipe = async () => {
     if (!recipeForm.productId) return;
+    const filledLines = recipeLines.filter(l => l.itemId);
+    const seen = new Set<string>();
+    for (const l of filledLines) {
+      if (seen.has(l.itemId)) {
+        const dup = itemOptions.find(i => String(i.id) === l.itemId);
+        toast.error(`Duplicate ingredient: ${dup ? String(dup.name || dup.code) : l.itemId}`);
+        return;
+      }
+      seen.add(l.itemId);
+    }
     setActionBusy('save-recipe');
     try {
-      await productApi.upsertRecipe(token, recipeForm.productId, { version: recipeForm.version, yieldQty: Number(recipeForm.yieldQty), yieldUomCode: recipeForm.yieldUomCode, status: recipeForm.status, items: recipeLines.filter(l => l.itemId).map(l => ({ itemId: l.itemId, qtyRequired: Number(l.qtyRequired), uomCode: l.uomCode })) });
+      await productApi.upsertRecipe(token, recipeForm.productId, { version: recipeForm.version, yieldQty: Number(recipeForm.yieldQty), yieldUomCode: recipeForm.yieldUomCode, status: recipeForm.status, items: filledLines.map(l => ({ itemId: l.itemId, qtyRequired: Number(l.qtyRequired), uomCode: l.uomCode })) });
       toast.success('Recipe saved'); void loadRecipes();
     } catch (e) { toast.error(getErrorMessage(e, 'Failed to save recipe')); } finally { setActionBusy(''); }
   };
@@ -224,11 +221,6 @@ export function CatalogModule() {
       await productApi.upsertPrice(token, { productId: priceForm.productId, outletId, priceAmount: Number(priceForm.priceAmount), effectiveFrom: priceForm.effectiveFrom });
       toast.success('Price saved'); void loadPricing();
     } catch (e) { toast.error(getErrorMessage(e, 'Failed')); } finally { setActionBusy(''); }
-  };
-
-  const deactivatePromotion = async (id: string) => {
-    setActionBusy(`deact:${id}`);
-    try { await salesApi.deactivatePromotion(token, id); toast.success('Deactivated'); void loadPromotions(); } catch (e) { toast.error(getErrorMessage(e, 'Failed')); } finally { setActionBusy(''); }
   };
 
   const selectedRecipeProduct = productOptions.find(p => String(p.id) === recipeForm.productId) || recipeProducts.find(p => String(p.id) === recipeForm.productId) || null;
@@ -386,7 +378,14 @@ export function CatalogModule() {
                   {recipeLines.length === 0 ? <div className="px-3 py-4 text-center text-[10px] text-muted-foreground">{canManageCatalog ? 'No lines — click Add to start building the recipe' : 'No recipe lines configured'}</div> : (
                     <div className="divide-y overflow-x-auto">{recipeLines.map((line, idx) => (
                       <div key={line.key} className={cn('grid gap-1.5 p-2 min-w-[320px]', canManageCatalog ? 'grid-cols-[minmax(120px,1fr)_70px_70px_30px]' : 'grid-cols-[minmax(120px,1fr)_70px_70px]')}>
-                        <select disabled={!canManageCatalog} className="h-7 rounded border border-input bg-background px-1.5 text-[11px] disabled:opacity-100 disabled:text-foreground" value={line.itemId} onChange={e => updateLineItem(line.key, e.target.value)}><option value="">Item {idx + 1}</option>{itemOptions.map(i => <option key={String(i.id)} value={String(i.id)}>{String(i.name || i.code)}</option>)}</select>
+                        <select disabled={!canManageCatalog} className="h-7 rounded border border-input bg-background px-1.5 text-[11px] disabled:opacity-100 disabled:text-foreground" value={line.itemId} onChange={e => updateLineItem(line.key, e.target.value)}>
+                          <option value="">Item {idx + 1}</option>
+                          {itemOptions.map(i => {
+                            const id = String(i.id);
+                            const usedElsewhere = id !== line.itemId && recipeLines.some(l => l.itemId === id);
+                            return <option key={id} value={id} disabled={usedElsewhere}>{String(i.name || i.code)}{usedElsewhere ? ' (added)' : ''}</option>;
+                          })}
+                        </select>
                         <input readOnly={!canManageCatalog} type="number" min="0" step="0.001" className="h-7 rounded border border-input bg-background px-1.5 text-[11px]" value={line.qtyRequired} onChange={e => updateRecipeLine(line.key, { qtyRequired: e.target.value })} />
                         <select disabled={!canManageCatalog} className="h-7 rounded border border-input bg-background px-1 text-[11px] disabled:opacity-100 disabled:text-foreground" value={line.uomCode} onChange={e => updateRecipeLine(line.key, { uomCode: e.target.value })}>{Array.from(new Set([resolveUom(line.itemId), ...ITEM_UOM_OPTIONS])).map(u => <option key={`${line.key}-${u}`}>{u}</option>)}</select>
                         {canManageCatalog ? <button onClick={() => removeRecipeLine(line.key)} className="h-7 w-7 rounded border text-muted-foreground hover:text-foreground hover:bg-accent"><Trash2 className="h-2.5 w-2.5 mx-auto" /></button> : null}
@@ -436,55 +435,15 @@ export function CatalogModule() {
                   </tbody></table></div>
                   <ListPaginationControls total={pricesTotal} limit={pricesQuery.limit} offset={pricesQuery.offset} hasMore={pricesHasMore} disabled={pricesLoading} onPageChange={pricesQuery.setPage} onLimitChange={pricesQuery.setPageSize} />
                 </div>
-                {canManageCatalog ? (
-                  <div className="surface-elevated p-4 space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <h3 className="text-sm font-semibold">Promotions ({promotionsTotal})</h3>
-                      <div className="flex items-center gap-2">
-                        <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={promotionsQuery.filters.status || 'all'} onChange={e => promotionsQuery.setFilter('status', e.target.value === 'all' ? undefined : e.target.value)}>
-                          <option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option>
-                        </select>
-                        <button onClick={() => void loadPromotions()} disabled={promotionsLoading} className="h-8 w-8 rounded border flex items-center justify-center hover:bg-accent disabled:opacity-60"><RefreshCw className={cn('h-3.5 w-3.5', promotionsLoading && 'animate-spin')} /></button>
-                      </div>
-                    </div>
-                    <div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b bg-muted/30">
-                      <th className="text-left text-[11px] px-4 py-2.5">Name</th><th className="text-left text-[11px] px-4 py-2.5">Type</th><th className="text-left text-[11px] px-4 py-2.5">Status</th><th className="text-right text-[11px] px-4 py-2.5"></th>
-                    </tr></thead><tbody>
-                      {promotionsLoading && promotions.length === 0 ? <ListTableSkeleton columns={4} rows={3} /> : promotions.length === 0 ? <tr><td colSpan={4} className="px-4 py-6 text-center text-sm text-muted-foreground">No promotions</td></tr> : promotions.map(p => (
-                        <tr key={String(p.id)} className="border-b last:border-0 hover:bg-muted/20">
-                          <td className="px-4 py-2.5 text-sm font-medium">{String(p.name || p.id)}</td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(p.promoType || '—')}</td>
-                          <td className="px-4 py-2.5"><StatusBadge status={p.status} /></td>
-                          <td className="px-4 py-2.5 text-right">{(p.status === 'active' || p.status === 'draft') && <button onClick={() => void deactivatePromotion(String(p.id))} disabled={actionBusy === `deact:${p.id}`} className="h-6 px-2 rounded border text-[10px] inline-flex items-center gap-1 hover:bg-accent disabled:opacity-60"><Pause className="h-2.5 w-2.5" />Deact</button>}</td>
-                        </tr>
-                      ))}
-                    </tbody></table></div>
-                    <ListPaginationControls total={promotionsTotal} limit={promotionsQuery.limit} offset={promotionsQuery.offset} hasMore={promotionsHasMore} disabled={promotionsLoading} onPageChange={promotionsQuery.setPage} onLimitChange={promotionsQuery.setPageSize} />
-                  </div>
-                ) : null}
               </>
             )}
           </div>
         )}
 
-        {/* ══ SCOPE OVERRIDES ════════════════════════════════════ */}
-        {activeTab === 'overrides' && (
+        {/* ══ PROMOTIONS ══════════════════════════════════════════ */}
+        {activeTab === 'promotions' && (
           <div className="flex-1 overflow-y-auto">
-            <ScopeOverrideExplorer token={token} outletId={outletId} />
-          </div>
-        )}
-
-        {/* ══ PUBLISH CENTER ══════════════════════════════════════ */}
-        {activeTab === 'publish' && (
-          <div className="flex-1 overflow-hidden">
-            <PublishCenter token={token} />
-          </div>
-        )}
-
-        {/* ══ CHANGE HISTORY ═════════════════════════════════════ */}
-        {activeTab === 'history' && (
-          <div className="flex-1 overflow-y-auto">
-            <ChangeHistory token={token} />
+            <PromotionsModule />
           </div>
         )}
 

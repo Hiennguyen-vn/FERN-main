@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  Info,
   RefreshCw,
 } from 'lucide-react';
 import {
@@ -56,6 +57,8 @@ interface OutletCostRow {
   otherExpenses: number;
   totalOpCost: number;
   opCostPct: number | null;
+  cogs: number | null;
+  primeCostPct: number | null;
   currency: string;
 }
 
@@ -72,7 +75,7 @@ export function FinancePrimeCostWorkspace({
   const [runs, setRuns] = useState<PayrollRunView[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriodView[]>([]);
   const [selectedPeriodKey, setSelectedPeriodKey] = useState('');
-  const [thresholdPct, setThresholdPct] = useState(65);
+  const [primeCostTarget, setPrimeCostTarget] = useState(60);
   const {
     orders,
     visibleOutlets,
@@ -103,6 +106,16 @@ export function FinancePrimeCostWorkspace({
     [outlets, regions, scopeOutletId, scopeRegionId],
   );
 
+  const periodRange = useMemo(() => {
+    if (!selectedPeriodKey) return { startDate: undefined as string | undefined, endDate: undefined as string | undefined };
+    const [y, m] = selectedPeriodKey.split('-').map(Number);
+    if (!y || !m) return { startDate: undefined, endDate: undefined };
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end = new Date(Date.UTC(y, m, 0));
+    const toISO = (d: Date) => d.toISOString().slice(0, 10);
+    return { startDate: toISO(start), endDate: toISO(end) };
+  }, [selectedPeriodKey]);
+
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
@@ -111,6 +124,8 @@ export function FinancePrimeCostWorkspace({
       const [expPage, runItems, periodItems] = await Promise.all([
         financeApi.expenses(token, {
           outletId: scopeOutletId || undefined,
+          startDate: periodRange.startDate,
+          endDate: periodRange.endDate,
           limit: 500,
           sortBy: 'businessDate',
           sortDir: 'desc',
@@ -142,7 +157,7 @@ export function FinancePrimeCostWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [scopedRegionId, scopeOutletId, token]);
+  }, [periodRange.endDate, periodRange.startDate, scopedRegionId, scopeOutletId, token]);
 
   useEffect(() => {
     void load();
@@ -248,6 +263,8 @@ export function FinancePrimeCostWorkspace({
         otherExpenses,
         totalOpCost,
         opCostPct: netSales > 0 ? (totalOpCost / netSales) * 100 : null,
+        cogs: null,
+        primeCostPct: null,
         currency: String(currency),
       };
     }).sort((left, right) => right.totalOpCost - left.totalOpCost);
@@ -267,7 +284,13 @@ export function FinancePrimeCostWorkspace({
 
   const currency = outletRows[0]?.currency ?? currentRevenue.currency ?? 'USD';
   const laborPct = totals.netSales > 0 ? (totals.payroll / totals.netSales) * 100 : null;
-  const opCostPct = totals.netSales > 0 ? (totals.totalOpCost / totals.netSales) * 100 : null;
+  const totalCogs = outletRows.reduce<number | null>((acc, row) => {
+    if (row.cogs == null) return acc;
+    return (acc ?? 0) + row.cogs;
+  }, null);
+  const primeCostPct = totalCogs != null && totals.netSales > 0
+    ? ((totals.payroll + totalCogs) / totals.netSales) * 100
+    : null;
 
   const comparisonRows = useMemo(() => {
     return outletRows.map((row) => {
@@ -281,26 +304,16 @@ export function FinancePrimeCostWorkspace({
             && resolveRunPeriodKey(run) === priorPeriod.key,
         )
         .reduce((sum, run) => sum + toNumber(run.netSalary), 0);
-      const priorExpensesValue = expenses
-        .filter(
-          (expense) =>
-            String(expense.outletId) === row.outletId
-            && priorPeriod
-            && getPeriodKey(expense.businessDate || expense.createdAt) === priorPeriod.key
-            && String(expense.subtype || expense.sourceType || '').toLowerCase() !== 'payroll',
-        )
-        .reduce((sum, expense) => sum + toNumber(expense.amount), 0);
-      const priorOpCost = priorPayroll + priorExpensesValue;
-      const priorPct = priorNetSalesValue > 0 ? (priorOpCost / priorNetSalesValue) * 100 : null;
+      const priorLaborPct = priorNetSalesValue > 0 ? (priorPayroll / priorNetSalesValue) * 100 : null;
 
       return {
         outletId: row.outletId,
         outlet: row.outletCode,
-        currentPct: row.opCostPct ?? 0,
-        priorPct: priorPct ?? 0,
+        currentPct: row.laborPct ?? 0,
+        priorPct: priorLaborPct ?? 0,
       };
     });
-  }, [expenses, outletRows, priorPeriod, priorRevenueByOutlet, resolveRunPeriodKey, runs]);
+  }, [outletRows, priorPeriod, priorRevenueByOutlet, resolveRunPeriodKey, runs]);
 
   const alerts = useMemo(() => {
     return outletRows
@@ -323,19 +336,19 @@ export function FinancePrimeCostWorkspace({
           });
         }
 
-        if (row.opCostPct != null && row.opCostPct > thresholdPct) {
+        if (row.primeCostPct != null && row.primeCostPct > primeCostTarget) {
           items.push({
-            key: `${row.outletId}-op-cost`,
+            key: `${row.outletId}-prime-cost`,
             label: row.outletCode,
-            tone: row.opCostPct > thresholdPct + 8 ? 'critical' : 'warning',
-            message: `Operating cost is ${row.opCostPct.toFixed(1)}% of sales — above the ${thresholdPct}% target.`,
+            tone: row.primeCostPct > primeCostTarget + 8 ? 'critical' : 'warning',
+            message: `Prime Cost is ${row.primeCostPct.toFixed(1)}% of sales — above the ${primeCostTarget}% target.`,
           });
         }
 
         return items;
       })
       .slice(0, 5);
-  }, [outletRows, thresholdPct]);
+  }, [outletRows, primeCostTarget]);
 
   return (
     <div className="animate-fade-in space-y-5">
@@ -349,8 +362,8 @@ export function FinancePrimeCostWorkspace({
           <select className="h-8 rounded-md border border-input bg-background px-2.5 text-xs" value={activePeriodKey} onChange={(event) => setSelectedPeriodKey(event.target.value)}>
             {periodOptions.length === 0 ? (<option value="">No periods</option>) : (periodOptions.map((option) => (<option key={option.key} value={option.key}>{option.label}</option>)))}
           </select>
-          <select className="h-8 rounded-md border border-input bg-background px-2.5 text-xs" value={String(thresholdPct)} onChange={(event) => setThresholdPct(Number(event.target.value))}>
-            {[55, 60, 65, 70].map((value) => (<option key={value} value={value}>Target: {value}%</option>))}
+          <select className="h-8 rounded-md border border-input bg-background px-2.5 text-xs" value={String(primeCostTarget)} onChange={(event) => setPrimeCostTarget(Number(event.target.value))}>
+            {[55, 60, 65, 70].map((value) => (<option key={value} value={value}>Prime Cost target: {value}%</option>))}
           </select>
           <button onClick={() => { void load(); void refreshSales(); }} disabled={loading || salesLoading} className="flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent disabled:opacity-60">
             <RefreshCw className={cn('h-3.5 w-3.5', (loading || salesLoading) && 'animate-spin')} /> Refresh
@@ -360,14 +373,12 @@ export function FinancePrimeCostWorkspace({
 
       <section className="surface-elevated overflow-hidden">
 
-        <div className="grid gap-0 md:grid-cols-6">
+        <div className="grid gap-0 md:grid-cols-4">
           {[
             { label: 'Net Sales', value: formatMoney(totals.netSales, currency), sub: formatPeriodLabel(activePeriodKey) },
             { label: 'Labor Total', value: formatMoney(totals.payroll, currency), sub: totals.payroll === 0 ? 'No approved payroll in scope' : laborPct == null ? 'No sales data' : laborPct > 200 ? 'Exceeds sales — check data' : `${laborPct.toFixed(1)}% of sales` },
-            { label: 'Other OpEx', value: formatMoney(totals.otherExpenses, currency), sub: 'Non-payroll expenses' },
-            { label: 'Operating Cost %', value: opCostPct == null ? '—' : opCostPct > 200 ? '>200%' : `${opCostPct.toFixed(1)}%`, sub: `Target: ${thresholdPct}%` },
-            { label: 'COGS', value: '—', sub: 'Inventory not connected' },
-            { label: 'Prime Cost %', value: '—', sub: 'Requires COGS data' },
+            { label: 'COGS', value: totalCogs == null ? '—' : formatMoney(totalCogs, currency), sub: totalCogs == null ? 'Connect Procurement to enable' : 'From inventory' },
+            { label: 'Prime Cost %', value: primeCostPct == null ? '—' : `${primeCostPct.toFixed(1)}%`, sub: primeCostPct == null ? 'Needs COGS' : `Target: ${primeCostTarget}%` },
           ].map((item, index) => (
             <div
               key={item.label}
@@ -384,8 +395,11 @@ export function FinancePrimeCostWorkspace({
         </div>
       </section>
 
-      <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-        Labor % and operating cost % are calculated from live revenue. Prime Cost % and Gross Margin will appear automatically once inventory (COGS) is connected in the Procurement module.
+      <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>
+          Prime Cost % = (Labor + COGS) / Net Sales. COGS becomes available once the Procurement module is connected. Non-payroll operating expenses are tracked separately in the Operating Expenses tab.
+        </span>
       </div>
 
       {error ? (
@@ -402,9 +416,9 @@ export function FinancePrimeCostWorkspace({
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_360px]">
         <section className="surface-elevated overflow-hidden">
           <div className="border-b px-5 py-4">
-            <h3 className="text-sm font-semibold">Operating cost % current vs prior</h3>
+            <h3 className="text-sm font-semibold">Labor % current vs prior</h3>
             <p className="text-xs text-muted-foreground">
-              Cost ratios are based on net sales. Prior period comparison uses the previous month.
+              Labor ratio against net sales. Prime Cost trend will appear once COGS data is available from Procurement.
             </p>
           </div>
           <div className="h-[320px] px-3 py-4">
@@ -445,13 +459,19 @@ export function FinancePrimeCostWorkspace({
           <div className="border-b px-5 py-4">
             <h3 className="text-sm font-semibold">Variance signals</h3>
             <p className="text-xs text-muted-foreground">
-              Cost alerts for labor and operating expenses in the selected period.
+              Alerts for labor and prime cost in the selected period.
             </p>
           </div>
           <div className="space-y-3 px-5 py-4">
+            {totalCogs == null ? (
+              <div className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 text-sm text-sky-900">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                <p className="text-xs">Prime Cost unavailable — Procurement/Inventory not connected. Labor alerts still shown below.</p>
+              </div>
+            ) : null}
             {alerts.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No cost alerts for the selected period. Labor and operating costs are within target thresholds.
+                No alerts for the selected period. Labor and prime cost are within target thresholds.
               </p>
             ) : (
               alerts.map((alert) => (
@@ -487,19 +507,19 @@ export function FinancePrimeCostWorkspace({
         <div className="border-b px-5 py-4">
           <h3 className="text-sm font-semibold">Outlet cost breakdown</h3>
           <p className="text-xs text-muted-foreground">
-            Labor % and operating cost % are calculated from live revenue. Prime Cost % requires COGS data from the Procurement module.
+            Labor % is calculated from live revenue. Prime Cost % requires COGS data from the Procurement module.
           </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b bg-muted/30">
-                {['Outlet', 'Net Sales', 'Payroll', 'Labor %', 'Other Expenses', 'Total Op Cost', 'Op Cost %', 'Prime Cost %'].map((header) => (
+                {['Outlet', 'Net Sales', 'Payroll', 'Labor %', 'COGS', 'Prime Cost %'].map((header) => (
                   <th
                     key={header}
                     className={cn(
                       'px-4 py-2.5 text-[11px] font-medium',
-                      ['Net Sales', 'Payroll', 'Labor %', 'Other Expenses', 'Total Op Cost', 'Op Cost %', 'Prime Cost %'].includes(header)
+                      ['Net Sales', 'Payroll', 'Labor %', 'COGS', 'Prime Cost %'].includes(header)
                         ? 'text-right'
                         : 'text-left',
                     )}
@@ -512,11 +532,11 @@ export function FinancePrimeCostWorkspace({
             <tbody>
               {(loading || salesLoading) && outletRows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">Loading…</td>
+                  <td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">Loading…</td>
                 </tr>
               ) : outletRows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                  <td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">
                     No outlet data in current scope.
                   </td>
                 </tr>
@@ -538,17 +558,11 @@ export function FinancePrimeCostWorkspace({
                     <td className={cn('px-4 py-3 text-right text-sm', row.laborPct != null && row.laborPct > 100 && 'text-red-600')}>
                       {row.laborPct == null ? '—' : row.laborPct > 200 ? '>200%' : `${row.laborPct.toFixed(1)}%`}
                     </td>
-                    <td className="px-4 py-3 text-right font-mono text-sm">
-                      {formatMoney(row.otherExpenses, row.currency)}
+                    <td className="px-4 py-3 text-right font-mono text-sm text-muted-foreground">
+                      {row.cogs == null ? '—' : formatMoney(row.cogs, row.currency)}
                     </td>
-                    <td className="px-4 py-3 text-right font-mono text-sm font-medium">
-                      {formatMoney(row.totalOpCost, row.currency)}
-                    </td>
-                    <td className={cn('px-4 py-3 text-right text-sm', row.opCostPct != null && row.opCostPct > 100 && 'text-red-600')}>
-                      {row.opCostPct == null ? '—' : row.opCostPct > 200 ? '>200%' : `${row.opCostPct.toFixed(1)}%`}
-                    </td>
-                    <td className="px-4 py-3 text-right text-xs text-muted-foreground">
-                      — (needs COGS)
+                    <td className={cn('px-4 py-3 text-right text-sm', row.primeCostPct != null && row.primeCostPct > primeCostTarget && 'text-red-600')}>
+                      {row.primeCostPct == null ? <span className="text-xs text-muted-foreground">— (needs COGS)</span> : `${row.primeCostPct.toFixed(1)}%`}
                     </td>
                   </tr>
                 ))

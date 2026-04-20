@@ -2,7 +2,7 @@
  * Comprehensive test suite for the config-driven module access matrix.
  *
  * Aligned with docs/authorization-business-rules.md:
- *   §2 Canonical Roles (10 roles)
+ *   §2 Canonical Roles (9 roles)
  *   §3 Legacy Role Mapping
  *   §4 Domain Access Matrix
  *   §5 Domain Rules in Detail
@@ -13,6 +13,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  hasCatalogMutationAccess,
   hasModuleAccess,
   hasFinanceWorkspaceAccess,
   hasHrOperationsAccess,
@@ -143,6 +144,10 @@ describe('Region Manager scoped read (§2, §5)', () => {
     }
   });
 
+  it('can mutate catalog for the assigned region', () => {
+    expect(hasCatalogMutationAccess(rm)).toBe(true);
+  });
+
   it('is denied POS, procurement write, IAM, HR, workforce, scheduling', () => {
     expect(hasModuleAccess(rm, 'pos')).toBe(false);
     expect(hasModuleAccess(rm, 'procurement')).toBe(false);
@@ -215,26 +220,19 @@ describe('Staff POS-only (§2, §5.3)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// §2 — Product Manager: Catalog Only
+// §3 — Legacy product_manager alias resolves to region_manager
 // ---------------------------------------------------------------------------
 
-describe('Product Manager catalog (§2, §5.2)', () => {
-  const pm = roleSession('product_manager');
+describe('Legacy product_manager alias (§3)', () => {
+  const legacyPm = roleSession('product_manager');
+  const rm = roleSession('region_manager');
 
-  it('can access catalog and read-floor modules', () => {
-    expect(hasModuleAccess(pm, 'home')).toBe(false);
-    expect(hasModuleAccess(pm, 'catalog')).toBe(true);
-    expect(hasModuleAccess(pm, 'inventory')).toBe(true); // read-floor
-    expect(hasModuleAccess(pm, 'reports')).toBe(true); // read-floor
+  it('matches region_manager module access', () => {
+    expect(accessibleFamilies(legacyPm)).toEqual(accessibleFamilies(rm));
   });
 
-  it('is denied business operations beyond catalog', () => {
-    expect(hasModuleAccess(pm, 'pos')).toBe(false);
-    expect(hasModuleAccess(pm, 'procurement')).toBe(false);
-    expect(hasModuleAccess(pm, 'finance')).toBe(false);
-    expect(hasModuleAccess(pm, 'hr')).toBe(false);
-    expect(hasModuleAccess(pm, 'iam')).toBe(false);
-    expect(hasModuleAccess(pm, 'audit')).toBe(false);
+  it('inherits region_manager catalog mutation access', () => {
+    expect(hasCatalogMutationAccess(legacyPm)).toBe(true);
   });
 });
 
@@ -367,6 +365,7 @@ describe('Legacy role alias mapping (§3)', () => {
     ['regional_finance', 'finance'],
     ['accountant', 'finance'],
     ['regional_manager', 'region_manager'],
+    ['product_manager', 'region_manager'],
     ['system_admin', 'admin'],
     ['technical_admin', 'admin'],
   ])('%s → %s', (legacyCode, canonicalRole) => {
@@ -568,7 +567,6 @@ describe('Golden module visibility per role (§4)', () => {
     region_manager:  'home catalog inventory finance org regional-ops reports audit'.split(' '),
     outlet_manager:  'home pos catalog inventory procurement finance hr workforce scheduling reports crm promotions'.split(' '),
     staff:           'pos catalog inventory reports crm promotions'.split(' '),
-    product_manager: 'catalog inventory reports'.split(' '),
     procurement:     'catalog inventory procurement reports'.split(' '),
     finance:         'catalog inventory finance reports'.split(' '),
     hr:              'catalog inventory hr workforce scheduling reports'.split(' '),

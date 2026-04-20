@@ -57,10 +57,23 @@ export function ProductListPanel({ token, selectedId, onSelect, compact, canCrea
       setForm({ code: '', name: '', categoryCode: 'beverage' });
       setShowCreate(false);
       toast.success('Product created');
-      await load();
       const createdId = String(created?.id ?? '');
-      const full = createdId ? products.find(p => String(p.id) === createdId) : undefined;
-      onSelect(full ?? (created as unknown as ProductView));
+      // Re-fetch so list updates AND we get a canonical ProductView row for the new product
+      try {
+        const result = await productApi.productsPaged(token, {
+          q: query.debouncedSearch || undefined, sortBy: query.sortBy, sortDir: query.sortDir,
+          limit: query.limit, offset: query.offset,
+        });
+        setProducts(result.items);
+        setTotal(result.totalCount);
+        setHasMore(result.items.length >= query.limit);
+        const full = createdId ? result.items.find(p => String(p.id) === createdId) : undefined;
+        if (full) onSelect(full);
+        else if (created && typeof created === 'object') onSelect(created as ProductView);
+      } catch {
+        void load();
+        if (created && typeof created === 'object') onSelect(created as ProductView);
+      }
     } catch (e) {
       toast.error(getErrorMessage(e, 'Failed to create product'));
     } finally {

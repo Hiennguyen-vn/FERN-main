@@ -669,6 +669,15 @@ public class SalesRepository extends BaseRepository {
       if (!isApprovableStatus(lockedSale.status())) {
         throw ServiceException.conflict("Only newly created orders can be approved");
       }
+      Long effectiveSessionId = lockedSale.posSessionId();
+      if (effectiveSessionId == null) {
+        // Public/QR orders are created without a session. Link to the outlet's current open session at approval time
+        // so session revenue aggregates include them.
+        effectiveSessionId = findOpenPosSessionIdForOutlet(conn, lockedSale.outletId())
+            .orElseThrow(() -> ServiceException.conflict(
+                "No open POS session for outlet " + lockedSale.outletId()
+                    + " — open a session before approving customer orders"));
+      }
       Map<Long, AggregatedSaleLine> aggregatedLines = loadSaleLinesForInventory(conn, saleId);
       validateStockAvailability(
           conn,
@@ -696,16 +705,35 @@ public class SalesRepository extends BaseRepository {
           UPDATE core.sale_record
           SET status = 'order_approved'::sale_order_status_enum,
               payment_status = 'unpaid'::payment_status_enum,
+              pos_session_id = COALESCE(pos_session_id, ?),
               updated_at = NOW()
           WHERE id = ?
           """
       )) {
-        ps.setLong(1, saleId);
+        ps.setLong(1, effectiveSessionId);
+        ps.setLong(2, saleId);
         ps.executeUpdate();
       }
       return findSale(conn, saleId)
           .orElseThrow(() -> new IllegalStateException("Approved sale not found"));
     });
+  }
+
+  private Optional<Long> findOpenPosSessionIdForOutlet(Connection conn, long outletId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT id FROM core.pos_session
+        WHERE outlet_id = ? AND status = 'open'::pos_session_status_enum
+        ORDER BY opened_at DESC
+        LIMIT 1
+        """
+    )) {
+      ps.setLong(1, outletId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) return Optional.of(rs.getLong(1));
+        return Optional.empty();
+      }
+    }
   }
 
   public SalesDtos.SaleView markPaymentDone(long saleId, SalesDtos.MarkPaymentDoneRequest request) {

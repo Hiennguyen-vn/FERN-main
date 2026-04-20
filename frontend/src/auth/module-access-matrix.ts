@@ -60,9 +60,9 @@ export const MODULE_ACCESS_MATRIX: Record<ModuleFamily, ModuleAccessRule> = {
     outletMembership: false,
   },
 
-  // §5.2 — Catalog read: any outlet member; mutate: product_manager
+  // §5.2 — Catalog read: any outlet member; mutate: region_manager
   catalog: {
-    roles: ['product_manager'],
+    roles: ['region_manager'],
     permissions: ['product.catalog.write'],
     outletMembership: true, // read-floor: any outlet member can browse catalog
   },
@@ -183,6 +183,7 @@ export const LEGACY_ROLE_ALIASES: Record<string, string> = {
   regional_finance: 'finance',
   accountant: 'finance',
   regional_manager: 'region_manager',
+  product_manager: 'region_manager',
   system_admin: 'admin',
   technical_admin: 'admin',
 };

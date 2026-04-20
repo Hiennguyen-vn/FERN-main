@@ -46,6 +46,39 @@ describe('shell layout helpers', () => {
     });
   });
 
+  it('collapses region-scoped sessions to their assigned root region instead of exposing child regions as peers', () => {
+    const scopeTree = computeScopeTree(
+      [
+        { id: 'vn-root', name: 'Khu vực 1' },
+        { id: 'vn', name: 'Vietnam' },
+        { id: 'vn-hcm', name: 'Ho Chi Minh City' },
+        { id: 'vn-dn', name: 'Da Nang' },
+      ],
+      [
+        { id: 'o-vn-1', regionId: 'vn', code: 'VN-001', name: 'Vietnam Outlet 1' },
+        { id: 'o-hcm-1', regionId: 'vn-hcm', code: 'HCM-001', name: 'HCM Outlet 1' },
+        { id: 'o-dn-1', regionId: 'vn-dn', code: 'DN-001', name: 'Da Nang Outlet 1' },
+      ],
+      [
+        {
+          scopeType: 'region',
+          scopeId: 'vn',
+          scopeCode: 'VN',
+          roles: ['region_manager'],
+          outletIds: ['o-vn-1', 'o-hcm-1', 'o-dn-1'],
+        },
+      ],
+    );
+
+    expect(scopeTree[0].children).toHaveLength(1);
+    expect(scopeTree[0].children?.[0]).toMatchObject({
+      id: 'vn',
+      name: 'Vietnam',
+      level: 'region',
+    });
+    expect(scopeTree[0].children?.[0]?.children?.map((outlet) => outlet.id)).toEqual(['o-dn-1', 'o-hcm-1', 'o-vn-1']);
+  });
+
   it('builds shell user fallbacks when profile fields are missing', () => {
     const shellUser = buildShellUser(buildSession({
       user: { id: '5', username: 'ops', fullName: '', email: null, status: 'suspended' },

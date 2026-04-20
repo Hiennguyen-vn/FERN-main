@@ -550,6 +550,83 @@ class SalesServiceTest {
   }
 
   @Test
+  void approveSaleAllowsScopedWriterForOpenPublicOrder() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        15L,
+        "workflow.hcm.cashier",
+        "sess-15",
+        Set.of("cashier"),
+        Set.of("sales.order.write"),
+        Set.of(2000L),
+        true,
+        false,
+        null
+    ));
+    SalesDtos.SaleView openOrder = publicOrder("9800", 2000L, "order_created");
+    SalesDtos.SaleView approvedOrder = publicOrder("9800", 2000L, "order_approved");
+    when(salesRepository.findSale(9800L)).thenReturn(Optional.of(openOrder));
+    when(salesRepository.approveSale(9800L, 15L)).thenReturn(approvedOrder);
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2000L))).thenReturn(true);
+
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
+    SalesDtos.SaleView result = service.approveSale(9800L);
+
+    verify(salesRepository).approveSale(9800L, 15L);
+    verifyNoInteractions(kafkaEventPublisher);
+    assertEquals("order_approved", result.status());
+  }
+
+  @Test
+  void approveSaleRejectsScopedWriterOutsideOutlet() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        15L,
+        "workflow.hcm.cashier",
+        "sess-15",
+        Set.of("cashier"),
+        Set.of("sales.order.write"),
+        Set.of(2002L),
+        true,
+        false,
+        null
+    ));
+    when(salesRepository.findSale(9800L)).thenReturn(Optional.of(publicOrder("9800", 2000L, "order_created")));
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2000L))).thenReturn(false);
+
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
+
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.approveSale(9800L));
+    assertEquals(403, exception.getStatusCode());
+  }
+
+  @Test
+  void approveSalePropagatesConflictWhenOutletHasNoOpenSession() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        15L,
+        "workflow.hcm.cashier",
+        "sess-15",
+        Set.of("cashier"),
+        Set.of("sales.order.write"),
+        Set.of(2000L),
+        true,
+        false,
+        null
+    ));
+    when(salesRepository.findSale(9800L)).thenReturn(Optional.of(publicOrder("9800", 2000L, "order_created")));
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2000L))).thenReturn(true);
+    when(salesRepository.approveSale(9800L, 15L))
+        .thenThrow(ServiceException.conflict("No open POS session for outlet 2000 — open a session before approving customer orders"));
+
+    SalesService service = new SalesService(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock);
+
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.approveSale(9800L));
+    assertEquals(409, exception.getStatusCode());
+    assertEquals(
+        "No open POS session for outlet 2000 — open a session before approving customer orders",
+        exception.getMessage()
+    );
+  }
+
+  @Test
   void confirmSaleAllowsScopedWriterForOpenPublicOrder() {
     RequestUserContextHolder.set(new RequestUserContext(
         15L,

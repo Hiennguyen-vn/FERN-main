@@ -72,7 +72,8 @@ export function FinanceModule() {
     if (isSuperadmin || isFinance || isHr) tabs.add('labor');
     if (isSuperadmin || isFinance || isOutletManager || isRegionManager) tabs.add('expenses');
     if (isSuperadmin || isFinance || isRegionManager) tabs.add('pl');
-    if (isSuperadmin || isFinance || isRegionManager) tabs.add('prime-cost');
+    // Prime Cost tab tạm ẩn — chờ Procurement/COGS integration
+    // if (isSuperadmin || isFinance || isRegionManager) tabs.add('prime-cost');
     if (isSuperadmin || isFinance) tabs.add('close');
     return tabs;
   }, [isSuperadmin, isFinance, isHr, isRegionManager, isOutletManager]);

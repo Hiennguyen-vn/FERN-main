@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hasCatalogMutationAccess,
   hasCrmReadAccess,
   hasHrCompensationAccess,
   hasIamRoleManagementAccess,
@@ -126,5 +127,17 @@ describe('hasModuleAccess', () => {
     expect(hasIamRoleManagementAccess(roleManager)).toBe(true);
     expect(hasIamUserManagementAccess(admin)).toBe(true);
     expect(hasIamRoleManagementAccess(admin)).toBe(true);
+  });
+
+  it('grants catalog mutation to region_manager and legacy product_manager', () => {
+    const regionManager = buildSession({
+      rolesByOutlet: { '101': ['region_manager'] },
+    });
+    const legacyProductManager = buildSession({
+      rolesByOutlet: { '101': ['product_manager'] },
+    });
+
+    expect(hasCatalogMutationAccess(regionManager)).toBe(true);
+    expect(hasCatalogMutationAccess(legacyProductManager)).toBe(true);
   });
 });

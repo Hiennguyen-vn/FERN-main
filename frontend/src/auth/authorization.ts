@@ -158,7 +158,7 @@ export function hasCatalogMutationAccess(session: AuthSession | null) {
   const { roles, permissions, isSuperadmin, isGovernanceOnly } = getAccessState(session);
 
   if (isSuperadmin) return true;
-  if (roles.has('product_manager')) return true;
+  if (roles.has('region_manager')) return true;
 
   return !isGovernanceOnly && permissions.has('product.catalog.write');
 }

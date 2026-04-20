@@ -61,7 +61,6 @@ interface Props {
   outletName: string;
   operatorName: string;
   outletId?: string;
-  onCustomerOrders?: () => void;
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -87,7 +86,7 @@ function resolveCapabilityState(error: unknown): PermissionState | null {
   return null;
 }
 
-export function POSModule({ outletName, operatorName, outletId, onCustomerOrders }: Props) {
+export function POSModule({ outletName, operatorName, outletId }: Props) {
   const { session } = useAuth();
   const { token, scope } = useShellRuntime();
   const [view, setView] = useState<POSView>({ screen: 'list' });
@@ -682,7 +681,6 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
         onReconcile={(session) => setView({ screen: 'reconcile', sessionId: session.id })}
         onEditSession={(session) => setView({ screen: 'edit-session', sessionId: session.id })}
         onDeleteSession={(session) => handleDeleteSession(session.id)}
-        onCustomerOrders={canAccessOrderingTables ? onCustomerOrders : undefined}
         onCustomers={canAccessCustomerReferences ? () => setView({ screen: 'customers' }) : undefined}
         onOutletStats={() => setView({ screen: 'outlet-stats' })}
         onTables={canAccessOrderingTables ? () => setView({ screen: 'tables' }) : undefined}

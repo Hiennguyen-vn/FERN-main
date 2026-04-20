@@ -15,7 +15,6 @@ import { PosRoleRedirect } from "./routes/pos-order/guards/PosRoleRedirect";
 
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const POSPage = lazy(() => import("./pages/POSPage"));
-const CustomerOrdersPage = lazy(() => import("./pages/CustomerOrdersPage"));
 const PublicOrderPage = lazy(() => import("./pages/PublicOrderPage"));
 const InventoryModule = lazy(() => import("@/components/inventory/InventoryModule").then((m) => ({ default: m.InventoryModule })));
 const ProcurementModule = lazy(() => import("@/components/procurement/ProcurementModule").then((m) => ({ default: m.ProcurementModule })));
@@ -124,7 +123,6 @@ const App = () => (
             <Route element={<ProtectedShell />}>
               <Route path="/dashboard" element={<LazyRoute><DashboardPage /></LazyRoute>} />
               <Route path="/pos" element={<LazyRoute><PosRoleRedirect><POSPage /></PosRoleRedirect></LazyRoute>} />
-              <Route path="/order" element={<LazyRoute><CustomerOrdersPage /></LazyRoute>} />
               <Route path="/inventory" element={<LazyRoute><InventoryModule /></LazyRoute>} />
               <Route path="/procurement" element={<LazyRoute><ProcurementModule /></LazyRoute>} />
               <Route path="/catalog" element={<LazyRoute><CatalogModule /></LazyRoute>} />

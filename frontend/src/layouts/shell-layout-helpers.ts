@@ -1,4 +1,4 @@
-import type { AuthSession } from '@/api/auth-api';
+import type { AuthBusinessScopeView, AuthSession } from '@/api/auth-api';
 import { hasModuleAccess } from '@/auth/authorization';
 import type {
   ActionHub,
@@ -33,7 +33,6 @@ export const FAMILY_TO_PATH: Record<ModuleFamily, string> = {
 export const PATH_TO_FAMILY: Record<string, string> = Object.fromEntries(
   Object.entries(FAMILY_TO_PATH).map(([family, path]) => [path, family]),
 );
-PATH_TO_FAMILY['/order'] = 'pos';
 PATH_TO_FAMILY['/org'] = 'org';
 PATH_TO_FAMILY['/settings'] = 'org';
 
@@ -69,7 +68,27 @@ export const ACTION_HUB: ActionHub = {
   ],
 };
 
-export function computeScopeTree(
+function normalizeScopeId(value: string | null | undefined) {
+  return String(value ?? '').trim();
+}
+
+function buildOutletScopeOption(
+  outlet: { id: string; regionId: string; code: string; name: string },
+  parentRegionId: string,
+): ScopeOption {
+  return {
+    id: outlet.id,
+    name: `${outlet.code} · ${outlet.name}`,
+    level: 'outlet',
+    parentId: parentRegionId,
+  };
+}
+
+function sortScopeTreeChildren(nodes: ScopeOption[]) {
+  return [...nodes].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function computeFullScopeTree(
   regions: Array<{ id: string; name: string }>,
   outlets: Array<{ id: string; regionId: string; code: string; name: string }>,
 ): ScopeOption[] {
@@ -96,22 +115,113 @@ export function computeScopeTree(
       };
       regionsById.set(parent.id, parent);
     }
-    (parent.children ??= []).push({
-      id: outlet.id,
-      name: `${outlet.code} · ${outlet.name}`,
-      level: 'outlet',
-      parentId: outlet.regionId,
-    });
+    (parent.children ??= []).push(buildOutletScopeOption(outlet, parent.id));
   });
+
+  const children = Array.from(regionsById.values()).map((region) => ({
+    ...region,
+    children: sortScopeTreeChildren(region.children ?? []),
+  }));
 
   return [
     {
       id: 'system',
       name: 'All Regions',
       level: 'system',
-      children: Array.from(regionsById.values()),
+      children: sortScopeTreeChildren(children),
     },
   ];
+}
+
+function computeAssignedScopeTree(
+  regions: Array<{ id: string; name: string }>,
+  outlets: Array<{ id: string; regionId: string; code: string; name: string }>,
+  scopeAssignments: AuthBusinessScopeView[],
+): ScopeOption[] {
+  const regionsById = new Map(regions.map((region) => [region.id, region]));
+  const outletsById = new Map(outlets.map((outlet) => [outlet.id, outlet]));
+  const rootRegions = new Map<string, ScopeOption>();
+  const coveredOutletIds = new Set<string>();
+
+  const ensureRootRegion = (regionId: string) => {
+    const existing = rootRegions.get(regionId);
+    if (existing) return existing;
+    const region = regionsById.get(regionId);
+    const created: ScopeOption = {
+      id: regionId,
+      name: region?.name || `Region ${regionId}`,
+      level: 'region',
+      parentId: 'system',
+      children: [],
+    };
+    rootRegions.set(regionId, created);
+    return created;
+  };
+
+  for (const assignment of scopeAssignments) {
+    if (assignment.scopeType !== 'region') continue;
+    const regionId = normalizeScopeId(assignment.scopeId);
+    if (!regionId) continue;
+    const root = ensureRootRegion(regionId);
+    for (const outletIdValue of assignment.outletIds ?? []) {
+      const outletId = normalizeScopeId(outletIdValue);
+      const outlet = outletsById.get(outletId);
+      if (!outlet) continue;
+      coveredOutletIds.add(outlet.id);
+      if ((root.children ?? []).some((child) => child.id === outlet.id)) continue;
+      (root.children ??= []).push(buildOutletScopeOption(outlet, regionId));
+    }
+  }
+
+  for (const assignment of scopeAssignments) {
+    if (assignment.scopeType !== 'outlet') continue;
+    const outletIds = assignment.outletIds?.length
+      ? assignment.outletIds
+      : assignment.scopeId
+        ? [assignment.scopeId]
+        : [];
+    for (const outletIdValue of outletIds) {
+      const outletId = normalizeScopeId(outletIdValue);
+      if (!outletId || coveredOutletIds.has(outletId)) continue;
+      const outlet = outletsById.get(outletId);
+      if (!outlet) continue;
+      const root = ensureRootRegion(outlet.regionId);
+      coveredOutletIds.add(outlet.id);
+      if ((root.children ?? []).some((child) => child.id === outlet.id)) continue;
+      (root.children ??= []).push(buildOutletScopeOption(outlet, root.id));
+    }
+  }
+
+  if (rootRegions.size === 0) {
+    return computeFullScopeTree(regions, outlets);
+  }
+
+  const children = Array.from(rootRegions.values()).map((region) => ({
+    ...region,
+    children: sortScopeTreeChildren(region.children ?? []),
+  }));
+
+  return [
+    {
+      id: 'system',
+      name: 'All Regions',
+      level: 'system',
+      children: sortScopeTreeChildren(children),
+    },
+  ];
+}
+
+export function computeScopeTree(
+  regions: Array<{ id: string; name: string }>,
+  outlets: Array<{ id: string; regionId: string; code: string; name: string }>,
+  scopeAssignments?: AuthBusinessScopeView[],
+): ScopeOption[] {
+  const normalizedAssignments = (scopeAssignments ?? []).filter((assignment) => normalizeScopeId(assignment.scopeType));
+  const hasGlobalScope = normalizedAssignments.some((assignment) => assignment.scopeType === 'global');
+  if (normalizedAssignments.length === 0 || hasGlobalScope) {
+    return computeFullScopeTree(regions, outlets);
+  }
+  return computeAssignedScopeTree(regions, outlets, normalizedAssignments);
 }
 
 export function defaultScope(level: ScopeLevel, scopeTree: ScopeOption[]): ShellScope {

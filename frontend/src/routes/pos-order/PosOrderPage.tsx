@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Clock, History, ListChecks, LogOut, Plus, Power } from 'lucide-react';
+import { ClipboardList, Clock, History, ListChecks, LogOut, Plus, Power, QrCode } from 'lucide-react';
+import { useCustomerWaitingCount } from './hooks/use-customer-waiting-count';
+import { QrQueueView } from './components/QrQueueView';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import type { ScopeOutlet } from '@/api/org-api';
@@ -21,7 +23,9 @@ import { OrdersDrawer } from './components/OrdersDrawer';
 import { useOrdersFeed, type OrderScope } from './hooks/use-orders-feed';
 import { useCart } from './hooks/use-pos-cart';
 import { useOrderHistory, type SavedOrder } from './hooks/use-order-history';
+import { useDraftOrders } from './hooks/use-draft-orders';
 import { usePosMenu, type PosMenuItem } from './hooks/use-pos-menu';
+import { DraftPickerDialog } from './components/DraftPickerDialog';
 import { usePosSession } from './hooks/use-pos-session';
 import { useSubmitOrder } from './hooks/use-submit-order';
 
@@ -38,6 +42,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
   const navigate = useNavigate();
   const cart = useCart();
   const history = useOrderHistory();
+  const draftOrders = useDraftOrders();
   const menuQuery = usePosMenu(outletId);
   const sessionHook = usePosSession(outletId, currencyCode);
   const submit = useSubmitOrder();
@@ -52,6 +57,10 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
   const [clock, setClock] = useState(() => new Date());
   const [pendingOrderNo, setPendingOrderNo] = useState(history.nextOrderNo());
   const [drawerScope, setDrawerScope] = useState<OrderScope | null>(null);
+  const [view, setView] = useState<'menu' | 'qr-queue'>('menu');
+  const [draftPickerOpen, setDraftPickerOpen] = useState(false);
+  const customerWaitingQuery = useCustomerWaitingCount(outletId);
+  const customerWaitingCount = customerWaitingQuery.data ?? 0;
   const qc = useQueryClient();
   const token = session?.accessToken;
   const posSessionId = sessionHook.session?.id ?? null;
@@ -255,12 +264,41 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
             </span>
           )}
         </button>
+        <button
+          type="button"
+          onClick={() => setView((v) => (v === 'qr-queue' ? 'menu' : 'qr-queue'))}
+          className={`relative inline-flex items-center gap-1.5 text-sm h-9 px-3 rounded-md ${
+            view === 'qr-queue' ? 'pos-accent-soft-bg pos-accent-text font-semibold' : 'hover:bg-accent'
+          }`}
+        >
+          <QrCode className="w-4 h-4" /> Đơn khách QR
+          {customerWaitingCount > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full text-[10px] font-bold bg-warning text-warning-foreground">
+              {customerWaitingCount}
+            </span>
+          )}
+        </button>
         <button type="button" onClick={() => setDrawerScope('today')} className="inline-flex items-center gap-1.5 text-sm h-9 px-3 rounded-md hover:bg-accent">
           <History className="w-4 h-4" /> Hôm nay ({todayCount})
         </button>
-        <Button onClick={() => cart.reset()} className="h-9 pos-accent-bg hover:opacity-90">
-          <Plus className="w-4 h-4 mr-1" /> Đơn mới
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button onClick={() => { cart.reset(); setView('menu'); }} className="h-9 pos-accent-bg hover:opacity-90 rounded-r-none pr-3">
+            <Plus className="w-4 h-4 mr-1" /> Đơn mới
+          </Button>
+          <button
+            type="button"
+            onClick={() => setDraftPickerOpen(true)}
+            className="relative h-9 px-2 pos-accent-bg hover:opacity-90 rounded-l-none border-l border-white/30 inline-flex items-center justify-center"
+            title="Đơn lưu tạm"
+          >
+            <ClipboardList className="w-4 h-4 text-white" />
+            {draftOrders.drafts.length > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-0.5 inline-flex items-center justify-center rounded-full text-[9px] font-bold bg-white pos-accent-text">
+                {draftOrders.drafts.length}
+              </span>
+            )}
+          </button>
+        </div>
         {sessionHook.session && (
           <Button
             variant="outline"
@@ -277,23 +315,17 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
         </button>
       </header>
 
-      {menuQuery.isError && (
-        <div className="px-4 py-2 text-sm bg-destructive/10 text-destructive border-b">
-          Không tải được menu — kiểm tra kết nối backend.
-        </div>
-      )}
-      {!menuQuery.isLoading && menuQuery.data && menuQuery.data.menu.length === 0 && (
-        <div className="px-4 py-2 text-sm bg-warning/10 text-warning-foreground border-b">
-          Catalog chưa được cấu hình cho outlet này.
-        </div>
-      )}
-      {!menuQuery.isLoading && menuQuery.data && menuQuery.data.missingPriceCount > 0 && (
-        <div className="px-4 py-2 text-sm bg-warning/10 text-warning-foreground border-b">
-          {menuQuery.data.missingPriceCount} sản phẩm chưa có giá cho outlet này — cần cấu hình trong Catalog trước khi bán.
-        </div>
-      )}
 
       <div className="flex-1 flex min-h-0">
+        {view === 'qr-queue' ? (
+          <QrQueueView
+            outletId={outletId}
+            outletName={outletName}
+            menu={menu}
+            onRequestPayment={(order) => setResumeTarget(order)}
+          />
+        ) : (
+          <>
         <CategorySidebar
           active={category}
           categories={categories}
@@ -329,12 +361,18 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
           total={cart.total}
           onCheckout={() => setPaymentOpen(true)}
           onSaveDraft={() => {
-            try {
-              localStorage.setItem(`pos-order-draft-${pendingOrderNo}`, JSON.stringify(cart.lines));
-              cart.reset();
-            } catch { /* ignore */ }
+            if (cart.lines.length === 0) return;
+            draftOrders.saveDraft({
+              orderNo: pendingOrderNo,
+              orderType: cart.orderType,
+              customerName: cart.customerName,
+              lines: cart.lines,
+            });
+            cart.reset();
           }}
         />
+          </>
+        )}
       </div>
 
       <ItemOptionsDialog
@@ -391,6 +429,22 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
         onPrintReceipt={() => setResumeTarget(null)}
         onPrintKot={() => setResumeTarget(null)}
         onNewOrder={() => setResumeTarget(null)}
+      />
+
+      <DraftPickerDialog
+        open={draftPickerOpen}
+        onOpenChange={setDraftPickerOpen}
+        drafts={draftOrders.drafts}
+        onRestore={(draft) => {
+          cart.reset();
+          draft.lines.forEach((l) => cart.addLine({ ...l }));
+          cart.setOrderType(draft.orderType);
+          cart.setCustomerName(draft.customerName);
+          draftOrders.deleteDraft(draft.draftId);
+          setView('menu');
+        }}
+        onDelete={draftOrders.deleteDraft}
+        onUpdate={draftOrders.updateDraft}
       />
 
       <OpenShiftDialog

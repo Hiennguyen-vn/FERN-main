@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Package, ScrollText, ClipboardCheck, ArrowLeftRight, Trash2, Loader2, RefreshCw, Search,
+  Package, ScrollText, ClipboardCheck, Trash2, Loader2, RefreshCw, Search,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -43,13 +43,12 @@ import {
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
 
-type InventoryTab = 'balances' | 'ledger' | 'counts' | 'adjustments' | 'waste';
+type InventoryTab = 'balances' | 'ledger' | 'counts' | 'waste';
 
 const TABS: { key: InventoryTab; label: string; icon: React.ElementType }[] = [
   { key: 'balances', label: 'Stock Balances', icon: Package },
   { key: 'ledger', label: 'Ledger', icon: ScrollText },
   { key: 'counts', label: 'Stock Counts', icon: ClipboardCheck },
-  { key: 'adjustments', label: 'Adjustments', icon: ArrowLeftRight },
   { key: 'waste', label: 'Waste', icon: Trash2 },
 ];
 
@@ -998,49 +997,6 @@ export function InventoryModule() {
                 onPageChange={countsQuery.setPage}
                 onLimitChange={countsQuery.setPageSize}
               />
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'adjustments' && (
-          <div className="surface-elevated max-w-3xl p-5 space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-sm font-semibold">Adjustments follow posted stock counts</h3>
-              <p className="text-sm text-muted-foreground">
-                The current backend does not expose manual adjustment create or edit flows. Inventory changes come from goods receipts,
-                sales usage, waste records, and posted stock counts.
-              </p>
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-lg border bg-muted/20 p-4">
-                <div className="text-xs font-medium">Use Stock Counts to reconcile</div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Create a count session, review the variance, then post it to generate the adjustment transactions.
-                </p>
-              </div>
-              <div className="rounded-lg border bg-muted/20 p-4">
-                <div className="text-xs font-medium">Use Ledger to audit the result</div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Posted stock counts write `stock_adjustment_in` or `stock_adjustment_out` entries into the inventory ledger.
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setActiveTab('counts')}
-                className="h-9 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground"
-              >
-                Open Stock Counts
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab('ledger');
-                  ledgerQuery.setFilter('txnType', 'stock_adjustment');
-                }}
-                className="h-9 rounded-md border px-3 text-xs font-medium hover:bg-accent"
-              >
-                Open Ledger
-              </button>
             </div>
           </div>
         )}

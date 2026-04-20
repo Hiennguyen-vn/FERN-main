@@ -59,7 +59,7 @@ import {
   DAYPART_ORDER,
   type DaypartGroup,
 } from '@/components/workforce/daily-board';
-import type { LiveStatus, DaySummary, DerivedException } from '@/types/workforce';
+import type { Daypart, LiveStatus, DaySummary, DerivedException } from '@/types/workforce';
 
 type WorkforceTab = 'schedule' | 'daily-board' | 'attendance' | 'review';
 
@@ -781,7 +781,7 @@ function SchedulePlannerTab({
   const [selectedCell, setSelectedCell] = useState<{ shiftId: string; date: string } | null>(null);
 
   const shiftsByDaypart = useMemo(() => {
-    const groups = new Map<string, ShiftView[]>();
+    const groups = new Map<Daypart, ShiftView[]>();
     for (const dp of DAYPART_ORDER) groups.set(dp, []);
     for (const shift of [...shifts].sort((a, b) => String(a.startTime ?? '').localeCompare(String(b.startTime ?? '')))) {
       const dp = getDaypart(shift);
@@ -869,7 +869,7 @@ function SchedulePlannerTab({
                       <div className="text-[11px] text-muted-foreground mt-0.5">
                         {formatShiftTime(shift.startTime)}–{formatShiftTime(shift.endTime)}
                       </div>
-                      <div className="text-[10px] text-muted-foreground/60 mt-0.5 uppercase tracking-wide">{getDaypartLabel(daypart as any)}</div>
+                      <div className="text-[10px] text-muted-foreground/60 mt-0.5 uppercase tracking-wide">{getDaypartLabel(daypart)}</div>
                     </td>
                     {weekDates.map((d) => {
                       const cellAssignments = assignments.filter(

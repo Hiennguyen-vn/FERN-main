@@ -2,7 +2,7 @@ BEGIN;
 
 /* =========================================================
    011_role_test_accounts_seed.sql
-   Test accounts for all 10 canonical roles per business rules.
+   Test accounts for all 9 canonical roles per business rules.
    Password for all test.* users: Workflow#2026!
 
    Roles & outlets:
@@ -11,7 +11,6 @@ BEGIN;
      region_manager  → HCM region outlets (2000, 2002, 2004)
      outlet_manager  → single outlet (2000)  [already exists as workflow.hcm.manager]
      staff           → single outlet (2000)  [uses cashier code]
-     product_manager → HCM region outlets (2000, 2002)
      procurement     → single outlet (2000)  [uses procurement_officer code]
      finance         → HCM region outlets (2000, 2002)
      hr              → HCM region outlets (2000, 2002)
@@ -29,10 +28,9 @@ INSERT INTO core.role (code, name, description)
 VALUES
   ('superadmin',          'Superadmin',        'Full chain-wide authority and emergency override'),
   ('admin',               'Admin',             'IAM governance within scope'),
-  ('region_manager',      'Region Manager',    'Operational oversight across a region'),
+  ('region_manager',      'Region Manager',    'Operational oversight and catalog management across a region'),
   ('outlet_manager',      'Outlet Manager',    'Store-level operations and approvals'),
   ('cashier',             'Staff',             'POS/cashier operator'),
-  ('product_manager',     'Product Manager',   'Catalog and pricing management'),
   ('procurement_officer', 'Procurement',       'Purchase order creation and processing'),
   ('finance',             'Finance',           'Financial operations and payroll approval'),
   ('hr',                  'HR',                'HR contracts, scheduling, payroll preparation'),
@@ -49,7 +47,6 @@ VALUES
   (4003, 'test.region.manager',  'RkVSTldvcmtmbG93U2VlZA==:7QetsR9u6R7RCXQD74G6D9hlmHzBSmeqzB3Pv0DrmDo=', 'Test Region Manager',  'TEST-RM-4003',      'test.region.manager@example.com',  'active'),
   (4004, 'test.outlet.manager',  'RkVSTldvcmtmbG93U2VlZA==:7QetsR9u6R7RCXQD74G6D9hlmHzBSmeqzB3Pv0DrmDo=', 'Test Outlet Manager',  'TEST-OM-4004',      'test.outlet.manager@example.com',  'active'),
   (4005, 'test.staff',           'RkVSTldvcmtmbG93U2VlZA==:7QetsR9u6R7RCXQD74G6D9hlmHzBSmeqzB3Pv0DrmDo=', 'Test Staff',           'TEST-STAFF-4005',   'test.staff@example.com',           'active'),
-  (4006, 'test.product.manager', 'RkVSTldvcmtmbG93U2VlZA==:7QetsR9u6R7RCXQD74G6D9hlmHzBSmeqzB3Pv0DrmDo=', 'Test Product Manager', 'TEST-PM-4006',      'test.product.manager@example.com', 'active'),
   (4007, 'test.procurement',     'RkVSTldvcmtmbG93U2VlZA==:7QetsR9u6R7RCXQD74G6D9hlmHzBSmeqzB3Pv0DrmDo=', 'Test Procurement',     'TEST-PROC-4007',    'test.procurement@example.com',     'active'),
   (4008, 'test.finance',         'RkVSTldvcmtmbG93U2VlZA==:7QetsR9u6R7RCXQD74G6D9hlmHzBSmeqzB3Pv0DrmDo=', 'Test Finance',         'TEST-FIN-4008',     'test.finance@example.com',         'active'),
   (4009, 'test.hr',              'RkVSTldvcmtmbG93U2VlZA==:7QetsR9u6R7RCXQD74G6D9hlmHzBSmeqzB3Pv0DrmDo=', 'Test HR',              'TEST-HR-4009',      'test.hr@example.com',              'active'),
@@ -88,13 +85,6 @@ ON CONFLICT (user_id, role_code, outlet_id) DO NOTHING;
 INSERT INTO core.user_role (user_id, role_code, outlet_id)
 VALUES
   (4005, 'cashier', 2000)
-ON CONFLICT (user_id, role_code, outlet_id) DO NOTHING;
-
--- product_manager: region scope via fan-out
-INSERT INTO core.user_role (user_id, role_code, outlet_id)
-VALUES
-  (4006, 'product_manager', 2000),
-  (4006, 'product_manager', 2002)
 ON CONFLICT (user_id, role_code, outlet_id) DO NOTHING;
 
 -- procurement: uses 'procurement_officer' code (legacy alias → procurement on frontend)

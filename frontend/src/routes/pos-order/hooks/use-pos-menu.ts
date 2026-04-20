@@ -72,7 +72,7 @@ function mergeMenu(
     .map(([code, count]) => ({ code, name: displayCategoryName(code), count }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  return { menu, categories, modifierGroups: activeGroups, missingPriceCount };
+  return { menu: menu.filter((m) => m.isAvailable), categories, modifierGroups: activeGroups, missingPriceCount };
 }
 
 export function usePosMenu(outletId: string | null) {

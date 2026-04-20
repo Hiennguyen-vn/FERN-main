@@ -1,5 +1,5 @@
-export type PromotionType = 'combo' | 'discount_percent' | 'discount_fixed' | 'bogo' | 'happy_hour' | 'bundle' | 'free_item';
-export type PromotionStatus = 'draft' | 'scheduled' | 'active' | 'paused' | 'expired';
+export type PromotionType = 'percentage' | 'fixed_amount' | 'buy_x_get_y' | 'combo_price' | 'subsidy';
+export type PromotionStatus = 'draft' | 'active' | 'inactive' | 'expired' | 'cancelled';
 export type PromotionScope = 'all' | 'region' | 'outlet';
 export type DayOfWeek = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 

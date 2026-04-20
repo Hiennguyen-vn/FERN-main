@@ -139,7 +139,7 @@ export function useSubmitOrder() {
 
     let allocatedDiscount = 0;
     let allocatedTax = 0;
-    const items = args.lines.map((l, idx) => {
+    const items: CreateSalePayload['items'] = args.lines.map((l, idx) => {
       const gross = lineGross[idx];
       const ratio = subtotal > 0 ? gross / subtotal : 0;
       let lineDiscount: number;
@@ -153,7 +153,7 @@ export function useSubmitOrder() {
         allocatedDiscount += lineDiscount;
         allocatedTax += lineTax;
       }
-      return {
+      const item: CreateSalePayload['items'][number] = {
         productId: l.itemId,
         quantity: l.quantity,
         discountAmount: lineDiscount,
@@ -161,6 +161,7 @@ export function useSubmitOrder() {
         note: null,
         promotionIds: [],
       };
+      return item;
     });
 
     return {

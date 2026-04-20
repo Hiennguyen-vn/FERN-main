@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Loader2, RefreshCcw } from 'lucide-react';
+import { Loader2, RefreshCcw } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAuth } from '@/auth/use-auth';
-import { hasSalesOrderQueueAccess } from '@/auth/authorization';
 import {
   productApi,
   salesApi,
@@ -12,30 +10,20 @@ import {
   type SaleListItemView,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
-import { EmptyState, PermissionBanner } from '@/components/shell/PermissionStates';
+import { EmptyState } from '@/components/shell/PermissionStates';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
-import { normalizeNumericId } from '@/constants/pos';
 import type { PaymentMethod, SaleOrder } from '@/types/pos';
 import { PaymentCapture } from '@/components/pos/PaymentCapture';
 import { SaleOrderDetail } from '@/components/pos/SaleOrderDetail';
 import { cn } from '@/lib/utils';
 import { formatPosCurrency, mapSaleToUi } from '@/components/pos/sale-order-utils';
-
-interface CustomerOrdersWorkspaceProps {
-  onBack?: () => void;
-  surfaceLabel?: string;
-}
-
-type QueueFilter = 'all' | 'waiting' | 'approved' | 'paid' | 'cancelled';
-
-function getQueueFilter(order: SaleOrder): QueueFilter {
-  if (order.status === 'cancelled') return 'cancelled';
-  if (order.paymentStatus === 'paid' || order.status === 'completed') return 'paid';
-  if (order.backendStatus === 'order_approved') return 'approved';
-  return 'waiting';
-}
+import {
+  getCustomerOrderQueueFilter,
+  isWaitingCustomerOrder,
+  type CustomerOrderQueueFilter,
+} from '@/components/pos/customer-order-queue';
 
 function shortToken(value: string | undefined) {
   const text = String(value || '').trim();
@@ -44,7 +32,7 @@ function shortToken(value: string | undefined) {
 }
 
 function statusBadgeClass(order: SaleOrder) {
-  const filter = getQueueFilter(order);
+  const filter = getCustomerOrderQueueFilter(order);
   switch (filter) {
     case 'paid':
       return 'bg-success/10 text-success';
@@ -57,12 +45,20 @@ function statusBadgeClass(order: SaleOrder) {
   }
 }
 
-export function CustomerOrdersWorkspace({
-  onBack,
-  surfaceLabel = 'Customer Orders',
-}: CustomerOrdersWorkspaceProps) {
-  const { session } = useAuth();
-  const { token, scope, user } = useShellRuntime();
+interface CustomerOrdersPanelProps {
+  outletId: string;
+  outletName?: string;
+  onWaitingCountChange?: (n: number) => void;
+  onQueueMutation?: () => void | Promise<unknown>;
+}
+
+export function CustomerOrdersPanel({
+  outletId,
+  outletName,
+  onWaitingCountChange,
+  onQueueMutation,
+}: CustomerOrdersPanelProps) {
+  const { token, user } = useShellRuntime();
   const [orders, setOrders] = useState<SaleListItemView[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState('');
@@ -71,18 +67,17 @@ export function CustomerOrdersWorkspace({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [search, setSearch] = useState('');
-  const [queueFilter, setQueueFilter] = useState<QueueFilter>('all');
+  const [queueFilter, setQueueFilter] = useState<CustomerOrderQueueFilter>('all');
   const [sessionCodeById, setSessionCodeById] = useState<Map<string, string>>(new Map());
   const [productNameById, setProductNameById] = useState<Map<string, string>>(new Map());
   const [paymentTarget, setPaymentTarget] = useState<SaleOrder | null>(null);
   const [approveBusyId, setApproveBusyId] = useState('');
   const [paymentBusyId, setPaymentBusyId] = useState('');
 
-  const scopedOutletId = normalizeNumericId(scope.outletId);
-  const hasQueueAccess = hasSalesOrderQueueAccess(session);
+  const resolvedOutletName = outletName || 'Selected outlet';
 
   const loadOrders = useCallback(async () => {
-    if (!token || !scopedOutletId) {
+    if (!token || !outletId) {
       setOrders([]);
       setOrdersError('');
       return;
@@ -93,7 +88,7 @@ export function CustomerOrdersWorkspace({
     try {
       const [ordersPage, sessionsPage] = await Promise.all([
         salesApi.orders(token, {
-          outletId: scopedOutletId,
+          outletId,
           publicOrderOnly: true,
           limit: 100,
           offset: 0,
@@ -101,7 +96,7 @@ export function CustomerOrdersWorkspace({
           sortDir: 'desc',
         }),
         salesApi.posSessions(token, {
-          outletId: scopedOutletId,
+          outletId,
           limit: 100,
           offset: 0,
         }),
@@ -109,9 +104,9 @@ export function CustomerOrdersWorkspace({
 
       setOrders(ordersPage.items || []);
       setSessionCodeById(new Map(
-        (sessionsPage.items || []).map((session: PosSessionView) => [
-          String(session.id),
-          String(session.sessionCode || session.id || '—'),
+        (sessionsPage.items || []).map((s: PosSessionView) => [
+          String(s.id),
+          String(s.sessionCode || s.id || '—'),
         ]),
       ));
     } catch (error: unknown) {
@@ -121,7 +116,7 @@ export function CustomerOrdersWorkspace({
     } finally {
       setOrdersLoading(false);
     }
-  }, [scopedOutletId, token]);
+  }, [outletId, token]);
 
   useEffect(() => {
     if (!token) {
@@ -132,7 +127,7 @@ export function CustomerOrdersWorkspace({
       try {
         const products = await productApi.products(token);
         setProductNameById(new Map(
-          products.map((product: ProductView) => [String(product.id), String(product.name || `Product ${product.id}`)]),
+          products.map((p: ProductView) => [String(p.id), String(p.name || `Product ${p.id}`)]),
         ));
       } catch (error) {
         console.error('Customer order queue product load failed:', error);
@@ -151,9 +146,7 @@ export function CustomerOrdersWorkspace({
       setDetailError('');
       return;
     }
-    if (!token) {
-      return;
-    }
+    if (!token) return;
     const loadDetail = async () => {
       setDetailLoading(true);
       setDetailError('');
@@ -182,19 +175,24 @@ export function CustomerOrdersWorkspace({
   }, [orders, selectedOrderId]);
 
   const mappedOrders = useMemo(
-    () => orders.map((order) => mapSaleToUi(order, null, scope.outletName || 'Selected outlet', user.displayName, sessionCodeById, productNameById)),
-    [orders, productNameById, scope.outletName, sessionCodeById, user.displayName],
+    () => orders.map((order) => mapSaleToUi(order, null, resolvedOutletName, user.displayName, sessionCodeById, productNameById)),
+    [orders, productNameById, resolvedOutletName, sessionCodeById, user.displayName],
   );
+
+  const waitingCount = useMemo(
+    () => mappedOrders.filter(isWaitingCustomerOrder).length,
+    [mappedOrders],
+  );
+
+  useEffect(() => {
+    onWaitingCountChange?.(waitingCount);
+  }, [waitingCount, onWaitingCountChange]);
 
   const filteredOrders = useMemo(() => {
     const normalizedQuery = search.trim().toLowerCase();
     return mappedOrders.filter((order) => {
-      if (queueFilter !== 'all' && getQueueFilter(order) !== queueFilter) {
-        return false;
-      }
-      if (!normalizedQuery) {
-        return true;
-      }
+      if (queueFilter !== 'all' && getCustomerOrderQueueFilter(order) !== queueFilter) return false;
+      if (!normalizedQuery) return true;
       const haystack = [
         order.orderNumber,
         order.publicOrderToken,
@@ -213,24 +211,19 @@ export function CustomerOrdersWorkspace({
   );
 
   const selectedOrder = useMemo(() => {
-    if (!selectedOrderBase) {
-      return null;
-    }
+    if (!selectedOrderBase) return null;
     return mapSaleToUi(
       selectedOrderBase,
       selectedDetail,
-      scope.outletName || 'Selected outlet',
+      resolvedOutletName,
       user.displayName,
       sessionCodeById,
       productNameById,
     );
-  }, [productNameById, scope.outletName, selectedDetail, selectedOrderBase, sessionCodeById, user.displayName]);
+  }, [productNameById, resolvedOutletName, selectedDetail, selectedOrderBase, sessionCodeById, user.displayName]);
 
   const handleApprove = useCallback(async (order: SaleOrder) => {
-    if (!token) {
-      toast.error('Please sign in first');
-      return;
-    }
+    if (!token) { toast.error('Please sign in first'); return; }
     setApproveBusyId(order.id);
     try {
       await salesApi.approveOrder(token, order.id);
@@ -238,19 +231,16 @@ export function CustomerOrdersWorkspace({
       await loadOrders();
       const refreshed = await salesApi.orderDetail(token, order.id);
       setSelectedDetail(refreshed);
+      await Promise.resolve(onQueueMutation?.());
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, 'Unable to approve customer order'));
     } finally {
       setApproveBusyId('');
     }
-  }, [loadOrders, token]);
+  }, [loadOrders, onQueueMutation, token]);
 
   const openPaymentCapture = useCallback(async (order: SaleOrder) => {
-    if (!token) {
-      toast.error('Please sign in first');
-      return;
-    }
-
+    if (!token) { toast.error('Please sign in first'); return; }
     try {
       const detail = await salesApi.orderDetail(token, order.id);
       const baseSale = orders.find((candidate) => String(candidate.id) === order.id);
@@ -260,7 +250,7 @@ export function CustomerOrdersWorkspace({
         mapSaleToUi(
           baseSale ?? {
             id: order.id,
-            outletId: scopedOutletId,
+            outletId,
             posSessionId: order.sessionId || null,
             publicOrderToken: order.publicOrderToken || null,
             status: detail.status,
@@ -279,7 +269,7 @@ export function CustomerOrdersWorkspace({
             payment: detail.payment,
           },
           detail,
-          scope.outletName || 'Selected outlet',
+          resolvedOutletName,
           user.displayName,
           sessionCodeById,
           productNameById,
@@ -288,13 +278,12 @@ export function CustomerOrdersWorkspace({
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, 'Unable to load order payment detail'));
     }
-  }, [orders, productNameById, scopedOutletId, scope.outletName, sessionCodeById, token, user.displayName]);
+  }, [orders, outletId, productNameById, resolvedOutletName, sessionCodeById, token, user.displayName]);
 
   const handleCompletePayment = useCallback(async (paymentMethod: PaymentMethod) => {
     if (!token || !paymentTarget) {
       return { ok: false, errorMessage: 'Payment target is missing' };
     }
-
     setPaymentBusyId(paymentTarget.id);
     try {
       await salesApi.markPaymentDone(token, paymentTarget.id, {
@@ -308,6 +297,7 @@ export function CustomerOrdersWorkspace({
       const refreshed = await salesApi.orderDetail(token, paymentTarget.id);
       setSelectedDetail(refreshed);
       setPaymentTarget(null);
+      await Promise.resolve(onQueueMutation?.());
       return { ok: true };
     } catch (error: unknown) {
       const message = getErrorMessage(error, 'Unable to capture payment');
@@ -316,23 +306,11 @@ export function CustomerOrdersWorkspace({
     } finally {
       setPaymentBusyId('');
     }
-  }, [loadOrders, paymentTarget, token]);
+  }, [loadOrders, onQueueMutation, paymentTarget, token]);
 
-  if (!hasQueueAccess) {
+  if (!outletId) {
     return (
-      <div className="p-6">
-        <PermissionBanner
-          state="hidden"
-          moduleName="Customer Orders"
-          detail="This queue requires sales write access so staff can approve and complete payment for customer-submitted orders."
-        />
-      </div>
-    );
-  }
-
-  if (!scopedOutletId) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
+      <div className="surface-elevated p-6">
         <EmptyState
           title="Select an outlet scope"
           description="Customer orders are processed outlet by outlet. Pick an outlet scope in the shell to open this queue."
@@ -358,50 +336,8 @@ export function CustomerOrdersWorkspace({
   }
 
   return (
-    <div className="p-6 space-y-5 animate-fade-in">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">{surfaceLabel}</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Review customer-submitted table orders, approve them into the live POS flow, then capture payment.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {onBack ? (
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={onBack}>
-              <ArrowLeft className="h-3 w-3" /> Back
-            </Button>
-          ) : null}
-          <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={() => void loadOrders()} disabled={ordersLoading}>
-            {ordersLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCcw className="h-3 w-3" />}
-            Refresh
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {([
-          { label: 'All', value: mappedOrders.length, filter: 'all' as const },
-          { label: 'Waiting Approval', value: mappedOrders.filter((order) => getQueueFilter(order) === 'waiting').length, filter: 'waiting' as const },
-          { label: 'Approved', value: mappedOrders.filter((order) => getQueueFilter(order) === 'approved').length, filter: 'approved' as const },
-          { label: 'Paid', value: mappedOrders.filter((order) => getQueueFilter(order) === 'paid').length, filter: 'paid' as const },
-        ]).map((item) => (
-          <button
-            key={item.label}
-            type="button"
-            onClick={() => setQueueFilter(item.filter)}
-            className={cn(
-              'surface-elevated p-3 text-left transition-colors',
-              queueFilter === item.filter ? 'ring-1 ring-primary/35' : '',
-            )}
-          >
-            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{item.label}</p>
-            <p className="text-xl font-semibold text-foreground mt-1">{item.value}</p>
-          </button>
-        ))}
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_460px]">
+    <div className="space-y-4">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_460px]">
         <div className="surface-elevated p-4 space-y-4">
           <div className="flex items-center gap-3 flex-wrap">
             <Input
@@ -410,23 +346,32 @@ export function CustomerOrdersWorkspace({
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
-            <div className="flex items-center gap-1.5">
-              {(['all', 'waiting', 'approved', 'paid', 'cancelled'] as const).map((filter) => (
-                <button
-                  key={filter}
-                  type="button"
-                  className={cn(
-                    'rounded-md border px-2.5 py-1.5 text-[11px] capitalize transition-colors',
-                    queueFilter === filter
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'bg-card text-foreground border-border hover:bg-accent',
-                  )}
-                  onClick={() => setQueueFilter(filter)}
-                >
-                  {filter}
-                </button>
-              ))}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {(['all', 'waiting', 'approved', 'paid', 'cancelled'] as const).map((filter) => {
+                const count = filter === 'all'
+                  ? mappedOrders.length
+                  : mappedOrders.filter((o) => getCustomerOrderQueueFilter(o) === filter).length;
+                return (
+                  <button
+                    key={filter}
+                    type="button"
+                    className={cn(
+                      'rounded-md border px-2.5 py-1.5 text-[11px] capitalize transition-colors',
+                      queueFilter === filter
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'bg-card text-foreground border-border hover:bg-accent',
+                    )}
+                    onClick={() => setQueueFilter(filter)}
+                  >
+                    {filter} ({count})
+                  </button>
+                );
+              })}
             </div>
+            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5 ml-auto" onClick={() => void loadOrders()} disabled={ordersLoading}>
+              {ordersLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCcw className="h-3 w-3" />}
+              Refresh
+            </Button>
           </div>
 
           {ordersError ? <p className="text-xs text-destructive">{ordersError}</p> : null}
@@ -452,7 +397,7 @@ export function CustomerOrdersWorkspace({
                 </thead>
                 <tbody>
                   {filteredOrders.map((order) => {
-                    const queueState = getQueueFilter(order);
+                    const queueState = getCustomerOrderQueueFilter(order);
                     return (
                       <tr
                         key={order.id}
@@ -534,8 +479,8 @@ export function CustomerOrdersWorkspace({
             <SaleOrderDetail
               order={selectedOrder}
               onBack={() => setSelectedOrderId('')}
-              onApprove={getQueueFilter(selectedOrder) === 'waiting' ? () => void handleApprove(selectedOrder) : undefined}
-              onPay={getQueueFilter(selectedOrder) === 'approved' ? () => void openPaymentCapture(selectedOrder) : undefined}
+              onApprove={getCustomerOrderQueueFilter(selectedOrder) === 'waiting' ? () => void handleApprove(selectedOrder) : undefined}
+              onPay={getCustomerOrderQueueFilter(selectedOrder) === 'approved' ? () => void openPaymentCapture(selectedOrder) : undefined}
               approvePending={approveBusyId === selectedOrder.id}
               paymentPending={paymentBusyId === selectedOrder.id}
             />

@@ -66,7 +66,7 @@ export function PromotionsModule() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({
     name: '',
-    promoType: 'discount_percent',
+    promoType: 'percentage',
     valueAmount: '',
     valuePercent: '10',
     minOrderAmount: '',
@@ -161,7 +161,7 @@ export function PromotionsModule() {
       setCreateOpen(false);
       setForm({
         name: '',
-        promoType: 'discount_percent',
+        promoType: 'percentage',
         valueAmount: '',
         valuePercent: '10',
         minOrderAmount: '',
@@ -331,10 +331,11 @@ export function PromotionsModule() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="discount_percent">discount_percent</SelectItem>
-                    <SelectItem value="discount_fixed">discount_fixed</SelectItem>
-                    <SelectItem value="bundle">bundle</SelectItem>
-                    <SelectItem value="bogo">bogo</SelectItem>
+                    <SelectItem value="percentage">Percentage discount</SelectItem>
+                    <SelectItem value="fixed_amount">Fixed amount</SelectItem>
+                    <SelectItem value="buy_x_get_y">Buy X get Y</SelectItem>
+                    <SelectItem value="combo_price">Combo price</SelectItem>
+                    <SelectItem value="subsidy">Subsidy</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

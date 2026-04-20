@@ -7,6 +7,9 @@ import { Button } from '@/components/ui/button';
 import type { POSSession, POSSessionStatus, SaleOrder } from '@/types/pos';
 import { PAYMENT_METHOD_LABELS } from '@/constants/pos';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/auth/use-auth';
+import { hasSalesOrderQueueAccess } from '@/auth/authorization';
+import { CustomerOrdersPanel } from '@/components/pos/CustomerOrdersPanel';
 
 const STATUS_STEPS: { key: POSSessionStatus; label: string }[] = [
   { key: 'open', label: 'Opened' },
@@ -28,7 +31,11 @@ interface Props {
 }
 
 export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClose, onReconcile, onNewOrder, onViewOrder }: Props) {
-  const [activeTab, setActiveTab] = useState<'orders' | 'payments' | 'reconciliation' | 'activity'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'customerOrders' | 'payments' | 'reconciliation' | 'activity'>('orders');
+  const [customerWaitingCount, setCustomerWaitingCount] = useState(0);
+  const { session: authSession } = useAuth();
+  const canQueue = hasSalesOrderQueueAccess(authSession);
+  const showCustomerOrdersTab = canQueue && session.status === 'open';
   const sessionOrders = orders;
 
   const statusIndex = STATUS_STEPS.findIndex(s => s.key === session.status);
@@ -126,16 +133,17 @@ export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClo
       </div>
 
       {/* Tabs */}
-      <div className="border-b flex items-center gap-0">
-        {[
-          { key: 'orders', label: 'Orders', icon: ShoppingBag },
-          { key: 'payments', label: 'Payments', icon: CreditCard },
-          { key: 'reconciliation', label: 'Reconciliation', icon: BarChart3 },
-          { key: 'activity', label: 'Activity', icon: ScrollText },
-        ].map((tab) => (
+      <div className="border-b flex items-center gap-0 flex-wrap">
+        {([
+          { key: 'orders' as const, label: 'Orders', icon: ShoppingBag, badge: 0 },
+          ...(showCustomerOrdersTab ? [{ key: 'customerOrders' as const, label: 'Customer Orders', icon: Clock, badge: customerWaitingCount }] : []),
+          { key: 'payments' as const, label: 'Payments', icon: CreditCard, badge: 0 },
+          { key: 'reconciliation' as const, label: 'Reconciliation', icon: BarChart3, badge: 0 },
+          { key: 'activity' as const, label: 'Activity', icon: ScrollText, badge: 0 },
+        ]).map((tab) => (
           <button
             key={tab.key}
-            onClick={() => setActiveTab(tab.key as typeof activeTab)}
+            onClick={() => setActiveTab(tab.key)}
             className={cn(
               'flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors',
               activeTab === tab.key
@@ -145,9 +153,20 @@ export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClo
           >
             <tab.icon className="h-3.5 w-3.5" />
             {tab.label}
+            {tab.badge > 0 ? (
+              <span className="ml-1 rounded-full bg-warning/15 text-warning text-[10px] font-semibold px-1.5 py-0.5">{tab.badge}</span>
+            ) : null}
           </button>
         ))}
       </div>
+
+      {activeTab === 'customerOrders' && showCustomerOrdersTab && (
+        <CustomerOrdersPanel
+          outletId={session.outletId}
+          outletName={session.outletName}
+          onWaitingCountChange={setCustomerWaitingCount}
+        />
+      )}
 
       {/* Tab content */}
       {activeTab === 'orders' && (

@@ -692,7 +692,7 @@ export function FinancePeriodCloseWorkspace({
                               <AlertTriangle className="h-3 w-3" />
                               {row.varianceDetail}
                               <button
-                                onClick={() => onNavigate('prime-cost')}
+                                onClick={() => onNavigate('expenses')}
                                 className="ml-1 underline hover:no-underline"
                               >
                                 → Review variance

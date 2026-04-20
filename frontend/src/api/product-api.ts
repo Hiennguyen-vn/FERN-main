@@ -393,8 +393,8 @@ export const productApi = {
     decodeArrayFromPageOrArray(await apiRequest('/api/v1/product/products', { token, query: { limit: 1000 } }), decodeProduct),
   productsPaged: async (token: string, query: ProductsQuery): Promise<PagedResponse<ProductView>> =>
     decodePaged(await apiRequest('/api/v1/product/products', { token, query }), decodeProduct),
-  createProduct: async (token: string, payload: CreateProductPayload): Promise<unknown> =>
-    apiRequest('/api/v1/product/products', {
+  createProduct: async (token: string, payload: CreateProductPayload): Promise<ProductView> =>
+    decodeProduct(await apiRequest('/api/v1/product/products', {
       method: 'POST',
       token,
       body: {
@@ -404,7 +404,7 @@ export const productApi = {
         imageUrl: payload.imageUrl ?? null,
         description: payload.description ?? null,
       },
-    }),
+    })),
   items: async (token: string): Promise<ItemView[]> =>
     decodeArrayFromPageOrArray(await apiRequest('/api/v1/product/items', { token, query: { limit: 1000 } }), decodeItem),
   itemsPaged: async (token: string, query: ItemsQuery): Promise<PagedResponse<ItemView>> =>

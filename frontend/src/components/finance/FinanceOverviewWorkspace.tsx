@@ -526,7 +526,6 @@ export function FinanceOverviewWorkspace({
           <section className="surface-elevated overflow-hidden">
             <div className="flex items-center justify-between border-b px-4 py-3">
               <h3 className="text-sm font-semibold">Outlet performance</h3>
-              <button onClick={() => onNavigate('prime-cost')} className="text-xs text-primary hover:underline">Prime Cost →</button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full">
