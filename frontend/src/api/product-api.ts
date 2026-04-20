@@ -469,6 +469,37 @@ export const productApi = {
         body: payload,
       }),
     ),
+  presignProductImageUpload: async (
+    token: string,
+    productId: string,
+    contentType: string,
+    size: number,
+  ): Promise<{ uploadUrl: string; finalUrl: string; expiresAt: string; contentType: string }> => {
+    const raw = asRecord(
+      await apiRequest(`/api/v1/product/products/${productId}/image/presign`, {
+        method: 'POST',
+        token,
+        body: { contentType, size },
+      }),
+    ) ?? {};
+    return {
+      uploadUrl: String(raw.uploadUrl ?? ''),
+      finalUrl: String(raw.finalUrl ?? ''),
+      expiresAt: String(raw.expiresAt ?? ''),
+      contentType: String(raw.contentType ?? contentType),
+    };
+  },
+  uploadProductImageToS3: async (uploadUrl: string, file: File): Promise<void> => {
+    const res = await fetch(uploadUrl, {
+      method: 'PUT',
+      body: file,
+      headers: { 'Content-Type': file.type },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`S3 upload failed (${res.status}): ${text.slice(0, 200)}`);
+    }
+  },
   updateItem: async (
     token: string,
     itemId: string,

@@ -41,7 +41,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     onSuccess: (nextSession) => {
       if (!nextSession) return;
       setSession(nextSession);
-      void queryClient.invalidateQueries();
     },
     onError: () => {
       setSession(null);

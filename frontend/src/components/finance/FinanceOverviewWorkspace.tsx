@@ -20,6 +20,7 @@ import {
   financeApi,
   payrollApi,
   type ExpenseView,
+  type FinanceExpensesQuery,
   type PayrollPeriodView,
   type PayrollPeriodsQuery,
   type PayrollRunView,
@@ -32,6 +33,8 @@ import { collectPagedItems } from '@/lib/collect-paged-items';
 import { getFinanceOutletDisplay } from '@/components/finance/finance-display';
 import type { FinanceTab } from '@/components/finance/finance-workspace-config';
 import {
+  availablePeriodsFromMonthly,
+  buildMonthlyPl,
   buildRevenueSnapshot,
   describeFinanceScope,
   findPeriodComparison,
@@ -43,6 +46,7 @@ import {
 } from '@/components/finance/finance-phase2-utils';
 import { formatMoney } from '@/components/finance/finance-utils';
 import { useFinanceSalesOrders } from '@/components/finance/use-finance-sales-orders';
+import { useMonthlyFinance } from '@/components/finance/use-monthly-finance';
 
 interface Props {
   token: string;
@@ -135,6 +139,14 @@ export function FinanceOverviewWorkspace({
   const [runs, setRuns] = useState<PayrollRunView[]>([]);
   const [selectedPeriodKey, setSelectedPeriodKey] = useState('');
   const {
+    revenueRows: monthlyRevenueRows,
+    expenseRows: monthlyExpenseRows,
+    payrollRows: monthlyPayrollRows,
+    loading: monthlyLoading,
+    error: monthlyError,
+    refresh: refreshMonthly,
+  } = useMonthlyFinance({ token, scopeOutletId });
+  const {
     orders,
     visibleOutlets,
     loading: salesLoading,
@@ -184,13 +196,17 @@ export function FinanceOverviewWorkspace({
     setLoading(true);
     setError('');
     try {
-      const [expPage, periodItems, runItems] = await Promise.all([
-        financeApi.expenses(token, {
-          outletId: scopeOutletId || undefined,
-          limit: 500,
-          sortBy: 'businessDate',
-          sortDir: 'desc',
-        }),
+      const [expItems, periodItems, runItems] = await Promise.all([
+        collectPagedItems<ExpenseView, FinanceExpensesQuery>(
+          (q) => financeApi.expenses(token, q),
+          {
+            outletId: scopeOutletId || undefined,
+            sortBy: 'businessDate',
+            sortDir: 'desc',
+          },
+          500,
+          200,
+        ).catch(() => [] as ExpenseView[]),
         collectPagedItems<PayrollPeriodView, PayrollPeriodsQuery>(
           (query) => payrollApi.periods(token, query),
           {
@@ -208,10 +224,11 @@ export function FinanceOverviewWorkspace({
             sortDir: 'desc',
           },
           500,
+          200,
         ).catch(() => [] as PayrollRunView[]),
       ]);
 
-      setExpenses(expPage.items || []);
+      setExpenses(expItems);
       setPeriods(periodItems);
       setRuns(runItems);
     } catch (err: unknown) {
@@ -226,7 +243,9 @@ export function FinanceOverviewWorkspace({
   }, [load]);
 
   const selectablePeriods = useMemo(() => {
-    const keys = new Set<string>();
+    const keys = new Set<string>(
+      availablePeriodsFromMonthly(monthlyRevenueRows, monthlyExpenseRows, monthlyPayrollRows),
+    );
 
     orders.forEach((order) => {
       const key = getPeriodKey(order.createdAt);
@@ -251,7 +270,7 @@ export function FinanceOverviewWorkspace({
         key,
         label: formatPeriodLabel(key),
       }));
-  }, [expenses, orders, periods, resolveRunPeriodKey, runs]);
+  }, [expenses, orders, periods, resolveRunPeriodKey, runs, monthlyRevenueRows, monthlyExpenseRows, monthlyPayrollRows]);
 
   useEffect(() => {
     setSelectedPeriodKey((current) => {
@@ -300,84 +319,62 @@ export function FinanceOverviewWorkspace({
     [activePeriodKey, resolveRunPeriodKey, runs],
   );
   const approvedRuns = useMemo(
-    () => currentPeriodRuns.filter((run) => String(run.status || '').toLowerCase() === 'approved'),
+    () => currentPeriodRuns.filter((run) => {
+      const st = String(run.status || '').toLowerCase();
+      return st === 'approved' || st === 'paid';
+    }),
     [currentPeriodRuns],
   );
 
+  const monthlyPl = useMemo(() => {
+    if (!activePeriodKey) return null;
+    return buildMonthlyPl({
+      revenueRows: monthlyRevenueRows,
+      expenseRows: monthlyExpenseRows,
+      payrollRows: monthlyPayrollRows,
+      periodKey: activePeriodKey,
+      visibleOutlets: scopedVisibleOutlets,
+    });
+  }, [activePeriodKey, monthlyRevenueRows, monthlyExpenseRows, monthlyPayrollRows, scopedVisibleOutlets]);
+
   const overviewKpis = useMemo((): OverviewKpis => {
-    let totalExpenses = 0;
-    let manualExpenses = 0;
-    let payrollExpenses = 0;
-    let invoiceExpenses = 0;
-    let currency = revenueSnapshot.currency || 'USD';
-
-    for (const expense of currentExpenses) {
-      const amount = toNumber(expense.amount);
-      const raw = String(expense.subtype || expense.sourceType || '').toLowerCase();
-      if (expense.currencyCode) currency = expense.currencyCode;
-      totalExpenses += amount;
-      if (raw === 'payroll') {
-        payrollExpenses += amount;
-      } else if (raw.includes('invoice') || raw === 'inventory_purchase') {
-        invoiceExpenses += amount;
-      } else {
-        manualExpenses += amount;
-      }
+    const pl = monthlyPl;
+    const currency = pl?.currency || revenueSnapshot.currency || 'USD';
+    if (!pl) {
+      return {
+        netSales: 0,
+        totalPayroll: 0,
+        totalExpenses: 0,
+        otherExpenses: 0,
+        manualExpenses: 0,
+        payrollExpenses: 0,
+        invoiceExpenses: 0,
+        laborPct: null,
+        otherOpExPct: null,
+        varianceFlags: 0,
+        currency,
+      };
     }
-
-    // Only count payroll runs from outlets in the visible scope
-    const visibleOutletIds = new Set(scopedVisibleOutlets.map((o) => o.id));
-    const scopedRuns = visibleOutletIds.size > 0
-      ? approvedRuns.filter((run) => visibleOutletIds.has(String(run.outletId ?? '')))
-      : approvedRuns;
-    const totalPayroll = scopedRuns.reduce((sum, run) => sum + toNumber(run.netSalary), 0);
-    if (!currency) {
-      currency = String(scopedRuns[0]?.currencyCode || 'USD');
-    }
-    // Only count non-payroll expenses from outlets in the visible scope
-    const scopedOtherExpenses = currentExpenses
-      .filter((expense) => {
-        const raw = String(expense.subtype || expense.sourceType || '').toLowerCase();
-        if (raw === 'payroll') return false;
-        if (visibleOutletIds.size > 0 && !visibleOutletIds.has(String(expense.outletId ?? ''))) return false;
-        return true;
-      });
-    const otherExpenses = scopedOtherExpenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
-    const laborPct = revenueSnapshot.netSales > 0 ? (totalPayroll / revenueSnapshot.netSales) * 100 : null;
-    const otherOpExPct = revenueSnapshot.netSales > 0 ? (otherExpenses / revenueSnapshot.netSales) * 100 : null;
-
-    const varianceFlags = scopedVisibleOutlets.reduce((count, outlet) => {
-      const outletNetSales = revenueSnapshot.outletRows.find((row) => row.outletId === outlet.id)?.netSales || 0;
-      const outletPayroll = approvedRuns
-        .filter((run) => String(run.outletId) === outlet.id)
-        .reduce((sum, run) => sum + toNumber(run.netSalary), 0);
-      const outletOtherExpenses = currentExpenses
-        .filter(
-          (expense) =>
-            String(expense.outletId) === outlet.id
-            && String(expense.subtype || expense.sourceType || '').toLowerCase() !== 'payroll',
-        )
-        .reduce((sum, expense) => sum + toNumber(expense.amount), 0);
-      const outletLaborPct = outletNetSales > 0 ? (outletPayroll / outletNetSales) * 100 : null;
-      const outletOtherOpExPct = outletNetSales > 0 ? (outletOtherExpenses / outletNetSales) * 100 : null;
-      const status = getFinanceVarianceStatus(outletLaborPct, outletOtherOpExPct, outletNetSales);
+    const otherExpenses = pl.totalOpEx;
+    const totalExpenses = otherExpenses + pl.payrollCost;
+    const varianceFlags = pl.outletRows.reduce((count, row) => {
+      const status = getFinanceVarianceStatus(row.laborPct, row.opExPct, row.netSales);
       return status === 'watch' || status === 'risk' ? count + 1 : count;
     }, 0);
-
     return {
-      netSales: revenueSnapshot.netSales,
-      totalPayroll,
+      netSales: pl.netSales,
+      totalPayroll: pl.payrollCost,
       totalExpenses,
       otherExpenses,
-      manualExpenses,
-      payrollExpenses,
-      invoiceExpenses,
-      laborPct,
-      otherOpExPct,
+      manualExpenses: pl.manualExpenses,
+      payrollExpenses: pl.payrollCost,
+      invoiceExpenses: pl.invoiceExpenses + pl.inventoryExpenses,
+      laborPct: pl.laborPct,
+      otherOpExPct: pl.opExPct,
       varianceFlags,
       currency,
     };
-  }, [approvedRuns, currentExpenses, revenueSnapshot, scopedVisibleOutlets]);
+  }, [monthlyPl, revenueSnapshot.currency]);
 
   const closeStatus = useMemo((): PeriodCloseStatus => {
     const approved = currentPeriodRuns.filter((run) => String(run.status || '').toLowerCase() === 'approved').length;
@@ -404,37 +401,21 @@ export function FinanceOverviewWorkspace({
   }, [overviewKpis]);
 
   const outletPerformanceRows = useMemo((): OutletPerformanceRow[] => {
-    return scopedVisibleOutlets
-      .map((outlet) => {
-        const outletNetSales = revenueSnapshot.outletRows.find((row) => row.outletId === outlet.id)?.netSales || 0;
-        const payroll = approvedRuns
-          .filter((run) => String(run.outletId) === outlet.id)
-          .reduce((sum, run) => sum + toNumber(run.netSalary), 0);
-        const otherExpenses = currentExpenses
-          .filter(
-            (expense) =>
-              String(expense.outletId) === outlet.id
-              && String(expense.subtype || expense.sourceType || '').toLowerCase() !== 'payroll',
-          )
-          .reduce((sum, expense) => sum + toNumber(expense.amount), 0);
-        const laborPct = outletNetSales > 0 ? (payroll / outletNetSales) * 100 : null;
-        const otherOpExPct = outletNetSales > 0 ? (otherExpenses / outletNetSales) * 100 : null;
-
-        return {
-          outletId: outlet.id,
-          outletCode: outlet.code || outlet.id,
-          outletName: outlet.name || outlet.id,
-          netSales: outletNetSales,
-          payroll,
-          laborPct,
-          otherExpenses,
-          otherOpExPct,
-          status: getFinanceVarianceStatus(laborPct, otherOpExPct, outletNetSales),
-        };
-      })
-      .filter((row) => row.netSales > 0 || row.payroll > 0 || row.otherExpenses > 0 || scopedVisibleOutlets.length === 1)
+    if (!monthlyPl) return [];
+    return monthlyPl.outletRows
+      .map((row) => ({
+        outletId: row.outletId,
+        outletCode: row.outletCode,
+        outletName: row.outletName,
+        netSales: row.netSales,
+        payroll: row.payroll,
+        laborPct: row.laborPct,
+        otherExpenses: row.opEx,
+        otherOpExPct: row.opExPct,
+        status: getFinanceVarianceStatus(row.laborPct, row.opExPct, row.netSales),
+      }))
       .sort((left, right) => right.netSales - left.netSales);
-  }, [approvedRuns, currentExpenses, revenueSnapshot.outletRows, scopedVisibleOutlets]);
+  }, [monthlyPl]);
 
   const recentExpenses = useMemo(
     () => currentExpenses.slice(0, 6),
@@ -470,19 +451,19 @@ export function FinanceOverviewWorkspace({
             )}
           </select>
           <button
-            onClick={() => { void load(); void refreshSales(); }}
-            disabled={loading || salesLoading}
+            onClick={() => { void load(); void refreshSales(); void refreshMonthly(); }}
+            disabled={loading || salesLoading || monthlyLoading}
             className="flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent disabled:opacity-60"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', (loading || salesLoading) && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (loading || salesLoading || monthlyLoading) && 'animate-spin')} />
             Refresh
           </button>
         </div>
       </div>
 
-      {(error || salesError) ? (
+      {(error || salesError || monthlyError) ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-sm text-destructive">
-          {[error, salesError].filter(Boolean).join(' · ')}
+          {[error, salesError, monthlyError].filter(Boolean).join(' · ')}
         </div>
       ) : null}
 

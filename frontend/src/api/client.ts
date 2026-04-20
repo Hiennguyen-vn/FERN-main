@@ -27,6 +27,7 @@ export interface RequestOptions {
   body?: unknown;
   query?: object;
   signal?: AbortSignal;
+  headers?: Record<string, string>;
 }
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || '';
@@ -62,7 +63,7 @@ async function parseBody(response: Response) {
 }
 
 export async function apiRequest<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', token, body, query, signal } = options;
+  const { method = 'GET', token, body, query, signal, headers: extraHeaders } = options;
   const queryString = toQueryString(query);
   const url = `${API_BASE}${path}${queryString}`;
   const headers: Record<string, string> = {};
@@ -71,6 +72,13 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
   }
   if (token && !isCookieBackedSessionToken(token)) {
     headers.Authorization = `Bearer ${token}`;
+  }
+  if (extraHeaders) {
+    for (const [key, value] of Object.entries(extraHeaders)) {
+      if (value !== undefined && value !== null && value !== '') {
+        headers[key] = value;
+      }
+    }
   }
 
   const response = await fetch(url, {

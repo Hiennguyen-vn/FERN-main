@@ -121,6 +121,17 @@ public final class PayrollDtos {
   ) {
   }
 
+  public record MonthlyPayrollRow(
+      Long outletId,
+      String month,
+      String status,
+      long recordCount,
+      BigDecimal baseSalary,
+      BigDecimal netSalary,
+      String currencyCode
+  ) {
+  }
+
   public record GeneratePayrollRequest(
       @NotNull Long payrollTimesheetId,
       @NotBlank String currencyCode,

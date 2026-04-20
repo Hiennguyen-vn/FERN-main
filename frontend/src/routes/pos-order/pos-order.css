@@ -1,0 +1,57 @@
+@import '@/styles/brand-tokens.css';
+
+.pos-order-root {
+  --pos-accent: 18 95% 60%;
+  --pos-accent-soft: 18 100% 96%;
+  --pos-accent-hover: 18 85% 54%;
+  --pos-success: 152 60% 50%;
+  --pos-surface: 30 40% 98%;
+  --pos-bg: 30 30% 97%;
+
+  --primary: var(--pos-accent);
+  --primary-foreground: 0 0% 100%;
+  --ring: var(--pos-accent);
+}
+
+.pos-order-root .pos-accent-bg {
+  background: hsl(var(--pos-accent));
+  color: #fff;
+}
+.pos-order-root .pos-accent-text {
+  color: hsl(var(--pos-accent));
+}
+.pos-order-root .pos-accent-soft-bg {
+  background: hsl(var(--pos-accent-soft));
+}
+.pos-order-root .pos-success-bg {
+  background: hsl(var(--pos-success));
+  color: #fff;
+}
+
+.pos-order-root .pos-card-item {
+  transition: box-shadow 0.18s, transform 0.18s;
+}
+.pos-order-root .pos-card-item:hover {
+  box-shadow: 0 8px 20px -8px hsl(18 90% 50% / 0.25);
+  transform: translateY(-1px);
+}
+
+.pos-order-root .pos-sidebar-btn.active {
+  background: hsl(var(--pos-accent));
+  color: #fff;
+}
+
+@keyframes pos-pop {
+  0% { transform: scale(0.7); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.pos-order-root .pos-pop {
+  animation: pos-pop 0.45s cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+
+@media print {
+  body * { visibility: hidden; }
+  .pos-print-area, .pos-print-area * { visibility: visible; }
+  .pos-print-area { position: absolute; left: 0; top: 0; width: 80mm; }
+}

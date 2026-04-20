@@ -14,6 +14,10 @@ import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.dorabets.common.spring.web.PagedResult;
+import com.dorabets.idempotency.IdempotencyGuard;
+import com.dorabets.idempotency.model.IdempotencyResult;
+import com.dorabets.idempotency.model.TtlPolicy;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.sales.PaymentCapturedEvent;
 import com.fern.events.sales.SaleCompletedEvent;
 import com.fern.services.sales.api.SalesDtos;
@@ -41,6 +45,8 @@ class SalesServiceTest {
   private TypedKafkaEventPublisher kafkaEventPublisher;
   @Mock
   private AuthorizationPolicyService authorizationPolicyService;
+  @Mock
+  private IdempotencyGuard idempotencyGuard;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
 
@@ -130,6 +136,110 @@ class SalesServiceTest {
     assertEquals("500", result.id());
     assertEquals("order_created", result.status());
     assertEquals("unpaid", result.paymentStatus());
+  }
+
+  @Test
+  void submitSaleWithIdempotencyKeyDelegatesToGuardAndReturnsReplayedResult() throws Exception {
+    RequestUserContextHolder.set(new RequestUserContext(
+        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
+    ));
+    when(authorizationPolicyService.canWriteSales(any())).thenReturn(true);
+
+    SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
+        7L, 300L, "USD", "dine_in", "n",
+        List.of(new SalesDtos.SaleLineRequest(
+            11L, new BigDecimal("1.0000"), BigDecimal.ZERO, BigDecimal.ZERO, null, Set.of()
+        )),
+        null
+    );
+    SalesDtos.SaleView sale = new SalesDtos.SaleView(
+        "777", 7L, "300", null, null, null, "USD", "dine_in", "order_created", "unpaid",
+        new BigDecimal("5.00"), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("5.00"),
+        "n",
+        List.of(new SalesDtos.SaleLineView(
+            11L, "PROD-11", "P", new BigDecimal("1.0000"), new BigDecimal("5.00"),
+            BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("5.00"), Set.of(), null
+        )),
+        null, Instant.parse("2026-03-27T00:00:00Z")
+    );
+
+    ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+    String expectedBody = mapper.writeValueAsString(sale);
+
+    when(idempotencyGuard.execute(
+        eq("sales-service:create-order"),
+        eq("550e8400-e29b-41d4-a716-446655440000"),
+        any(String.class),
+        eq(TtlPolicy.BET),
+        any()
+    )).thenReturn(new IdempotencyResult(false, 201, expectedBody, "777"));
+
+    SalesService service = new SalesService(
+        salesRepository, kafkaEventPublisher, authorizationPolicyService, clock, idempotencyGuard, mapper
+    );
+    SalesDtos.SaleView result = service.submitSale("550e8400-e29b-41d4-a716-446655440000", request);
+
+    assertEquals("777", result.id());
+    verify(idempotencyGuard).execute(
+        eq("sales-service:create-order"),
+        eq("550e8400-e29b-41d4-a716-446655440000"),
+        any(String.class),
+        eq(TtlPolicy.BET),
+        any()
+    );
+  }
+
+  @Test
+  void submitSaleWithInvalidIdempotencyKeyThrowsBadRequest() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
+    ));
+    when(authorizationPolicyService.canWriteSales(any())).thenReturn(true);
+
+    SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
+        7L, 300L, "USD", "dine_in", "n",
+        List.of(new SalesDtos.SaleLineRequest(
+            11L, new BigDecimal("1.0000"), BigDecimal.ZERO, BigDecimal.ZERO, null, Set.of()
+        )),
+        null
+    );
+
+    SalesService service = new SalesService(
+        salesRepository, kafkaEventPublisher, authorizationPolicyService, clock,
+        idempotencyGuard, new ObjectMapper()
+    );
+    assertThrows(ServiceException.class, () -> service.submitSale("not-a-uuid", request));
+    verifyNoInteractions(salesRepository);
+  }
+
+  @Test
+  void submitSaleWithBlankIdempotencyKeyFallsBackToDirectRepositoryCall() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
+    ));
+    when(authorizationPolicyService.canWriteSales(any())).thenReturn(true);
+
+    SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
+        7L, 300L, "USD", "dine_in", "n",
+        List.of(new SalesDtos.SaleLineRequest(
+            11L, new BigDecimal("1.0000"), BigDecimal.ZERO, BigDecimal.ZERO, null, Set.of()
+        )),
+        null
+    );
+    SalesDtos.SaleView sale = new SalesDtos.SaleView(
+        "900", 7L, "300", null, null, null, "USD", "dine_in", "order_created", "unpaid",
+        new BigDecimal("5.00"), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("5.00"),
+        "n", List.of(), null, Instant.parse("2026-03-27T00:00:00Z")
+    );
+    when(salesRepository.submitSale(request)).thenReturn(sale);
+
+    SalesService service = new SalesService(
+        salesRepository, kafkaEventPublisher, authorizationPolicyService, clock,
+        idempotencyGuard, new ObjectMapper()
+    );
+    SalesDtos.SaleView result = service.submitSale(null, request);
+    assertEquals("900", result.id());
+    verifyNoInteractions(idempotencyGuard);
   }
 
   @Test

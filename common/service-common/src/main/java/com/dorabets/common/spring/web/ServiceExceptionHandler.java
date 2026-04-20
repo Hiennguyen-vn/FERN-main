@@ -1,7 +1,10 @@
 package com.dorabets.common.spring.web;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.idempotency.IdempotencyConflictException;
+import java.sql.SQLException;
 import java.time.Instant;
+import org.springframework.dao.DataIntegrityViolationException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,6 +77,40 @@ public class ServiceExceptionHandler {
   @ExceptionHandler(HttpMessageNotReadableException.class)
   public ResponseEntity<Map<String, Object>> handleMalformedJson(HttpMessageNotReadableException exception) {
     return response(HttpStatus.BAD_REQUEST, "invalid_json", "Malformed JSON request body", null);
+  }
+
+  @ExceptionHandler(IdempotencyConflictException.class)
+  public ResponseEntity<Map<String, Object>> handleIdempotencyConflict(IdempotencyConflictException exception) {
+    return response(
+        HttpStatus.CONFLICT,
+        "idempotency_conflict",
+        exception.getMessage() == null ? "Idempotency key reused with different payload" : exception.getMessage(),
+        null
+    );
+  }
+
+  @ExceptionHandler(DataIntegrityViolationException.class)
+  public ResponseEntity<Map<String, Object>> handleDataIntegrity(DataIntegrityViolationException exception) {
+    log.warn("Data integrity violation", exception);
+    Throwable root = exception.getMostSpecificCause();
+    String rootMessage = root != null && root.getMessage() != null ? root.getMessage() : exception.getMessage();
+    String summary = summarizeIntegrityMessage(rootMessage);
+    return response(HttpStatus.UNPROCESSABLE_ENTITY, "data_integrity_error", summary, null);
+  }
+
+  @ExceptionHandler(SQLException.class)
+  public ResponseEntity<Map<String, Object>> handleSql(SQLException exception) {
+    log.error("Unhandled SQL exception", exception);
+    String summary = summarizeIntegrityMessage(exception.getMessage());
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("sqlState", exception.getSQLState());
+    return response(HttpStatus.UNPROCESSABLE_ENTITY, "sql_error", summary, details);
+  }
+
+  private String summarizeIntegrityMessage(String raw) {
+    if (raw == null || raw.isBlank()) return "Database constraint violation";
+    String firstLine = raw.split("\\r?\\n", 2)[0];
+    return firstLine.length() > 300 ? firstLine.substring(0, 300) + "..." : firstLine;
   }
 
   @ExceptionHandler(NoResourceFoundException.class)

@@ -116,6 +116,15 @@ public class PayrollController {
     return payrollService.listPayroll(payrollPeriodId, userId, outletId, status, q, sortBy, sortDir, limit, offset);
   }
 
+  @GetMapping("/monthly")
+  public List<PayrollDtos.MonthlyPayrollRow> monthlyPayroll(
+      @RequestParam(required = false) Long outletId,
+      @RequestParam(required = false) LocalDate startDate,
+      @RequestParam(required = false) LocalDate endDate
+  ) {
+    return payrollService.monthlyPayroll(outletId, startDate, endDate);
+  }
+
   @PostMapping("/{payrollId}/approve")
   public PayrollDtos.PayrollView approvePayroll(@PathVariable long payrollId) {
     return payrollService.approvePayroll(payrollId);

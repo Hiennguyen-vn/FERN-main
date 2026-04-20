@@ -6,13 +6,18 @@ import com.dorabets.common.spring.auth.BusinessUserProfile;
 import com.dorabets.common.spring.auth.CanonicalRole;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.dorabets.common.spring.cache.JacksonCacheSerializer;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.dorabets.common.spring.web.PagedResult;
 import com.dorabets.common.spring.web.QueryConventions;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.payroll.PayrollApprovedEvent;
 import com.fern.services.payroll.api.PayrollDtos;
 import com.fern.services.payroll.infrastructure.HrServiceClient;
 import com.fern.services.payroll.infrastructure.PayrollRepository;
+import com.natsu.common.model.cache.RedisClientAdapter;
+import com.natsu.common.model.cache.TieredCache;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -20,7 +25,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -33,6 +40,40 @@ public class PayrollService {
   private final TypedKafkaEventPublisher eventPublisher;
   private final Clock clock;
   private final AuthorizationPolicyService authorizationPolicyService;
+  private final TieredCache<List<PayrollDtos.MonthlyPayrollRow>> monthlyPayrollCache;
+
+  @Autowired
+  public PayrollService(
+      PayrollRepository payrollRepository,
+      HrServiceClient hrServiceClient,
+      SalaryCalculator salaryCalculator,
+      SnowflakeIdGenerator idGenerator,
+      TypedKafkaEventPublisher eventPublisher,
+      Clock clock,
+      AuthorizationPolicyService authorizationPolicyService,
+      ObjectMapper objectMapper,
+      RedisClientAdapter redisClientAdapter
+  ) {
+    this.payrollRepository = payrollRepository;
+    this.hrServiceClient = hrServiceClient;
+    this.salaryCalculator = salaryCalculator;
+    this.idGenerator = idGenerator;
+    this.eventPublisher = eventPublisher;
+    this.clock = clock;
+    this.authorizationPolicyService = authorizationPolicyService;
+    this.monthlyPayrollCache = redisClientAdapter == null
+        ? null
+        : TieredCache.<List<PayrollDtos.MonthlyPayrollRow>>builder("fern-payroll-monthly")
+            .localMaxSize(1_000)
+            .localTtl(Duration.ofMinutes(1))
+            .redisTtl(Duration.ofMinutes(10))
+            .redisClient(redisClientAdapter)
+            .serializer(new JacksonCacheSerializer<>(
+                objectMapper,
+                new TypeReference<List<PayrollDtos.MonthlyPayrollRow>>() { }
+            ))
+            .build();
+  }
 
   public PayrollService(
       PayrollRepository payrollRepository,
@@ -43,13 +84,7 @@ public class PayrollService {
       Clock clock,
       AuthorizationPolicyService authorizationPolicyService
   ) {
-    this.payrollRepository = payrollRepository;
-    this.hrServiceClient = hrServiceClient;
-    this.salaryCalculator = salaryCalculator;
-    this.idGenerator = idGenerator;
-    this.eventPublisher = eventPublisher;
-    this.clock = clock;
-    this.authorizationPolicyService = authorizationPolicyService;
+    this(payrollRepository, hrServiceClient, salaryCalculator, idGenerator, eventPublisher, clock, authorizationPolicyService, new ObjectMapper(), null);
   }
 
   public PayrollDtos.PayrollPeriodView createPeriod(PayrollDtos.CreatePayrollPeriodRequest request) {
@@ -394,6 +429,33 @@ public class PayrollService {
         ).map(this::toListDto);
   }
 
+  public List<PayrollDtos.MonthlyPayrollRow> monthlyPayroll(
+      Long outletId,
+      LocalDate startDate,
+      LocalDate endDate
+  ) {
+    Set<Long> scopedRegionIds = resolvePayrollReadRegionIds();
+    if (monthlyPayrollCache == null) {
+      return payrollRepository.monthlyPayroll(scopedRegionIds, outletId, startDate, endDate);
+    }
+    String scopeKey = scopedRegionIds == null
+        ? "all"
+        : scopedRegionIds.stream().sorted().map(Object::toString).reduce((a, b) -> a + "," + b).orElse("none");
+    String key = "scope:" + scopeKey
+        + "|outlet:" + (outletId == null ? "any" : outletId)
+        + "|start:" + (startDate == null ? "" : startDate)
+        + "|end:" + (endDate == null ? "" : endDate);
+    return monthlyPayrollCache.getOrCompute(
+        key,
+        () -> payrollRepository.monthlyPayroll(scopedRegionIds, outletId, startDate, endDate),
+        Duration.ofMinutes(10)
+    );
+  }
+
+  public void evictMonthlyPayrollCache() {
+    if (monthlyPayrollCache != null) monthlyPayrollCache.clearLocal();
+  }
+
   public PayrollDtos.PayrollView approvePayroll(long payrollId) {
     PayrollRepository.PayrollScopeRecord scope = payrollRepository.findPayrollScope(payrollId)
         .orElseThrow(() -> ServiceException.notFound("Payroll not found: " + payrollId));
@@ -421,6 +483,7 @@ public class PayrollService {
             projection.payroll().approvedAt() == null ? clock.instant() : projection.payroll().approvedAt()
         )
     );
+    evictMonthlyPayrollCache();
     return toDto(projection.payroll());
   }
 
@@ -434,6 +497,7 @@ public class PayrollService {
       throw ServiceException.conflict("Only approved payroll runs can be marked as paid");
     }
     PayrollRepository.PayrollRecord paid = payrollRepository.markPaid(payrollId, trimToNull(paymentRef));
+    evictMonthlyPayrollCache();
     return toDto(paid);
   }
 
@@ -493,7 +557,8 @@ public class PayrollService {
     }
     long userId = context.requireUserId();
     BusinessUserProfile profile = authorizationPolicyService.resolveUserProfile(userId);
-    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)
+        || profile.canonicalRoles().contains(CanonicalRole.SUPERADMIN)) {
       return null;
     }
     LinkedHashSet<Long> regionIds = new LinkedHashSet<>();

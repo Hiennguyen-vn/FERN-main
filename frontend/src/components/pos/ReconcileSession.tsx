@@ -91,6 +91,20 @@ export function ReconcileSession({
           </p>
         </div>
 
+        {session.outstandingAmount > 0 && (
+          <div className="flex items-start gap-2.5 px-3 py-3 rounded-lg bg-warning/10 border border-warning/30">
+            <AlertTriangle className="h-4 w-4 text-warning flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-medium text-foreground">
+                Outstanding revenue: ${session.outstandingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Billed ${session.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} but only ${session.totalCollected.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} collected via payments. Reconcile only records collected amounts — resolve unpaid orders before closing.
+              </p>
+            </div>
+          </div>
+        )}
+
         {!available && (
           <div className="flex items-start gap-2.5 px-3 py-3 rounded-lg bg-warning/8 border border-warning/15">
             <AlertTriangle className="h-4 w-4 text-warning flex-shrink-0 mt-0.5" />

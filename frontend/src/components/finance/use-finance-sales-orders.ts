@@ -46,8 +46,8 @@ export function useFinanceSalesOrders({
           sortBy: 'createdAt',
           sortDir: 'desc',
         },
-        200,
-        25,
+        500,
+        400,
       );
 
       const visibleOutletIds = new Set(visibleOutlets.map((outlet) => outlet.id));

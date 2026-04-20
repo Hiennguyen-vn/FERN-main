@@ -71,6 +71,7 @@ export function mapSaleToUi(
   operatorName: string,
   sessionCodeById: Map<string, string>,
   productNameById: Map<string, string>,
+  sessionOperatorNameById?: Map<string, string>,
 ): SaleOrder {
   const status = String((detail?.status ?? sale?.status ?? '')).toLowerCase();
   const paymentStatusRaw = String((detail?.paymentStatus ?? sale?.paymentStatus ?? '')).toLowerCase();
@@ -108,7 +109,9 @@ export function mapSaleToUi(
     sourceLabel: isPublicOrder ? 'Customer table order' : 'Cashier order',
     publicOrderToken: publicOrderToken ? String(publicOrderToken) : undefined,
     outletName: outletNameFallback,
-    createdBy: isPublicOrder ? 'Customer QR/table' : operatorName,
+    createdBy: isPublicOrder
+      ? 'Customer QR/table'
+      : (sessionOperatorNameById?.get(sessionId) ?? operatorName),
     createdAt: String(detail?.createdAt ?? sale?.createdAt ?? new Date().toISOString()),
     status: status === 'cancelled' ? 'cancelled' : (status === 'payment_done' || status === 'completed' ? 'completed' : 'open'),
     paymentStatus: paymentStatusRaw === 'paid' ? 'paid' : paymentStatusRaw === 'partially_paid' ? 'partial' : 'unpaid',

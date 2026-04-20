@@ -90,6 +90,16 @@ export interface PayrollTimesheetsQuery {
   offset?: number;
 }
 
+export interface MonthlyPayrollRow {
+  outletId: string | number | null;
+  month: string;
+  status: string;
+  recordCount: number;
+  baseSalary: number;
+  netSalary: number;
+  currencyCode?: string | null;
+}
+
 export interface PayrollRunsQuery {
   payrollPeriodId?: string;
   userId?: string;
@@ -267,6 +277,13 @@ export const payrollApi = {
     ),
   runs: async (token: string, query: PayrollRunsQuery): Promise<PagedResponse<PayrollRunView>> =>
     decodePaged(await apiRequest('/api/v1/payroll', { token, query }), decodePayrollRun),
+  monthlyPayroll: async (
+    token: string,
+    query: { outletId?: string; startDate?: string; endDate?: string },
+  ): Promise<MonthlyPayrollRow[]> => {
+    const raw = await apiRequest<unknown>('/api/v1/payroll/monthly', { token, query });
+    return Array.isArray(raw) ? (raw as MonthlyPayrollRow[]) : [];
+  },
   calculateSalary: async (token: string, payload: CalculateSalaryPayload): Promise<CalculateSalaryResult> => {
     const raw = await apiRequest('/api/v1/payroll/calculate-salary', {
       method: 'POST',

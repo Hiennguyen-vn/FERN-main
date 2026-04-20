@@ -9,6 +9,8 @@ import { Label } from '@/components/ui/label';
 import type { POSSession } from '@/types/pos';
 import { PAYMENT_METHOD_LABELS } from '@/constants/pos';
 
+const fmtMoney = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 interface Props {
   session: POSSession;
   onBack: () => void;
@@ -52,8 +54,8 @@ export function CloseSession({ session, onBack, onConfirm }: Props) {
           </div>
           <div className="p-3 rounded-lg bg-muted/40 text-center">
             <DollarSign className="h-4 w-4 mx-auto text-muted-foreground mb-1" />
-            <p className="text-xl font-semibold text-foreground">${session.totalRevenue.toLocaleString()}</p>
-            <p className="text-[10px] text-muted-foreground">Total Revenue</p>
+            <p className="text-xl font-semibold text-foreground">${fmtMoney(session.totalRevenue)}</p>
+            <p className="text-[10px] text-muted-foreground">Revenue (Billed)</p>
           </div>
         </div>
 
@@ -63,9 +65,19 @@ export function CloseSession({ session, onBack, onConfirm }: Props) {
           {session.paymentSummary.map(ps => (
             <div key={ps.method} className="flex items-center justify-between p-2.5 rounded-md bg-muted/20">
               <span className="text-xs text-foreground">{PAYMENT_METHOD_LABELS[ps.method] || ps.method}</span>
-              <span className="text-xs font-medium text-foreground">${ps.total.toLocaleString()} ({ps.count})</span>
+              <span className="text-xs font-medium text-foreground">${fmtMoney(ps.total)} ({ps.count})</span>
             </div>
           ))}
+          <div className="flex items-center justify-between pt-2 border-t">
+            <span className="text-xs font-semibold text-foreground">Collected</span>
+            <span className="text-xs font-semibold text-foreground">${fmtMoney(session.totalCollected)}</span>
+          </div>
+          {session.outstandingAmount > 0 && (
+            <div className="flex items-center justify-between p-2.5 rounded-md bg-warning/10 border border-warning/30">
+              <span className="text-xs font-semibold text-warning">Outstanding</span>
+              <span className="text-xs font-semibold text-warning">${fmtMoney(session.outstandingAmount)}</span>
+            </div>
+          )}
         </div>
 
         <div className="space-y-2">

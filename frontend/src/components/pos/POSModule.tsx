@@ -19,6 +19,7 @@ import type { POSSession, SaleOrder, OrderLineItem, PaymentMethod } from '@/type
 import { usePOSSessions, type DBPosSession } from '@/hooks/use-pos-sessions';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
 import {
+  authApi,
   crmApi,
   productApi,
   salesApi,
@@ -142,18 +143,19 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
   }, [token]);
 
   const sessions: POSSession[] = useMemo(() => {
-    const orderAgg = new Map<string, { orderCount: number; revenue: number; paymentSummary: Map<PaymentMethod, { total: number; count: number }> }>();
+    const orderAgg = new Map<string, { orderCount: number; revenue: number; collected: number; paymentSummary: Map<PaymentMethod, { total: number; count: number }> }>();
 
     orders.forEach((order) => {
       const key = order.sessionId;
       if (!key) return;
-      const existing = orderAgg.get(key) || { orderCount: 0, revenue: 0, paymentSummary: new Map() };
+      const existing = orderAgg.get(key) || { orderCount: 0, revenue: 0, collected: 0, paymentSummary: new Map() };
       existing.orderCount += 1;
       existing.revenue += order.total;
       order.payments.forEach((payment) => {
         const current = existing.paymentSummary.get(payment.method) || { total: 0, count: 0 };
         current.total += payment.amount;
         current.count += 1;
+        existing.collected += payment.amount;
         existing.paymentSummary.set(payment.method, current);
       });
       orderAgg.set(key, existing);
@@ -161,6 +163,12 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
 
     return dbSessions.map((session) => {
       const stats = orderAgg.get(session.id);
+      const backendRevenue = session.total_revenue || 0;
+      const backendOrderCount = session.order_count || 0;
+      const hasLoadedOrders = (stats?.orderCount || 0) >= backendOrderCount && backendOrderCount > 0;
+      const totalRevenue = backendRevenue > 0 ? backendRevenue : (stats?.revenue || 0);
+      const totalCollected = stats?.collected || 0;
+      const outstandingAmount = hasLoadedOrders ? Math.max(0, totalRevenue - totalCollected) : 0;
       return {
         id: session.id,
         code: `POS-${session.opened_at.slice(0, 10).replace(/-/g, '')}-${session.id.slice(0, 3).toUpperCase()}`,
@@ -173,8 +181,10 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
         status: session.status as POSSession['status'],
         closedAt: session.closed_at || undefined,
         openingNote: session.notes || undefined,
-        orderCount: stats?.orderCount || 0,
-        totalRevenue: stats?.revenue || 0,
+        orderCount: backendOrderCount || stats?.orderCount || 0,
+        totalRevenue,
+        totalCollected,
+        outstandingAmount,
         paymentSummary: stats
           ? Array.from(stats.paymentSummary.entries()).map(([method, value]) => ({
               method,
@@ -185,6 +195,77 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
       };
     });
   }, [dbSessions, orders]);
+
+  const buildSessionContext = useCallback(async () => {
+    const sessionCodeById = new Map(
+      dbSessions.map((session) => [
+        session.id,
+        `POS-${session.opened_at.slice(0, 10).replace(/-/g, '')}-${session.id.slice(0, 3).toUpperCase()}`,
+      ]),
+    );
+
+    const operatorIds = Array.from(new Set(
+      dbSessions.map((s) => s.operator_id).filter((v) => v && v.trim() !== ''),
+    ));
+    const userNameById = new Map<string, string>();
+    if (operatorIds.length > 0 && token) {
+      try {
+        const usersPage = await authApi.users(token, { limit: 200 });
+        for (const u of usersPage.items) {
+          userNameById.set(String(u.id), u.fullName || u.username || String(u.id));
+        }
+      } catch {
+        // ignore — fallback to operatorName prop
+      }
+    }
+    const sessionOperatorNameById = new Map<string, string>();
+    for (const s of dbSessions) {
+      const name = userNameById.get(s.operator_id);
+      if (name) sessionOperatorNameById.set(s.id, name);
+    }
+    return { sessionCodeById, sessionOperatorNameById };
+  }, [dbSessions, token]);
+
+  const loadOrdersWithContext = useCallback(async (
+    items: SaleListItemView[],
+    context: { sessionCodeById: Map<string, string>; sessionOperatorNameById: Map<string, string> },
+  ): Promise<SaleOrder[]> => {
+    if (!token || items.length === 0) return [];
+    const detailResponses = await Promise.all(
+      items.map(async (item) => {
+        try {
+          return await salesApi.orderDetail(token, String(item.id));
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return items.map((item, index) =>
+      mapSaleToUi(
+        item,
+        detailResponses[index],
+        outletName,
+        operatorName,
+        context.sessionCodeById,
+        productNameById,
+        context.sessionOperatorNameById,
+      ),
+    );
+  }, [operatorName, outletName, productNameById, token]);
+
+  const mergeOrdersIntoState = useCallback((incoming: SaleOrder[]) => {
+    if (incoming.length === 0) return;
+    setOrders((prev) => {
+      const map = new Map(prev.map((o) => [o.id, o]));
+      incoming.forEach((o) => map.set(o.id, o));
+      return Array.from(map.values());
+    });
+    setOrdersMap((prev) => {
+      const next = { ...prev };
+      incoming.forEach((o) => { next[o.id] = o; });
+      return next;
+    });
+  }, []);
 
   const fetchOrders = useCallback(async () => {
     if (!token) {
@@ -200,34 +281,11 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
         limit: 50,
         offset: 0,
       });
-
-      const sessionCodeById = new Map(
-        dbSessions.map((session) => [
-          session.id,
-          `POS-${session.opened_at.slice(0, 10).replace(/-/g, '')}-${session.id.slice(0, 3).toUpperCase()}`,
-        ]),
-      );
-      const baseItems = page.items || [];
-      const detailResponses = await Promise.all(
-        baseItems.map(async (item: SaleListItemView) => {
-          try {
-            return await salesApi.orderDetail(token, String(item.id));
-          } catch {
-            return null;
-          }
-        }),
-      );
-
-      const mapped = baseItems.map((item: SaleListItemView, index: number) =>
-        mapSaleToUi(item, detailResponses[index], outletName, operatorName, sessionCodeById, productNameById),
-      );
-
-      const detailMap: Record<string, SaleOrder> = {};
-      mapped.forEach((order) => {
-        detailMap[order.id] = order;
-      });
-
+      const context = await buildSessionContext();
+      const mapped = await loadOrdersWithContext(page.items || [], context);
       setOrders(mapped);
+      const detailMap: Record<string, SaleOrder> = {};
+      mapped.forEach((o) => { detailMap[o.id] = o; });
       setOrdersMap(detailMap);
     } catch (error) {
       console.error('Failed to load sale orders:', error);
@@ -237,11 +295,37 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
     } finally {
       setOrdersLoading(false);
     }
-  }, [dbSessions, operatorName, outletName, productNameById, scopedOutletId, token]);
+  }, [buildSessionContext, loadOrdersWithContext, scopedOutletId, token]);
+
+  const fetchOrdersForSession = useCallback(async (sessionId: string) => {
+    if (!token || !sessionId) return;
+    setOrdersLoading(true);
+    try {
+      const page = await salesApi.orders(token, {
+        posSessionId: sessionId,
+        limit: 500,
+        offset: 0,
+      });
+      const context = await buildSessionContext();
+      const mapped = await loadOrdersWithContext(page.items || [], context);
+      mergeOrdersIntoState(mapped);
+    } catch (error) {
+      console.error('Failed to load session orders:', error);
+      toast.error('Unable to load orders for this session');
+    } finally {
+      setOrdersLoading(false);
+    }
+  }, [buildSessionContext, loadOrdersWithContext, mergeOrdersIntoState, token]);
 
   useEffect(() => {
     void fetchOrders();
   }, [fetchOrders]);
+
+  useEffect(() => {
+    if (view.screen === 'session-detail') {
+      void fetchOrdersForSession(view.sessionId);
+    }
+  }, [fetchOrdersForSession, view]);
 
   const loadCustomers = useCallback(async (query = customerQuery) => {
     if (!token) {
@@ -638,6 +722,7 @@ export function POSModule({ outletName, operatorName, outletId, onCustomerOrders
       <POSSessionDetail
         session={session}
         orders={sessionOrders}
+        ordersLoading={ordersLoading}
         onBack={goList}
         onClose={() => setView({ screen: 'close-session', sessionId: session.id })}
         onReconcile={() => setView({ screen: 'reconcile', sessionId: session.id })}

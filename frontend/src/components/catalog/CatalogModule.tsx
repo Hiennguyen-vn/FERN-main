@@ -22,17 +22,15 @@ import { ProductListPanel } from '@/components/catalog/ProductListPanel';
 import { ProductDetailPanel } from '@/components/catalog/ProductDetailPanel';
 import { CatalogControlTower } from '@/components/catalog/CatalogControlTower';
 import { IngredientDrawer } from '@/components/catalog/IngredientDrawer';
-import { LayoutDashboard, FolderTree, Layers, LayoutGrid, GitBranch, Rocket, History } from 'lucide-react';
+import { LayoutDashboard, FolderTree, GitBranch, Rocket, History } from 'lucide-react';
 import { CategoryManager } from '@/components/catalog/CategoryManager';
-import { MenuAssignment } from '@/components/catalog/MenuAssignment';
 import { ScopeOverrideExplorer } from '@/components/catalog/ScopeOverrideExplorer';
 import { PublishCenter } from '@/components/catalog/PublishCenter';
 import { ChangeHistory } from '@/components/catalog/ChangeHistory';
-import { VariantsModule } from '@/components/catalog/VariantsModule';
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
-type CatTab = 'overview' | 'products' | 'ingredients' | 'recipes' | 'pricing' | 'categories' | 'menus' | 'overrides' | 'publish' | 'history' | 'variants';
+type CatTab = 'overview' | 'products' | 'ingredients' | 'recipes' | 'pricing' | 'categories' | 'overrides' | 'publish' | 'history';
 
 const TABS: { key: CatTab; label: string; icon: React.ElementType }[] = [
   { key: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -41,11 +39,9 @@ const TABS: { key: CatTab; label: string; icon: React.ElementType }[] = [
   { key: 'recipes', label: 'Recipes', icon: BookOpen },
   { key: 'pricing', label: 'Pricing', icon: DollarSign },
   { key: 'categories', label: 'Categories', icon: FolderTree },
-  { key: 'menus', label: 'Menus', icon: LayoutGrid },
   { key: 'overrides', label: 'Overrides', icon: GitBranch },
   { key: 'publish', label: 'Publish', icon: Rocket },
   { key: 'history', label: 'History', icon: History },
-  { key: 'variants', label: 'Variants', icon: Layers },
 ];
 
 const READ_ONLY_TABS = TABS.filter((tab) => ['products', 'recipes', 'pricing'].includes(tab.key));
@@ -471,13 +467,6 @@ export function CatalogModule() {
           </div>
         )}
 
-        {/* ══ MENUS ═══════════════════════════════════════════════ */}
-        {activeTab === 'menus' && (
-          <div className="flex-1 overflow-hidden">
-            <MenuAssignment token={token} />
-          </div>
-        )}
-
         {/* ══ SCOPE OVERRIDES ════════════════════════════════════ */}
         {activeTab === 'overrides' && (
           <div className="flex-1 overflow-y-auto">
@@ -503,13 +492,6 @@ export function CatalogModule() {
         {activeTab === 'categories' && (
           <div className="flex-1 overflow-y-auto">
             <CategoryManager token={token} />
-          </div>
-        )}
-
-        {/* ══ VARIANTS & MODIFIERS ═════════════════════════════════ */}
-        {activeTab === 'variants' && (
-          <div className="flex-1 overflow-hidden">
-            <VariantsModule token={token} />
           </div>
         )}
 

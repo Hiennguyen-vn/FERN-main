@@ -1,5 +1,7 @@
 import { Suspense, lazy, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { persistQueryClient } from "@tanstack/query-persist-client-core";
+import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persister";
 import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
@@ -9,6 +11,7 @@ import { useAuth } from "@/auth/use-auth";
 import Login from "./pages/Login";
 import ShellLayout from "./layouts/ShellLayout";
 import NotFound from "./pages/NotFound";
+import { PosRoleRedirect } from "./routes/pos-order/guards/PosRoleRedirect";
 
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const POSPage = lazy(() => import("./pages/POSPage"));
@@ -28,8 +31,45 @@ const CRMModule = lazy(() => import("@/components/crm/CRMModule").then((m) => ({
 const PromotionsModule = lazy(() => import("@/components/promotions/PromotionsModule").then((m) => ({ default: m.PromotionsModule })));
 // SchedulingModule absorbed into WorkforceModule — redirect kept for backward compat
 const WorkforceModule = lazy(() => import("@/components/workforce/WorkforceModule").then((m) => ({ default: m.WorkforceModule })));
+const PosOrderGate = lazy(() => import("./routes/pos-order/guards/PosOrderGate"));
 
-const queryClient = new QueryClient();
+const PERSISTED_QUERY_PREFIXES = [
+  ['sales', 'monthlyRevenue'],
+  ['finance', 'monthlyExpenses'],
+  ['payroll', 'monthly'],
+];
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60_000,
+      gcTime: 300_000,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+if (typeof window !== 'undefined') {
+  const persister = createSyncStoragePersister({
+    storage: window.localStorage,
+    key: 'fern-finance-cache',
+    throttleTime: 1000,
+  });
+  void persistQueryClient({
+    queryClient,
+    persister,
+    maxAge: 60 * 60 * 1000,
+    dehydrateOptions: {
+      shouldDehydrateQuery: (query) => {
+        const key = query.queryKey;
+        if (!Array.isArray(key) || key.length < 2) return false;
+        return PERSISTED_QUERY_PREFIXES.some(
+          (prefix) => key[0] === prefix[0] && key[1] === prefix[1],
+        );
+      },
+    },
+  });
+}
 
 function LazyRoute({ children }: { children: ReactNode }) {
   return (
@@ -79,10 +119,11 @@ const App = () => (
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
             <Route path="/order/:tableToken" element={<LazyRoute><PublicOrderPage /></LazyRoute>} />
+            <Route path="/posorder" element={<LazyRoute><PosOrderGate /></LazyRoute>} />
 
             <Route element={<ProtectedShell />}>
               <Route path="/dashboard" element={<LazyRoute><DashboardPage /></LazyRoute>} />
-              <Route path="/pos" element={<LazyRoute><POSPage /></LazyRoute>} />
+              <Route path="/pos" element={<LazyRoute><PosRoleRedirect><POSPage /></PosRoleRedirect></LazyRoute>} />
               <Route path="/order" element={<LazyRoute><CustomerOrdersPage /></LazyRoute>} />
               <Route path="/inventory" element={<LazyRoute><InventoryModule /></LazyRoute>} />
               <Route path="/procurement" element={<LazyRoute><ProcurementModule /></LazyRoute>} />

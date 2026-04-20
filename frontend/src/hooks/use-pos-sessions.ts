@@ -20,6 +20,8 @@ export interface DBPosSession {
   created_at: string;
   updated_at: string;
   outlet_name?: string;
+  order_count: number;
+  total_revenue: number;
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -45,6 +47,8 @@ function mapPosSession(apiSession: PosSessionView, outletNameById: Map<string, s
     created_at: openedAt,
     updated_at: closedAt || openedAt,
     outlet_name: outletNameById.get(outletId) || 'Unknown',
+    order_count: typeof apiSession.orderCount === 'number' ? apiSession.orderCount : 0,
+    total_revenue: typeof apiSession.totalRevenue === 'number' ? apiSession.totalRevenue : 0,
   };
 }
 

@@ -52,6 +52,7 @@ export function FinanceOperatingExpensesWorkspace({
   const [hasMore, setHasMore] = useState(false);
   const [actionBusy, setActionBusy] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [periodKey, setPeriodKey] = useState(() => new Date().toISOString().slice(0, 7));
   const [expenseForm, setExpenseForm] = useState({
     sourceType: 'operating_expense' as FinanceCreateExpenseSource,
     amount: '',
@@ -105,6 +106,27 @@ export function FinanceOperatingExpensesWorkspace({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeOutletId]);
 
+  const periodRange = useMemo(() => {
+    if (!periodKey) return { startDate: undefined, endDate: undefined };
+    const [y, m] = periodKey.split('-').map(Number);
+    const start = new Date(Date.UTC(y, (m || 1) - 1, 1));
+    const end = new Date(Date.UTC(y, (m || 1), 0));
+    const toISO = (d: Date) => d.toISOString().slice(0, 10);
+    return { startDate: toISO(start), endDate: toISO(end) };
+  }, [periodKey]);
+
+  const periodOptions = useMemo(() => {
+    const now = new Date();
+    const months: { key: string; label: string }[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+      const label = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(d);
+      months.push({ key, label });
+    }
+    return months;
+  }, []);
+
   const loadExpenses = useCallback(async () => {
     if (!token) return;
     setLoading(true);
@@ -114,6 +136,8 @@ export function FinanceOperatingExpensesWorkspace({
         ...query.query,
         outletId: scopeOutletId || undefined,
         sourceType: query.filters.sourceType,
+        startDate: periodRange.startDate,
+        endDate: periodRange.endDate,
       });
       setExpenses(page.items || []);
       setTotal(page.total || page.totalCount || 0);
@@ -126,7 +150,7 @@ export function FinanceOperatingExpensesWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [token, query.query, query.filters.sourceType, scopeOutletId]);
+  }, [token, query.query, query.filters.sourceType, scopeOutletId, periodRange]);
 
   useEffect(() => {
     void loadExpenses();
@@ -330,6 +354,15 @@ export function FinanceOperatingExpensesWorkspace({
                 onChange={(e) => query.setSearchInput(e.target.value)}
               />
             </div>
+            <select
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+              value={periodKey}
+              onChange={(e) => setPeriodKey(e.target.value)}
+            >
+              {periodOptions.map((opt) => (
+                <option key={opt.key} value={opt.key}>{opt.label}</option>
+              ))}
+            </select>
             <select
               className="h-8 rounded-md border border-input bg-background px-2 text-xs"
               value={query.filters.sourceType || 'all'}

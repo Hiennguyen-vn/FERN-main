@@ -3,6 +3,7 @@ package com.fern.services.finance.infrastructure;
 import com.dorabets.common.repository.BaseRepository;
 import com.dorabets.common.spring.web.PagedResult;
 import com.dorabets.common.spring.web.QueryConventions;
+import com.fern.services.finance.api.FinanceDtos;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.Date;
@@ -136,6 +137,62 @@ public class FinanceRepository extends BaseRepository {
             rows.add(mapExpense(rs));
           }
           return PagedResult.of(rows, limit, offset, totalCount);
+        }
+      }
+    });
+  }
+
+  public List<FinanceDtos.MonthlyExpenseRow> monthlyExpenses(
+      Long outletId,
+      LocalDate startDate,
+      LocalDate endDate
+  ) {
+    return executeInTransaction(conn -> {
+      StringBuilder sql = new StringBuilder(
+          """
+          SELECT
+            er.outlet_id,
+            to_char(date_trunc('month', er.business_date), 'YYYY-MM') AS month,
+            er.source_type::text AS source_type,
+            COUNT(*) AS record_count,
+            COALESCE(SUM(er.amount), 0) AS amount,
+            MIN(er.currency_code) AS currency_code
+          FROM core.expense_record er
+          WHERE 1 = 1
+          """
+      );
+      List<Object> params = new ArrayList<>();
+      if (outletId != null) {
+        sql.append(" AND er.outlet_id = ?");
+        params.add(outletId);
+      }
+      if (startDate != null) {
+        sql.append(" AND er.business_date >= ?");
+        params.add(Date.valueOf(startDate));
+      }
+      if (endDate != null) {
+        sql.append(" AND er.business_date <= ?");
+        params.add(Date.valueOf(endDate));
+      }
+      sql.append(" GROUP BY er.outlet_id, date_trunc('month', er.business_date), er.source_type");
+      sql.append(" ORDER BY er.outlet_id, month, source_type");
+
+      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+        bindParams(ps, params);
+        try (ResultSet rs = ps.executeQuery()) {
+          List<FinanceDtos.MonthlyExpenseRow> rows = new ArrayList<>();
+          while (rs.next()) {
+            BigDecimal amount = rs.getBigDecimal("amount");
+            rows.add(new FinanceDtos.MonthlyExpenseRow(
+                rs.getLong("outlet_id"),
+                rs.getString("month"),
+                rs.getString("source_type"),
+                rs.getLong("record_count"),
+                amount == null ? BigDecimal.ZERO : amount,
+                rs.getString("currency_code")
+            ));
+          }
+          return rows;
         }
       }
     });

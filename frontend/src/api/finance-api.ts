@@ -20,6 +20,8 @@ export interface ExpenseView {
 export interface FinanceExpensesQuery {
   outletId?: string;
   sourceType?: string;
+  startDate?: string;
+  endDate?: string;
   q?: string;
   sortBy?: string;
   sortDir?: 'asc' | 'desc';
@@ -54,9 +56,25 @@ function decodeExpense(value: unknown): ExpenseView {
   };
 }
 
+export interface MonthlyExpenseRow {
+  outletId: string | number;
+  month: string;
+  sourceType: string;
+  recordCount: number;
+  amount: number;
+  currencyCode?: string | null;
+}
+
 export const financeApi = {
   expenses: async (token: string, query: FinanceExpensesQuery): Promise<PagedResponse<ExpenseView>> =>
     decodePaged(await apiRequest('/api/v1/finance/expenses', { token, query }), decodeExpense),
+  monthlyExpenses: async (
+    token: string,
+    query: { outletId?: string; startDate?: string; endDate?: string },
+  ): Promise<MonthlyExpenseRow[]> => {
+    const raw = await apiRequest<unknown>('/api/v1/finance/expenses/monthly', { token, query });
+    return Array.isArray(raw) ? (raw as MonthlyExpenseRow[]) : [];
+  },
   expenseDetail: async (token: string, expenseId: string): Promise<ExpenseView> =>
     decodeExpense(await apiRequest(`/api/v1/finance/expenses/${expenseId}`, { token })),
   createOperatingExpense: async (token: string, payload: CreateExpensePayload): Promise<unknown> =>

@@ -58,4 +58,13 @@ public class FinanceController {
   ) {
     return financeService.listExpenses(outletId, startDate, endDate, sourceType, q, sortBy, sortDir, limit, offset);
   }
+
+  @GetMapping("/expenses/monthly")
+  public List<FinanceDtos.MonthlyExpenseRow> monthlyExpenses(
+      @RequestParam(required = false) Long outletId,
+      @RequestParam(required = false) LocalDate startDate,
+      @RequestParam(required = false) LocalDate endDate
+  ) {
+    return financeService.monthlyExpenses(outletId, startDate, endDate);
+  }
 }

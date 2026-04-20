@@ -16,6 +16,7 @@ import java.time.Clock;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 
@@ -30,6 +31,26 @@ public class FinanceEventConsumer {
   private final TypedKafkaEventPublisher eventPublisher;
   private final ObjectMapper objectMapper;
   private final Clock clock;
+  private final FinanceService financeService;
+
+  @Autowired
+  public FinanceEventConsumer(
+      FinanceRepository financeRepository,
+      IdempotencyGuard idempotencyGuard,
+      SnowflakeIdGenerator idGenerator,
+      TypedKafkaEventPublisher eventPublisher,
+      ObjectMapper objectMapper,
+      Clock clock,
+      FinanceService financeService
+  ) {
+    this.financeRepository = financeRepository;
+    this.idempotencyGuard = idempotencyGuard;
+    this.idGenerator = idGenerator;
+    this.eventPublisher = eventPublisher;
+    this.objectMapper = objectMapper;
+    this.clock = clock;
+    this.financeService = financeService;
+  }
 
   public FinanceEventConsumer(
       FinanceRepository financeRepository,
@@ -39,12 +60,7 @@ public class FinanceEventConsumer {
       ObjectMapper objectMapper,
       Clock clock
   ) {
-    this.financeRepository = financeRepository;
-    this.idempotencyGuard = idempotencyGuard;
-    this.idGenerator = idGenerator;
-    this.eventPublisher = eventPublisher;
-    this.objectMapper = objectMapper;
-    this.clock = clock;
+    this(financeRepository, idempotencyGuard, idGenerator, eventPublisher, objectMapper, clock, null);
   }
 
   @KafkaListener(topics = "fern.procurement.invoice-approved")
@@ -86,6 +102,7 @@ public class FinanceEventConsumer {
               );
               publishExpenseCreated(record, receiptId);
             }
+            if (financeService != null) financeService.evictMonthlyExpenseCache();
             return IdempotencyResult.created(
                 toJson(Map.of("supplierInvoiceId", event.supplierInvoiceId(), "receiptsProcessed", event.linkedReceiptIds().size())),
                 Long.toString(event.supplierInvoiceId())
@@ -123,6 +140,7 @@ public class FinanceEventConsumer {
                 "Auto-created from approved payroll " + event.payrollId()
             );
             publishExpenseCreated(record, event.payrollId());
+            if (financeService != null) financeService.evictMonthlyExpenseCache();
             return IdempotencyResult.created(
                 toJson(Map.of("payrollId", event.payrollId(), "expenseId", record.id())),
                 Long.toString(record.id())

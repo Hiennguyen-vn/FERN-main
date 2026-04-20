@@ -27,6 +27,8 @@ import { ScopeBar } from '@/components/shell/ScopeBar';
 const QuickActionsPanel = lazy(() => import('@/components/shell/QuickActionsPanel').then((module) => ({ default: module.QuickActionsPanel })));
 const NotificationPanel = lazy(() => import('@/components/shell/NotificationPanel').then((module) => ({ default: module.NotificationPanel })));
 
+const attemptedScopeRecoverySessions = new Set<string>();
+
 const ROUTE_META: Record<string, { title: string; breadcrumbs: string[] }> = {
   '/dashboard': { title: 'Outlet Control Center', breadcrumbs: ['Home', 'Dashboard'] },
   '/pos': { title: 'Point of Sale', breadcrumbs: ['POS'] },
@@ -97,8 +99,10 @@ export default function ShellLayout() {
     if (hierarchyQuery.isLoading || hierarchyQuery.isError) return;
     if (hierarchyQuery.data?.outlets?.length) return;
     if (attemptedScopeRecovery.current) return;
+    if (attemptedScopeRecoverySessions.has(session.user.id)) return;
 
     attemptedScopeRecovery.current = true;
+    attemptedScopeRecoverySessions.add(session.user.id);
     void refreshSession()
       .catch((error) => {
         console.error('Scope recovery refresh failed:', error);
@@ -107,7 +111,6 @@ export default function ShellLayout() {
         void hierarchyQuery.refetch();
       });
   }, [
-    hierarchyQuery,
     hierarchyQuery.data?.outlets?.length,
     hierarchyQuery.isError,
     hierarchyQuery.isLoading,
@@ -186,7 +189,7 @@ export default function ShellLayout() {
   const shellUser = useMemo(() => buildShellUser(session), [session]);
 
   const basePath = '/' + location.pathname.split('/')[1];
-  const meta = ROUTE_META[basePath] || { title: 'OpsCenter', breadcrumbs: [] };
+  const meta = ROUTE_META[basePath] || { title: 'FERN', breadcrumbs: [] };
   const activeFamily = PATH_TO_FAMILY[basePath] as ModuleFamily | undefined;
   const defaultPath = visibleModules[0]?.path || '/dashboard';
   const showScopeBar = activeFamily !== 'org';

@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -53,8 +54,11 @@ public class SalesController {
 
   @PostMapping("/orders")
   @ResponseStatus(HttpStatus.CREATED)
-  public SalesDtos.SaleView submitSale(@Valid @RequestBody SalesDtos.SubmitSaleRequest request) {
-    return salesService.submitSale(request);
+  public SalesDtos.SaleView submitSale(
+      @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+      @Valid @RequestBody SalesDtos.SubmitSaleRequest request
+  ) {
+    return salesService.submitSale(idempotencyKey, request);
   }
 
   @GetMapping("/ordering-tables")
@@ -119,6 +123,24 @@ public class SalesController {
   @GetMapping("/orders/{saleId}")
   public SalesDtos.SaleView getSale(@PathVariable long saleId) {
     return salesService.getSale(saleId);
+  }
+
+  @GetMapping("/revenue/monthly")
+  public List<SalesDtos.MonthlyRevenueRow> monthlyRevenue(
+      @RequestParam(required = false) Long outletId,
+      @RequestParam(required = false) LocalDate startDate,
+      @RequestParam(required = false) LocalDate endDate
+  ) {
+    return salesService.monthlyRevenue(outletId, startDate, endDate);
+  }
+
+  @GetMapping("/revenue/daily")
+  public List<SalesDtos.DailyRevenueRow> dailyRevenue(
+      @RequestParam(required = false) Long outletId,
+      @RequestParam(required = false) LocalDate startDate,
+      @RequestParam(required = false) LocalDate endDate
+  ) {
+    return salesService.dailyRevenue(outletId, startDate, endDate);
   }
 
   @PostMapping("/orders/{saleId}/approve")

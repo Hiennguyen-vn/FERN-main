@@ -5,6 +5,7 @@ import { ApiError } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Card, CardContent } from '@/components/ui/card';
 import type { AuthErrorType } from '@/types/shell';
 import {
   AlertTriangle,
@@ -14,7 +15,7 @@ import {
   Loader2,
   Eye,
   EyeOff,
-  ChevronRight,
+  Leaf,
 } from 'lucide-react';
 
 const AUTH_ERROR_MESSAGES: Record<AuthErrorType, { title: string; message: string; icon: React.ReactNode }> = {
@@ -100,159 +101,152 @@ export default function Login() {
   const branchInfo = AUTH_ERROR_MESSAGES.branch_blocked;
 
   return (
-    <div className="flex min-h-screen">
-      {/* Left panel — brand / illustration */}
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-6 bg-background">
+      {/* Decorative background */}
       <div
-        className="hidden lg:flex lg:w-[45%] flex-col justify-between p-12"
-        style={{ background: 'hsl(var(--login-panel))' }}
-      >
-        <div>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-sm">O</span>
-            </div>
-            <span className="text-lg font-semibold" style={{ color: 'hsl(var(--login-panel-foreground))' }}>
-              OpsCenter
-            </span>
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10"
+        style={{
+          background:
+            'radial-gradient(ellipse 60% 50% at 20% 10%, hsl(var(--primary) / 0.12), transparent 60%),' +
+            'radial-gradient(ellipse 50% 40% at 85% 90%, hsl(var(--scope-region) / 0.10), transparent 60%),' +
+            'linear-gradient(180deg, hsl(var(--background)) 0%, hsl(var(--surface-2)) 100%)',
+        }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-32 -left-32 h-96 w-96 rounded-full blur-3xl -z-10"
+        style={{ background: 'hsl(var(--primary) / 0.15)' }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -bottom-32 -right-32 h-96 w-96 rounded-full blur-3xl -z-10"
+        style={{ background: 'hsl(var(--scope-region) / 0.12)' }}
+      />
+
+      <div className="w-full max-w-md space-y-6">
+        {/* Brand */}
+        <div className="flex flex-col items-center gap-3">
+          <div
+            className="h-14 w-14 rounded-2xl flex items-center justify-center shadow-lg"
+            style={{
+              background:
+                'linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(152 60% 40%) 100%)',
+            }}
+          >
+            <Leaf className="h-7 w-7 text-primary-foreground" strokeWidth={2.25} />
           </div>
-          <p className="text-sm mt-1" style={{ color: 'hsl(var(--sidebar-muted))' }}>
-            Multi-Outlet F&B Operations Platform
-          </p>
-        </div>
-
-        <div className="space-y-8">
-          <div className="space-y-6">
-            {[
-              { label: 'Outlet Operations', desc: 'POS, inventory, and daily ops in one place' },
-              { label: 'Regional Oversight', desc: 'Cross-outlet visibility and approvals' },
-              { label: 'Finance & Procurement', desc: 'End-to-end spend and supply chain control' },
-            ].map((item) => (
-              <div key={item.label} className="flex items-start gap-4">
-                <div className="h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'hsl(var(--sidebar-accent))' }}>
-                  <ChevronRight className="h-4 w-4" style={{ color: 'hsl(var(--login-accent))' }} />
-                </div>
-                <div>
-                  <p className="text-sm font-medium" style={{ color: 'hsl(var(--login-panel-foreground))' }}>
-                    {item.label}
-                  </p>
-                  <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--sidebar-muted))' }}>
-                    {item.desc}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <p className="text-xs" style={{ color: 'hsl(var(--sidebar-muted))' }}>
-          © 2026 OpsCenter · Enterprise Platform v2.1
-        </p>
-      </div>
-
-      {/* Right panel — auth form */}
-      <div className="flex-1 flex items-center justify-center p-8 bg-background">
-        <div className="w-full max-w-sm space-y-8">
-          {/* Mobile logo */}
-          <div className="lg:hidden flex items-center gap-3 mb-4">
-            <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-sm">O</span>
-            </div>
-            <span className="text-lg font-semibold text-foreground">OpsCenter</span>
-          </div>
-
-          <div>
-            <h1 className="text-xl font-semibold text-foreground">Sign in to your account</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Enter your credentials to access the platform
+          <div className="text-center">
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">FERN</h1>
+            <p className="text-xs mt-1 text-muted-foreground">
+              Multi-Outlet F&B Operations Platform
             </p>
           </div>
-
-          {/* Branch blocked banner */}
-          {showBranchBlocked && (
-            <div className="permission-banner permission-banner-unavailable animate-fade-in">
-              <ServerCrash className="h-4 w-4 flex-shrink-0" />
-              <div>
-                <p className="font-medium text-sm">{branchInfo.title}</p>
-                <p className="text-xs mt-0.5 text-muted-foreground">{branchInfo.message}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Auth error */}
-          {errorInfo && (
-            <div className="flex items-start gap-3 p-3 rounded-lg border border-destructive/20 bg-destructive/5 animate-fade-in">
-              <span className="text-destructive mt-0.5">{errorInfo.icon}</span>
-              <div>
-                <p className="font-medium text-sm text-foreground">{errorInfo.title}</p>
-                <p className="text-xs mt-0.5 text-muted-foreground">{errorInfo.message}</p>
-              </div>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-sm font-medium text-foreground">
-                Username or email
-              </Label>
-              <Input
-                id="email"
-                type="text"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com"
-                className="h-10"
-                autoComplete="username"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-sm font-medium text-foreground">
-                Password
-              </Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="h-10 pr-10"
-                  autoComplete="current-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-
-            <Button type="submit" className="w-full h-10" disabled={loading}>
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Signing in…
-                </>
-              ) : (
-                'Sign in'
-              )}
-            </Button>
-          </form>
-
-          <div className="pt-4 border-t">
-            <button
-              type="button"
-              onClick={() => setShowBranchBlocked(!showBranchBlocked)}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {showBranchBlocked ? 'Hide' : 'Show'} environment status
-            </button>
-          </div>
-
         </div>
+
+        {/* Card */}
+        <Card
+          className="border-border/60 backdrop-blur-sm"
+          style={{ boxShadow: 'var(--shadow-xl)', background: 'hsl(var(--card) / 0.85)' }}
+        >
+          <CardContent className="p-6 sm:p-8 space-y-5">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">Sign in to your account</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Enter your credentials to access the platform
+              </p>
+            </div>
+
+            {showBranchBlocked && (
+              <div className="permission-banner permission-banner-unavailable animate-fade-in">
+                <ServerCrash className="h-4 w-4 flex-shrink-0" />
+                <div>
+                  <p className="font-medium text-sm">{branchInfo.title}</p>
+                  <p className="text-xs mt-0.5 text-muted-foreground">{branchInfo.message}</p>
+                </div>
+              </div>
+            )}
+
+            {errorInfo && (
+              <div className="flex items-start gap-3 p-3 rounded-lg border border-destructive/20 bg-destructive/5 animate-fade-in">
+                <span className="text-destructive mt-0.5">{errorInfo.icon}</span>
+                <div>
+                  <p className="font-medium text-sm text-foreground">{errorInfo.title}</p>
+                  <p className="text-xs mt-0.5 text-muted-foreground">{errorInfo.message}</p>
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email" className="text-sm font-medium text-foreground">
+                  Username or email
+                </Label>
+                <Input
+                  id="email"
+                  type="text"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@company.com"
+                  className="h-11"
+                  autoComplete="username"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password" className="text-sm font-medium text-foreground">
+                    Password
+                  </Label>
+                </div>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="h-11 pr-10"
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <Button type="submit" className="w-full h-11 font-medium" disabled={loading}>
+                {loading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Signing in…
+                  </>
+                ) : (
+                  'Sign in'
+                )}
+              </Button>
+            </form>
+
+            <div className="pt-2 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setShowBranchBlocked(!showBranchBlocked)}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showBranchBlocked ? 'Hide' : 'Show'} environment status
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <p className="text-center text-xs text-muted-foreground">
+          © 2026 FERN · Enterprise Platform v2.1
+        </p>
       </div>
     </div>
   );

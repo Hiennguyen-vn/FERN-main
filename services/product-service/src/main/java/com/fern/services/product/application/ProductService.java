@@ -200,6 +200,10 @@ public class ProductService {
     return recipe;
   }
 
+  public void requireCatalogMutationForPublicAccess() {
+    requireCatalogMutationAccess(RequestUserContextHolder.get());
+  }
+
   private void requireCatalogMutationAccess(RequestUserContext context) {
     if (authorizationPolicyService.canMutateCatalog(context)) {
       return;

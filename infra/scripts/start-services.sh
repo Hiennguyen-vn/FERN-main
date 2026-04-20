@@ -183,6 +183,13 @@ for record in "${FERN_LOCAL_SERVICE_ORDER[@]}"; do
         JWT_SECRET="${JWT_SECRET:-}" \
         CONTROL_HEARTBEAT_LEASE_SECONDS="${CONTROL_HEARTBEAT_LEASE_SECONDS:-30}" \
         CONTROL_HEARTBEAT_INTERVAL_SECONDS="${CONTROL_HEARTBEAT_INTERVAL_SECONDS:-10}" \
+        AWS_REGION="${AWS_REGION:-}" \
+        AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}" \
+        AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}" \
+        S3_BUCKET_PRODUCT_IMAGES="${S3_BUCKET_PRODUCT_IMAGES:-}" \
+        S3_PUBLIC_BASE_URL="${S3_PUBLIC_BASE_URL:-}" \
+        S3_ENDPOINT="${S3_ENDPOINT:-}" \
+        S3_PATH_STYLE="${S3_PATH_STYLE:-false}" \
         JAVA_OPTS="${JAVA_OPTS:-}" \
         java ${JAVA_OPTS:-} -jar "$jar_path" --dev \
         >"$log_file" 2>&1 < /dev/null &
@@ -204,6 +211,13 @@ for record in "${FERN_LOCAL_SERVICE_ORDER[@]}"; do
         JWT_SECRET="${JWT_SECRET:-}" \
         CONTROL_HEARTBEAT_LEASE_SECONDS="${CONTROL_HEARTBEAT_LEASE_SECONDS:-30}" \
         CONTROL_HEARTBEAT_INTERVAL_SECONDS="${CONTROL_HEARTBEAT_INTERVAL_SECONDS:-10}" \
+        AWS_REGION="${AWS_REGION:-}" \
+        AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}" \
+        AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}" \
+        S3_BUCKET_PRODUCT_IMAGES="${S3_BUCKET_PRODUCT_IMAGES:-}" \
+        S3_PUBLIC_BASE_URL="${S3_PUBLIC_BASE_URL:-}" \
+        S3_ENDPOINT="${S3_ENDPOINT:-}" \
+        S3_PATH_STYLE="${S3_PATH_STYLE:-false}" \
         JAVA_OPTS="${JAVA_OPTS:-}" \
         java ${JAVA_OPTS:-} -jar "$jar_path" \
         >"$log_file" 2>&1 < /dev/null &

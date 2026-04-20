@@ -122,8 +122,24 @@ export function ProductListPanel({ token, selectedId, onSelect, compact, canCrea
             <button key={String(p.id)} onClick={() => onSelect(p)}
               className={cn('w-full flex items-center gap-2.5 px-3 py-2.5 border-b text-left transition-colors',
                 active ? 'bg-primary/5 border-l-2 border-l-primary' : 'hover:bg-muted/30')}>
-              <div className="h-8 w-8 rounded-lg bg-muted/50 flex items-center justify-center flex-shrink-0">
-                <Package className="h-3.5 w-3.5 text-muted-foreground" />
+              <div className="h-10 w-10 rounded-lg bg-muted/50 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                {p.imageUrl ? (
+                  <img
+                    src={String(p.imageUrl)}
+                    alt={String(p.name || '')}
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                    onError={(e) => {
+                      const img = e.target as HTMLImageElement;
+                      img.style.display = 'none';
+                      const fallback = img.nextElementSibling as HTMLElement | null;
+                      if (fallback) fallback.style.display = 'flex';
+                    }}
+                  />
+                ) : null}
+                <div className={cn('h-full w-full items-center justify-center', p.imageUrl ? 'hidden' : 'flex')}>
+                  <Package className="h-4 w-4 text-muted-foreground" />
+                </div>
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium truncate">{String(p.name || '—')}</p>

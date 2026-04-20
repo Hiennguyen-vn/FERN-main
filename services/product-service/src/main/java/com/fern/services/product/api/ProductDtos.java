@@ -234,4 +234,10 @@ public final class ProductDtos {
   public record CreateModifierGroupRequest(@NotBlank String code, @NotBlank String name, String selectionType, int minSelections, int maxSelections) {}
 
   public record AddModifierOptionRequest(@NotBlank String code, @NotBlank String name, java.math.BigDecimal priceAdjustment, int displayOrder) {}
+
+  // ── Image upload ──────────────────────────────────────
+
+  public record PresignImageRequest(@NotBlank String contentType, long size) {}
+
+  public record PresignedUploadResult(String uploadUrl, String finalUrl, String expiresAt, String contentType) {}
 }

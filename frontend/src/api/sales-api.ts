@@ -57,6 +57,8 @@ export interface PosSessionView {
   openedAt?: string | null;
   closedAt?: string | null;
   note?: string | null;
+  orderCount?: number | null;
+  totalRevenue?: number | null;
   [key: string]: unknown;
 }
 
@@ -187,6 +189,43 @@ export interface CreatePromotionPayload {
   outletIds: number[];
 }
 
+export interface MonthlyRevenueRow {
+  outletId: string | number;
+  month: string;
+  orderCount: number;
+  cancelledCount: number;
+  grossSales: number;
+  discounts: number;
+  netSales: number;
+  taxAmount: number;
+  totalAmount: number;
+  voids: number;
+  currencyCode?: string | null;
+}
+
+export interface RevenueMixEntry {
+  key: string;
+  amount: number;
+  orderCount: number;
+}
+
+export interface DailyRevenueRow {
+  outletId: string | number;
+  businessDate: string;
+  orderCount: number;
+  cancelledCount: number;
+  grossSales: number;
+  discounts: number;
+  netSales: number;
+  taxAmount: number;
+  totalAmount: number;
+  voids: number;
+  currencyCode?: string | null;
+  paymentMix: RevenueMixEntry[];
+  channelMix: RevenueMixEntry[];
+  paymentCodedOrders: number;
+}
+
 export interface SalesOrdersQuery {
   outletId?: string;
   limit?: number;
@@ -198,6 +237,8 @@ export interface SalesOrdersQuery {
   paymentStatus?: string;
   publicOrderOnly?: boolean;
   posSessionId?: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface PosSessionsQuery {
@@ -322,6 +363,8 @@ function decodePosSession(value: unknown): PosSessionView {
     openedAt: asNullableString(record.openedAt),
     closedAt: asNullableString(record.closedAt),
     note: asNullableString(record.note),
+    orderCount: asNullableNumber(record.orderCount),
+    totalRevenue: asNullableNumber(record.totalRevenue),
   };
 }
 
@@ -481,10 +524,33 @@ export const salesApi = {
     decodePublicOrderReceipt(await apiRequest(`/api/v1/sales/public/tables/${tableToken}/orders/${orderToken}`)),
   orders: async (token: string, query: SalesOrdersQuery): Promise<PagedResponse<SaleListItemView>> =>
     decodePaged(await apiRequest('/api/v1/sales/orders', { token, query }), decodeSale),
+  monthlyRevenue: async (
+    token: string,
+    query: { outletId?: string; startDate?: string; endDate?: string },
+  ): Promise<MonthlyRevenueRow[]> => {
+    const raw = await apiRequest<unknown>('/api/v1/sales/revenue/monthly', { token, query });
+    return Array.isArray(raw) ? (raw as MonthlyRevenueRow[]) : [];
+  },
+  dailyRevenue: async (
+    token: string,
+    query: { outletId?: string; startDate?: string; endDate?: string },
+  ): Promise<DailyRevenueRow[]> => {
+    const raw = await apiRequest<unknown>('/api/v1/sales/revenue/daily', { token, query });
+    return Array.isArray(raw) ? (raw as DailyRevenueRow[]) : [];
+  },
   orderDetail: async (token: string, saleId: string): Promise<SaleDetailView> =>
     decodeSale(await apiRequest(`/api/v1/sales/orders/${saleId}`, { token })),
-  createOrder: async (token: string, payload: CreateSalePayload): Promise<SaleDetailView> =>
-    decodeSale(await apiRequest('/api/v1/sales/orders', { method: 'POST', token, body: payload })),
+  createOrder: async (
+    token: string,
+    payload: CreateSalePayload,
+    opts?: { idempotencyKey?: string }
+  ): Promise<SaleDetailView> =>
+    decodeSale(await apiRequest('/api/v1/sales/orders', {
+      method: 'POST',
+      token,
+      body: payload,
+      headers: opts?.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : undefined,
+    })),
   approveOrder: async (token: string, saleId: string): Promise<unknown> =>
     apiRequest(`/api/v1/sales/orders/${saleId}/approve`, { method: 'POST', token }),
   markPaymentDone: async (token: string, saleId: string, payload: MarkPaymentDonePayload): Promise<unknown> =>

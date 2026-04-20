@@ -14,9 +14,12 @@ const STATUS_STEPS: { key: POSSessionStatus; label: string }[] = [
   { key: 'reconciled', label: 'Reconciled' },
 ];
 
+const fmtMoney = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 interface Props {
   session: POSSession;
   orders: SaleOrder[];
+  ordersLoading?: boolean;
   onBack: () => void;
   onClose: () => void;
   onReconcile: () => void;
@@ -24,7 +27,7 @@ interface Props {
   onViewOrder: (orderId: string) => void;
 }
 
-export function POSSessionDetail({ session, orders, onBack, onClose, onReconcile, onNewOrder, onViewOrder }: Props) {
+export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClose, onReconcile, onNewOrder, onViewOrder }: Props) {
   const [activeTab, setActiveTab] = useState<'orders' | 'payments' | 'reconciliation' | 'activity'>('orders');
   const sessionOrders = orders;
 
@@ -100,9 +103,9 @@ export function POSSessionDetail({ session, orders, onBack, onClose, onReconcile
         <div className="surface-elevated p-4">
           <div className="flex items-center gap-2 mb-2">
             <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Revenue</span>
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Revenue (Billed)</span>
           </div>
-          <p className="text-xl font-semibold text-foreground">${session.totalRevenue.toLocaleString()}</p>
+          <p className="text-xl font-semibold text-foreground">${fmtMoney(session.totalRevenue)}</p>
         </div>
         <div className="surface-elevated p-4">
           <div className="flex items-center gap-2 mb-2">
@@ -110,13 +113,13 @@ export function POSSessionDetail({ session, orders, onBack, onClose, onReconcile
             <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Avg Order</span>
           </div>
           <p className="text-xl font-semibold text-foreground">
-            ${session.orderCount > 0 ? (session.totalRevenue / session.orderCount).toFixed(2) : '0.00'}
+            ${session.orderCount > 0 ? fmtMoney(session.totalRevenue / session.orderCount) : '0.00'}
           </p>
         </div>
         <div className="surface-elevated p-4">
           <div className="flex items-center gap-2 mb-2">
             <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Pay Methods</span>
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Methods Used</span>
           </div>
           <p className="text-xl font-semibold text-foreground">{session.paymentSummary.length}</p>
         </div>
@@ -159,6 +162,20 @@ export function POSSessionDetail({ session, orders, onBack, onClose, onReconcile
                 </tr>
               </thead>
               <tbody>
+                {ordersLoading && sessionOrders.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-xs text-muted-foreground">
+                      Loading orders…
+                    </td>
+                  </tr>
+                )}
+                {!ordersLoading && sessionOrders.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-xs text-muted-foreground">
+                      No orders in this session
+                    </td>
+                  </tr>
+                )}
                 {sessionOrders.map((order) => (
                   <tr key={order.id} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
                     <td className="px-4 py-2.5 text-sm font-medium text-primary cursor-pointer hover:underline" onClick={() => onViewOrder(order.id)}>
@@ -207,12 +224,25 @@ export function POSSessionDetail({ session, orders, onBack, onClose, onReconcile
                     <p className="text-[11px] text-muted-foreground">{ps.count} transactions</p>
                   </div>
                 </div>
-                <p className="text-sm font-semibold text-foreground">${ps.total.toLocaleString()}</p>
+                <p className="text-sm font-semibold text-foreground">${fmtMoney(ps.total)}</p>
               </div>
             ))}
             <div className="flex items-center justify-between pt-3 border-t">
-              <p className="text-sm font-semibold text-foreground">Total</p>
-              <p className="text-lg font-semibold text-foreground">${session.totalRevenue.toLocaleString()}</p>
+              <p className="text-sm font-semibold text-foreground">Collected</p>
+              <p className="text-lg font-semibold text-foreground">${fmtMoney(session.totalCollected)}</p>
+            </div>
+            {session.outstandingAmount > 0 && (
+              <div className="flex items-center justify-between p-3 rounded-lg bg-warning/10 border border-warning/30">
+                <div>
+                  <p className="text-sm font-semibold text-warning">Outstanding</p>
+                  <p className="text-[11px] text-muted-foreground">Billed revenue not yet collected</p>
+                </div>
+                <p className="text-lg font-semibold text-warning">${fmtMoney(session.outstandingAmount)}</p>
+              </div>
+            )}
+            <div className="flex items-center justify-between pt-3 border-t">
+              <p className="text-xs text-muted-foreground">Revenue (Billed)</p>
+              <p className="text-sm font-medium text-muted-foreground">${fmtMoney(session.totalRevenue)}</p>
             </div>
           </div>
         </div>

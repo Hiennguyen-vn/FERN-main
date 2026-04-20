@@ -2,7 +2,7 @@ import { useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Monitor, Package, Warehouse, ShoppingCart,
   Landmark, Users, CalendarClock, Building2, Map, BarChart3,
-  ScrollText, Shield,
+  ScrollText, Shield, Leaf,
 } from 'lucide-react';
 import type { ModuleEntry, ModuleFamily } from '@/types/shell';
 import { cn } from '@/lib/utils';
@@ -49,12 +49,17 @@ export function AppSidebar({ modules, collapsed, onNavigate, activeFamily }: App
       {/* Logo */}
       <div className={cn('h-14 flex items-center border-b px-4 flex-shrink-0', collapsed && 'justify-center px-0')}
         style={{ borderColor: 'hsl(var(--sidebar-border))' }}>
-        <div className="h-7 w-7 rounded-md bg-primary flex items-center justify-center flex-shrink-0">
-          <span className="text-primary-foreground font-bold text-xs">O</span>
+        <div
+          className="h-7 w-7 rounded-md flex items-center justify-center flex-shrink-0"
+          style={{
+            background: 'linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(152 60% 40%) 100%)',
+          }}
+        >
+          <Leaf className="h-4 w-4 text-primary-foreground" strokeWidth={2.5} />
         </div>
         {!collapsed && (
-          <span className="ml-2.5 text-sm font-semibold" style={{ color: 'hsl(var(--sidebar-accent-foreground))' }}>
-            OpsCenter
+          <span className="ml-2.5 text-sm font-semibold tracking-tight" style={{ color: 'hsl(var(--sidebar-accent-foreground))' }}>
+            FERN
           </span>
         )}
       </div>

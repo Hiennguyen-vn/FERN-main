@@ -20,6 +20,8 @@ export interface POSSession {
   openingNote?: string;
   orderCount: number;
   totalRevenue: number;
+  totalCollected: number;
+  outstandingAmount: number;
   paymentSummary: { method: PaymentMethod; total: number; count: number }[];
 }
 

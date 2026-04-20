@@ -584,6 +584,67 @@ public class PayrollRepository extends BaseRepository {
     });
   }
 
+  public List<com.fern.services.payroll.api.PayrollDtos.MonthlyPayrollRow> monthlyPayroll(
+      Set<Long> scopedRegionIds,
+      Long outletId,
+      java.time.LocalDate startDate,
+      java.time.LocalDate endDate
+  ) {
+    StringBuilder sql = new StringBuilder(
+        """
+        SELECT
+          pt.outlet_id,
+          to_char(date_trunc('month', COALESCE(pp.pay_date, pp.end_date, pp.start_date)), 'YYYY-MM') AS month,
+          p.status::text AS status,
+          COUNT(*) AS record_count,
+          COALESCE(SUM(p.base_salary_amount), 0) AS base_salary,
+          COALESCE(SUM(p.net_salary), 0) AS net_salary,
+          MIN(p.currency_code) AS currency_code
+        FROM core.payroll p
+        JOIN core.payroll_timesheet pt ON pt.id = p.payroll_timesheet_id
+        JOIN core.payroll_period pp ON pp.id = pt.payroll_period_id
+        WHERE 1 = 1
+        """
+    );
+    List<Object> params = new ArrayList<>();
+    appendRegionScopeFilter(sql, params, "pp.region_id", scopedRegionIds);
+    if (outletId != null) {
+      sql.append(" AND pt.outlet_id = ?");
+      params.add(outletId);
+    }
+    if (startDate != null) {
+      sql.append(" AND COALESCE(pp.pay_date, pp.end_date, pp.start_date) >= ?");
+      params.add(java.sql.Date.valueOf(startDate));
+    }
+    if (endDate != null) {
+      sql.append(" AND COALESCE(pp.pay_date, pp.end_date, pp.start_date) <= ?");
+      params.add(java.sql.Date.valueOf(endDate));
+    }
+    sql.append(" GROUP BY pt.outlet_id, date_trunc('month', COALESCE(pp.pay_date, pp.end_date, pp.start_date)), p.status");
+    sql.append(" ORDER BY pt.outlet_id, month, status");
+
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+        bindParams(ps, params);
+        try (ResultSet rs = ps.executeQuery()) {
+          List<com.fern.services.payroll.api.PayrollDtos.MonthlyPayrollRow> rows = new ArrayList<>();
+          while (rs.next()) {
+            rows.add(new com.fern.services.payroll.api.PayrollDtos.MonthlyPayrollRow(
+                (Long) rs.getObject("outlet_id"),
+                rs.getString("month"),
+                rs.getString("status"),
+                rs.getLong("record_count"),
+                rs.getBigDecimal("base_salary"),
+                rs.getBigDecimal("net_salary"),
+                rs.getString("currency_code")
+            ));
+          }
+          return rows;
+        }
+      }
+    });
+  }
+
   public Optional<PayrollRecord> findPayrollByTimesheetId(long payrollTimesheetId) {
     return queryOne(
         """

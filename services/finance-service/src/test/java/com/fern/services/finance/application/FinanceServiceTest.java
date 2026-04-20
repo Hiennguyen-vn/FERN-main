@@ -187,9 +187,9 @@ class FinanceServiceTest {
         null,
         null,
         null,
-        100,
+        500,
         15
-    )).thenReturn(PagedResult.of(java.util.List.of(), 100, 15, 0));
+    )).thenReturn(PagedResult.of(java.util.List.of(), 500, 15, 0));
 
     FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
     service.listExpenses(
@@ -212,7 +212,7 @@ class FinanceServiceTest {
         null,
         null,
         null,
-        100,
+        500,
         15
     );
   }

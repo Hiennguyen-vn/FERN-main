@@ -4,9 +4,20 @@ import com.dorabets.common.middleware.ServiceException;
 import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.dorabets.common.spring.cache.JacksonCacheSerializer;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.dorabets.common.spring.web.PagedResult;
 import com.dorabets.common.spring.web.QueryConventions;
+import com.dorabets.idempotency.IdempotencyGuard;
+import com.dorabets.idempotency.model.IdempotencyResult;
+import com.dorabets.idempotency.model.TtlPolicy;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.natsu.common.model.cache.RedisClientAdapter;
+import com.natsu.common.model.cache.TieredCache;
+import java.time.Duration;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.fern.events.sales.PaymentCapturedEvent;
 import com.fern.events.sales.SaleCompletedEvent;
 import com.fern.events.sales.SaleCompletedLineItem;
@@ -18,26 +29,71 @@ import java.time.LocalDate;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 @Service
 public class SalesService {
 
+  static final String IDEMPOTENCY_SERVICE = "sales-service:create-order";
+
   private final SalesRepository salesRepository;
   private final TypedKafkaEventPublisher kafkaEventPublisher;
   private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
+  private final IdempotencyGuard idempotencyGuard;
+  private final ObjectMapper objectMapper;
+  private final TieredCache<List<SalesDtos.MonthlyRevenueRow>> monthlyRevenueCache;
 
+  @Autowired
+  public SalesService(
+      SalesRepository salesRepository,
+      TypedKafkaEventPublisher kafkaEventPublisher,
+      AuthorizationPolicyService authorizationPolicyService,
+      Clock clock,
+      IdempotencyGuard idempotencyGuard,
+      ObjectMapper objectMapper,
+      RedisClientAdapter redisClientAdapter
+  ) {
+    this.salesRepository = salesRepository;
+    this.kafkaEventPublisher = kafkaEventPublisher;
+    this.authorizationPolicyService = authorizationPolicyService;
+    this.clock = clock;
+    this.idempotencyGuard = idempotencyGuard;
+    this.objectMapper = objectMapper;
+    this.monthlyRevenueCache = redisClientAdapter == null
+        ? null
+        : TieredCache.<List<SalesDtos.MonthlyRevenueRow>>builder("fern-sales-monthly-revenue")
+            .localMaxSize(1_000)
+            .localTtl(Duration.ofMinutes(1))
+            .redisTtl(Duration.ofMinutes(10))
+            .redisClient(redisClientAdapter)
+            .serializer(new JacksonCacheSerializer<>(
+                objectMapper,
+                new TypeReference<List<SalesDtos.MonthlyRevenueRow>>() { }
+            ))
+            .build();
+  }
+
+  // Backward-compatible overload used by existing tests that do not need idempotency wiring.
   public SalesService(
       SalesRepository salesRepository,
       TypedKafkaEventPublisher kafkaEventPublisher,
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock
   ) {
-    this.salesRepository = salesRepository;
-    this.kafkaEventPublisher = kafkaEventPublisher;
-    this.authorizationPolicyService = authorizationPolicyService;
-    this.clock = clock;
+    this(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock, null, new ObjectMapper(), null);
+  }
+
+  public SalesService(
+      SalesRepository salesRepository,
+      TypedKafkaEventPublisher kafkaEventPublisher,
+      AuthorizationPolicyService authorizationPolicyService,
+      Clock clock,
+      IdempotencyGuard idempotencyGuard,
+      ObjectMapper objectMapper
+  ) {
+    this(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock, idempotencyGuard, objectMapper, null);
   }
 
   public SalesDtos.PosSessionView openPosSession(SalesDtos.OpenPosSessionRequest request) {
@@ -66,12 +122,64 @@ public class SalesService {
   }
 
   public SalesDtos.SaleView submitSale(SalesDtos.SubmitSaleRequest request) {
+    return submitSale(null, request);
+  }
+
+  public SalesDtos.SaleView submitSale(String idempotencyKey, SalesDtos.SubmitSaleRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
     requireSalesWrite(context);
     if (request.payment() != null) {
       throw ServiceException.badRequest("Payment is captured with mark-payment-done after order approval");
     }
-    return salesRepository.submitSale(request);
+    if (idempotencyKey == null || idempotencyKey.isBlank()) {
+      return salesRepository.submitSale(request);
+    }
+    String normalizedKey = normalizeIdempotencyKey(idempotencyKey);
+    String requestBody = serializeForHash(request);
+    IdempotencyResult result = idempotencyGuard.execute(
+        IDEMPOTENCY_SERVICE,
+        normalizedKey,
+        requestBody,
+        TtlPolicy.BET,
+        () -> {
+          SalesDtos.SaleView view = salesRepository.submitSale(request);
+          return IdempotencyResult.created(serializeResponse(view), view.id());
+        }
+    );
+    return deserializeResponse(result.responseBody());
+  }
+
+  private static String normalizeIdempotencyKey(String raw) {
+    String trimmed = raw.trim();
+    try {
+      return UUID.fromString(trimmed).toString();
+    } catch (IllegalArgumentException ex) {
+      throw ServiceException.badRequest("Idempotency-Key must be a UUID");
+    }
+  }
+
+  private String serializeForHash(SalesDtos.SubmitSaleRequest request) {
+    try {
+      return objectMapper.writeValueAsString(request);
+    } catch (JsonProcessingException ex) {
+      throw new IllegalStateException("Failed to serialize submit request for idempotency hash", ex);
+    }
+  }
+
+  private String serializeResponse(SalesDtos.SaleView view) {
+    try {
+      return objectMapper.writeValueAsString(view);
+    } catch (JsonProcessingException ex) {
+      throw new IllegalStateException("Failed to serialize sale response for idempotency cache", ex);
+    }
+  }
+
+  private SalesDtos.SaleView deserializeResponse(String body) {
+    try {
+      return objectMapper.readValue(body, SalesDtos.SaleView.class);
+    } catch (Exception ex) {
+      throw new IllegalStateException("Failed to deserialize cached sale response", ex);
+    }
   }
 
   public SalesDtos.SaleView getSale(long saleId) {
@@ -109,6 +217,42 @@ public class SalesService {
         sanitizeLimit(limit),
         sanitizeOffset(offset)
     );
+  }
+
+  public List<SalesDtos.MonthlyRevenueRow> monthlyRevenue(Long outletId, LocalDate startDate, LocalDate endDate) {
+    Set<Long> readable = resolveReadableOutletIds(outletId);
+    String cacheKey = buildMonthlyCacheKey(readable, outletId, startDate, endDate);
+    if (cacheKey == null) {
+      return salesRepository.monthlyRevenue(readable, startDate, endDate);
+    }
+    return monthlyRevenueCache.getOrCompute(
+        cacheKey,
+        () -> salesRepository.monthlyRevenue(readable, startDate, endDate),
+        Duration.ofMinutes(10)
+    );
+  }
+
+  public void evictMonthlyRevenueCache() {
+    if (monthlyRevenueCache != null) monthlyRevenueCache.clearLocal();
+  }
+
+  public List<SalesDtos.DailyRevenueRow> dailyRevenue(Long outletId, LocalDate startDate, LocalDate endDate) {
+    Set<Long> readable = resolveReadableOutletIds(outletId);
+    return salesRepository.dailyRevenue(readable, startDate, endDate);
+  }
+
+  private String buildMonthlyCacheKey(Set<Long> readable, Long outletId, LocalDate startDate, LocalDate endDate) {
+    if (monthlyRevenueCache == null) return null;
+    StringBuilder sb = new StringBuilder();
+    if (readable == null) {
+      sb.append("scope:all");
+    } else {
+      sb.append("scope:").append(readable.stream().sorted().map(Object::toString).reduce((a, b) -> a + "," + b).orElse("none"));
+    }
+    sb.append("|outlet:").append(outletId == null ? "any" : outletId);
+    sb.append("|start:").append(startDate == null ? "" : startDate);
+    sb.append("|end:").append(endDate == null ? "" : endDate);
+    return sb.toString();
   }
 
   public List<SalesDtos.OrderingTableLinkView> listOrderingTables(Long outletId, String status) {
@@ -168,6 +312,7 @@ public class SalesService {
     requireSalesWriteForOutlet(context, existing.outletId());
     SalesDtos.SaleView paid = salesRepository.markPaymentDone(saleId, request);
     publishSaleCompletedEvents(paid);
+    evictMonthlyRevenueCache();
     return paid;
   }
 
@@ -176,7 +321,9 @@ public class SalesService {
     SalesDtos.SaleView existing = salesRepository.findSale(saleId)
         .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
     requireSalesWriteForOutlet(context, existing.outletId());
-    return salesRepository.cancelSale(saleId, request == null ? null : request.reason(), context.userId());
+    SalesDtos.SaleView cancelled = salesRepository.cancelSale(saleId, request == null ? null : request.reason(), context.userId());
+    evictMonthlyRevenueCache();
+    return cancelled;
   }
 
   public PagedResult<SalesDtos.PosSessionListItemView> listPosSessions(

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Package, BookOpen, DollarSign, Store, X, Loader2, Save, Edit2, Check,
-  Plus, ArrowRight, AlertTriangle, MapPin,
+  Plus, ArrowRight, AlertTriangle, MapPin, ImageIcon, Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -34,10 +34,13 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
   const [recipe, setRecipe] = useState<RecipeView | null>(null);
   const [prices, setPrices] = useState<PriceView[]>([]);
   const [allPrices, setAllPrices] = useState<PriceView[]>([]);
+  const [priceFetchErrors, setPriceFetchErrors] = useState<string[]>([]);
   const [availability, setAvailability] = useState<AvailabilityView[]>([]);
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', description: '', status: '' });
+  const [editForm, setEditForm] = useState({ name: '', description: '', status: '', imageUrl: '' });
   const [saving, setSaving] = useState('');
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Org data
   const [outlets, setOutlets] = useState<OrgOutlet[]>([]);
@@ -142,7 +145,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
 
   // Edit
   const startEdit = () => {
-    setEditForm({ name: String(product.name || ''), description: String(product.description || ''), status: String(product.status || 'draft') });
+    setEditForm({ name: String(product.name || ''), description: String(product.description || ''), status: String(product.status || 'draft'), imageUrl: String(product.imageUrl || '') });
     setEditing(true);
   };
 
@@ -157,11 +160,62 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
     }
     setSaving('product');
     try {
-      await productApi.updateProduct(token, pid, { name: editForm.name || undefined, description: editForm.description || undefined, status: editForm.status || undefined });
+      await productApi.updateProduct(token, pid, { name: editForm.name || undefined, description: editForm.description || undefined, status: editForm.status || undefined, imageUrl: editForm.imageUrl?.trim() || undefined });
       toast.success('Product updated');
       setEditing(false);
       onProductUpdated();
     } catch (e) { toast.error(getErrorMessage(e, 'Failed to update')); } finally { setSaving(''); }
+  };
+
+  const handleQuickUpload = async (file: File) => {
+    if (!canManageCatalog) return;
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.type)) {
+      toast.error('Định dạng không hỗ trợ. Dùng JPG/PNG/WEBP.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File vượt quá 5MB.');
+      return;
+    }
+    setUploadingImage(true);
+    try {
+      const { uploadUrl, finalUrl } = await productApi.presignProductImageUpload(token, pid, file.type, file.size);
+      await productApi.uploadProductImageToS3(uploadUrl, file);
+      await productApi.updateProduct(token, pid, { imageUrl: finalUrl });
+      toast.success('Đã cập nhật ảnh');
+      onProductUpdated();
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Upload thất bại'));
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleImageFileSelected = async (file: File) => {
+    if (!canManageCatalog) return;
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.type)) {
+      toast.error('Định dạng không hỗ trợ. Dùng JPG/PNG/WEBP.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File vượt quá 5MB.');
+      return;
+    }
+    setUploadingImage(true);
+    try {
+      const { uploadUrl, finalUrl } = await productApi.presignProductImageUpload(token, pid, file.type, file.size);
+      await productApi.uploadProductImageToS3(uploadUrl, file);
+      setEditForm((f) => ({ ...f, imageUrl: finalUrl }));
+      toast.success('Tải ảnh lên thành công. Nhấn Save để lưu.');
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Upload thất bại'));
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   // Set price — supports outlet or region scope
@@ -310,6 +364,58 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
                   <select className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2 text-sm" value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))}>
                     <option value="draft">draft</option><option value="active">active</option><option value="inactive">inactive</option><option value="discontinued">discontinued</option>
                   </select></div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-muted-foreground">Image</label>
+                  <div className="mt-1 flex items-start gap-3">
+                    <div className="w-24 h-24 rounded-md border bg-muted overflow-hidden shrink-0 flex items-center justify-center">
+                      {editForm.imageUrl ? (
+                        <img src={editForm.imageUrl} alt="Product" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      ) : (
+                        <ImageIcon className="h-8 w-8 text-muted-foreground/40" />
+                      )}
+                    </div>
+                    <div className="flex-1 space-y-2">
+                      <input
+                        type="text"
+                        placeholder="Dán URL ảnh (Unsplash, CDN...)"
+                        className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm"
+                        value={editForm.imageUrl}
+                        onChange={(e) => setEditForm((f) => ({ ...f, imageUrl: e.target.value }))}
+                      />
+                      <div className="flex items-center gap-2">
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) void handleImageFileSelected(f);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          disabled={uploadingImage}
+                          onClick={() => fileInputRef.current?.click()}
+                          className="h-8 px-3 rounded-md border text-xs font-medium inline-flex items-center gap-1.5 hover:bg-accent disabled:opacity-60"
+                        >
+                          {uploadingImage ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+                          {uploadingImage ? 'Đang tải...' : 'Tải ảnh lên'}
+                        </button>
+                        {editForm.imageUrl && (
+                          <button
+                            type="button"
+                            onClick={() => setEditForm((f) => ({ ...f, imageUrl: '' }))}
+                            className="h-8 px-3 rounded-md border text-xs text-destructive hover:bg-destructive/10"
+                          >
+                            Xóa ảnh
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">JPG/PNG/WEBP, tối đa 5MB.</p>
+                    </div>
+                  </div>
+                </div>
                 {editForm.status === 'active' && product.status !== 'active' && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-2.5 space-y-1">
                     <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Activation requirements</p>
@@ -334,11 +440,43 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
                     <button onClick={startEdit} className="h-6 px-2 rounded border text-[10px] inline-flex items-center gap-1 hover:bg-accent"><Edit2 className="h-2.5 w-2.5" />Edit</button>
                   ) : null}
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><p className="text-[10px] text-muted-foreground">Code</p><p className="text-xs font-mono mt-0.5">{String(product.code || '—')}</p></div>
-                  <div><p className="text-[10px] text-muted-foreground">Category</p><p className="text-xs mt-0.5">{String(product.categoryCode || '—')}</p></div>
-                  <div><p className="text-[10px] text-muted-foreground">Status</p><StatusBadge status={product.status} className="mt-0.5" /></div>
-                  <div><p className="text-[10px] text-muted-foreground">Recipe</p><p className="text-xs mt-0.5">{recipe?.version ? `${recipe.version} (${recipe.status})` : 'None'}</p></div>
+                <div className="flex items-start gap-3">
+                  <div className="w-32 h-32 rounded-md border bg-muted overflow-hidden shrink-0 flex items-center justify-center relative group">
+                    {product.imageUrl ? (
+                      <img src={String(product.imageUrl)} alt={String(product.name || '')} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    ) : (
+                      <ImageIcon className="h-10 w-10 text-muted-foreground/40" />
+                    )}
+                    {canManageCatalog && (
+                      <>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) void handleQuickUpload(f);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          disabled={uploadingImage}
+                          onClick={() => fileInputRef.current?.click()}
+                          className="absolute inset-0 bg-black/50 text-white text-[11px] font-medium opacity-0 group-hover:opacity-100 transition flex flex-col items-center justify-center gap-1 disabled:opacity-60"
+                        >
+                          {uploadingImage ? <Loader2 className="h-5 w-5 animate-spin" /> : <Upload className="h-5 w-5" />}
+                          {uploadingImage ? 'Đang tải...' : 'Tải ảnh lên'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 flex-1">
+                    <div><p className="text-[10px] text-muted-foreground">Code</p><p className="text-xs font-mono mt-0.5">{String(product.code || '—')}</p></div>
+                    <div><p className="text-[10px] text-muted-foreground">Category</p><p className="text-xs mt-0.5">{String(product.categoryCode || '—')}</p></div>
+                    <div><p className="text-[10px] text-muted-foreground">Status</p><StatusBadge status={product.status} className="mt-0.5" /></div>
+                    <div><p className="text-[10px] text-muted-foreground">Recipe</p><p className="text-xs mt-0.5">{recipe?.version ? `${recipe.version} (${recipe.status})` : 'None'}</p></div>
+                  </div>
                 </div>
                 {product.description && <div><p className="text-[10px] text-muted-foreground">Description</p><p className="text-xs mt-0.5 text-muted-foreground">{String(product.description)}</p></div>}
               </div>
@@ -596,10 +734,12 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
                 const knownOrphans = availability
                   .filter(a => !usedOutletIds.has(String(a.outletId)) && knownOutletIds.has(String(a.outletId)))
                   .map(a => {
-                    const outlet = outlets.find(o => o.id === String(a.outletId))!;
+                    const outlet = outlets.find(o => o.id === String(a.outletId));
+                    if (!outlet) return null;
                     usedOutletIds.add(String(a.outletId));
                     return { outlet, avail: a, hasPriceAtOutlet: pricedOutletIds.has(String(a.outletId)) };
-                  });
+                  })
+                  .filter((x): x is { outlet: typeof outlets[number]; avail: typeof availability[number]; hasPriceAtOutlet: boolean } => x !== null);
 
                 // Outlets outside user scope — count only, don't show raw IDs
                 const outOfScopeCount = availability.filter(a => !usedOutletIds.has(String(a.outletId))).length;

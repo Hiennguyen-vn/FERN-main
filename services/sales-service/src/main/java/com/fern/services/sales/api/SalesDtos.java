@@ -305,4 +305,44 @@ public final class SalesDtos {
       List<OutletHourlyRevenuePoint> hourlyRevenue
   ) {
   }
+
+  public record MonthlyRevenueRow(
+      long outletId,
+      String month,
+      long orderCount,
+      long cancelledCount,
+      BigDecimal grossSales,
+      BigDecimal discounts,
+      BigDecimal netSales,
+      BigDecimal taxAmount,
+      BigDecimal totalAmount,
+      BigDecimal voids,
+      String currencyCode
+  ) {
+  }
+
+  public record RevenueMixEntry(
+      String key,
+      BigDecimal amount,
+      long orderCount
+  ) {
+  }
+
+  public record DailyRevenueRow(
+      long outletId,
+      LocalDate businessDate,
+      long orderCount,
+      long cancelledCount,
+      BigDecimal grossSales,
+      BigDecimal discounts,
+      BigDecimal netSales,
+      BigDecimal taxAmount,
+      BigDecimal totalAmount,
+      BigDecimal voids,
+      String currencyCode,
+      List<RevenueMixEntry> paymentMix,
+      List<RevenueMixEntry> channelMix,
+      long paymentCodedOrders
+  ) {
+  }
 }

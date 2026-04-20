@@ -1,11 +1,14 @@
 package com.fern.services.product.api;
 
+import com.dorabets.common.middleware.ServiceException;
 import com.dorabets.common.spring.web.PagedResult;
 import com.fern.services.product.application.ProductService;
+import com.fern.services.product.infrastructure.ProductImageStorage;
 import com.fern.services.product.infrastructure.VariantRepository;
 import jakarta.validation.Valid;
 import java.time.LocalDate;
 import java.util.List;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,10 +27,16 @@ public class ProductController {
 
   private final ProductService productService;
   private final VariantRepository variantRepository;
+  private final ObjectProvider<ProductImageStorage> imageStorageProvider;
 
-  public ProductController(ProductService productService, VariantRepository variantRepository) {
+  public ProductController(
+      ProductService productService,
+      VariantRepository variantRepository,
+      ObjectProvider<ProductImageStorage> imageStorageProvider
+  ) {
     this.productService = productService;
     this.variantRepository = variantRepository;
+    this.imageStorageProvider = imageStorageProvider;
   }
 
   @GetMapping("/products")
@@ -118,6 +127,19 @@ public class ProductController {
       @RequestBody ProductDtos.UpdateProductRequest request
   ) {
     return productService.updateProduct(productId, request);
+  }
+
+  @PostMapping("/products/{productId}/image/presign")
+  public ProductDtos.PresignedUploadResult presignImageUpload(
+      @PathVariable long productId,
+      @Valid @RequestBody ProductDtos.PresignImageRequest request
+  ) {
+    productService.requireCatalogMutationForPublicAccess();
+    ProductImageStorage storage = imageStorageProvider.getIfAvailable();
+    if (storage == null) {
+      throw ServiceException.badRequest("Image upload is not configured for this environment");
+    }
+    return storage.presignUpload(productId, request.contentType(), request.size());
   }
 
   @PutMapping("/items/{itemId}")

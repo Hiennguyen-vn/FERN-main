@@ -1,31 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { RefreshCw, TrendingDown, TrendingUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { ScopeOutlet, ScopeRegion } from '@/api/fern-api';
 import {
-  financeApi,
-  payrollApi,
-  type ExpenseView,
-  type PayrollRunView,
-  type PayrollRunsQuery,
-  type ScopeOutlet,
-  type ScopeRegion,
-} from '@/api/fern-api';
-import { getErrorMessage } from '@/api/decoders';
-import { collectPagedItems } from '@/lib/collect-paged-items';
-import {
-  buildRevenueSnapshot,
+  availablePeriodsFromMonthly,
+  buildMonthlyPl,
   formatPeriodLabel,
   getFinanceVisibleOutlets,
-  getPeriodKey,
-  toNumber,
 } from '@/components/finance/finance-phase2-utils';
-import { useFinanceSalesOrders } from '@/components/finance/use-finance-sales-orders';
+import { useMonthlyFinance } from '@/components/finance/use-monthly-finance';
 import {
   formatMoney,
   formatMoneyExact,
   laborVarianceLevel,
   opexVarianceLevel,
-  toNum,
 } from '@/components/finance/finance-utils';
 
 interface Props {
@@ -122,71 +110,26 @@ export function FinancePLWorkspace({
   regions,
   outlets,
 }: Props) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [expenses, setExpenses] = useState<ExpenseView[]>([]);
-  const [runs, setRuns] = useState<PayrollRunView[]>([]);
   const [selectedPeriodKey, setSelectedPeriodKey] = useState('');
 
   const {
-    orders,
-    visibleOutlets,
-    loading: salesLoading,
-    error: salesError,
-    refresh: refreshSales,
-  } = useFinanceSalesOrders({ token, scopeRegionId, scopeOutletId, outlets });
+    revenueRows,
+    expenseRows,
+    payrollRows,
+    loading,
+    error,
+    refresh,
+  } = useMonthlyFinance({ token, scopeOutletId });
 
   const scopedVisibleOutlets = useMemo(
     () => getFinanceVisibleOutlets(outlets, scopeRegionId, scopeOutletId),
     [outlets, scopeRegionId, scopeOutletId],
   );
 
-  const load = useCallback(async () => {
-    if (!token) return;
-    setLoading(true);
-    setError('');
-    try {
-      const [expPage, runItems] = await Promise.all([
-        financeApi.expenses(token, {
-          outletId: scopeOutletId || undefined,
-          limit: 500,
-          sortBy: 'businessDate',
-          sortDir: 'desc',
-        }),
-        collectPagedItems<PayrollRunView, PayrollRunsQuery>(
-          (q) => payrollApi.runs(token, q),
-          {
-            outletId: scopeOutletId || undefined,
-            status: 'approved',
-            sortBy: 'createdAt',
-            sortDir: 'desc',
-          },
-          500,
-        ).catch(() => [] as PayrollRunView[]),
-      ]);
-      setExpenses(expPage.items || []);
-      setRuns(runItems);
-    } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Unable to load P&L data'));
-    } finally {
-      setLoading(false);
-    }
-  }, [token, scopeOutletId]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const availablePeriods = useMemo(() => {
-    const keys = new Set<string>();
-    for (const o of orders) {
-      const k = getPeriodKey(o.createdAt);
-      if (k) keys.add(k);
-    }
-    for (const e of expenses) {
-      const k = getPeriodKey(e.businessDate || e.createdAt);
-      if (k) keys.add(k);
-    }
-    return [...keys].sort().reverse();
-  }, [orders, expenses]);
+  const availablePeriods = useMemo(
+    () => availablePeriodsFromMonthly(revenueRows, expenseRows, payrollRows),
+    [revenueRows, expenseRows, payrollRows],
+  );
 
   useEffect(() => {
     if (!selectedPeriodKey && availablePeriods.length > 0) {
@@ -196,104 +139,50 @@ export function FinancePLWorkspace({
 
   const plData = useMemo(() => {
     if (!selectedPeriodKey) return null;
-
-    const snapshot = buildRevenueSnapshot({
-      orders,
-      visibleOutlets,
+    const monthly = buildMonthlyPl({
+      revenueRows,
+      expenseRows,
+      payrollRows,
       periodKey: selectedPeriodKey,
-      channelFilter: 'all',
+      visibleOutlets: scopedVisibleOutlets,
     });
-
-    const visibleIds = new Set(scopedVisibleOutlets.map((o) => o.id));
-
-    const periodExpenses = expenses.filter((e) => {
-      const k = getPeriodKey(e.businessDate || e.createdAt);
-      if (k !== selectedPeriodKey) return false;
-      return visibleIds.size === 0 || visibleIds.has(String(e.outletId ?? ''));
-    });
-
-    const periodRuns = runs.filter((r) => {
-      if (String(r.status || '').toLowerCase() !== 'approved') return false;
-      const k = getPeriodKey(r.approvedAt || r.createdAt);
-      if (k !== selectedPeriodKey) return false;
-      return visibleIds.size === 0 || visibleIds.has(String(r.outletId ?? ''));
-    });
-
-    const payrollCost = periodRuns.reduce((s, r) => s + toNum(r.netSalary), 0);
-
-    const invoiceExpenses = periodExpenses
-      .filter((e) => String(e.subtype || e.sourceType || '').toLowerCase().includes('invoice'))
-      .reduce((s, e) => s + toNum(e.amount), 0);
-
-    const manualExpenses = periodExpenses
-      .filter((e) => {
-        const t = String(e.subtype || e.sourceType || '').toLowerCase();
-        return t !== 'payroll' && !t.includes('invoice') && t !== 'inventory_purchase';
-      })
-      .reduce((s, e) => s + toNum(e.amount), 0);
-
-    const inventoryExpenses = periodExpenses
-      .filter((e) => String(e.subtype || e.sourceType || '').toLowerCase() === 'inventory_purchase')
-      .reduce((s, e) => s + toNum(e.amount), 0);
-
-    const totalOpEx = invoiceExpenses + manualExpenses + inventoryExpenses;
-    const totalCosts = payrollCost + totalOpEx;
-    const operatingIncome = snapshot.netSales - totalCosts;
-    const ns = snapshot.netSales;
-
-    const outletRows: PLOutletRow[] = scopedVisibleOutlets
-      .map((outlet) => {
-        const rev = snapshot.outletRows.find((r) => r.outletId === outlet.id);
-        const outletNs = rev?.netSales ?? 0;
-        const outletPay = periodRuns
-          .filter((r) => String(r.outletId) === outlet.id)
-          .reduce((s, r) => s + toNum(r.netSalary), 0);
-        const outletOpEx = periodExpenses
-          .filter((e) => {
-            if (String(e.outletId) !== outlet.id) return false;
-            return String(e.subtype || e.sourceType || '').toLowerCase() !== 'payroll';
-          })
-          .reduce((s, e) => s + toNum(e.amount), 0);
-        const outletIncome = outletNs - outletPay - outletOpEx;
-        return {
-          outletId: outlet.id,
-          outletCode: outlet.code || outlet.id,
-          outletName: outlet.name || outlet.id,
-          netSales: outletNs,
-          payroll: outletPay,
-          opEx: outletOpEx,
-          totalCosts: outletPay + outletOpEx,
-          income: outletIncome,
-          laborPct: outletNs > 0 ? (outletPay / outletNs) * 100 : null,
-          opExPct: outletNs > 0 ? (outletOpEx / outletNs) * 100 : null,
-          incomePct: outletNs > 0 ? (outletIncome / outletNs) * 100 : null,
-        };
-      })
-      .filter((r) => r.netSales > 0 || r.payroll > 0 || r.opEx > 0)
-      .sort((a, b) => b.netSales - a.netSales);
-
     return {
-      currency: snapshot.currency || 'VND',
-      grossSales: snapshot.grossSales,
-      discounts: snapshot.discounts,
-      netSales: ns,
-      completedOrders: snapshot.completedOrderCount,
-      payrollCost,
-      invoiceExpenses,
-      manualExpenses,
-      inventoryExpenses,
-      totalOpEx,
-      totalCosts,
-      operatingIncome,
-      laborPct: ns > 0 ? (payrollCost / ns) * 100 : null,
-      opExPct: ns > 0 ? (totalOpEx / ns) * 100 : null,
-      incomePct: ns > 0 ? (operatingIncome / ns) * 100 : null,
-      outletRows,
+      currency: monthly.currency || 'VND',
+      grossSales: monthly.grossSales,
+      discounts: monthly.discounts,
+      netSales: monthly.netSales,
+      completedOrders: monthly.completedOrders,
+      payrollCost: monthly.payrollCost,
+      invoiceExpenses: monthly.invoiceExpenses,
+      manualExpenses: monthly.manualExpenses,
+      inventoryExpenses: monthly.inventoryExpenses,
+      totalOpEx: monthly.totalOpEx,
+      totalCosts: monthly.totalCosts,
+      operatingIncome: monthly.operatingIncome,
+      laborPct: monthly.laborPct,
+      opExPct: monthly.opExPct,
+      incomePct: monthly.incomePct,
+      outletRows: monthly.outletRows
+        .slice()
+        .sort((a, b) => b.netSales - a.netSales)
+        .map((row): PLOutletRow => ({
+          outletId: row.outletId,
+          outletCode: row.outletCode,
+          outletName: row.outletName,
+          netSales: row.netSales,
+          payroll: row.payroll,
+          opEx: row.opEx,
+          totalCosts: row.totalCosts,
+          income: row.operatingIncome,
+          laborPct: row.laborPct,
+          opExPct: row.opExPct,
+          incomePct: row.incomePct,
+        })),
     };
-  }, [selectedPeriodKey, orders, visibleOutlets, expenses, runs, scopedVisibleOutlets]);
+  }, [selectedPeriodKey, revenueRows, expenseRows, payrollRows, scopedVisibleOutlets]);
 
-  const isLoading = loading || salesLoading;
-  const combinedError = [error, salesError].filter(Boolean).join(' · ');
+  const isLoading = loading;
+  const combinedError = error;
 
   const scopeLabel = useMemo(() => {
     if (scopeOutletId) {
@@ -334,7 +223,7 @@ export function FinancePLWorkspace({
             )}
           </select>
           <button
-            onClick={() => { void load(); void refreshSales(); }}
+            onClick={() => { void refresh(); }}
             disabled={isLoading}
             className="flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent disabled:opacity-60"
           >

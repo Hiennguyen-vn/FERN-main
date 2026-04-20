@@ -37,6 +37,16 @@ public final class FinanceDtos {
   ) {
   }
 
+  public record MonthlyExpenseRow(
+      long outletId,
+      String month,
+      String sourceType,
+      long recordCount,
+      BigDecimal amount,
+      String currencyCode
+  ) {
+  }
+
   public record CreateOtherExpenseRequest(
       @NotNull Long outletId,
       @NotNull LocalDate businessDate,

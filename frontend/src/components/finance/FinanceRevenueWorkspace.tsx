@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
   RefreshCw,
@@ -20,17 +20,19 @@ import type {
   ScopeOutlet,
   ScopeRegion,
 } from '@/api/fern-api';
+import { salesApi, type DailyRevenueRow, type MonthlyRevenueRow } from '@/api/sales-api';
+import { getErrorMessage } from '@/api/decoders';
 import type { FinanceTab } from '@/components/finance/finance-workspace-config';
 import {
-  buildFinancePeriodOptions,
-  buildRevenueSnapshot,
+  buildFinancePeriodOptionsFromMonthly,
+  buildRevenueSnapshotFromDaily,
   describeFinanceScope,
   findPeriodComparison,
   formatPeriodLabel,
+  getFinanceVisibleOutlets,
   type RevenueChannelFilter,
 } from '@/components/finance/finance-phase2-utils';
 import { formatMoney } from '@/components/finance/finance-utils';
-import { useFinanceSalesOrders } from '@/components/finance/use-finance-sales-orders';
 
 interface Props {
   token: string;
@@ -69,22 +71,42 @@ export function FinanceRevenueWorkspace({
   const [selectedPeriodKey, setSelectedPeriodKey] = useState('');
   const [channelFilter, setChannelFilter] = useState<RevenueChannelFilter>('all');
   const [metric, setMetric] = useState<'netSales' | 'grossSales' | 'discounts'>('netSales');
-  const {
-    orders,
-    visibleOutlets,
-    loading,
-    error,
-    refresh,
-  } = useFinanceSalesOrders({
-    token,
-    scopeRegionId,
-    scopeOutletId,
-    outlets,
-  });
+  const [monthlyRows, setMonthlyRows] = useState<MonthlyRevenueRow[]>([]);
+  const [dailyRows, setDailyRows] = useState<DailyRevenueRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const visibleOutlets = useMemo(
+    () => getFinanceVisibleOutlets(outlets, scopeRegionId, scopeOutletId),
+    [outlets, scopeOutletId, scopeRegionId],
+  );
+
+  const loadMonthly = useCallback(async () => {
+    if (!token) return;
+    try {
+      const rows = await salesApi.monthlyRevenue(token, {
+        outletId: scopeOutletId || undefined,
+      });
+      const visibleIds = new Set(visibleOutlets.map((outlet) => outlet.id));
+      setMonthlyRows(
+        visibleIds.size > 0
+          ? rows.filter((row) => visibleIds.has(String(row.outletId)))
+          : rows,
+      );
+    } catch (err: unknown) {
+      console.error('Finance monthly revenue load failed', err);
+      setMonthlyRows([]);
+      setError(getErrorMessage(err, 'Unable to load revenue'));
+    }
+  }, [scopeOutletId, token, visibleOutlets]);
+
+  useEffect(() => {
+    void loadMonthly();
+  }, [loadMonthly]);
 
   const periodOptions = useMemo(
-    () => buildFinancePeriodOptions(orders),
-    [orders],
+    () => buildFinancePeriodOptionsFromMonthly(monthlyRows),
+    [monthlyRows],
   );
 
   useEffect(() => {
@@ -101,28 +123,63 @@ export function FinanceRevenueWorkspace({
     () => findPeriodComparison(periodOptions, activePeriodKey),
     [activePeriodKey, periodOptions],
   );
+
+  const loadDaily = useCallback(async (periodKey: string) => {
+    if (!token || !periodKey) {
+      setDailyRows([]);
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const [year, month] = periodKey.split('-').map(Number);
+      const start = new Date(Date.UTC(year, (month || 1) - 1, 1));
+      const end = new Date(Date.UTC(year, (month || 1), 0));
+      const toISO = (d: Date) => d.toISOString().slice(0, 10);
+      const rows = await salesApi.dailyRevenue(token, {
+        outletId: scopeOutletId || undefined,
+        startDate: toISO(start),
+        endDate: toISO(end),
+      });
+      const visibleIds = new Set(visibleOutlets.map((outlet) => outlet.id));
+      setDailyRows(
+        visibleIds.size > 0
+          ? rows.filter((row) => visibleIds.has(String(row.outletId)))
+          : rows,
+      );
+    } catch (err: unknown) {
+      console.error('Finance daily revenue load failed', err);
+      setDailyRows([]);
+      setError(getErrorMessage(err, 'Unable to load revenue detail'));
+    } finally {
+      setLoading(false);
+    }
+  }, [scopeOutletId, token, visibleOutlets]);
+
+  useEffect(() => {
+    void loadDaily(activePeriodKey);
+  }, [activePeriodKey, loadDaily]);
+
+  const refresh = useCallback(async () => {
+    await Promise.all([loadMonthly(), loadDaily(activePeriodKey)]);
+  }, [activePeriodKey, loadDaily, loadMonthly]);
+
   const snapshot = useMemo(
     () =>
-      buildRevenueSnapshot({
-        orders,
+      buildRevenueSnapshotFromDaily({
+        dailyRows,
         visibleOutlets,
-        periodKey: activePeriodKey,
         channelFilter,
       }),
-    [activePeriodKey, channelFilter, orders, visibleOutlets],
+    [channelFilter, dailyRows, visibleOutlets],
   );
-  const comparisonSnapshot = useMemo(
-    () =>
-      comparisonPeriod
-        ? buildRevenueSnapshot({
-            orders,
-            visibleOutlets,
-            periodKey: comparisonPeriod.key,
-            channelFilter,
-          })
-        : null,
-    [channelFilter, comparisonPeriod, orders, visibleOutlets],
-  );
+
+  const comparisonNetSales = useMemo(() => {
+    if (!comparisonPeriod) return null;
+    return monthlyRows
+      .filter((row) => row.month === comparisonPeriod.key)
+      .reduce((sum, row) => sum + Number(row.netSales ?? 0), 0);
+  }, [comparisonPeriod, monthlyRows]);
 
   const scopeLabel = useMemo(
     () =>
@@ -135,8 +192,8 @@ export function FinanceRevenueWorkspace({
     [outlets, regions, scopeOutletId, scopeRegionId],
   );
 
-  const revenueDeltaPct = comparisonSnapshot && comparisonSnapshot.netSales > 0
-    ? ((snapshot.netSales - comparisonSnapshot.netSales) / comparisonSnapshot.netSales) * 100
+  const revenueDeltaPct = comparisonNetSales != null && comparisonNetSales > 0
+    ? ((snapshot.netSales - comparisonNetSales) / comparisonNetSales) * 100
     : null;
   const hasData = snapshot.completedOrderCount > 0 || snapshot.voids > 0;
 

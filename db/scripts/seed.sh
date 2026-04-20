@@ -26,3 +26,4 @@ until docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGR
 done
 
 docker compose run --rm -T db-tools psql -v ON_ERROR_STOP=1 -f /workspace/db/seeds/000_baseline_seed.sql
+docker compose run --rm -T db-tools psql -v ON_ERROR_STOP=1 -f /workspace/db/seeds/012_product_images_seed.sql

@@ -4,16 +4,23 @@ import com.dorabets.common.middleware.ServiceException;
 import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.dorabets.common.spring.cache.JacksonCacheSerializer;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.dorabets.common.spring.web.PagedResult;
 import com.dorabets.common.spring.web.QueryConventions;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.finance.ExpenseRecordCreatedEvent;
 import com.fern.services.finance.api.FinanceDtos;
 import com.fern.services.finance.infrastructure.FinanceRepository;
+import com.natsu.common.model.cache.RedisClientAdapter;
+import com.natsu.common.model.cache.TieredCache;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -24,6 +31,36 @@ public class FinanceService {
   private final TypedKafkaEventPublisher eventPublisher;
   private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
+  private final TieredCache<List<FinanceDtos.MonthlyExpenseRow>> monthlyExpenseCache;
+
+  @Autowired
+  public FinanceService(
+      FinanceRepository financeRepository,
+      SnowflakeIdGenerator idGenerator,
+      TypedKafkaEventPublisher eventPublisher,
+      AuthorizationPolicyService authorizationPolicyService,
+      Clock clock,
+      ObjectMapper objectMapper,
+      RedisClientAdapter redisClientAdapter
+  ) {
+    this.financeRepository = financeRepository;
+    this.idGenerator = idGenerator;
+    this.eventPublisher = eventPublisher;
+    this.authorizationPolicyService = authorizationPolicyService;
+    this.clock = clock;
+    this.monthlyExpenseCache = redisClientAdapter == null
+        ? null
+        : TieredCache.<List<FinanceDtos.MonthlyExpenseRow>>builder("fern-finance-monthly-expenses")
+            .localMaxSize(1_000)
+            .localTtl(Duration.ofMinutes(1))
+            .redisTtl(Duration.ofMinutes(10))
+            .redisClient(redisClientAdapter)
+            .serializer(new JacksonCacheSerializer<>(
+                objectMapper,
+                new TypeReference<List<FinanceDtos.MonthlyExpenseRow>>() { }
+            ))
+            .build();
+  }
 
   public FinanceService(
       FinanceRepository financeRepository,
@@ -32,11 +69,7 @@ public class FinanceService {
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock
   ) {
-    this.financeRepository = financeRepository;
-    this.idGenerator = idGenerator;
-    this.eventPublisher = eventPublisher;
-    this.authorizationPolicyService = authorizationPolicyService;
-    this.clock = clock;
+    this(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock, new ObjectMapper(), null);
   }
 
   public FinanceDtos.ExpenseView createOperatingExpense(FinanceDtos.CreateOperatingExpenseRequest request) {
@@ -53,6 +86,7 @@ public class FinanceService {
         request.description().trim()
     );
     publishExpenseCreated(record, expenseId);
+    evictMonthlyExpenseCache();
     return toDto(record);
   }
 
@@ -70,6 +104,7 @@ public class FinanceService {
         request.description().trim()
     );
     publishExpenseCreated(record, expenseId);
+    evictMonthlyExpenseCache();
     return toDto(record);
   }
 
@@ -103,6 +138,30 @@ public class FinanceService {
             sanitizeLimit(limit),
             sanitizeOffset(offset)
         ).map(this::toDto);
+  }
+
+  public List<FinanceDtos.MonthlyExpenseRow> monthlyExpenses(
+      Long outletId,
+      LocalDate startDate,
+      LocalDate endDate
+  ) {
+    requireFinanceRead();
+    if (monthlyExpenseCache == null) {
+      return financeRepository.monthlyExpenses(outletId, startDate, endDate);
+    }
+    String key = "outlet:" + (outletId == null ? "all" : outletId)
+        + "|start:" + (startDate == null ? "" : startDate)
+        + "|end:" + (endDate == null ? "" : endDate);
+    return monthlyExpenseCache.getOrCompute(
+        key,
+        () -> financeRepository.monthlyExpenses(outletId, startDate, endDate),
+        Duration.ofMinutes(10)
+    );
+  }
+
+  public void evictMonthlyExpenseCache() {
+    // Simplest correct-by-construction: wipe all. Monthly totals small, recompute cheap.
+    if (monthlyExpenseCache != null) monthlyExpenseCache.clearLocal();
   }
 
   private void publishExpenseCreated(FinanceRepository.ExpenseRecord record, long sourceId) {
@@ -161,7 +220,7 @@ public class FinanceService {
   }
 
   private int sanitizeLimit(Integer limit) {
-    return QueryConventions.sanitizeLimit(limit, 50, 100);
+    return QueryConventions.sanitizeLimit(limit, 50, 500);
   }
 
   private int sanitizeOffset(Integer offset) {

@@ -1,0 +1,52 @@
+:where(.brand-surface) {
+  --pos-accent: 18 95% 60%;
+  --pos-accent-soft: 18 100% 96%;
+  --pos-accent-hover: 18 85% 54%;
+  --pos-success: 152 60% 50%;
+  --pos-success-soft: 152 55% 94%;
+  --pos-surface: 30 40% 98%;
+  --pos-bg: 30 30% 97%;
+
+  --primary: var(--pos-accent);
+  --primary-foreground: 0 0% 100%;
+  --ring: var(--pos-accent);
+}
+
+.brand-surface .accent-bg {
+  background: hsl(var(--pos-accent));
+  color: #fff;
+}
+.brand-surface .accent-bg:hover {
+  background: hsl(var(--pos-accent-hover));
+}
+.brand-surface .accent-text {
+  color: hsl(var(--pos-accent));
+}
+.brand-surface .accent-soft-bg {
+  background: hsl(var(--pos-accent-soft));
+}
+.brand-surface .success-bg {
+  background: hsl(var(--pos-success));
+  color: #fff;
+}
+.brand-surface .success-soft-bg {
+  background: hsl(var(--pos-success-soft));
+}
+
+@keyframes brand-pop {
+  0% { transform: scale(0.7); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.brand-surface .pop {
+  animation: brand-pop 0.45s cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+
+@keyframes brand-pulse-ring {
+  0% { box-shadow: 0 0 0 0 hsl(var(--pos-accent) / 0.45); }
+  70% { box-shadow: 0 0 0 14px hsl(var(--pos-accent) / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--pos-accent) / 0); }
+}
+.brand-surface .pulse-ring {
+  animation: brand-pulse-ring 1.8s ease-out infinite;
+}

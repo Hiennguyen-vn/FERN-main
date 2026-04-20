@@ -91,6 +91,30 @@ public class SalesRepository extends BaseRepository {
 
   public SalesDtos.PosSessionView closePosSession(long sessionId, String note) {
     return executeInTransaction(conn -> {
+      LockedPosSessionRecord locked = lockPosSession(conn, sessionId)
+          .orElseThrow(() -> ServiceException.notFound("POS session not found: " + sessionId));
+      if (!"open".equalsIgnoreCase(locked.status())) {
+        throw ServiceException.conflict("Only open sessions can be closed");
+      }
+      try (PreparedStatement chk = conn.prepareStatement(
+          """
+          SELECT COUNT(*) FROM core.sale_record
+          WHERE pos_session_id = ?
+            AND public_token IS NULL
+            AND status <> 'cancelled'::sale_order_status_enum
+            AND payment_status IN ('unpaid'::payment_status_enum, 'partially_paid'::payment_status_enum)
+          """
+      )) {
+        chk.setLong(1, sessionId);
+        try (ResultSet rs = chk.executeQuery()) {
+          if (rs.next()) {
+            int count = rs.getInt(1);
+            if (count > 0) {
+              throw ServiceException.conflict("SESSION_HAS_UNPAID_ORDERS:" + count);
+            }
+          }
+        }
+      }
       try (PreparedStatement ps = conn.prepareStatement(
           """
           UPDATE core.pos_session
@@ -724,7 +748,14 @@ public class SalesRepository extends BaseRepository {
             .orElseThrow(() -> new IllegalStateException("Cancelled sale not found"));
       }
       if (!isCancellableStatus(status)) {
-        throw ServiceException.conflict("Only newly created orders can be cancelled");
+        String paymentStatus = readPaymentStatus(conn, saleId);
+        if ("order_approved".equalsIgnoreCase(status)
+            && paymentStatus != null
+            && !"paid".equalsIgnoreCase(paymentStatus)) {
+          // approved but not yet paid — allow cancel
+        } else {
+          throw ServiceException.conflict("Only unpaid orders can be cancelled");
+        }
       }
 
       String cancellationNote = buildCancellationNote(lockedSale.note(), reason, actorUserId);
@@ -2192,6 +2223,17 @@ public class SalesRepository extends BaseRepository {
     return "order_created".equalsIgnoreCase(status) || "open".equalsIgnoreCase(status);
   }
 
+  private String readPaymentStatus(Connection conn, long saleId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        "SELECT payment_status FROM core.sale_record WHERE id = ?"
+    )) {
+      ps.setLong(1, saleId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? rs.getString(1) : null;
+      }
+    }
+  }
+
   private static boolean isNegativeStockViolation(java.sql.SQLException exception) {
     return "23514".equals(exception.getSQLState());
   }
@@ -3120,5 +3162,284 @@ public class SalesRepository extends BaseRepository {
       long orderingTableId,
       String orderToken
   ) {
+  }
+
+  public List<SalesDtos.MonthlyRevenueRow> monthlyRevenue(
+      Set<Long> outletIds,
+      LocalDate startDate,
+      LocalDate endDate
+  ) {
+    if (outletIds != null && outletIds.isEmpty()) {
+      return List.of();
+    }
+    return executeInTransaction(conn -> {
+      StringBuilder sql = new StringBuilder(
+          """
+          SELECT
+            ps.outlet_id,
+            to_char(date_trunc('month', ps.business_date), 'YYYY-MM') AS month,
+            COUNT(*) FILTER (WHERE sr.status = 'completed') AS order_count,
+            COUNT(*) FILTER (WHERE sr.status = 'cancelled') AS cancelled_count,
+            COALESCE(SUM(sr.subtotal)  FILTER (WHERE sr.status = 'completed'), 0) AS gross_sales,
+            COALESCE(SUM(sr.discount)  FILTER (WHERE sr.status = 'completed'), 0) AS discounts,
+            COALESCE(SUM(sr.tax_amount) FILTER (WHERE sr.status = 'completed'), 0) AS tax_amount,
+            COALESCE(SUM(sr.total_amount) FILTER (WHERE sr.status = 'completed'), 0) AS total_amount,
+            COALESCE(SUM(sr.subtotal)  FILTER (WHERE sr.status = 'cancelled'), 0) AS voids,
+            MIN(sr.currency_code) AS currency_code
+          FROM core.pos_session ps
+          JOIN core.sale_record sr ON sr.pos_session_id = ps.id
+          WHERE 1 = 1
+          """
+      );
+      List<Object> params = new ArrayList<>();
+      appendOutletScope(sql, params, "ps.outlet_id", outletIds);
+      if (startDate != null) {
+        sql.append(" AND ps.business_date >= ?");
+        params.add(java.sql.Date.valueOf(startDate));
+      }
+      if (endDate != null) {
+        sql.append(" AND ps.business_date <= ?");
+        params.add(java.sql.Date.valueOf(endDate));
+      }
+      sql.append(" GROUP BY ps.outlet_id, date_trunc('month', ps.business_date)");
+      sql.append(" ORDER BY ps.outlet_id, month");
+
+      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+        for (int i = 0; i < params.size(); i++) {
+          ps.setObject(i + 1, params.get(i));
+        }
+        try (ResultSet rs = ps.executeQuery()) {
+          List<SalesDtos.MonthlyRevenueRow> rows = new ArrayList<>();
+          while (rs.next()) {
+            BigDecimal gross = rs.getBigDecimal("gross_sales");
+            BigDecimal discount = rs.getBigDecimal("discounts");
+            BigDecimal net = (gross == null ? BigDecimal.ZERO : gross)
+                .subtract(discount == null ? BigDecimal.ZERO : discount);
+            rows.add(new SalesDtos.MonthlyRevenueRow(
+                rs.getLong("outlet_id"),
+                rs.getString("month"),
+                rs.getLong("order_count"),
+                rs.getLong("cancelled_count"),
+                gross == null ? BigDecimal.ZERO : gross,
+                discount == null ? BigDecimal.ZERO : discount,
+                net,
+                nullSafe(rs.getBigDecimal("tax_amount")),
+                nullSafe(rs.getBigDecimal("total_amount")),
+                nullSafe(rs.getBigDecimal("voids")),
+                rs.getString("currency_code")
+            ));
+          }
+          return rows;
+        }
+      }
+    });
+  }
+
+  public List<SalesDtos.DailyRevenueRow> dailyRevenue(
+      Set<Long> outletIds,
+      LocalDate startDate,
+      LocalDate endDate
+  ) {
+    if (outletIds != null && outletIds.isEmpty()) {
+      return List.of();
+    }
+    return executeInTransaction(conn -> {
+      record Key(long outletId, LocalDate date) {}
+
+      java.util.Map<Key, SalesDtos.DailyRevenueRow> acc = new java.util.LinkedHashMap<>();
+      java.util.Map<Key, java.util.Map<String, BigDecimal>> paymentAmount = new java.util.HashMap<>();
+      java.util.Map<Key, java.util.Map<String, Long>> paymentCount = new java.util.HashMap<>();
+      java.util.Map<Key, java.util.Map<String, BigDecimal>> channelAmount = new java.util.HashMap<>();
+      java.util.Map<Key, java.util.Map<String, Long>> channelCount = new java.util.HashMap<>();
+      java.util.Map<Key, Long> paymentCoded = new java.util.HashMap<>();
+
+      StringBuilder aggSql = new StringBuilder(
+          """
+          SELECT
+            ps.outlet_id,
+            ps.business_date,
+            COUNT(*) FILTER (WHERE sr.status = 'completed') AS order_count,
+            COUNT(*) FILTER (WHERE sr.status = 'cancelled') AS cancelled_count,
+            COALESCE(SUM(sr.subtotal)  FILTER (WHERE sr.status = 'completed'), 0) AS gross_sales,
+            COALESCE(SUM(sr.discount)  FILTER (WHERE sr.status = 'completed'), 0) AS discounts,
+            COALESCE(SUM(sr.tax_amount) FILTER (WHERE sr.status = 'completed'), 0) AS tax_amount,
+            COALESCE(SUM(sr.total_amount) FILTER (WHERE sr.status = 'completed'), 0) AS total_amount,
+            COALESCE(SUM(sr.subtotal)  FILTER (WHERE sr.status = 'cancelled'), 0) AS voids,
+            MIN(sr.currency_code) AS currency_code
+          FROM core.pos_session ps
+          JOIN core.sale_record sr ON sr.pos_session_id = ps.id
+          WHERE 1 = 1
+          """
+      );
+      List<Object> aggParams = new ArrayList<>();
+      appendOutletScope(aggSql, aggParams, "ps.outlet_id", outletIds);
+      if (startDate != null) {
+        aggSql.append(" AND ps.business_date >= ?");
+        aggParams.add(java.sql.Date.valueOf(startDate));
+      }
+      if (endDate != null) {
+        aggSql.append(" AND ps.business_date <= ?");
+        aggParams.add(java.sql.Date.valueOf(endDate));
+      }
+      aggSql.append(" GROUP BY ps.outlet_id, ps.business_date ORDER BY ps.outlet_id, ps.business_date");
+
+      try (PreparedStatement ps = conn.prepareStatement(aggSql.toString())) {
+        for (int i = 0; i < aggParams.size(); i++) {
+          ps.setObject(i + 1, aggParams.get(i));
+        }
+        try (ResultSet rs = ps.executeQuery()) {
+          while (rs.next()) {
+            long outletId = rs.getLong("outlet_id");
+            LocalDate bd = rs.getObject("business_date", LocalDate.class);
+            BigDecimal gross = nullSafe(rs.getBigDecimal("gross_sales"));
+            BigDecimal discount = nullSafe(rs.getBigDecimal("discounts"));
+            BigDecimal net = gross.subtract(discount);
+            Key key = new Key(outletId, bd);
+            acc.put(key, new SalesDtos.DailyRevenueRow(
+                outletId,
+                bd,
+                rs.getLong("order_count"),
+                rs.getLong("cancelled_count"),
+                gross,
+                discount,
+                net,
+                nullSafe(rs.getBigDecimal("tax_amount")),
+                nullSafe(rs.getBigDecimal("total_amount")),
+                nullSafe(rs.getBigDecimal("voids")),
+                rs.getString("currency_code"),
+                List.of(),
+                List.of(),
+                0L
+            ));
+          }
+        }
+      }
+
+      StringBuilder paySql = new StringBuilder(
+          """
+          SELECT ps.outlet_id, ps.business_date, p.payment_method,
+                 SUM(sr.total_amount) AS amount, COUNT(*) AS cnt
+          FROM core.pos_session ps
+          JOIN core.sale_record sr ON sr.pos_session_id = ps.id
+          LEFT JOIN core.payment p ON p.sale_id = sr.id
+          WHERE sr.status = 'completed'
+          """
+      );
+      List<Object> payParams = new ArrayList<>();
+      appendOutletScope(paySql, payParams, "ps.outlet_id", outletIds);
+      if (startDate != null) {
+        paySql.append(" AND ps.business_date >= ?");
+        payParams.add(java.sql.Date.valueOf(startDate));
+      }
+      if (endDate != null) {
+        paySql.append(" AND ps.business_date <= ?");
+        payParams.add(java.sql.Date.valueOf(endDate));
+      }
+      paySql.append(" GROUP BY ps.outlet_id, ps.business_date, p.payment_method");
+
+      try (PreparedStatement ps = conn.prepareStatement(paySql.toString())) {
+        for (int i = 0; i < payParams.size(); i++) {
+          ps.setObject(i + 1, payParams.get(i));
+        }
+        try (ResultSet rs = ps.executeQuery()) {
+          while (rs.next()) {
+            long outletId = rs.getLong("outlet_id");
+            LocalDate bd = rs.getObject("business_date", LocalDate.class);
+            Key key = new Key(outletId, bd);
+            String method = rs.getString("payment_method");
+            BigDecimal amount = nullSafe(rs.getBigDecimal("amount"));
+            long cnt = rs.getLong("cnt");
+            if (method != null && !method.isBlank()) {
+              paymentAmount.computeIfAbsent(key, k -> new java.util.LinkedHashMap<>())
+                  .merge(method, amount, BigDecimal::add);
+              paymentCount.computeIfAbsent(key, k -> new java.util.HashMap<>())
+                  .merge(method, cnt, Long::sum);
+              paymentCoded.merge(key, cnt, Long::sum);
+            }
+          }
+        }
+      }
+
+      StringBuilder chSql = new StringBuilder(
+          """
+          SELECT ps.outlet_id, ps.business_date, sr.order_type,
+                 SUM(sr.total_amount) AS amount, COUNT(*) AS cnt
+          FROM core.pos_session ps
+          JOIN core.sale_record sr ON sr.pos_session_id = ps.id
+          WHERE sr.status = 'completed'
+          """
+      );
+      List<Object> chParams = new ArrayList<>();
+      appendOutletScope(chSql, chParams, "ps.outlet_id", outletIds);
+      if (startDate != null) {
+        chSql.append(" AND ps.business_date >= ?");
+        chParams.add(java.sql.Date.valueOf(startDate));
+      }
+      if (endDate != null) {
+        chSql.append(" AND ps.business_date <= ?");
+        chParams.add(java.sql.Date.valueOf(endDate));
+      }
+      chSql.append(" GROUP BY ps.outlet_id, ps.business_date, sr.order_type");
+
+      try (PreparedStatement ps = conn.prepareStatement(chSql.toString())) {
+        for (int i = 0; i < chParams.size(); i++) {
+          ps.setObject(i + 1, chParams.get(i));
+        }
+        try (ResultSet rs = ps.executeQuery()) {
+          while (rs.next()) {
+            long outletId = rs.getLong("outlet_id");
+            LocalDate bd = rs.getObject("business_date", LocalDate.class);
+            Key key = new Key(outletId, bd);
+            String channel = rs.getString("order_type");
+            BigDecimal amount = nullSafe(rs.getBigDecimal("amount"));
+            long cnt = rs.getLong("cnt");
+            String chKey = channel == null ? "unknown" : channel;
+            channelAmount.computeIfAbsent(key, k -> new java.util.LinkedHashMap<>())
+                .merge(chKey, amount, BigDecimal::add);
+            channelCount.computeIfAbsent(key, k -> new java.util.HashMap<>())
+                .merge(chKey, cnt, Long::sum);
+          }
+        }
+      }
+
+      List<SalesDtos.DailyRevenueRow> out = new ArrayList<>();
+      for (var entry : acc.entrySet()) {
+        Key key = entry.getKey();
+        SalesDtos.DailyRevenueRow row = entry.getValue();
+        List<SalesDtos.RevenueMixEntry> payMix = new ArrayList<>();
+        java.util.Map<String, BigDecimal> payAmt = paymentAmount.getOrDefault(key, java.util.Map.of());
+        java.util.Map<String, Long> payCnt = paymentCount.getOrDefault(key, java.util.Map.of());
+        for (var e : payAmt.entrySet()) {
+          payMix.add(new SalesDtos.RevenueMixEntry(e.getKey(), e.getValue(), payCnt.getOrDefault(e.getKey(), 0L)));
+        }
+        List<SalesDtos.RevenueMixEntry> chMix = new ArrayList<>();
+        java.util.Map<String, BigDecimal> chAmt = channelAmount.getOrDefault(key, java.util.Map.of());
+        java.util.Map<String, Long> chCnt = channelCount.getOrDefault(key, java.util.Map.of());
+        for (var e : chAmt.entrySet()) {
+          chMix.add(new SalesDtos.RevenueMixEntry(e.getKey(), e.getValue(), chCnt.getOrDefault(e.getKey(), 0L)));
+        }
+        out.add(new SalesDtos.DailyRevenueRow(
+            row.outletId(),
+            row.businessDate(),
+            row.orderCount(),
+            row.cancelledCount(),
+            row.grossSales(),
+            row.discounts(),
+            row.netSales(),
+            row.taxAmount(),
+            row.totalAmount(),
+            row.voids(),
+            row.currencyCode(),
+            payMix,
+            chMix,
+            paymentCoded.getOrDefault(key, 0L)
+        ));
+      }
+      return out;
+    });
+  }
+
+  private static BigDecimal nullSafe(BigDecimal value) {
+    return value == null ? BigDecimal.ZERO : value;
   }
 }
