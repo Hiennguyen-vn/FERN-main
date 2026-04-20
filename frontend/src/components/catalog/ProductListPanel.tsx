@@ -57,8 +57,10 @@ export function ProductListPanel({ token, selectedId, onSelect, compact, canCrea
       setForm({ code: '', name: '', categoryCode: 'beverage' });
       setShowCreate(false);
       toast.success('Product created');
-      void load();
-      onSelect(created as unknown as ProductView);
+      await load();
+      const createdId = String(created?.id ?? '');
+      const full = createdId ? products.find(p => String(p.id) === createdId) : undefined;
+      onSelect(full ?? (created as unknown as ProductView));
     } catch (e) {
       toast.error(getErrorMessage(e, 'Failed to create product'));
     } finally {
