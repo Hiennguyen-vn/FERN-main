@@ -57,6 +57,12 @@
       <artifactId>HikariCP</artifactId>
     </dependency>
 
+    <!-- Kafka (optional publish of org events after DB insert) -->
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-clients</artifactId>
+    </dependency>
+
     <!-- JSON / YAML -->
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>

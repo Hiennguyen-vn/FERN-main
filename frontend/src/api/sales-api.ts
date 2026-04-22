@@ -186,7 +186,7 @@ export interface CreatePromotionPayload {
   maxDiscountAmount?: number | null;
   effectiveFrom: string;
   effectiveTo?: string | null;
-  outletIds: number[];
+  outletIds: string[];
 }
 
 export interface MonthlyRevenueRow {

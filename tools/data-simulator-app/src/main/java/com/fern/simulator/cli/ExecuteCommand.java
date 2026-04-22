@@ -48,6 +48,6 @@ public class ExecuteCommand implements Runnable {
         System.out.println();
 
         SimulationEngine engine = new SimulationEngine();
-        engine.run(config, target, dryRun);
+        engine.run(config, target, dryRun, null, parent.getKafkaBootstrap(), parent.getOrgServiceUrl());
     }
 }

@@ -67,7 +67,7 @@ describe('salesApi promotions', () => {
       maxDiscountAmount: 2,
       effectiveFrom: '2026-04-10T10:00:00Z',
       effectiveTo: '2026-04-20T10:00:00Z',
-      outletIds: [2001],
+      outletIds: ['3481632263605075968'],
     });
 
     const [, options] = fetchMock.mock.calls[0];
@@ -80,7 +80,7 @@ describe('salesApi promotions', () => {
       maxDiscountAmount: 2,
       effectiveFrom: '2026-04-10T10:00:00Z',
       effectiveTo: '2026-04-20T10:00:00Z',
-      outletIds: [2001],
+      outletIds: ['3481632263605075968'],
     });
   });
 });

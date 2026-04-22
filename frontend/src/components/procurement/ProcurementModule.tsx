@@ -5,10 +5,13 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
+  orgApi,
   procurementApi,
   type GoodsReceiptView,
   type ItemView,
   type PurchaseOrderView,
+  type ScopeOutlet,
+  type ScopeRegion,
   type SupplierInvoiceView,
   type SupplierPaymentView,
   type SupplierView,
@@ -33,6 +36,7 @@ import {
   PaymentCreatePanel,
   PurchaseOrderCreatePanel,
 } from '@/components/procurement/ProcurementCreatePanels';
+import { resolveProcurementScopeCurrency } from '@/components/procurement/procurement-currency';
 import {
   formatProcurementAmount,
   formatProcurementStatusLabel,
@@ -53,7 +57,7 @@ import {
 } from '@/components/procurement/status-flow';
 
 type ProcTab = 'suppliers' | 'purchase-orders' | 'goods-receipts' | 'invoices' | 'payments';
-type ProcurementDetailKind = 'purchase-order' | 'goods-receipt';
+type ProcurementDetailKind = 'purchase-order' | 'goods-receipt' | 'invoice';
 
 const TABS: { key: ProcTab; label: string; icon: React.ElementType }[] = [
   { key: 'suppliers', label: 'Suppliers', icon: Building2 },
@@ -150,8 +154,12 @@ function DetailField({
 
 export function ProcurementModule() {
   const { token, scope } = useShellRuntime();
+  const regionScopeId = String(scope.regionId ?? '').trim();
+  const outletScopeId = String(scope.outletId ?? '').trim();
   const outletId = normalizeNumeric(scope.outletId);
   const [activeTab, setActiveTab] = useState<ProcTab>('suppliers');
+  const [regions, setRegions] = useState<ScopeRegion[]>([]);
+  const [outlets, setOutlets] = useState<ScopeOutlet[]>([]);
 
   const [supplierDirectory, setSupplierDirectory] = useState<SupplierView[]>([]);
   const [itemDirectory, setItemDirectory] = useState<ItemView[]>([]);
@@ -197,6 +205,7 @@ export function ProcurementModule() {
   const [detailError, setDetailError] = useState('');
   const [selectedPurchaseOrder, setSelectedPurchaseOrder] = useState<PurchaseOrderView | null>(null);
   const [selectedGoodsReceipt, setSelectedGoodsReceipt] = useState<GoodsReceiptView | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<SupplierInvoiceView | null>(null);
 
   const [supplierForm, setSupplierForm] = useState({
     supplierCode: '',
@@ -206,6 +215,40 @@ export function ProcurementModule() {
     email: '',
     status: 'active',
   });
+
+  useEffect(() => {
+    if (!token) {
+      setRegions([]);
+      setOutlets([]);
+      return;
+    }
+    let active = true;
+    void orgApi.hierarchy(token)
+      .then((hierarchy) => {
+        if (!active) return;
+        setRegions(hierarchy.regions || []);
+        setOutlets(hierarchy.outlets || []);
+      })
+      .catch((error: unknown) => {
+        console.error('Procurement org hierarchy load failed', error);
+        if (!active) return;
+        setRegions([]);
+        setOutlets([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  const scopeCurrencyCode = useMemo(
+    () => resolveProcurementScopeCurrency({
+      regions,
+      outlets,
+      regionId: regionScopeId,
+      outletId: outletScopeId,
+    }),
+    [outletScopeId, outlets, regionScopeId, regions],
+  );
 
   const suppliersQuery = useListQueryState<{ status?: string }>({
     initialLimit: 20,
@@ -510,6 +553,10 @@ export function ProcurementModule() {
     () => new Map(purchaseOrderDirectory.map((purchaseOrder) => [String(purchaseOrder.id), purchaseOrder])),
     [purchaseOrderDirectory],
   );
+  const goodsReceiptById = useMemo(
+    () => new Map(goodsReceiptDirectory.map((goodsReceipt) => [String(goodsReceipt.id), goodsReceipt])),
+    [goodsReceiptDirectory],
+  );
 
   const closeDetail = useCallback(() => {
     setDetailOpen(false);
@@ -518,6 +565,7 @@ export function ProcurementModule() {
     setDetailLoading(false);
     setSelectedPurchaseOrder(null);
     setSelectedGoodsReceipt(null);
+    setSelectedInvoice(null);
     setDetailKey('');
   }, []);
 
@@ -529,6 +577,7 @@ export function ProcurementModule() {
     setDetailLoading(true);
     setSelectedPurchaseOrder(null);
     setSelectedGoodsReceipt(null);
+    setSelectedInvoice(null);
     try {
       const detail = await procurementApi.purchaseOrder(token, purchaseOrderId);
       setSelectedPurchaseOrder(detail);
@@ -548,11 +597,32 @@ export function ProcurementModule() {
     setDetailLoading(true);
     setSelectedPurchaseOrder(null);
     setSelectedGoodsReceipt(null);
+    setSelectedInvoice(null);
     try {
       const detail = await procurementApi.goodsReceipt(token, goodsReceiptId);
       setSelectedGoodsReceipt(detail);
     } catch (error: unknown) {
       setDetailError(getErrorMessage(error, 'Unable to load goods receipt detail'));
+    } finally {
+      setDetailLoading(false);
+      setDetailKey('');
+    }
+  }, [token]);
+
+  const openInvoiceDetail = useCallback(async (invoiceId: string) => {
+    setDetailKey(`inv-view:${invoiceId}`);
+    setDetailKind('invoice');
+    setDetailOpen(true);
+    setDetailError('');
+    setDetailLoading(true);
+    setSelectedPurchaseOrder(null);
+    setSelectedGoodsReceipt(null);
+    setSelectedInvoice(null);
+    try {
+      const detail = await procurementApi.invoice(token, invoiceId);
+      setSelectedInvoice(detail);
+    } catch (error: unknown) {
+      setDetailError(getErrorMessage(error, 'Unable to load invoice detail'));
     } finally {
       setDetailLoading(false);
       setDetailKey('');
@@ -762,6 +832,109 @@ export function ProcurementModule() {
     );
   };
 
+  const renderInvoiceDetail = () => {
+    if (!selectedInvoice) return null;
+    const detail = selectedInvoice;
+    const currencyCode = String(detail.currencyCode || 'USD');
+    const supplierName = supplierById.get(String(detail.supplierId || '')) || `Supplier ${detail.supplierId || '—'}`;
+    const linkedReceipts = Array.isArray(detail.linkedReceiptIds) ? detail.linkedReceiptIds : [];
+    const lines = Array.isArray(detail.items) ? detail.items : [];
+
+    return (
+      <div className="space-y-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <DetailField label="Invoice number" value={String(detail.invoiceNumber || shortRef('INV', detail.id))} />
+          <DetailField label="Supplier" value={supplierName} />
+          <DetailField label="Status" value={<StatusBadge status={detail.status} />} />
+          <DetailField label="Total" value={`${formatProcurementAmount(detail.totalAmount || 0, currencyCode)} ${currencyCode}`} />
+          <DetailField label="Subtotal" value={`${formatProcurementAmount(detail.subtotal || 0, currencyCode)} ${currencyCode}`} />
+          <DetailField label="Tax" value={`${formatProcurementAmount(detail.taxAmount || 0, currencyCode)} ${currencyCode}`} />
+          <DetailField label="Invoice date" value={formatDateLabel(detail.invoiceDate)} />
+          <DetailField label="Due date" value={formatDateLabel(detail.dueDate)} />
+          <DetailField label="Approved at" value={formatDateTimeLabel(detail.approvedAt)} />
+          <DetailField label="Full ID" value={detail.id} mono />
+        </div>
+
+        <div className="rounded-lg border bg-muted/20 p-4">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Note</p>
+          <p className="mt-1 text-sm text-foreground">{String(detail.note || 'No note')}</p>
+        </div>
+
+        <div className="rounded-xl border overflow-hidden">
+          <div className="border-b bg-muted/30 px-4 py-3">
+            <h4 className="text-sm font-semibold">Linked Goods Receipts</h4>
+            <p className="text-xs text-muted-foreground">These receipts were used as the source documents for this supplier invoice.</p>
+          </div>
+          <div className="divide-y">
+            {linkedReceipts.length === 0 ? (
+              <div className="px-4 py-6 text-sm text-muted-foreground">This invoice has no linked goods receipt references.</div>
+            ) : linkedReceipts.map((receiptId) => {
+              const receipt = goodsReceiptById.get(String(receiptId));
+              return (
+                <div key={`${detail.id}-receipt-${receiptId}`} className="grid gap-2 px-4 py-3 md:grid-cols-[1.2fr_1fr_1fr] md:items-center">
+                  <div>
+                    <p className="text-sm font-medium">{String(receipt?.receiptNumber || shortRef('GR', String(receiptId)))}</p>
+                    <p className="text-[11px] font-mono text-muted-foreground">{String(receiptId)}</p>
+                  </div>
+                  <p className="text-sm text-muted-foreground">{formatDateLabel(receipt?.businessDate)}</p>
+                  <p className="text-sm text-muted-foreground">{receipt ? `${formatProcurementAmount(receipt.totalPrice || 0, receipt.currencyCode)} ${String(receipt.currencyCode || currencyCode)}` : 'Detail not loaded in current list'}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-xl border overflow-hidden">
+          <div className="border-b bg-muted/30 px-4 py-3">
+            <h4 className="text-sm font-semibold">Invoice Lines</h4>
+            <p className="text-xs text-muted-foreground">Review billed quantities, tax, and totals before approving or reconciling the invoice.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px]">
+              <thead>
+                <tr className="border-b bg-muted/20">
+                  <th className="px-4 py-2.5 text-left text-[11px]">Line</th>
+                  <th className="px-4 py-2.5 text-left text-[11px]">Description</th>
+                  <th className="px-4 py-2.5 text-left text-[11px]">Source GR Item</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Qty</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Unit Price</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Tax %</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Tax Amount</th>
+                  <th className="px-4 py-2.5 text-right text-[11px]">Line Total</th>
+                  <th className="px-4 py-2.5 text-left text-[11px]">Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">This invoice has no invoice lines.</td>
+                  </tr>
+                ) : lines.map((line, index) => (
+                  <tr key={`${detail.id}-invoice-line-${line.lineNumber || index}`} className="border-b last:border-0">
+                    <td className="px-4 py-3 text-sm font-medium">{line.lineNumber || index + 1}</td>
+                    <td className="px-4 py-3">
+                      <div>
+                        <p className="text-sm font-medium">{String(line.description || line.lineType || `Invoice line ${index + 1}`)}</p>
+                        <p className="text-[11px] text-muted-foreground">{String(line.lineType || 'stock')}</p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{String(line.goodsReceiptItemId || '—')}</td>
+                    <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.qtyInvoiced || 0).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(line.unitPrice || 0, currencyCode)}</td>
+                    <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.taxPercent || 0).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(line.taxAmount || 0, currencyCode)}</td>
+                    <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(line.lineTotal || 0, currencyCode)}</td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground">{String(line.note || '—')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col h-full animate-fade-in">
       <div className="border-b bg-card px-6 flex items-center gap-0 flex-shrink-0">
@@ -906,6 +1079,7 @@ export function ProcurementModule() {
             <PurchaseOrderCreatePanel
               token={token}
               outletId={outletId}
+              scopeCurrencyCode={scopeCurrencyCode}
               suppliers={supplierDirectory}
               items={itemDirectory}
               onCreated={async () => {
@@ -1028,6 +1202,7 @@ export function ProcurementModule() {
             <GoodsReceiptCreatePanel
               token={token}
               outletId={outletId}
+              scopeCurrencyCode={scopeCurrencyCode}
               suppliers={supplierDirectory}
               items={itemDirectory}
               purchaseOrders={purchaseOrderDirectory}
@@ -1237,12 +1412,19 @@ export function ProcurementModule() {
                             <div className="text-[11px] text-muted-foreground">{String(row.currencyCode || 'USD')}</div>
                           </td>
                           <td className="px-4 py-2.5 text-right">
-                            <TinyAction
-                              label="Approve"
-                              busy={actionKey === `inv:${id}`}
-                              disabled={!canApproveSupplierInvoice(status)}
-                              onClick={() => void runAction(`inv:${id}`, () => procurementApi.approveInvoice(token, id), 'Invoice approved')}
-                            />
+                            <div className="flex items-center justify-end gap-2">
+                              <TinyAction
+                                label="View"
+                                busy={detailKey === `inv-view:${id}`}
+                                onClick={() => void openInvoiceDetail(id)}
+                              />
+                              <TinyAction
+                                label="Approve"
+                                busy={actionKey === `inv:${id}`}
+                                disabled={!canApproveSupplierInvoice(status)}
+                                onClick={() => void runAction(`inv:${id}`, () => procurementApi.approveInvoice(token, id), 'Invoice approved')}
+                              />
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1398,12 +1580,18 @@ export function ProcurementModule() {
           <div className="border-b px-6 py-5">
             <DialogHeader className="space-y-1 text-left">
               <DialogTitle className="text-base">
-                {detailKind === 'goods-receipt' ? 'Goods Receipt Detail' : 'Purchase Order Detail'}
+                {detailKind === 'goods-receipt'
+                  ? 'Goods Receipt Detail'
+                  : detailKind === 'invoice'
+                    ? 'Invoice Detail'
+                    : 'Purchase Order Detail'}
               </DialogTitle>
               <DialogDescription>
                 {detailKind === 'goods-receipt'
                   ? 'Review the linked purchase order and the exact items received into stock.'
-                  : 'Review supplier, timeline, and ordered items before moving this purchase order forward.'}
+                  : detailKind === 'invoice'
+                    ? 'Review supplier billing, linked receipts, and invoice lines before approval.'
+                    : 'Review supplier, timeline, and ordered items before moving this purchase order forward.'}
               </DialogDescription>
             </DialogHeader>
           </div>
@@ -1413,6 +1601,8 @@ export function ProcurementModule() {
               <div className="py-16 text-center text-sm text-muted-foreground">Loading detail…</div>
             ) : detailError ? (
               <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{detailError}</div>
+            ) : detailKind === 'invoice' ? (
+              renderInvoiceDetail()
             ) : detailKind === 'goods-receipt' ? (
               renderGoodsReceiptDetail()
             ) : (

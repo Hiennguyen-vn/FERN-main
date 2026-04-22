@@ -16,6 +16,10 @@ import {
   formatProcurementStatusLabel,
 } from '@/components/procurement/formatters';
 import {
+  resolveGoodsReceiptCurrency,
+} from '@/components/procurement/procurement-currency';
+import { normalizeCurrencyCode } from '@/lib/org-currency';
+import {
   canCreateGoodsReceiptFromPurchaseOrder,
   canCreateInvoiceFromGoodsReceipt,
   canCreatePaymentFromInvoice,
@@ -192,25 +196,37 @@ interface SharedProps {
   onCreated: () => Promise<void>;
 }
 
+interface ScopeCurrencyProps {
+  scopeCurrencyCode: string;
+}
+
 export function PurchaseOrderCreatePanel({
   token,
   outletId,
+  scopeCurrencyCode,
   suppliers,
   items,
   onCreated,
-}: SharedProps & {
+}: SharedProps & ScopeCurrencyProps & {
   suppliers: SupplierView[];
   items: ItemView[];
 }) {
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
     supplierId: '',
-    currencyCode: 'USD',
+    currencyCode: normalizeCurrencyCode(scopeCurrencyCode),
     orderDate: new Date().toISOString().slice(0, 10),
     expectedDeliveryDate: '',
     note: '',
   });
   const [lines, setLines] = useState<PurchaseOrderDraftLine[]>(() => [createPurchaseOrderLine(items)]);
+
+  useEffect(() => {
+    const nextCurrencyCode = normalizeCurrencyCode(scopeCurrencyCode);
+    setForm((current) => (current.currencyCode === nextCurrencyCode
+      ? current
+      : { ...current, currencyCode: nextCurrencyCode }));
+  }, [scopeCurrencyCode]);
 
   useEffect(() => {
     setLines((current) => (current.length > 0 ? current : [createPurchaseOrderLine(items)]));
@@ -253,7 +269,7 @@ export function PurchaseOrderCreatePanel({
       await procurementApi.createPurchaseOrder(token, {
         supplierId: toLongLike(form.supplierId),
         outletId: toLongLike(outletId),
-        currencyCode: form.currencyCode.trim() || 'USD',
+        currencyCode: normalizeCurrencyCode(form.currencyCode),
         orderDate: form.orderDate,
         expectedDeliveryDate: form.expectedDeliveryDate || null,
         note: form.note.trim() || null,
@@ -268,7 +284,7 @@ export function PurchaseOrderCreatePanel({
       toast.success('Purchase order created');
       setForm({
         supplierId: '',
-        currencyCode: 'USD',
+        currencyCode: normalizeCurrencyCode(scopeCurrencyCode),
         orderDate: new Date().toISOString().slice(0, 10),
         expectedDeliveryDate: '',
         note: '',
@@ -329,9 +345,10 @@ export function PurchaseOrderCreatePanel({
         <div>
           <SectionLabel>Currency</SectionLabel>
           <input
-            className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            className="mt-1 h-9 w-full rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground"
             value={form.currencyCode}
-            onChange={(event) => setForm((current) => ({ ...current, currencyCode: event.target.value.toUpperCase() }))}
+            readOnly
+            aria-readonly="true"
           />
         </div>
       </div>
@@ -447,11 +464,12 @@ export function PurchaseOrderCreatePanel({
 export function GoodsReceiptCreatePanel({
   token,
   outletId,
+  scopeCurrencyCode,
   suppliers,
   items,
   purchaseOrders,
   onCreated,
-}: SharedProps & {
+}: SharedProps & ScopeCurrencyProps & {
   suppliers: SupplierView[];
   items: ItemView[];
   purchaseOrders: PurchaseOrderView[];
@@ -461,7 +479,7 @@ export function GoodsReceiptCreatePanel({
   const [selectedPurchaseOrder, setSelectedPurchaseOrder] = useState<PurchaseOrderView | null>(null);
   const [form, setForm] = useState({
     poId: '',
-    currencyCode: 'USD',
+    currencyCode: normalizeCurrencyCode(scopeCurrencyCode),
     businessDate: new Date().toISOString().slice(0, 10),
     supplierLotNumber: '',
     note: '',
@@ -486,9 +504,27 @@ export function GoodsReceiptCreatePanel({
   );
 
   useEffect(() => {
+    if (selectedPurchaseOrder) {
+      return;
+    }
+    const nextCurrencyCode = resolveGoodsReceiptCurrency({
+      scopeCurrencyCode,
+    });
+    setForm((current) => (current.currencyCode === nextCurrencyCode
+      ? current
+      : { ...current, currencyCode: nextCurrencyCode }));
+  }, [scopeCurrencyCode, selectedPurchaseOrder]);
+
+  useEffect(() => {
     let cancelled = false;
     if (!token || !form.poId) {
       setSelectedPurchaseOrder(null);
+      setForm((current) => ({
+        ...current,
+        currencyCode: resolveGoodsReceiptCurrency({
+          scopeCurrencyCode,
+        }),
+      }));
       setLines([createGoodsReceiptLine(items)]);
       return () => {
         cancelled = true;
@@ -503,7 +539,10 @@ export function GoodsReceiptCreatePanel({
         setSelectedPurchaseOrder(purchaseOrder);
         setForm((current) => ({
           ...current,
-          currencyCode: String(purchaseOrder.currencyCode || current.currencyCode || 'USD'),
+          currencyCode: resolveGoodsReceiptCurrency({
+            purchaseOrderCurrencyCode: purchaseOrder.currencyCode,
+            scopeCurrencyCode,
+          }),
         }));
         const poLines = (purchaseOrder.items || [])
           .map((line) => {
@@ -530,6 +569,12 @@ export function GoodsReceiptCreatePanel({
       } catch (error: unknown) {
         if (!cancelled) {
           setSelectedPurchaseOrder(null);
+          setForm((current) => ({
+            ...current,
+            currencyCode: resolveGoodsReceiptCurrency({
+              scopeCurrencyCode,
+            }),
+          }));
           setLines([createGoodsReceiptLine(items)]);
           toast.error(getErrorMessage(error, 'Unable to load purchase order detail'));
         }
@@ -544,7 +589,7 @@ export function GoodsReceiptCreatePanel({
     return () => {
       cancelled = true;
     };
-  }, [form.poId, itemNameById, items, token]);
+  }, [form.poId, itemNameById, items, scopeCurrencyCode, token]);
 
   const total = useMemo(
     () => lines.reduce((sum, line) => sum + parsePositiveNumber(line.qtyReceived) * parseNonNegativeNumber(line.unitCost), 0),
@@ -573,7 +618,10 @@ export function GoodsReceiptCreatePanel({
       const receiptLines = lines.filter((line) => line.itemId && parsePositiveNumber(line.qtyReceived) > 0);
       await procurementApi.createGoodsReceipt(token, {
         poId: toLongLike(form.poId),
-        currencyCode: form.currencyCode.trim() || 'USD',
+        currencyCode: resolveGoodsReceiptCurrency({
+          purchaseOrderCurrencyCode: selectedPurchaseOrder?.currencyCode,
+          scopeCurrencyCode: form.currencyCode,
+        }),
         businessDate: form.businessDate,
         totalPrice: total,
         supplierLotNumber: form.supplierLotNumber.trim() || null,
@@ -591,7 +639,9 @@ export function GoodsReceiptCreatePanel({
       toast.success('Goods receipt created');
       setForm({
         poId: '',
-        currencyCode: 'USD',
+        currencyCode: resolveGoodsReceiptCurrency({
+          scopeCurrencyCode,
+        }),
         businessDate: new Date().toISOString().slice(0, 10),
         supplierLotNumber: '',
         note: '',
@@ -644,9 +694,10 @@ export function GoodsReceiptCreatePanel({
         <div>
           <SectionLabel>Currency</SectionLabel>
           <input
-            className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            className="mt-1 h-9 w-full rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground"
             value={form.currencyCode}
-            onChange={(event) => setForm((current) => ({ ...current, currencyCode: event.target.value.toUpperCase() }))}
+            readOnly
+            aria-readonly="true"
           />
         </div>
         <div>

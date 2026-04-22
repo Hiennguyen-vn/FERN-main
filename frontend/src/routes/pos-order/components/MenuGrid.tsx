@@ -12,6 +12,13 @@ interface Props {
   emptyMessage?: string;
 }
 
+function badgeLabel(item: PosMenuItem) {
+  if (item.unavailableCode === 'insufficient_ingredients') return 'Thiếu NL';
+  if (item.unavailableCode === 'outlet_unavailable') return 'Tạm ngưng';
+  if (item.unavailableCode === 'missing_price') return 'Chưa có giá';
+  return 'Không bán';
+}
+
 export function MenuGrid({ category, items, onPick, isLoading, emptyMessage }: Props) {
   const [query, setQuery] = useState('');
 
@@ -21,7 +28,7 @@ export function MenuGrid({ category, items, onPick, isLoading, emptyMessage }: P
       const q = query.trim().toLowerCase();
       list = list.filter((m) => m.name.toLowerCase().includes(q));
     }
-    return list;
+    return [...list].sort((left, right) => Number(right.isAvailable) - Number(left.isAvailable));
   }, [items, category, query]);
 
   return (
@@ -63,18 +70,24 @@ export function MenuGrid({ category, items, onPick, isLoading, emptyMessage }: P
                 <button
                   key={m.id}
                   type="button"
-                  disabled={disabled}
-                  onClick={() => !disabled && onPick(m)}
-                  className={`pos-card-item text-left bg-white rounded-xl border overflow-hidden flex flex-col ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  title={disabled ? 'Chưa có giá cho outlet này' : undefined}
+                  aria-disabled={disabled}
+                  onClick={() => {
+                    if (!disabled) onPick(m);
+                  }}
+                  className={`pos-card-item text-left bg-white rounded-xl border overflow-hidden flex flex-col ${
+                    disabled ? 'cursor-not-allowed border-destructive/20 bg-muted/20' : ''
+                  }`}
+                  title={disabled ? m.unavailableReason : undefined}
                 >
-                  <div className="relative aspect-[4/3] bg-muted flex items-center justify-center text-muted-foreground">
+                  <div className={`relative aspect-[4/3] flex items-center justify-center text-muted-foreground ${
+                    disabled ? 'bg-muted/80' : 'bg-muted'
+                  }`}>
                     {m.imageUrl ? (
                       <img
                         src={m.imageUrl}
                         alt={m.name}
                         loading="lazy"
-                        className="w-full h-full object-cover"
+                        className={`w-full h-full object-cover ${disabled ? 'grayscale-[0.35] opacity-70' : ''}`}
                         onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                       />
                     ) : (
@@ -82,13 +95,20 @@ export function MenuGrid({ category, items, onPick, isLoading, emptyMessage }: P
                     )}
                     {disabled && (
                       <span className="absolute top-2 left-2 bg-destructive/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                        Chưa có giá
+                        {badgeLabel(m)}
                       </span>
                     )}
                   </div>
                   <div className="p-3 flex-1 flex flex-col gap-1">
                     <div className="text-sm font-medium line-clamp-2 min-h-[2.5em]">{m.name}</div>
-                    <div className="pos-accent-text font-bold">{formatVnd(m.price)}</div>
+                    <div className={disabled ? 'font-bold text-muted-foreground' : 'pos-accent-text font-bold'}>
+                      {formatVnd(m.price)}
+                    </div>
+                    {disabled && (
+                      <div className="text-[11px] leading-snug text-destructive">
+                        {m.unavailableReason ?? 'Tạm thời không thể bán'}
+                      </div>
+                    )}
                   </div>
                 </button>
               );

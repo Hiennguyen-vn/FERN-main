@@ -9,12 +9,16 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { salesApi, type CreatePromotionPayload, type PromotionView } from '@/api/fern-api';
+import { salesApi, orgApi, type PromotionView } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
 import { normalizeNumericId } from '@/constants/pos';
 import { EmptyState, ServiceUnavailablePage } from '@/components/shell/PermissionStates';
+import { buildCreatePromotionPayload, createDefaultPromotionFormValues, type PromotionFormValues } from '@/components/promotions/promotion-form';
 import { toast } from 'sonner';
+
+interface OrgOutlet { id: string; code: string; name: string; regionId: string; }
+interface OrgRegion { id: string; code: string; name: string; }
 
 interface PromotionRow {
   id: string;
@@ -41,12 +45,6 @@ function toNumber(value: unknown) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
-function toLong(value: unknown): number | null {
-  const text = String(value ?? '').trim();
-  if (!/^\d+$/.test(text)) return null;
-  return Number(text);
-}
-
 function derivePromotionStatus(status: string, effectiveFrom: string, effectiveTo?: string) {
   const now = Date.now();
   const start = effectiveFrom ? new Date(effectiveFrom).getTime() : Number.NaN;
@@ -64,17 +62,21 @@ export function PromotionsModule() {
   const [search, setSearch] = useState('');
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({
-    name: '',
-    promoType: 'percentage',
-    valueAmount: '',
-    valuePercent: '10',
-    minOrderAmount: '',
-    effectiveFrom: new Date().toISOString().slice(0, 16),
-    effectiveTo: '',
-  });
+  const [form, setForm] = useState<PromotionFormValues>(createDefaultPromotionFormValues);
 
   const outletId = normalizeNumericId(scope.outletId);
+  const [outlets, setOutlets] = useState<OrgOutlet[]>([]);
+  const [regions, setRegions] = useState<OrgRegion[]>([]);
+  const [selectedOutletIds, setSelectedOutletIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!token) return;
+    orgApi.hierarchy(token).then((h) => {
+      setRegions(h.regions.map((r) => ({ id: r.id, code: r.code, name: r.name })));
+      setOutlets(h.outlets.map((o) => ({ id: o.id, code: o.code, name: o.name, regionId: o.regionId })));
+      setSelectedOutletIds(outletId ? [outletId] : []);
+    }).catch(() => {});
+  }, [token, outletId]);
 
   const load = useCallback(async () => {
     if (!token) {
@@ -139,35 +141,19 @@ export function PromotionsModule() {
       toast.error('Name and effective start are required');
       return;
     }
+    if (selectedOutletIds.length === 0) {
+      toast.error('Select at least one outlet');
+      return;
+    }
 
-    const payload: CreatePromotionPayload = {
-      name: form.name.trim(),
-      promoType: form.promoType,
-      valueAmount: form.valueAmount ? toNumber(form.valueAmount) : null,
-      valuePercent: form.valuePercent ? toNumber(form.valuePercent) : null,
-      minOrderAmount: form.minOrderAmount ? toNumber(form.minOrderAmount) : null,
-      maxDiscountAmount: null,
-      effectiveFrom: new Date(form.effectiveFrom).toISOString(),
-      effectiveTo: form.effectiveTo ? new Date(form.effectiveTo).toISOString() : null,
-      outletIds: (() => {
-        const parsed = toLong(outletId);
-        return parsed ? [parsed] : [];
-      })(),
-    };
+    const payload = buildCreatePromotionPayload(form, selectedOutletIds);
 
     try {
       await salesApi.createPromotion(token, payload);
       toast.success('Promotion created');
       setCreateOpen(false);
-      setForm({
-        name: '',
-        promoType: 'percentage',
-        valueAmount: '',
-        valuePercent: '10',
-        minOrderAmount: '',
-        effectiveFrom: new Date().toISOString().slice(0, 16),
-        effectiveTo: '',
-      });
+      setForm(createDefaultPromotionFormValues());
+      setSelectedOutletIds(outletId ? [outletId] : []);
       await load();
     } catch (error) {
       console.error('Create promotion failed:', error);
@@ -367,8 +353,64 @@ export function PromotionsModule() {
               </div>
             </div>
 
-            <div className="rounded-md border p-3 text-[11px] text-muted-foreground">
-              Scope: {outletId ? `Outlet ${outletId}` : 'All outlets'}
+            <div className="space-y-1.5">
+              <Label className="text-xs">Outlets <span className="text-destructive">*</span></Label>
+              {outlets.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">Loading outlets...</p>
+              ) : (
+                <div className="rounded-md border max-h-48 overflow-y-auto divide-y">
+                  {regions.map((region) => {
+                    const regionOutlets = outlets.filter((o) => o.regionId === region.id);
+                    if (regionOutlets.length === 0) return null;
+                    const allSelected = regionOutlets.every((o) => selectedOutletIds.includes(o.id));
+                    const someSelected = regionOutlets.some((o) => selectedOutletIds.includes(o.id));
+                    const toggleRegion = () => {
+                      if (allSelected) {
+                        setSelectedOutletIds((prev) => prev.filter((id) => !regionOutlets.find((o) => o.id === id)));
+                      } else {
+                        setSelectedOutletIds((prev) => [...new Set([...prev, ...regionOutlets.map((o) => o.id)])]);
+                      }
+                    };
+                    return (
+                      <div key={region.id}>
+                        <label className="flex items-center gap-2 cursor-pointer bg-muted/30 px-2 py-1.5 hover:bg-muted/50">
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5"
+                            checked={allSelected}
+                            ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                            onChange={toggleRegion}
+                          />
+                          <span className="text-[11px] font-semibold">{region.name}</span>
+                          <span className="text-[10px] text-muted-foreground font-mono">{region.code}</span>
+                          <span className="text-[10px] text-muted-foreground ml-auto">{regionOutlets.filter((o) => selectedOutletIds.includes(o.id)).length}/{regionOutlets.length}</span>
+                        </label>
+                        <div className="divide-y">
+                          {regionOutlets.map((o) => (
+                            <label key={o.id} className="flex items-center gap-2 cursor-pointer px-4 py-1 hover:bg-muted/20">
+                              <input
+                                type="checkbox"
+                                className="h-3 w-3"
+                                checked={selectedOutletIds.includes(o.id)}
+                                onChange={(e) => {
+                                  setSelectedOutletIds((prev) =>
+                                    e.target.checked ? [...prev, o.id] : prev.filter((id) => id !== o.id)
+                                  );
+                                }}
+                              />
+                              <span className="text-[11px] font-mono">{o.code}</span>
+                              <span className="text-[11px] text-muted-foreground">{o.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {selectedOutletIds.length > 0 && (
+                <p className="text-[10px] text-muted-foreground">{selectedOutletIds.length} outlet(s) selected</p>
+              )}
             </div>
           </div>
           <DialogFooter>

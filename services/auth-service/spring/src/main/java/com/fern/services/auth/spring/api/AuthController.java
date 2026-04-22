@@ -98,12 +98,14 @@ public class AuthController {
       @RequestParam(name = "q", required = false) String q,
       @RequestParam(required = false) String status,
       @RequestParam(required = false) Long outletId,
+      @RequestParam(required = false) Long regionId,
+      @RequestParam(required = false) String roleCode,
       @RequestParam(required = false) String sortBy,
       @RequestParam(required = false) String sortDir,
       @RequestParam(defaultValue = "100") int limit,
       @RequestParam(defaultValue = "0") int offset
   ) {
-    return authService.listUsers(username, q, status, outletId, sortBy, sortDir, limit, offset);
+    return authService.listUsers(username, q, status, outletId, regionId, roleCode, sortBy, sortDir, limit, offset);
   }
 
   @GetMapping("/scopes")

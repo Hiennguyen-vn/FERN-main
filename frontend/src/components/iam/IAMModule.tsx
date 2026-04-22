@@ -343,9 +343,9 @@ export function IAMModule() {
     userId: string; outletId: string; permissionCode: string; userName: string; permName: string;
   } | null>(null);
 
-  const usersQuery = useListQueryState<{ outletId?: string; status?: string }>({
+  const usersQuery = useListQueryState<{ outletId?: string; status?: string; regionId?: string; roleCode?: string }>({
     initialLimit: 25, initialSortBy: 'username', initialSortDir: 'asc',
-    initialFilters: { outletId: scopedOutletId || undefined, status: undefined },
+    initialFilters: { outletId: scopedOutletId || undefined, status: undefined, regionId: undefined, roleCode: undefined },
   });
   const auditQuery = useListQueryState<{ module?: string }>({
     initialLimit: 25, initialSortBy: 'createdAt', initialSortDir: 'desc',
@@ -536,21 +536,15 @@ export function IAMModule() {
 
   const filteredUsers = useMemo(() => users.filter((u) => {
     const meta = dirMeta.get(u.id);
-    const ua = assignmentsByUser.get(u.id) ?? [];
-    // Role filter: skip users whose primary role doesn't match. If user has no meta,
-    // they have no scope data loaded yet — exclude them when a specific role is selected.
-    if (userRoleFilter !== 'all') {
-      if (!meta) return false;
-      if (meta.primaryRoleCode !== userRoleFilter) return false;
-    }
+    // role filter is handled server-side via usersQuery.filters.roleCode
     if (userScopeFilter !== 'all') {
       if (!meta) return false;
       if (meta.dominantScopeType !== userScopeFilter) return false;
     }
-    if (userRegionFilter !== 'all' && !ua.some((a) => a.scopeType === 'global' || (a.scopeType === 'region' && a.scopeId === userRegionFilter) || a.outletIds.some((id) => outletRegionIds.get(id) === userRegionFilter))) return false;
+    // region filter is handled server-side via usersQuery.filters.regionId
     if (legacyOnly && (!meta || (meta.legacyLabels.length === 0 && meta.compatibilityOnlyLabels.length === 0))) return false;
     return true;
-  }), [assignmentsByUser, dirMeta, legacyOnly, outletRegionIds, userRegionFilter, userRoleFilter, userScopeFilter, users]);
+  }), [dirMeta, legacyOnly, userScopeFilter, users]);
 
   const selectedUser = useMemo(() => users.find((u) => u.id === selectedUserId) ?? null, [selectedUserId, users]);
   const selectedUserAssignments = useMemo(() => collapsed.filter((a) => a.userId === selectedUserId), [collapsed, selectedUserId]);
@@ -945,7 +939,7 @@ export function IAMModule() {
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input className="h-8 w-60 pl-8 text-sm" placeholder="Search..." value={usersQuery.searchInput} onChange={(e) => usersQuery.setSearchInput(e.target.value)} />
         </div>
-        <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={userRoleFilter} onChange={(e) => setUserRoleFilter(e.target.value)}>
+        <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={userRoleFilter} onChange={(e) => { setUserRoleFilter(e.target.value); usersQuery.setFilter('roleCode', e.target.value === 'all' ? undefined : e.target.value); }}>
           <option value="all">All roles</option>
           {roleRefs.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}
         </select>
@@ -953,7 +947,7 @@ export function IAMModule() {
           <option value="all">All scopes</option>
           <option value="global">Global</option><option value="region">Region</option><option value="outlet">Outlet</option>
         </select>
-        <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={userRegionFilter} onChange={(e) => setUserRegionFilter(e.target.value)}>
+        <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={userRegionFilter} onChange={(e) => { setUserRegionFilter(e.target.value); usersQuery.setFilter('regionId', e.target.value === 'all' ? undefined : e.target.value); }}>
           <option value="all">All regions</option>
           {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>

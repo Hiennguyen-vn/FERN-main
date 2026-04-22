@@ -187,9 +187,13 @@ public class OrgService {
     String status = normalizeCreateStatus(request.status());
     OrgDtos.OutletView outlet = orgRepository.createOutlet(request);
     orgHierarchyCacheService.evict();
+    // Key = regionId (not outletId) to guarantee same-region events go to same partition.
+    // This prevents race conditions in auth-service OrgEventConsumer when multiple outlets
+    // are created in the same region concurrently (e.g. via data simulator).
+    // See: OrgSyncRepository.fanOutNewOutlet - "coverage" check needs sequential processing per region.
     kafkaEventPublisher.publish(
         "fern.org.outlet-created",
-        Long.toString(outlet.id()),
+        Long.toString(outlet.regionId()),
         "org.outlet.created",
         new OutletCreatedEvent(
             outlet.id(),
@@ -262,6 +266,10 @@ public class OrgService {
         orgRepository.listRegions(),
         orgRepository.listOutlets(null)
     );
+  }
+
+  public void evictHierarchyCache() {
+    orgHierarchyCacheService.evict();
   }
 
   private OrgHierarchyCacheService.CachedHierarchy cachedHierarchy() {
@@ -389,9 +397,13 @@ public class OrgService {
   }
 
   private void publishOutletUpdated(OrgDtos.OutletView outlet, String reason, Long actorUserId) {
+    // Key = regionId (not outletId) to guarantee same-region events go to same partition.
+    // This prevents race conditions in auth-service OrgEventConsumer when multiple outlets
+    // are updated in the same region concurrently.
+    // See: OrgSyncRepository.reSyncOutletRegion - needs sequential processing per region.
     kafkaEventPublisher.publish(
         "fern.org.outlet-updated",
-        Long.toString(outlet.id()),
+        Long.toString(outlet.regionId()),
         "org.outlet.updated",
         new OutletUpdatedEvent(
             outlet.id(),

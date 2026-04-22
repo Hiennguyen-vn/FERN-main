@@ -101,4 +101,10 @@ public class OrgController {
   ) {
     return orgService.upsertExchangeRate(request);
   }
+
+  @PostMapping("/cache/evict")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void evictHierarchyCache() {
+    orgService.evictHierarchyCache();
+  }
 }

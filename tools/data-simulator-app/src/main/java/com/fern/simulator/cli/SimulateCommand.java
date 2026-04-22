@@ -40,6 +40,12 @@ public class SimulateCommand implements Runnable {
     @Option(names = {"--allow-non-local"}, description = "Allow non-localhost database targets.", defaultValue = "false")
     boolean allowNonLocal;
 
+    @Option(names = {"--kafka-bootstrap"}, description = "Kafka bootstrap servers for publishing org events (e.g. localhost:9092). If omitted, no events are published.", defaultValue = "${FERN_KAFKA_BOOTSTRAP:}")
+    String kafkaBootstrap;
+
+    @Option(names = {"--org-service-url"}, description = "Org-service base URL for hierarchy cache eviction after outlet inserts (e.g. http://localhost:8083). If omitted, cache is not evicted.", defaultValue = "${FERN_ORG_SERVICE_URL:}")
+    String orgServiceUrl;
+
     @Override
     public void run() {
         new CommandLine(this).usage(System.out);
@@ -59,5 +65,13 @@ public class SimulateCommand implements Runnable {
 
     public boolean isAllowNonLocal() {
         return allowNonLocal;
+    }
+
+    public String getKafkaBootstrap() {
+        return kafkaBootstrap != null && !kafkaBootstrap.isBlank() ? kafkaBootstrap : null;
+    }
+
+    public String getOrgServiceUrl() {
+        return orgServiceUrl != null && !orgServiceUrl.isBlank() ? orgServiceUrl : null;
     }
 }

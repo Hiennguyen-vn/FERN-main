@@ -219,7 +219,7 @@ class OrgServiceTest {
     verify(orgHierarchyCacheService).evict();
     verify(kafkaEventPublisher).publish(
         eq("fern.org.outlet-created"),
-        eq("101"),
+        eq("1"),   // regionId, not outletId — key changed for same-region ordering guarantee
         eq("org.outlet.created"),
         any(OutletCreatedEvent.class)
     );
@@ -279,11 +279,41 @@ class OrgServiceTest {
     verify(orgHierarchyCacheService).evict();
     verify(kafkaEventPublisher).publish(
         eq("fern.org.outlet-updated"),
-        eq("2000"),
+        eq("10"),   // regionId, not outletId — key changed for same-region ordering guarantee
         eq("org.outlet.updated"),
         any(OutletUpdatedEvent.class)
     );
     assertEquals("archived", result.status());
+  }
+
+  @Test
+  void updateOutletPublishesUpdateEventWithRegionIdKey() {
+    RequestUserContextHolder.set(adminContext());
+    when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
+    when(orgRepository.findManagedOutletById(2000L)).thenReturn(Optional.of(outletView(2000L, 10L, "VN-HCM-001", "Saigon Central", "active")));
+    OrgDtos.OutletView updatedOutlet = outletView(2000L, 10L, "VN-HCM-001", "Saigon Central Updated", "active");
+    when(orgRepository.updateOutlet(eq(2000L), any())).thenReturn(updatedOutlet);
+
+    OrgService service = service();
+    service.updateOutlet(
+        2000L,
+        new OrgDtos.UpdateOutletRequest(
+            "VN-HCM-001",
+            "Saigon Central Updated",
+            "1 Nguyen Hue",
+            "123",
+            "hcm@example.com",
+            LocalDate.parse("2026-01-01"),
+            null
+        )
+    );
+
+    verify(kafkaEventPublisher).publish(
+        eq("fern.org.outlet-updated"),
+        eq("10"),   // regionId key, not outletId
+        eq("org.outlet.updated"),
+        any(OutletUpdatedEvent.class)
+    );
   }
 
   @Test

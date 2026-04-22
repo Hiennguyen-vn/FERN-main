@@ -739,9 +739,8 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
         outletName={outletName}
         cashierName={operatorName}
         onBack={() => setView({ screen: 'session-detail', sessionId: view.sessionId })}
-        onCheckout={(items, promo) => {
+        onCheckout={(items, promo, promoDiscount) => {
           const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
-          const promoDiscount = 0;
           const adjustedSubtotal = subtotal - promoDiscount;
           const taxAmount = +(adjustedSubtotal * 0.08).toFixed(2);
           const total = +(adjustedSubtotal + taxAmount).toFixed(2);

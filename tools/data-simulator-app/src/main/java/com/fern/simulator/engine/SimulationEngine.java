@@ -16,6 +16,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.time.LocalDate;
@@ -59,12 +63,30 @@ public class SimulationEngine {
 
     /** CLI mode — no listener */
     public RunResult run(SimulationConfig config, DatabaseTarget target, boolean dryRun) {
-        return run(config, target, dryRun, null);
+        return run(config, target, dryRun, null, null);
+    }
+
+    /** CLI mode with optional Kafka publishing */
+    public RunResult run(SimulationConfig config, DatabaseTarget target, boolean dryRun,
+                         String kafkaBootstrap) {
+        return run(config, target, dryRun, null, kafkaBootstrap, null);
     }
 
     /** GUI mode — with progress listener */
     public RunResult run(SimulationConfig config, DatabaseTarget target, boolean dryRun,
                          ProgressListener listener) {
+        return run(config, target, dryRun, listener, null, null);
+    }
+
+    /** Full — with progress listener and optional Kafka publishing */
+    public RunResult run(SimulationConfig config, DatabaseTarget target, boolean dryRun,
+                         ProgressListener listener, String kafkaBootstrap) {
+        return run(config, target, dryRun, listener, kafkaBootstrap, null);
+    }
+
+    /** Full — with progress listener, optional Kafka publishing, optional org-service URL for cache eviction */
+    public RunResult run(SimulationConfig config, DatabaseTarget target, boolean dryRun,
+                         ProgressListener listener, String kafkaBootstrap, String orgServiceUrl) {
         log.info("Starting simulation: namespace={}, seed={}, days={}, dryRun={}",
                 config.namespace(), config.seed(), config.totalDays(), dryRun);
         if (listener != null) listener.onStart(config.namespace(), config.totalDays(),
@@ -80,6 +102,16 @@ public class SimulationEngine {
             journal = new EventJournal(outputDir, config.namespace(), config.seed(), configHash);
         } catch (IOException e) {
             log.warn("Failed to initialize event journal, continuing without", e);
+        }
+
+        // Initialize Kafka publisher if bootstrap provided and not dry-run
+        SimulatorKafkaPublisher kafkaPublisher = null;
+        if (!dryRun && kafkaBootstrap != null && !kafkaBootstrap.isBlank()) {
+            try {
+                kafkaPublisher = new SimulatorKafkaPublisher(kafkaBootstrap);
+            } catch (Exception e) {
+                log.warn("Failed to initialize Kafka publisher, continuing without event publishing: {}", e.getMessage());
+            }
         }
 
         // Initialize persistence if not dry-run
@@ -161,6 +193,13 @@ public class SimulationEngine {
                 if (persister != null) {
                     try {
                         persister.persistDay(ctx, day);
+                        // Publish Kafka events AFTER DB commit to avoid consumer race condition
+                        if (!persister.getLastPersistedOutlets().isEmpty()) {
+                            if (kafkaPublisher != null) {
+                                kafkaPublisher.publishOutletsCreated(persister.getLastPersistedOutlets());
+                            }
+                            evictOrgHierarchyCache(orgServiceUrl);
+                        }
                     } catch (Exception e) {
                         log.error("Persistence failed on day {}: {}", day, e.getMessage(), e);
                         String detail = e.getMessage();
@@ -324,6 +363,9 @@ public class SimulationEngine {
             }
             throw e;
         } finally {
+            if (kafkaPublisher != null) {
+                try { kafkaPublisher.close(); } catch (Exception e) { log.warn("Failed to close Kafka publisher", e); }
+            }
             if (journal != null) {
                 try { journal.close(); } catch (IOException e) { log.warn("Failed to close journal", e); }
             }
@@ -588,6 +630,21 @@ public class SimulationEngine {
             return JSON.writeValueAsString(value);
         } catch (JsonProcessingException e) {
             return "{}";
+        }
+    }
+
+    private void evictOrgHierarchyCache(String orgServiceUrl) {
+        if (orgServiceUrl == null || orgServiceUrl.isBlank()) return;
+        try {
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(orgServiceUrl.stripTrailing() + "/api/v1/org/cache/evict"))
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .build();
+            HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+            log.info("Evicted org hierarchy cache: status={}", response.statusCode());
+        } catch (Exception e) {
+            log.warn("Failed to evict org hierarchy cache (non-fatal): {}", e.getMessage());
         }
     }
 }

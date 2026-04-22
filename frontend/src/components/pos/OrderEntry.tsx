@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { productApi, salesApi, type PriceView, type ProductView, type PromotionView } from '@/api/fern-api';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
 import { normalizeNumericId } from '@/constants/pos';
+import { calculatePromotionDiscount } from '@/components/pos/promotion-utils';
 import { toast } from 'sonner';
 
 type CartItem = OrderLineItem;
@@ -19,7 +20,7 @@ interface Props {
   outletName: string;
   cashierName: string;
   onBack: () => void;
-  onCheckout: (items: CartItem[], promo: string | null) => void;
+  onCheckout: (items: CartItem[], promo: string | null, promoDiscount: number) => void;
 }
 
 function toNumber(value: unknown) {
@@ -36,8 +37,7 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
   const [cart, setCart] = useState<CartItem[]>([]);
   const [promoCode, setPromoCode] = useState('');
   const [promoBusy, setPromoBusy] = useState(false);
-  const [appliedPromoId, setAppliedPromoId] = useState<string | null>(null);
-  const [appliedPromoLabel, setAppliedPromoLabel] = useState<string>('');
+  const [appliedPromotion, setAppliedPromotion] = useState<PromotionView | null>(null);
 
   const scopedOutletId = normalizeNumericId(scope.outletId);
 
@@ -142,9 +142,16 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
   };
 
   const subtotal = cart.reduce((sum, item) => sum + item.lineTotal, 0);
+  const appliedPromoId = appliedPromotion ? String(appliedPromotion.id ?? '') : null;
+  const appliedPromoLabel = appliedPromotion ? String(appliedPromotion.name ?? appliedPromotion.id ?? '') : '';
+  const promoDiscount = useMemo(
+    () => calculatePromotionDiscount(subtotal, appliedPromotion),
+    [appliedPromotion, subtotal],
+  );
+  const adjustedSubtotal = Math.max(0, subtotal - promoDiscount);
   const taxRate = 0.08;
-  const taxAmount = +(subtotal * taxRate).toFixed(2);
-  const total = +(subtotal + taxAmount).toFixed(2);
+  const taxAmount = +(adjustedSubtotal * taxRate).toFixed(2);
+  const total = +(adjustedSubtotal + taxAmount).toFixed(2);
 
   const applyPromo = () => {
     if (!token) {
@@ -168,19 +175,16 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
       });
 
       if (!matched) {
-        setAppliedPromoId(null);
-        setAppliedPromoLabel('');
+        setAppliedPromotion(null);
         toast.error('Promotion not found or inactive for this outlet');
         return;
       }
 
-      setAppliedPromoId(String(matched.id));
-      setAppliedPromoLabel(String(matched.name || matched.id));
+      setAppliedPromotion(matched);
       toast.success('Promotion applied');
     }).catch((error) => {
       console.error('Promotion lookup failed:', error);
-      setAppliedPromoId(null);
-      setAppliedPromoLabel('');
+      setAppliedPromotion(null);
       toast.error('Unable to validate promotion');
     }).finally(() => {
       setPromoBusy(false);
@@ -330,8 +334,7 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
                 value={promoCode}
                 onChange={(event) => {
                   setPromoCode(event.target.value);
-                  setAppliedPromoId(null);
-                  setAppliedPromoLabel('');
+                  setAppliedPromotion(null);
                 }}
                 className="h-7 text-xs flex-1"
               />
@@ -355,6 +358,12 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
               <span>Subtotal</span>
               <span>${subtotal.toFixed(2)}</span>
             </div>
+            {appliedPromoId ? (
+              <div className="flex justify-between text-xs text-success">
+                <span>Discount</span>
+                <span>-${promoDiscount.toFixed(2)}</span>
+              </div>
+            ) : null}
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>Tax (8%)</span>
               <span>${taxAmount.toFixed(2)}</span>
@@ -366,7 +375,7 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
             <Button
               className="w-full h-9 text-xs mt-2"
               disabled={cart.length === 0}
-              onClick={() => onCheckout(cart, appliedPromoId)}
+              onClick={() => onCheckout(cart, appliedPromoId, promoDiscount)}
             >
               Proceed to Payment — ${total > 0 ? total.toFixed(2) : '0.00'}
             </Button>

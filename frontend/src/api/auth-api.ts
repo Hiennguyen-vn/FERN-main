@@ -120,6 +120,8 @@ export interface AuthUsersQuery {
   username?: string;
   status?: string;
   outletId?: string;
+  regionId?: string;
+  roleCode?: string;
   sortBy?: string;
   sortDir?: 'asc' | 'desc';
   limit?: number;

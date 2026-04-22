@@ -79,6 +79,8 @@ public class AuthUserRepository extends BaseRepository {
       String username,
       String status,
       Set<Long> scopedOutletIds,
+      Long regionId,
+      String roleCode,
       String sortBy,
       String sortDir,
       int limit,
@@ -112,6 +114,36 @@ public class AuthUserRepository extends BaseRepository {
         params.add(status.trim());
       }
       appendScopedOutletFilterForUsers(sql, params, scopedOutletIds);
+      if (regionId != null) {
+        sql.append(
+            """
+             AND EXISTS (
+               SELECT 1
+               FROM (
+                 SELECT ur.outlet_id
+                 FROM core.user_role ur
+                 WHERE ur.user_id = u.id
+                 UNION
+                 SELECT up.outlet_id
+                 FROM core.user_permission up
+                 WHERE up.user_id = u.id
+               ) scoped_outlets
+               JOIN core.outlet o ON o.id = scoped_outlets.outlet_id
+               WHERE o.region_id = ?
+            )"""
+        );
+        params.add(regionId);
+      }
+      if (roleCode != null && !roleCode.isBlank()) {
+        sql.append(
+            """
+             AND EXISTS (
+               SELECT 1 FROM core.user_role ur
+               WHERE ur.user_id = u.id AND ur.role_code = ?
+            )"""
+        );
+        params.add(roleCode.trim());
+      }
 
       sql.append(" ORDER BY ").append(resolveUserListSortClause(sortBy, sortDir)).append(" LIMIT ? OFFSET ?");
       params.add(Math.max(1, Math.min(limit, 500)));

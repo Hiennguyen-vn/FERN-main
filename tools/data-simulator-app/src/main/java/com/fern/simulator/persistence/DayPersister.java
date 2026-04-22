@@ -11,7 +11,9 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -28,9 +30,15 @@ public class DayPersister {
     private long totalRowsWritten = 0;
     private long totalPersistMillis = 0;
     private final Map<String, Long> sectionTimingsMillis = new LinkedHashMap<>();
+    // Populated after each persistDay commit; caller publishes Kafka events from this list.
+    private List<SimOutlet> lastPersistedOutlets = List.of();
 
     public DayPersister(Connection conn) {
         this.conn = conn;
+    }
+
+    public List<SimOutlet> getLastPersistedOutlets() {
+        return lastPersistedOutlets;
     }
 
     /**
@@ -588,6 +596,8 @@ public class DayPersister {
             }
 
             batchWriter.flush();
+            // Capture before clearDirtyState so caller can publish Kafka events after commit
+            lastPersistedOutlets = new ArrayList<>(ctx.getDirtyOutlets());
             conn.commit();
             ctx.clearDirtyState();
             totalPersistMillis += (System.nanoTime() - persistStartedAt) / 1_000_000L;

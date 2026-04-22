@@ -1,0 +1,20 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="tile" x1="12" y1="8" x2="52" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FCFDFE" />
+      <stop offset="1" stop-color="#EEF4FA" />
+    </linearGradient>
+    <linearGradient id="gloss" x1="18" y1="12" x2="38" y2="28" gradientUnits="userSpaceOnUse">
+      <stop stop-color="white" stop-opacity="0.95" />
+      <stop offset="1" stop-color="white" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="18" fill="url(#tile)" />
+  <rect x="4.5" y="4.5" width="55" height="55" rx="17.5" stroke="#D9E3F1" />
+  <path d="M19.5 45C23.7 36.2 29.9 27.9 44.3 18.8" stroke="#1F3158" stroke-width="5.75" stroke-linecap="round" />
+  <ellipse cx="19.2" cy="40.8" rx="4.3" ry="6.9" transform="rotate(-63 19.2 40.8)" fill="#69A7FF" />
+  <ellipse cx="24.8" cy="37.8" rx="6.2" ry="9.8" transform="rotate(-48 24.8 37.8)" fill="#2FB47C" />
+  <ellipse cx="33.6" cy="28.5" rx="6.7" ry="10.8" transform="rotate(-33 33.6 28.5)" fill="#2F64D9" />
+  <ellipse cx="41.7" cy="20.3" rx="5.4" ry="8.6" transform="rotate(-18 41.7 20.3)" fill="#6F59E8" />
+  <path d="M18.2 13.5C24.7 11.6 31.6 11.8 37.9 14.3" stroke="url(#gloss)" stroke-width="3" stroke-linecap="round" />
+</svg>

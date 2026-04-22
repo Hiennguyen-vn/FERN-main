@@ -77,14 +77,15 @@ public class AuthorizationPolicyService {
     List<BusinessScopeAssignment> assignments = new ArrayList<>();
     Set<Long> allActiveOutlets = orgScopeRepository.findAllActiveOutletIds();
     Set<Long> superadminOutlets = new LinkedHashSet<>(outletsByRole.getOrDefault(CanonicalRole.SUPERADMIN, Set.of()));
-    if (!superadminOutlets.isEmpty() && !allActiveOutlets.isEmpty() && superadminOutlets.containsAll(allActiveOutlets)) {
+    if (!superadminOutlets.isEmpty()) {
+      Set<Long> scopeOutlets = allActiveOutlets.isEmpty() ? superadminOutlets : allActiveOutlets;
       assignments.add(new BusinessScopeAssignment(
           CanonicalRole.SUPERADMIN,
           ScopeType.GLOBAL,
           null,
           "global",
-          allActiveOutlets,
-          collectSourceRoleCodes(sourcesByRoleAndOutlet.get(CanonicalRole.SUPERADMIN), allActiveOutlets)
+          scopeOutlets,
+          collectSourceRoleCodes(sourcesByRoleAndOutlet.get(CanonicalRole.SUPERADMIN), scopeOutlets)
       ));
       superadminOutlets.removeAll(allActiveOutlets);
     }

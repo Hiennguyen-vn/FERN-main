@@ -15,7 +15,6 @@ import {
   Loader2,
   Eye,
   EyeOff,
-  Leaf,
 } from 'lucide-react';
 
 const AUTH_ERROR_MESSAGES: Record<AuthErrorType, { title: string; message: string; icon: React.ReactNode }> = {
@@ -127,15 +126,7 @@ export default function Login() {
       <div className="w-full max-w-md space-y-6">
         {/* Brand */}
         <div className="flex flex-col items-center gap-3">
-          <div
-            className="h-14 w-14 rounded-2xl flex items-center justify-center shadow-lg"
-            style={{
-              background:
-                'linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(152 60% 40%) 100%)',
-            }}
-          >
-            <Leaf className="h-7 w-7 text-primary-foreground" strokeWidth={2.25} />
-          </div>
+          <img src="/brand-mark.svg" alt="FERN" width={56} height={56} className="h-14 w-14 rounded-2xl shadow-lg" />
           <div className="text-center">
             <h1 className="text-3xl font-bold tracking-tight text-foreground">FERN</h1>
             <p className="text-xs mt-1 text-muted-foreground">

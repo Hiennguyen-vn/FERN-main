@@ -278,20 +278,20 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
     } catch (e) { toast.error(getErrorMessage(e, 'Failed')); } finally { setSaving(''); }
   };
 
+  const availCount = availability.filter(a => a.available).length;
+
   const TABS: { key: DetailTab; label: string; icon: React.ElementType }[] = canManageCatalog
     ? [
       { key: 'identity', label: 'Identity', icon: Package },
       { key: 'recipe', label: 'Recipe', icon: BookOpen },
       { key: 'pricing', label: 'Pricing', icon: DollarSign },
-      { key: 'availability', label: `Outlets (${availability.filter(a => a.available).length})`, icon: Store },
+      { key: 'availability', label: `Outlets (${availCount}/${outlets.length})`, icon: Store },
     ]
     : [
       { key: 'identity', label: 'Product', icon: Package },
       { key: 'recipe', label: 'Recipe', icon: BookOpen },
       { key: 'pricing', label: 'Pricing', icon: DollarSign },
     ];
-
-  const availCount = availability.filter(a => a.available).length;
   const priceCount = allPrices.length || prices.length;
   const pricedOutletIds = new Set(allPrices.map(p => String(p.outletId)));
 
@@ -353,9 +353,9 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
                     <ArrowRight className="h-3 w-3 text-muted-foreground" />
                   </button>
                   <button onClick={() => setTab('availability')} className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-muted/20 text-left">
-                    <Store className={cn('h-3.5 w-3.5 flex-shrink-0', availCount === 0 && availability.length > 0 ? 'text-amber-500' : 'text-emerald-500')} />
+                    <Store className={cn('h-3.5 w-3.5 flex-shrink-0', availCount === 0 && outlets.length > 0 ? 'text-amber-500' : 'text-emerald-500')} />
                     <span className="text-xs flex-1">Availability</span>
-                    <span className={cn('text-xs font-mono', availCount === 0 && availability.length > 0 ? 'text-amber-600 font-medium' : 'text-muted-foreground')}>{availCount}/{availability.length}</span>
+                    <span className={cn('text-xs font-mono', availCount === 0 && outlets.length > 0 ? 'text-amber-600 font-medium' : 'text-muted-foreground')}>{availCount}/{outlets.length}</span>
                     <ArrowRight className="h-3 w-3 text-muted-foreground" />
                   </button>
                 </div>
@@ -728,11 +728,11 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
             {/* Summary */}
             <div className="flex items-center justify-between">
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
-                Outlets ({availCount} enabled / {availability.length} total)
+                Outlets ({availCount} enabled / {outlets.length} total)
               </p>
             </div>
 
-            {availability.length === 0 ? (
+            {outlets.length === 0 ? (
               <EmptyState title="No availability data" description="No outlet availability records found." />
             ) : (
               (() => {
@@ -742,27 +742,26 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
                 const knownOutletIds = new Set(outlets.map(o => o.id));
                 const usedOutletIds = new Set<string>();
 
+                const syntheticAvail = (outlet: OrgOutlet): AvailabilityView =>
+                  ({ productId: product.id, outletId: outlet.id, available: false });
+
                 for (const region of regions) {
                   const regionOutlets = outletsForRegion(region.id);
-                  const items = regionOutlets
-                    .map(outlet => {
-                      const avail = availByOutlet.get(outlet.id);
-                      if (!avail) return null;
-                      usedOutletIds.add(outlet.id);
-                      return { outlet, avail, hasPriceAtOutlet: pricedOutletIds.has(outlet.id) };
-                    })
-                    .filter((x): x is NonNullable<typeof x> => x !== null);
+                  const items = regionOutlets.map(outlet => {
+                    const avail = availByOutlet.get(outlet.id) ?? syntheticAvail(outlet);
+                    usedOutletIds.add(outlet.id);
+                    return { outlet, avail, hasPriceAtOutlet: pricedOutletIds.has(outlet.id) };
+                  });
                   if (items.length > 0) regionGroups.push({ region, items });
                 }
 
                 // Known outlets not yet grouped (in user scope but no region match)
-                const knownOrphans = availability
-                  .filter(a => !usedOutletIds.has(String(a.outletId)) && knownOutletIds.has(String(a.outletId)))
-                  .map(a => {
-                    const outlet = outlets.find(o => o.id === String(a.outletId));
-                    if (!outlet) return null;
-                    usedOutletIds.add(String(a.outletId));
-                    return { outlet, avail: a, hasPriceAtOutlet: pricedOutletIds.has(String(a.outletId)) };
+                const knownOrphans = outlets
+                  .filter(o => !usedOutletIds.has(o.id))
+                  .map(outlet => {
+                    const avail = availByOutlet.get(outlet.id) ?? syntheticAvail(outlet);
+                    usedOutletIds.add(outlet.id);
+                    return { outlet, avail, hasPriceAtOutlet: pricedOutletIds.has(outlet.id) };
                   })
                   .filter((x): x is { outlet: typeof outlets[number]; avail: typeof availability[number]; hasPriceAtOutlet: boolean } => x !== null);
 
