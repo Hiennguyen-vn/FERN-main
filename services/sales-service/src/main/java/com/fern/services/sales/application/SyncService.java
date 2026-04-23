@@ -16,8 +16,11 @@ import org.springframework.stereotype.Service;
 @Service
 public class SyncService extends BaseRepository {
 
-    public SyncService(DataSource dataSource) {
+    private final SalesService salesService;
+
+    public SyncService(DataSource dataSource, SalesService salesService) {
         super(dataSource);
+        this.salesService = salesService;
     }
 
     // ── Catalog pull ──────────────────────────────────────────────────────────
@@ -169,19 +172,32 @@ public class SyncService extends BaseRepository {
         return new SyncDtos.PushResponse(accepted, rejected);
     }
 
+    @SuppressWarnings("unchecked")
     private void routeEvent(SyncDtos.PushEvent event) {
-        // Event routing stub — full routing wired in W4 when handlers are complete.
-        // Unknown types are accepted optimistically (server-side logged, not rejected).
         switch (event.type()) {
+            case "pos.sale.voided" -> {
+                // payload: {sale_id, reason}
+                java.util.Map<String, Object> p = (java.util.Map<String, Object>) event.payload();
+                long saleId = toLong(p.get("sale_id"));
+                String reason = (String) p.getOrDefault("reason", "voided_offline");
+                salesService.voidSaleFromSync(saleId, reason);
+            }
             case "pos.sale.submitted",
                  "pos.sale.approved",
                  "pos.payment.captured",
-                 "pos.sale.voided",
                  "pos.sale.refunded",
                  "pos.session.opened",
                  "pos.session.closed",
-                 "pos.inventory.adjusted" -> { /* accepted — full handler in W4 */ }
+                 "pos.inventory.adjusted" -> {
+                // Full handlers deferred to W4 integration phase.
+                // Accepted now; server stamps server_received_at via outbox relay.
+            }
             default -> throw ServiceException.badRequest("Unknown event type: " + event.type());
         }
+    }
+
+    private static long toLong(Object v) {
+        if (v instanceof Number n) return n.longValue();
+        return Long.parseLong(String.valueOf(v));
     }
 }

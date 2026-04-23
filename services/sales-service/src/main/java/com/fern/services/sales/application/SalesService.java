@@ -316,6 +316,13 @@ public class SalesService {
     return cancelled;
   }
 
+  // Alias used by sync push handler — voids an offline-submitted sale.
+  // Delegates to cancelSale; authorization bypassed for internal sync path.
+  public void voidSaleFromSync(long saleId, String reason) {
+    salesRepository.cancelSale(saleId, reason, null);
+    evictMonthlyRevenueCache();
+  }
+
   public PagedResult<SalesDtos.PosSessionListItemView> listPosSessions(
       Long outletId,
       LocalDate businessDate,
