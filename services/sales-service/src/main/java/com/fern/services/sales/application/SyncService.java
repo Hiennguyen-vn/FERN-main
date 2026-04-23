@@ -17,10 +17,12 @@ import org.springframework.stereotype.Service;
 public class SyncService extends BaseRepository {
 
     private final SalesService salesService;
+    private final PosMetrics posMetrics;
 
-    public SyncService(DataSource dataSource, SalesService salesService) {
+    public SyncService(DataSource dataSource, SalesService salesService, PosMetrics posMetrics) {
         super(dataSource);
         this.salesService = salesService;
+        this.posMetrics = posMetrics;
     }
 
     // ── Catalog pull ──────────────────────────────────────────────────────────
@@ -163,10 +165,12 @@ public class SyncService extends BaseRepository {
 
         for (SyncDtos.PushEvent event : request.events()) {
             try {
-                routeEvent(event);
+                posMetrics.recordSyncPushDuration(event.type(), () -> routeEvent(event));
                 accepted.add(event.eventId());
+                posMetrics.recordSyncPushEvent(event.type(), "accepted");
             } catch (Exception e) {
                 rejected.add(new SyncDtos.RejectedEvent(event.eventId(), e.getMessage()));
+                posMetrics.recordSyncPushEvent(event.type(), "rejected");
             }
         }
         return new SyncDtos.PushResponse(accepted, rejected);

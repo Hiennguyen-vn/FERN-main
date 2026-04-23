@@ -3,8 +3,10 @@ package com.dorabets.common.outbox;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
 import javax.sql.DataSource;
 import java.sql.*;
+import java.util.Optional;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,11 +25,18 @@ public class OutboxRelay {
     private final DataSource dataSource;
     private final TypedKafkaEventPublisher publisher;
     private final ObjectMapper objectMapper;
+    private final Optional<MeterRegistry> meterRegistry;
 
     public OutboxRelay(DataSource dataSource, TypedKafkaEventPublisher publisher, ObjectMapper objectMapper) {
+        this(dataSource, publisher, objectMapper, Optional.empty());
+    }
+
+    public OutboxRelay(DataSource dataSource, TypedKafkaEventPublisher publisher, ObjectMapper objectMapper,
+                       Optional<MeterRegistry> meterRegistry) {
         this.dataSource = dataSource;
         this.publisher = publisher;
         this.objectMapper = objectMapper;
+        this.meterRegistry = meterRegistry;
     }
 
     public void drain() {
@@ -99,6 +108,8 @@ public class OutboxRelay {
             ps.setLong(1, id);
             ps.setTimestamp(2, Timestamp.from(createdAt));
             ps.executeUpdate();
+            meterRegistry.ifPresent(r ->
+                r.counter("outbox_publish_rate_total", "status", "published").increment());
         } catch (SQLException e) {
             throw new RuntimeException("OutboxRelay.markPublished failed id=" + id, e);
         }
@@ -123,6 +134,10 @@ public class OutboxRelay {
             ps.setLong(5, id);
             ps.setTimestamp(6, Timestamp.from(createdAt));
             ps.executeUpdate();
+            if (newStatus.equals("FAILED")) {
+                meterRegistry.ifPresent(r ->
+                    r.counter("outbox_publish_rate_total", "status", "failed").increment());
+            }
         } catch (SQLException e) {
             throw new RuntimeException("OutboxRelay.markFailed failed id=" + id, e);
         }

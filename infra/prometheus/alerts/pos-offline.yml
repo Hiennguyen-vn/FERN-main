@@ -1,0 +1,76 @@
+groups:
+  - name: pos-offline
+    rules:
+
+      # P1 — Outbox stuck > 5 min
+      - alert: OutboxLagHigh
+        expr: outbox_publish_lag_seconds > 300
+        for: 10m
+        labels:
+          severity: P1
+        annotations:
+          summary: "Outbox lag > 5min sustained 10min"
+          description: "Outbox oldest PENDING event is {{ $value | humanizeDuration }} old. Check OutboxRelay and Kafka."
+
+      # P1 — Outbox backlog flood
+      - alert: OutboxDepthHigh
+        expr: outbox_pending_depth > 1000
+        for: 1m
+        labels:
+          severity: P1
+        annotations:
+          summary: "Outbox backlog > 1000 events"
+          description: "Current depth: {{ $value }}. Relay may be down or Kafka unavailable."
+
+      # P1 — Device offline during business hours
+      - alert: DeviceOfflineTooLong
+        expr: device_last_seen_lag_seconds > 7200
+        for: 5m
+        labels:
+          severity: P1
+        annotations:
+          summary: "POS device not seen > 2h during business hours"
+          description: "Oldest device last_seen lag: {{ $value | humanizeDuration }}. Device may be offline or crashed."
+
+      # P2 — Outbox warming lag
+      - alert: OutboxLagWarning
+        expr: outbox_publish_lag_seconds > 30
+        for: 5m
+        labels:
+          severity: P2
+        annotations:
+          summary: "Outbox lag > 30s sustained 5min"
+          description: "Current lag: {{ $value | humanizeDuration }}. Monitor for escalation."
+
+      # P2 — Sync rejection rate
+      - alert: SyncRejectedRateHigh
+        expr: |
+          rate(sync_push_events_total{outcome="rejected"}[5m])
+          /
+          rate(sync_push_events_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: P2
+        annotations:
+          summary: "Sync push rejected rate > 1%"
+          description: "Rejection rate: {{ $value | humanizePercentage }}. Check event validation or schema version."
+
+      # P2 — Negative inventory
+      - alert: NegativeInventoryBalance
+        expr: inventory_negative_balance_total > 0
+        for: 1m
+        labels:
+          severity: P2
+        annotations:
+          summary: "{{ $value }} SKUs have negative stock balance"
+          description: "Oversell allowed offline. Flag for reconciliation at shift close."
+
+      # P1 — Outbox FAILED count spike
+      - alert: OutboxFailedCountHigh
+        expr: increase(outbox_publish_rate_total{status="failed"}[10m]) > 50
+        for: 1m
+        labels:
+          severity: P1
+        annotations:
+          summary: "Outbox FAILED events > 50 in 10min"
+          description: "{{ $value }} events failed recently. Check DLQ and Kafka connectivity."

@@ -1,0 +1,186 @@
+{
+  "uid": "pos-offline-health",
+  "title": "Offline POS Health",
+  "tags": ["pos", "offline", "fern"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "prometheus" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Outbox Pending Depth",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "expr": "outbox_pending_depth", "legendFormat": "pending" }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "thresholds": {
+          "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 100 },
+            { "color": "red", "value": 1000 }
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Outbox Publish Lag (s)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "expr": "outbox_publish_lag_seconds", "legendFormat": "lag" }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "unit": "s",
+        "thresholds": {
+          "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 30 },
+            { "color": "red", "value": 300 }
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Inventory Negative Balances",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "expr": "inventory_negative_balance_total", "legendFormat": "negative SKUs" }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "thresholds": {
+          "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 1 }
+          ]
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Device Last Seen Lag (s)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "expr": "device_last_seen_lag_seconds", "legendFormat": "lag" }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "unit": "s",
+        "thresholds": {
+          "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 3600 },
+            { "color": "red", "value": 7200 }
+          ]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Sync Push Events Rate by Outcome",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "rate(sync_push_events_total{outcome=\"accepted\"}[1m])",
+          "legendFormat": "accepted / {{event_type}}"
+        },
+        {
+          "expr": "rate(sync_push_events_total{outcome=\"rejected\"}[1m])",
+          "legendFormat": "rejected / {{event_type}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Sync Push Duration p99 (s)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(sync_push_duration_seconds_bucket[1m]))",
+          "legendFormat": "p99 / {{event_type}}"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(sync_push_duration_seconds_bucket[1m]))",
+          "legendFormat": "p50 / {{event_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    },
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Payment State Transitions",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "increase(payment_state_transitions_total[1h])",
+          "legendFormat": "{{from_state}} → {{to_state}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Outbox Published vs Failed Rate",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "rate(outbox_publish_rate_total{status=\"published\"}[1m])",
+          "legendFormat": "published/s"
+        },
+        {
+          "expr": "rate(outbox_publish_rate_total{status=\"failed\"}[1m])",
+          "legendFormat": "failed/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      }
+    }
+  ]
+}
