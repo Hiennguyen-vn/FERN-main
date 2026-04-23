@@ -7,7 +7,6 @@ import com.dorabets.common.spring.auth.AuthSessionService;
 import com.dorabets.common.spring.auth.BusinessScopeAssignment;
 import com.dorabets.common.spring.auth.BusinessUserProfile;
 import com.dorabets.common.spring.auth.CanonicalRole;
-import com.dorabets.common.spring.auth.JwtClaims;
 import com.dorabets.common.spring.auth.JwtTokenService;
 import com.dorabets.common.spring.auth.OrgScopeRepository;
 import com.dorabets.common.spring.auth.PermissionMatrix;
@@ -842,5 +841,34 @@ public class AuthService {
       return delimiterIndex >= 0 ? forwardedFor.substring(0, delimiterIndex).trim() : forwardedFor;
     }
     return trimToNull(request.getRemoteAddr());
+  }
+
+  // Issues a 12-hour offline JWT for the authenticated user.
+  // Requires an active online session — caller must be authenticated.
+  public AuthDtos.LeaseOfflineResponse leaseOffline(AuthDtos.LeaseOfflineRequest request) {
+    var ctx = RequestUserContextHolder.get();
+    ctx.requireUserId();
+
+    long offlineTtlSeconds = 12 * 3600L;
+    Instant now = clock.instant();
+    Instant graceUntil = now.plusSeconds(offlineTtlSeconds);
+
+    // Re-derive current user's roles/permissions for the offline token
+    PermissionMatrix matrix = permissionMatrixService.load(ctx.userId());
+    Set<Long> outletIds = new java.util.LinkedHashSet<>();
+    outletIds.addAll(matrix.rolesByOutlet().keySet());
+    outletIds.addAll(matrix.permissionsByOutlet().keySet());
+
+    String token = jwtTokenService.issueAccessToken(
+        ctx.userId(),
+        ctx.username(),
+        ctx.sessionId(),
+        flatten(matrix.rolesByOutlet()),
+        flatten(matrix.permissionsByOutlet()),
+        outletIds,
+        offlineTtlSeconds
+    );
+
+    return new AuthDtos.LeaseOfflineResponse(token, offlineTtlSeconds, graceUntil);
   }
 }

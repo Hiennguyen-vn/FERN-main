@@ -243,4 +243,16 @@ public final class AuthDtos {
       Instant createdAt
   ) {
   }
+
+  public record LeaseOfflineRequest(
+      long deviceId
+  ) {
+  }
+
+  public record LeaseOfflineResponse(
+      String offlineToken,
+      long expiresInSeconds,
+      Instant offlineGraceUntil
+  ) {
+  }
 }

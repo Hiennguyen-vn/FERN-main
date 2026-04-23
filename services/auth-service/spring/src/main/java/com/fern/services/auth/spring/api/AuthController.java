@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -236,6 +237,12 @@ public class AuthController {
       builder.domain(authCookieDomain.trim());
     }
     response.addHeader(HttpHeaders.SET_COOKIE, builder.build().toString());
+  }
+
+  @PostMapping("/lease-offline")
+  public ResponseEntity<AuthDtos.LeaseOfflineResponse> leaseOffline(
+      @RequestBody AuthDtos.LeaseOfflineRequest request) {
+    return ResponseEntity.ok(authService.leaseOffline(request));
   }
 
   private void clearSessionCookie(HttpServletResponse response) {
