@@ -678,6 +678,30 @@ public class SalesRepository extends BaseRepository {
     return executeInTransaction(conn -> findPosSession(conn, sessionId));
   }
 
+  public Optional<SalesDtos.PosSessionView> findOpenPosSessionForOutlet(long outletId, java.time.LocalDate businessDate) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          SELECT id, session_code, outlet_id, currency_code, manager_id, opened_at, closed_at, business_date, status, note
+          FROM core.pos_session
+          WHERE outlet_id = ?
+            AND business_date = ?
+            AND status = 'open'::pos_session_status_enum
+          LIMIT 1
+          """
+      )) {
+        ps.setLong(1, outletId);
+        ps.setObject(2, businessDate);
+        try (ResultSet rs = ps.executeQuery()) {
+          if (rs.next()) {
+            return Optional.of(mapPosSession(rs));
+          }
+          return Optional.empty();
+        }
+      }
+    });
+  }
+
   public SalesDtos.SaleView approveSale(long saleId, Long actorUserId) {
     return executeInTransaction(conn -> {
       LockedSaleRecord lockedSale = lockSale(conn, saleId)

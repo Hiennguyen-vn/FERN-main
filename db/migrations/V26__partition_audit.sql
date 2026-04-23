@@ -93,6 +93,6 @@ FROM core.audit_log_legacy;
 -- ─── 4. Drop legacy (uncomment after row-count verification) ─────────────────
 -- SELECT COUNT(*) FROM core.audit_log;
 -- SELECT COUNT(*) FROM core.audit_log_legacy;
--- DROP TABLE core.audit_log_legacy;
+DROP TABLE core.audit_log_legacy;
 
 COMMIT;

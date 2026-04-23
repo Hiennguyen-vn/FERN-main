@@ -6,11 +6,14 @@ import com.fern.services.sales.api.SyncDtos;
 import com.fern.services.sales.api.SyncDtos.CatalogRow;
 import com.fern.services.sales.api.SyncDtos.StockRow;
 import javax.sql.DataSource;
+import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -180,28 +183,91 @@ public class SyncService extends BaseRepository {
     private void routeEvent(SyncDtos.PushEvent event) {
         switch (event.type()) {
             case "pos.sale.voided" -> {
-                // payload: {sale_id, reason}
-                java.util.Map<String, Object> p = (java.util.Map<String, Object>) event.payload();
+                Map<String, Object> p = (Map<String, Object>) event.payload();
                 long saleId = toLong(p.get("sale_id"));
-                String reason = (String) p.getOrDefault("reason", "voided_offline");
+                String reason = toStr(p.get("reason"), "voided_offline");
                 salesService.voidSaleFromSync(saleId, reason);
             }
-            case "pos.sale.submitted",
-                 "pos.sale.approved",
-                 "pos.payment.captured",
-                 "pos.sale.refunded",
-                 "pos.session.opened",
-                 "pos.session.closed",
-                 "pos.inventory.adjusted" -> {
-                // Full handlers deferred to W4 integration phase.
-                // Accepted now; server stamps server_received_at via outbox relay.
+            case "pos.sale.submitted" -> {
+                Map<String, Object> p = (Map<String, Object>) event.payload();
+                salesService.submitSaleFromSync(p);
+            }
+            case "pos.sale.approved" -> {
+                Map<String, Object> p = (Map<String, Object>) event.payload();
+                long saleId = toLong(p.get("sale_id"));
+                Long actorUserId = p.containsKey("actor_user_id") && p.get("actor_user_id") != null
+                    ? toLong(p.get("actor_user_id")) : null;
+                salesService.approveSaleFromSync(saleId, actorUserId);
+            }
+            case "pos.payment.captured" -> {
+                Map<String, Object> p = (Map<String, Object>) event.payload();
+                salesService.capturePaymentFromSync(p);
+            }
+            case "pos.sale.refunded" -> {
+                Map<String, Object> p = (Map<String, Object>) event.payload();
+                long saleId = toLong(p.get("sale_id"));
+                BigDecimal amount = toBigDecimal(p.get("amount"));
+                String reason = toStr(p.get("reason"), "refunded_offline");
+                salesService.refundSaleFromSync(saleId, amount, reason);
+            }
+            case "pos.session.opened" -> {
+                Map<String, Object> p = (Map<String, Object>) event.payload();
+                salesService.openPosSessionFromSync(p);
+            }
+            case "pos.session.closed" -> {
+                Map<String, Object> p = (Map<String, Object>) event.payload();
+                long sessionId = toLong(p.get("session_id"));
+                salesService.closePosSessionFromSync(sessionId);
+            }
+            case "pos.inventory.adjusted" -> {
+                Map<String, Object> p = (Map<String, Object>) event.payload();
+                adjustInventoryFromSync(p);
             }
             default -> throw ServiceException.badRequest("Unknown event type: " + event.type());
         }
     }
 
+    /** Direct JDBC inventory adjustment — inventory-service is not a dependency of sales-service. */
+    private void adjustInventoryFromSync(Map<String, Object> payload) {
+        long itemId    = toLong(payload.get("item_id"));
+        long outletId  = toLong(payload.get("outlet_id"));
+        BigDecimal qtyDelta = toBigDecimal(payload.get("qty_delta"));
+        String reason  = toStr(payload.get("reason"), "sync_adjustment");
+        String clientOccurredAt = toStr(payload.get("client_occurred_at"), null);
+        Instant txnTime = clientOccurredAt != null ? Instant.parse(clientOccurredAt) : Instant.now();
+        String txnType = qtyDelta.compareTo(BigDecimal.ZERO) >= 0
+            ? "stock_adjustment_in" : "stock_adjustment_out";
+
+        executeInTransaction(conn -> {
+            String sql = """
+                INSERT INTO core.inventory_transaction
+                  (item_id, outlet_id, txn_type, qty_change, reference_note, txn_time, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """;
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setLong(1, itemId);
+                ps.setLong(2, outletId);
+                ps.setString(3, txnType);
+                ps.setBigDecimal(4, qtyDelta);
+                ps.setString(5, reason);
+                ps.setTimestamp(6, Timestamp.from(txnTime));
+                ps.setTimestamp(7, Timestamp.from(Instant.now()));
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
     private static long toLong(Object v) {
         if (v instanceof Number n) return n.longValue();
         return Long.parseLong(String.valueOf(v));
+    }
+
+    private static BigDecimal toBigDecimal(Object v) {
+        return SalesService.toBigDecimal(v);
+    }
+
+    private static String toStr(Object v, String defaultValue) {
+        return SalesService.toStr(v, defaultValue);
     }
 }

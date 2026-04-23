@@ -323,6 +323,128 @@ public class SalesService {
     evictMonthlyRevenueCache();
   }
 
+  // ── Sync push handlers (W4) ───────────────────────────────────────────────
+  // All methods below bypass RequestUserContext authorization because
+  // they are called from the internal sync path (device → server reconcile).
+
+  public SalesDtos.SaleView submitSaleFromSync(java.util.Map<String, Object> payload) {
+    long outletId = toLong(payload.get("outlet_id"));
+    Long posSessionId = payload.containsKey("pos_session_id") && payload.get("pos_session_id") != null
+        ? toLong(payload.get("pos_session_id")) : null;
+    String currencyCode = toStr(payload.get("currency_code"), "VND");
+    String note = toStr(payload.get("note"), null);
+
+    @SuppressWarnings("unchecked")
+    java.util.List<java.util.Map<String, Object>> rawItems =
+        (java.util.List<java.util.Map<String, Object>>) payload.get("items");
+    if (rawItems == null || rawItems.isEmpty()) {
+      throw new IllegalArgumentException("items must not be empty");
+    }
+    java.util.List<SalesDtos.SaleLineRequest> lines = rawItems.stream().map(item -> {
+      long productId = toLong(item.get("product_id"));
+      java.math.BigDecimal qty = toBigDecimal(item.getOrDefault("quantity", 1));
+      java.math.BigDecimal discount = item.containsKey("discount_amount")
+          ? toBigDecimal(item.get("discount_amount")) : null;
+      java.math.BigDecimal tax = item.containsKey("tax_amount")
+          ? toBigDecimal(item.get("tax_amount")) : null;
+      String itemNote = toStr(item.get("note"), null);
+      return new SalesDtos.SaleLineRequest(productId, qty, discount, tax, itemNote, null);
+    }).toList();
+
+    SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
+        outletId, posSessionId, currencyCode, "pos", note, lines, null
+    );
+    return salesRepository.submitSale(request);
+  }
+
+  public SalesDtos.SaleView approveSaleFromSync(long saleId, Long actorUserId) {
+    return salesRepository.approveSale(saleId, actorUserId);
+  }
+
+  public SalesDtos.SaleView capturePaymentFromSync(java.util.Map<String, Object> payload) {
+    long saleId = toLong(payload.get("sale_id"));
+    java.math.BigDecimal amount = toBigDecimal(payload.get("amount"));
+    String paymentMethod = toStr(payload.get("payment_method"), "cash");
+    String transactionRef = toStr(payload.get("transaction_ref"), null);
+    String clientOccurredAt = toStr(payload.get("client_occurred_at"), null);
+    java.time.Instant paymentTime = clientOccurredAt != null
+        ? java.time.Instant.parse(clientOccurredAt) : clock.instant();
+
+    SalesDtos.MarkPaymentDoneRequest request = new SalesDtos.MarkPaymentDoneRequest(
+        paymentMethod, amount, paymentTime, transactionRef, null
+    );
+    SalesDtos.SaleView paid = salesRepository.markPaymentDone(saleId, request);
+    evictMonthlyRevenueCache();
+    return paid;
+  }
+
+  public void refundSaleFromSync(long saleId, java.math.BigDecimal amount, String reason) {
+    SalesDtos.SaleView existing = salesRepository.findSale(saleId).orElse(null);
+    if (existing == null) {
+      return; // idempotent — already gone
+    }
+    String status = existing.status();
+    if ("submitted".equalsIgnoreCase(status) || "approved".equalsIgnoreCase(status)) {
+      salesRepository.cancelSale(saleId, reason, null);
+      evictMonthlyRevenueCache();
+    }
+    // If already cancelled/completed accept silently (MVP: log and move on)
+  }
+
+  public SalesDtos.PosSessionView openPosSessionFromSync(java.util.Map<String, Object> payload) {
+    long outletId = toLong(payload.get("outlet_id"));
+    long managerUserId = toLong(payload.get("manager_user_id"));
+    String currencyCode = toStr(payload.get("currency_code"), "VND");
+    String businessDateStr = toStr(payload.get("business_date"), null);
+    java.time.LocalDate businessDate = businessDateStr != null
+        ? java.time.LocalDate.parse(businessDateStr) : java.time.LocalDate.now(clock);
+    String clientOccurredAt = toStr(payload.get("client_occurred_at"), null);
+
+    // Check idempotency — if session already open for this outlet+date return existing
+    java.util.Optional<SalesDtos.PosSessionView> existingOpen =
+        salesRepository.findOpenPosSessionForOutlet(outletId, businessDate);
+    if (existingOpen.isPresent()) {
+      return existingOpen.get();
+    }
+
+    String sessionCode = "SYNC-" + outletId + "-" + businessDate.toString().replace("-", "");
+    SalesDtos.OpenPosSessionRequest request = new SalesDtos.OpenPosSessionRequest(
+        sessionCode, outletId, currencyCode, managerUserId, businessDate, "opened_offline"
+    );
+    return salesRepository.openPosSession(request);
+  }
+
+  public SalesDtos.PosSessionView closePosSessionFromSync(long sessionId) {
+    SalesDtos.PosSessionView session = salesRepository.findPosSession(sessionId).orElse(null);
+    if (session == null || "closed".equalsIgnoreCase(session.status())) {
+      return session; // idempotent
+    }
+    try {
+      return salesRepository.closePosSession(sessionId, null);
+    } catch (com.dorabets.common.middleware.ServiceException ex) {
+      // SESSION_HAS_UNPAID_ORDERS or other conflict — accept silently for sync
+      return salesRepository.findPosSession(sessionId).orElse(session);
+    }
+  }
+
+  private static long toLong(Object v) {
+    if (v instanceof Number n) return n.longValue();
+    return Long.parseLong(String.valueOf(v));
+  }
+
+  static java.math.BigDecimal toBigDecimal(Object v) {
+    if (v == null) return java.math.BigDecimal.ZERO;
+    if (v instanceof java.math.BigDecimal bd) return bd;
+    if (v instanceof Number n) return java.math.BigDecimal.valueOf(n.doubleValue());
+    return new java.math.BigDecimal(String.valueOf(v));
+  }
+
+  static String toStr(Object v, String defaultValue) {
+    if (v == null) return defaultValue;
+    String s = String.valueOf(v).trim();
+    return s.isEmpty() ? defaultValue : s;
+  }
+
   public PagedResult<SalesDtos.PosSessionListItemView> listPosSessions(
       Long outletId,
       LocalDate businessDate,

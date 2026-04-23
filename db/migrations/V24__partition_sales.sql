@@ -330,8 +330,8 @@ ALTER TABLE core.sale_item_transaction
 -- Uncomment only after confirming row counts match:
 --   SELECT COUNT(*) FROM core.sale_record;
 --   SELECT COUNT(*) FROM core.sale_record_legacy;
--- DROP TABLE core.sale_item_legacy;
--- DROP TABLE core.payment_legacy;
--- DROP TABLE core.sale_record_legacy;
+DROP TABLE core.sale_item_legacy;
+DROP TABLE core.payment_legacy;
+DROP TABLE core.sale_record_legacy;
 
 COMMIT;

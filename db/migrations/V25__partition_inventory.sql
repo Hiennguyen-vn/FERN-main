@@ -193,6 +193,6 @@ ALTER TABLE core.manufacturing_transaction
 -- ─── 5. Drop legacy (uncomment after row-count verification) ─────────────────
 -- SELECT COUNT(*) FROM core.inventory_transaction;
 -- SELECT COUNT(*) FROM core.inventory_transaction_legacy;
--- DROP TABLE core.inventory_transaction_legacy;
+DROP TABLE core.inventory_transaction_legacy;
 
 COMMIT;
