@@ -1,0 +1,32 @@
+{
+  "index_patterns": ["audit-logs*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 2,
+      "number_of_replicas": 1,
+      "index.lifecycle.name": "audit-logs-policy",
+      "index.lifecycle.rollover_alias": "audit-logs"
+    },
+    "mappings": {
+      "properties": {
+        "audit_id": { "type": "long" },
+        "action": { "type": "keyword" },
+        "entity_name": { "type": "keyword" },
+        "entity_id": { "type": "keyword" },
+        "user_id": { "type": "long" },
+        "username": { "type": "keyword" },
+        "outlet_id": { "type": "integer" },
+        "ip_address": { "type": "ip" },
+        "user_agent": { "type": "text", "index": false },
+        "request_id": { "type": "keyword" },
+        "description": {
+          "type": "text",
+          "analyzer": "standard"
+        },
+        "diff": { "type": "object", "enabled": false },
+        "timestamp": { "type": "date" },
+        "severity": { "type": "keyword" }
+      }
+    }
+  }
+}

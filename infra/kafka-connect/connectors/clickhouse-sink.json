@@ -1,0 +1,24 @@
+{
+  "name": "fern-clickhouse-sink",
+  "config": {
+    "connector.class": "com.clickhouse.kafka.connect.ClickHouseSinkConnector",
+    "tasks.max": "2",
+    "topics": "fern.cdc.core.sale_record,fern.cdc.core.sale_item,fern.cdc.core.payment,fern.cdc.core.inventory_transaction,fern.cdc.core.product,fern.cdc.core.outlet",
+    "hostname": "clickhouse",
+    "port": "8123",
+    "database": "fern",
+    "username": "default",
+    "password": "",
+    "ssl": "false",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter.schemas.enable": "false",
+    "exactlyOnce": "false",
+    "tableMapping.fern.cdc.core.sale_record": "fact_sale",
+    "tableMapping.fern.cdc.core.sale_item": "fact_sale",
+    "tableMapping.fern.cdc.core.inventory_transaction": "fact_inventory_movement",
+    "tableMapping.fern.cdc.core.product": "dim_product",
+    "tableMapping.fern.cdc.core.outlet": "dim_outlet"
+  }
+}

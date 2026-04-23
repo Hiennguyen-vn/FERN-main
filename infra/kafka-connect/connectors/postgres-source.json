@@ -1,0 +1,21 @@
+{
+  "name": "fern-postgres-source",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "fern",
+    "database.password": "fern",
+    "database.dbname": "fern",
+    "database.server.name": "fern",
+    "plugin.name": "pgoutput",
+    "slot.name": "debezium_slot",
+    "publication.name": "debezium_pub",
+    "table.include.list": "core.sale_record,core.sale_item,core.payment,core.inventory_transaction,core.product,core.outlet",
+    "topic.prefix": "fern.cdc",
+    "transforms": "route",
+    "transforms.route.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter"
+  }
+}

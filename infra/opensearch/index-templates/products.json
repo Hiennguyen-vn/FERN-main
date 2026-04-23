@@ -1,0 +1,50 @@
+{
+  "index_patterns": ["products*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 2,
+      "number_of_replicas": 1,
+      "analysis": {
+        "analyzer": {
+          "vietnamese_standard": {
+            "type": "standard",
+            "stopwords": "_none_"
+          },
+          "product_search_analyzer": {
+            "type": "custom",
+            "tokenizer": "standard",
+            "filter": ["lowercase", "asciifolding", "word_delimiter_graph"]
+          }
+        }
+      }
+    },
+    "mappings": {
+      "properties": {
+        "product_id": { "type": "long" },
+        "name": {
+          "type": "text",
+          "analyzer": "product_search_analyzer",
+          "fields": {
+            "keyword": { "type": "keyword" },
+            "suggest": {
+              "type": "completion"
+            }
+          }
+        },
+        "category_id": { "type": "integer" },
+        "category_name": {
+          "type": "text",
+          "analyzer": "product_search_analyzer",
+          "fields": {
+            "keyword": { "type": "keyword" }
+          }
+        },
+        "sku": { "type": "keyword" },
+        "barcode": { "type": "keyword" },
+        "price": { "type": "scaled_float", "scaling_factor": 100 },
+        "active": { "type": "boolean" },
+        "updated_at": { "type": "date" }
+      }
+    }
+  }
+}
