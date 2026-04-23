@@ -639,8 +639,8 @@ public class SalesRepository extends BaseRepository {
       ps.executeUpdate();
     }
 
-    insertSaleItems(conn, saleId, aggregatedLines.values(), now);
-    insertSalePromotions(conn, saleId, aggregatedLines.values(), now);
+    insertSaleItems(conn, saleId, request.outletId(), now, aggregatedLines.values(), now);
+    insertSalePromotions(conn, saleId, now, aggregatedLines.values(), now);
     return findSale(conn, saleId)
         .orElseThrow(() -> new IllegalStateException("Created sale not found"));
   }
@@ -694,7 +694,7 @@ public class SalesRepository extends BaseRepository {
                 "No open POS session for outlet " + lockedSale.outletId()
                     + " — open a session before approving customer orders"));
       }
-      Map<Long, AggregatedSaleLine> aggregatedLines = loadSaleLinesForInventory(conn, saleId);
+      Map<Long, AggregatedSaleLine> aggregatedLines = loadSaleLinesForInventory(conn, saleId, lockedSale.createdAt());
       validateStockAvailability(
           conn,
           lockedSale.outletId(),
@@ -705,6 +705,7 @@ public class SalesRepository extends BaseRepository {
         applyInventoryUsageForSale(
             conn,
             saleId,
+            lockedSale.createdAt(),
             lockedSale.outletId(),
             lockedSale.businessDate(),
             actorUserId,
@@ -764,7 +765,7 @@ public class SalesRepository extends BaseRepository {
         throw ServiceException.conflict("Payment amount must match the approved order total");
       }
       Instant paymentTime = request.paymentTime() == null ? clock.instant() : request.paymentTime();
-      upsertPayment(conn, saleId, lockedSale.posSessionId(), request, amount, paymentTime);
+      upsertPayment(conn, saleId, lockedSale.outletId(), lockedSale.createdAt(), lockedSale.posSessionId(), request, amount, paymentTime);
       try (PreparedStatement ps = conn.prepareStatement(
           """
           UPDATE core.sale_record
@@ -1755,8 +1756,9 @@ public class SalesRepository extends BaseRepository {
     return aggregated;
   }
 
-  private void insertSaleItems(Connection conn, long saleId, Iterable<AggregatedSaleLine> lines, Instant now)
-      throws Exception {
+  private void insertSaleItems(
+      Connection conn, long saleId, long outletId, Instant saleCreatedAt,
+      Iterable<AggregatedSaleLine> lines, Instant now) throws Exception {
     for (AggregatedSaleLine line : lines) {
       BigDecimal lineTotal = line.unitPrice()
           .multiply(line.quantity())
@@ -1766,39 +1768,44 @@ public class SalesRepository extends BaseRepository {
       try (PreparedStatement ps = conn.prepareStatement(
           """
           INSERT INTO core.sale_item (
-            sale_id, product_id, unit_price, qty, discount_amount, tax_amount, line_total, note, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            sale_id, sale_created_at, outlet_id, product_id,
+            unit_price, qty, discount_amount, tax_amount, line_total, note, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           """
       )) {
         ps.setLong(1, saleId);
-        ps.setLong(2, line.productId());
-        ps.setBigDecimal(3, line.unitPrice());
-        ps.setBigDecimal(4, line.quantity());
-        ps.setBigDecimal(5, line.discountAmount().setScale(2, RoundingMode.HALF_UP));
-        ps.setBigDecimal(6, line.taxAmount().setScale(2, RoundingMode.HALF_UP));
-        ps.setBigDecimal(7, lineTotal);
-        ps.setString(8, line.note());
-        ps.setTimestamp(9, Timestamp.from(now));
-        ps.setTimestamp(10, Timestamp.from(now));
+        ps.setTimestamp(2, Timestamp.from(saleCreatedAt));
+        ps.setLong(3, outletId);
+        ps.setLong(4, line.productId());
+        ps.setBigDecimal(5, line.unitPrice());
+        ps.setBigDecimal(6, line.quantity());
+        ps.setBigDecimal(7, line.discountAmount().setScale(2, RoundingMode.HALF_UP));
+        ps.setBigDecimal(8, line.taxAmount().setScale(2, RoundingMode.HALF_UP));
+        ps.setBigDecimal(9, lineTotal);
+        ps.setString(10, line.note());
+        ps.setTimestamp(11, Timestamp.from(now));
+        ps.setTimestamp(12, Timestamp.from(now));
         ps.executeUpdate();
       }
     }
   }
 
-  private void insertSalePromotions(Connection conn, long saleId, Iterable<AggregatedSaleLine> lines, Instant now)
-      throws Exception {
+  private void insertSalePromotions(
+      Connection conn, long saleId, Instant saleCreatedAt,
+      Iterable<AggregatedSaleLine> lines, Instant now) throws Exception {
     for (AggregatedSaleLine line : lines) {
       for (Long promotionId : line.promotionIds()) {
         try (PreparedStatement ps = conn.prepareStatement(
             """
-            INSERT INTO core.sale_item_promotion (sale_id, product_id, promotion_id, created_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO core.sale_item_promotion (sale_id, sale_created_at, product_id, promotion_id, created_at)
+            VALUES (?, ?, ?, ?, ?)
             """
         )) {
           ps.setLong(1, saleId);
-          ps.setLong(2, line.productId());
-          ps.setLong(3, promotionId);
-          ps.setTimestamp(4, Timestamp.from(now));
+          ps.setTimestamp(2, Timestamp.from(saleCreatedAt));
+          ps.setLong(3, line.productId());
+          ps.setLong(4, promotionId);
+          ps.setTimestamp(5, Timestamp.from(now));
           ps.executeUpdate();
         }
       }
@@ -1808,6 +1815,8 @@ public class SalesRepository extends BaseRepository {
   private void upsertPayment(
       Connection conn,
       long saleId,
+      long outletId,
+      Instant saleCreatedAt,
       Long posSessionId,
       SalesDtos.MarkPaymentDoneRequest payment,
       BigDecimal totalAmount,
@@ -1827,7 +1836,7 @@ public class SalesRepository extends BaseRepository {
               transaction_ref = ?,
               note = ?,
               updated_at = ?
-          WHERE sale_id = ?
+          WHERE sale_id = ? AND sale_created_at = ?
           """
       )) {
         if (posSessionId == null) {
@@ -1842,6 +1851,7 @@ public class SalesRepository extends BaseRepository {
         ps.setString(6, trimToNull(payment.note()));
         ps.setTimestamp(7, Timestamp.from(now));
         ps.setLong(8, saleId);
+        ps.setTimestamp(9, Timestamp.from(saleCreatedAt));
         ps.executeUpdate();
       }
       return;
@@ -1849,39 +1859,45 @@ public class SalesRepository extends BaseRepository {
     try (PreparedStatement ps = conn.prepareStatement(
         """
         INSERT INTO core.payment (
-          sale_id, pos_session_id, payment_method, amount, status, payment_time, transaction_ref, note, created_at, updated_at
-        ) VALUES (?, ?, ?::payment_method_enum, ?, ?::payment_txn_status_enum, ?, ?, ?, ?, ?)
+          sale_id, sale_created_at, outlet_id, pos_session_id,
+          payment_method, amount, status, payment_time, transaction_ref, note,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?::payment_method_enum, ?, ?::payment_txn_status_enum, ?, ?, ?, ?, ?)
         """
     )) {
       ps.setLong(1, saleId);
+      ps.setTimestamp(2, Timestamp.from(saleCreatedAt));
+      ps.setLong(3, outletId);
       if (posSessionId == null) {
-        ps.setNull(2, java.sql.Types.BIGINT);
+        ps.setNull(4, java.sql.Types.BIGINT);
       } else {
-        ps.setLong(2, posSessionId);
+        ps.setLong(4, posSessionId);
       }
-      ps.setString(3, payment.paymentMethod().trim());
-      ps.setBigDecimal(4, totalAmount);
-      ps.setString(5, "success");
-      ps.setTimestamp(6, Timestamp.from(paymentTime));
-      ps.setString(7, trimToNull(payment.transactionRef()));
-      ps.setString(8, trimToNull(payment.note()));
-      ps.setTimestamp(9, Timestamp.from(now));
-      ps.setTimestamp(10, Timestamp.from(now));
+      ps.setString(5, payment.paymentMethod().trim());
+      ps.setBigDecimal(6, totalAmount);
+      ps.setString(7, "success");
+      ps.setTimestamp(8, Timestamp.from(paymentTime));
+      ps.setString(9, trimToNull(payment.transactionRef()));
+      ps.setString(10, trimToNull(payment.note()));
+      ps.setTimestamp(11, Timestamp.from(now));
+      ps.setTimestamp(12, Timestamp.from(now));
       ps.executeUpdate();
     }
   }
 
-  private Map<Long, AggregatedSaleLine> loadSaleLinesForInventory(Connection conn, long saleId) throws Exception {
+  private Map<Long, AggregatedSaleLine> loadSaleLinesForInventory(
+      Connection conn, long saleId, Instant saleCreatedAt) throws Exception {
     Map<Long, AggregatedSaleLine> aggregated = new LinkedHashMap<>();
     try (PreparedStatement ps = conn.prepareStatement(
         """
         SELECT product_id, qty, unit_price, discount_amount, tax_amount, note
         FROM core.sale_item
-        WHERE sale_id = ?
+        WHERE sale_id = ? AND sale_created_at = ?
         ORDER BY product_id
         """
     )) {
       ps.setLong(1, saleId);
+      ps.setTimestamp(2, Timestamp.from(saleCreatedAt));
       try (ResultSet rs = ps.executeQuery()) {
         while (rs.next()) {
           long productId = rs.getLong("product_id");
@@ -1903,6 +1919,7 @@ public class SalesRepository extends BaseRepository {
   private void applyInventoryUsageForSale(
       Connection conn,
       long saleId,
+      Instant saleCreatedAt,
       long outletId,
       LocalDate businessDate,
       Long actorUserId,
@@ -1911,7 +1928,7 @@ public class SalesRepository extends BaseRepository {
     InventoryPlan plan = buildInventoryPlan(conn, outletId, aggregatedLines, false);
     Instant txnTime = clock.instant();
     for (SaleUsageMovement movement : plan.movements()) {
-      if (saleItemTransactionExists(conn, saleId, movement.productId(), movement.itemId())) {
+      if (saleItemTransactionExists(conn, saleId, saleCreatedAt, movement.productId(), movement.itemId())) {
         continue;
       }
       long inventoryTransactionId = snowflakeIdGenerator.generateId();
@@ -1929,32 +1946,37 @@ public class SalesRepository extends BaseRepository {
       try (PreparedStatement ps = conn.prepareStatement(
           """
           INSERT INTO core.sale_item_transaction (
-            inventory_transaction_id, sale_id, product_id, item_id
-          ) VALUES (?, ?, ?, ?)
+            inventory_transaction_id, txn_time, sale_id, sale_created_at, product_id, item_id
+          ) VALUES (?, ?, ?, ?, ?, ?)
           """
       )) {
         ps.setLong(1, inventoryTransactionId);
-        ps.setLong(2, saleId);
-        ps.setLong(3, movement.productId());
-        ps.setLong(4, movement.itemId());
+        ps.setTimestamp(2, Timestamp.from(txnTime));
+        ps.setLong(3, saleId);
+        ps.setTimestamp(4, Timestamp.from(saleCreatedAt));
+        ps.setLong(5, movement.productId());
+        ps.setLong(6, movement.itemId());
         ps.executeUpdate();
       }
     }
   }
 
-  private boolean saleItemTransactionExists(Connection conn, long saleId, long productId, long itemId) throws Exception {
+  private boolean saleItemTransactionExists(
+      Connection conn, long saleId, Instant saleCreatedAt, long productId, long itemId) throws Exception {
     try (PreparedStatement ps = conn.prepareStatement(
         """
         SELECT 1
         FROM core.sale_item_transaction
         WHERE sale_id = ?
+          AND sale_created_at = ?
           AND product_id = ?
           AND item_id = ?
         """
     )) {
       ps.setLong(1, saleId);
-      ps.setLong(2, productId);
-      ps.setLong(3, itemId);
+      ps.setTimestamp(2, Timestamp.from(saleCreatedAt));
+      ps.setLong(3, productId);
+      ps.setLong(4, itemId);
       try (ResultSet rs = ps.executeQuery()) {
         return rs.next();
       }
@@ -2281,13 +2303,15 @@ public class SalesRepository extends BaseRepository {
           return Optional.empty();
         }
         Object posSessionId = rs.getObject("pos_session_id");
+        Instant saleCreatedAt = rs.getTimestamp("created_at").toInstant();
         return Optional.of(new LockedSaleRecord(
             rs.getLong("id"),
             rs.getLong("outlet_id"),
             posSessionId == null ? null : ((Number) posSessionId).longValue(),
             rs.getString("status"),
             rs.getBigDecimal("total_amount"),
-            rs.getTimestamp("created_at").toInstant().atZone(java.time.ZoneOffset.UTC).toLocalDate(),
+            saleCreatedAt.atZone(java.time.ZoneOffset.UTC).toLocalDate(),
+            saleCreatedAt,
             rs.getString("note")
         ));
       }
@@ -3141,6 +3165,7 @@ public class SalesRepository extends BaseRepository {
       String status,
       BigDecimal totalAmount,
       LocalDate businessDate,
+      Instant createdAt,
       String note
   ) {
   }
