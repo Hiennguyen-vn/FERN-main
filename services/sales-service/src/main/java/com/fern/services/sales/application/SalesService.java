@@ -5,7 +5,6 @@ import com.dorabets.common.spring.auth.AuthorizationPolicyService;
 import com.dorabets.common.spring.auth.RequestUserContext;
 import com.dorabets.common.spring.auth.RequestUserContextHolder;
 import com.dorabets.common.spring.cache.JacksonCacheSerializer;
-import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.dorabets.common.spring.web.PagedResult;
 import com.dorabets.common.spring.web.QueryConventions;
 import com.dorabets.idempotency.IdempotencyGuard;
@@ -18,9 +17,6 @@ import com.natsu.common.model.cache.RedisClientAdapter;
 import com.natsu.common.model.cache.TieredCache;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Autowired;
-import com.fern.events.sales.PaymentCapturedEvent;
-import com.fern.events.sales.SaleCompletedEvent;
-import com.fern.events.sales.SaleCompletedLineItem;
 import com.fern.services.sales.api.SalesDtos;
 import com.fern.services.sales.infrastructure.SalesRepository;
 import java.time.Clock;
@@ -38,7 +34,6 @@ public class SalesService {
   static final String IDEMPOTENCY_SERVICE = "sales-service:create-order";
 
   private final SalesRepository salesRepository;
-  private final TypedKafkaEventPublisher kafkaEventPublisher;
   private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
   private final IdempotencyGuard idempotencyGuard;
@@ -48,7 +43,6 @@ public class SalesService {
   @Autowired
   public SalesService(
       SalesRepository salesRepository,
-      TypedKafkaEventPublisher kafkaEventPublisher,
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock,
       IdempotencyGuard idempotencyGuard,
@@ -56,7 +50,6 @@ public class SalesService {
       RedisClientAdapter redisClientAdapter
   ) {
     this.salesRepository = salesRepository;
-    this.kafkaEventPublisher = kafkaEventPublisher;
     this.authorizationPolicyService = authorizationPolicyService;
     this.clock = clock;
     this.idempotencyGuard = idempotencyGuard;
@@ -75,25 +68,23 @@ public class SalesService {
             .build();
   }
 
-  // Backward-compatible overload used by existing tests that do not need idempotency wiring.
+  // Backward-compatible overload for tests without idempotency/cache wiring.
   public SalesService(
       SalesRepository salesRepository,
-      TypedKafkaEventPublisher kafkaEventPublisher,
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock
   ) {
-    this(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock, null, new ObjectMapper(), null);
+    this(salesRepository, authorizationPolicyService, clock, null, new ObjectMapper(), null);
   }
 
   public SalesService(
       SalesRepository salesRepository,
-      TypedKafkaEventPublisher kafkaEventPublisher,
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock,
       IdempotencyGuard idempotencyGuard,
       ObjectMapper objectMapper
   ) {
-    this(salesRepository, kafkaEventPublisher, authorizationPolicyService, clock, idempotencyGuard, objectMapper, null);
+    this(salesRepository, authorizationPolicyService, clock, idempotencyGuard, objectMapper, null);
   }
 
   public SalesDtos.PosSessionView openPosSession(SalesDtos.OpenPosSessionRequest request) {
@@ -311,7 +302,6 @@ public class SalesService {
         .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
     requireSalesWriteForOutlet(context, existing.outletId());
     SalesDtos.SaleView paid = salesRepository.markPaymentDone(saleId, request);
-    publishSaleCompletedEvents(paid);
     evictMonthlyRevenueCache();
     return paid;
   }
@@ -528,48 +518,6 @@ public class SalesService {
     return QueryConventions.sanitizeOffset(offset);
   }
 
-  private void publishSaleCompletedEvents(SalesDtos.SaleView sale) {
-    long saleId = Long.parseLong(sale.id());
-    kafkaEventPublisher.publish(
-        "fern.sales.sale-completed",
-        sale.id(),
-        "sales.sale.completed",
-        new SaleCompletedEvent(
-            saleId,
-            sale.outletId(),
-            sale.createdAt().atZone(java.time.ZoneOffset.UTC).toLocalDate(),
-            sale.currencyCode(),
-            sale.items().stream()
-                .map(item -> new SaleCompletedLineItem(
-                    item.productId(),
-                    item.quantity(),
-                    item.unitPrice(),
-                    item.discountAmount(),
-                    item.taxAmount(),
-                    item.lineTotal()
-                ))
-                .toList(),
-            sale.subtotal(),
-            sale.discount(),
-            sale.taxAmount(),
-            sale.totalAmount(),
-            clock.instant()
-        )
-    );
-    if (sale.payment() != null && "success".equalsIgnoreCase(sale.payment().status())) {
-      kafkaEventPublisher.publish(
-          "fern.sales.payment-captured",
-          sale.id(),
-          "sales.payment.captured",
-          new PaymentCapturedEvent(
-              saleId,
-              sale.payment().paymentMethod(),
-              sale.payment().amount(),
-              sale.currencyCode(),
-              sale.payment().paymentTime(),
-              sale.payment().transactionRef()
-          )
-      );
-    }
-  }
+  // Events now appended to outbox inside SalesRepository.markPaymentDone transaction.
+  // OutboxRelay publishes to Kafka asynchronously — no direct publish here.
 }

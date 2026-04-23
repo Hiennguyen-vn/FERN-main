@@ -1,7 +1,11 @@
 package com.fern.services.sales.infrastructure;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.outbox.OutboxWriter;
 import com.dorabets.common.repository.BaseRepository;
+import com.fern.events.sales.PaymentCapturedEvent;
+import com.fern.events.sales.SaleCompletedEvent;
+import com.fern.events.sales.SaleCompletedLineItem;
 import com.dorabets.common.spring.web.PagedResult;
 import com.dorabets.common.spring.web.QueryConventions;
 import com.fern.services.sales.api.CrmDtos;
@@ -44,15 +48,27 @@ public class SalesRepository extends BaseRepository {
 
   private final SnowflakeIdGenerator snowflakeIdGenerator;
   private final Clock clock;
+  private final OutboxWriter outboxWriter;
 
+  public SalesRepository(
+      DataSource dataSource,
+      SnowflakeIdGenerator snowflakeIdGenerator,
+      Clock clock,
+      OutboxWriter outboxWriter
+  ) {
+    super(dataSource);
+    this.snowflakeIdGenerator = snowflakeIdGenerator;
+    this.clock = clock;
+    this.outboxWriter = outboxWriter;
+  }
+
+  // Backward-compatible constructor for tests without outbox
   public SalesRepository(
       DataSource dataSource,
       SnowflakeIdGenerator snowflakeIdGenerator,
       Clock clock
   ) {
-    super(dataSource);
-    this.snowflakeIdGenerator = snowflakeIdGenerator;
-    this.clock = clock;
+    this(dataSource, snowflakeIdGenerator, clock, null);
   }
 
   public SalesDtos.PosSessionView openPosSession(SalesDtos.OpenPosSessionRequest request) {
@@ -761,9 +777,44 @@ public class SalesRepository extends BaseRepository {
         ps.setLong(1, saleId);
         ps.executeUpdate();
       }
-      return findSale(conn, saleId)
+      SalesDtos.SaleView paid = findSale(conn, saleId)
           .orElseThrow(() -> new IllegalStateException("Paid sale not found"));
+      appendSaleCompletedOutbox(conn, paid);
+      return paid;
     });
+  }
+
+  private void appendSaleCompletedOutbox(java.sql.Connection conn, SalesDtos.SaleView sale) {
+    if (outboxWriter == null) return;
+    long saleId = Long.parseLong(sale.id());
+    SaleCompletedEvent saleEvent = new SaleCompletedEvent(
+        saleId,
+        sale.outletId(),
+        sale.createdAt().atZone(java.time.ZoneOffset.UTC).toLocalDate(),
+        sale.currencyCode(),
+        sale.items().stream()
+            .map(i -> new SaleCompletedLineItem(
+                i.productId(), i.quantity(), i.unitPrice(),
+                i.discountAmount(), i.taxAmount(), i.lineTotal()))
+            .toList(),
+        sale.subtotal(), sale.discount(), sale.taxAmount(), sale.totalAmount(),
+        clock.instant()
+    );
+    outboxWriter.append(conn, "sale", saleId, "fern.sales.sale-completed",
+        sale.id(), saleEvent);
+
+    if (sale.payment() != null && "success".equalsIgnoreCase(sale.payment().status())) {
+      PaymentCapturedEvent payEvent = new PaymentCapturedEvent(
+          saleId,
+          sale.payment().paymentMethod(),
+          sale.payment().amount(),
+          sale.currencyCode(),
+          sale.payment().paymentTime(),
+          sale.payment().transactionRef()
+      );
+      outboxWriter.append(conn, "sale", saleId, "fern.sales.payment-captured",
+          sale.id(), payEvent);
+    }
   }
 
   public SalesDtos.SaleView cancelSale(long saleId, String reason, Long actorUserId) {
