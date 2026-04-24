@@ -20,10 +20,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import com.fern.services.sales.api.SalesDtos;
 import com.fern.services.sales.infrastructure.SalesRepository;
 import java.time.Clock;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -649,4 +651,16 @@ public class SalesService {
 
   // Events now appended to outbox inside SalesRepository.markPaymentDone transaction.
   // OutboxRelay publishes to Kafka asynchronously — no direct publish here.
+
+  public void adjustInventoryFromSync(Map<String, Object> payload) {
+    long itemId      = toLong(payload.get("item_id"));
+    long outletId    = toLong(payload.get("outlet_id"));
+    BigDecimal delta = toBigDecimal(payload.get("qty_delta"));
+    String reason    = toStr(payload.get("reason"), "sync_adjustment");
+    String clientAt  = toStr(payload.get("client_occurred_at"), null);
+    Instant txnTime  = clientAt != null ? Instant.parse(clientAt) : Instant.now();
+    String txnType   = delta.compareTo(BigDecimal.ZERO) >= 0
+        ? "stock_adjustment_in" : "stock_adjustment_out";
+    salesRepository.insertAdjustmentTransaction(outletId, itemId, delta, txnType, txnTime, reason);
+  }
 }

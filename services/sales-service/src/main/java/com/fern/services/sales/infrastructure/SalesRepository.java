@@ -2042,6 +2042,34 @@ public class SalesRepository extends BaseRepository {
     }
   }
 
+  public void insertAdjustmentTransaction(
+      long outletId, long itemId, BigDecimal qtyDelta, String txnType, Instant txnTime, String note) {
+    executeInTransaction(conn -> {
+      long id = snowflakeIdGenerator.generateId();
+      LocalDate businessDate = txnTime.atZone(java.time.ZoneOffset.UTC).toLocalDate();
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.inventory_transaction (
+            id, outlet_id, item_id, qty_change, business_date, txn_time,
+            txn_type, unit_cost, created_by_user_id, note
+          ) VALUES (?, ?, ?, ?, ?, ?, ?::inventory_txn_type_enum, ?, NULL, ?)
+          """
+      )) {
+        ps.setLong(1, id);
+        ps.setLong(2, outletId);
+        ps.setLong(3, itemId);
+        ps.setBigDecimal(4, qtyDelta.setScale(4, RoundingMode.HALF_UP));
+        ps.setObject(5, businessDate);
+        ps.setTimestamp(6, Timestamp.from(txnTime));
+        ps.setString(7, txnType);
+        ps.setBigDecimal(8, currentUnitCost(conn, outletId, itemId));
+        ps.setString(9, trimToNull(note));
+        ps.executeUpdate();
+      }
+      return null;
+    });
+  }
+
   private BigDecimal currentUnitCost(Connection conn, long outletId, long itemId) throws Exception {
     try (PreparedStatement ps = conn.prepareStatement(
         """
