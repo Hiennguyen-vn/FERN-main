@@ -20,6 +20,7 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
       "/health",
       "/api/v1/auth/login",
       "/api/v1/sales/public",
+      "/api/v1/product/product-images",
       "/api/v1/gateway/info",
       "/api/v1/gateway/routes",
       "/api/v1/gateway/targets",
@@ -78,13 +79,14 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
       OutletScopeContext.set(OutletScopeContext.ALL);
       return;
     }
+    // Superadmin always operates across all outlets, regardless of JWT outlet claim.
+    if (ctx.hasRole("superadmin")) {
+      OutletScopeContext.set(OutletScopeContext.ALL);
+      return;
+    }
     Set<Long> outlets = ctx.outletIds();
     if (outlets == null || outlets.isEmpty()) {
-      if (ctx.hasRole("superadmin")) {
-        OutletScopeContext.set(OutletScopeContext.ALL);
-      } else {
-        OutletScopeContext.clear();
-      }
+      OutletScopeContext.clear();
       return;
     }
     // Caller may pin which outlet they want via X-Outlet-Id (POS device must always send it).
