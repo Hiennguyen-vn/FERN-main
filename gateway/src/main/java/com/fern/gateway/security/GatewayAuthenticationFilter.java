@@ -3,6 +3,7 @@ package com.fern.gateway.security;
 import com.dorabets.common.auth.AuthTokenExtractor;
 import com.dorabets.common.auth.InternalServiceAuth;
 import com.dorabets.common.spring.auth.AuthSessionService;
+import com.dorabets.common.spring.auth.DeviceTokenRegistry;
 import com.dorabets.common.spring.auth.JwtClaims;
 import com.dorabets.common.spring.auth.JwtTokenService;
 import com.dorabets.common.spring.auth.SpringInternalServiceAuth;
@@ -30,23 +31,28 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
       InternalServiceAuth.HEADER_SESSION_ID,
       InternalServiceAuth.HEADER_ROLES,
       InternalServiceAuth.HEADER_PERMISSIONS,
-      "X-Internal-Outlet-Ids"
+      "X-Internal-Outlet-Ids",
+      "X-Internal-Device-Id",
+      "X-Internal-Device-Outlet-Id"
   );
 
   private final JwtTokenService jwtTokenService;
   private final SpringInternalServiceAuth internalServiceAuth;
   private final AuthSessionService authSessionService;
+  private final DeviceTokenRegistry deviceTokenRegistry;
   private final String authCookieName;
 
   public GatewayAuthenticationFilter(
       JwtTokenService jwtTokenService,
       SpringInternalServiceAuth internalServiceAuth,
       AuthSessionService authSessionService,
+      DeviceTokenRegistry deviceTokenRegistry,
       @org.springframework.beans.factory.annotation.Value("${AUTH_COOKIE_NAME:dorabets_session}") String authCookieName
   ) {
     this.jwtTokenService = jwtTokenService;
     this.internalServiceAuth = internalServiceAuth;
     this.authSessionService = authSessionService;
+    this.deviceTokenRegistry = deviceTokenRegistry;
     this.authCookieName = authCookieName;
   }
 
@@ -85,6 +91,23 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
     if (token != null) {
       try {
         JwtClaims claims = jwtTokenService.verify(token);
+        if (claims.isDeviceToken()) {
+          if (!isDevicePath(path)) {
+            exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+            return exchange.getResponse().setComplete();
+          }
+          deviceTokenRegistry.requireActiveDevice(claims, token);
+          builder.headers(h -> {
+            internalServiceAuth.apply(h, "pos-device", null);
+            h.set("X-Internal-Device-Id", Long.toString(claims.deviceId()));
+            h.set("X-Internal-Device-Outlet-Id", Long.toString(claims.deviceOutletId()));
+          });
+          return chain.filter(exchange.mutate().request(builder.build()).build());
+        }
+        if (isDevicePath(path)) {
+          exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+          return exchange.getResponse().setComplete();
+        }
         authSessionService.requireActiveSession(claims.sessionId(), claims.userId());
         HttpHeaders internalHeaders = new HttpHeaders();
         internalServiceAuth.apply(internalHeaders, "gateway", claims);
@@ -103,6 +126,14 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
     if (internalServiceAuth.hasInternalHeaders(requestHeaders)) {
       try {
         SpringInternalServiceAuth.AuthenticatedService internal = internalServiceAuth.authenticate(requestHeaders);
+        if (isDevicePath(path)) {
+          exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+          return exchange.getResponse().setComplete();
+        }
+        if ("pos-edge-agent".equals(internal.serviceName())) {
+          exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+          return exchange.getResponse().setComplete();
+        }
         builder.headers(httpHeaders -> applyTrustedInternalHeaders(httpHeaders, internal, requestHeaders));
         return chain.filter(exchange.mutate().request(builder.build()).build());
       } catch (Exception e) {
@@ -120,12 +151,21 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
     return -100;
   }
 
+  private boolean isDevicePath(String path) {
+    return path.startsWith("/api/v1/sync/")
+        || path.startsWith("/api/v1/devices/refresh");
+  }
+
   private boolean isPublicPath(String path) {
     return path.startsWith("/actuator")
         || path.startsWith("/health")
-        || path.startsWith("/api/v1/gateway")
+        || path.equals("/api/v1/gateway/info")
+        || path.equals("/api/v1/gateway/routes")
+        || path.equals("/api/v1/gateway/targets")
+        || path.startsWith("/internal/gateway/fallback")
         || path.startsWith("/api/v1/auth/login")
-        || path.startsWith("/api/v1/sales/public");
+        || path.startsWith("/api/v1/sales/public")
+        || path.equals("/api/v1/devices/pair");
   }
 
   private boolean isCorsPreflight(ServerWebExchange exchange) {

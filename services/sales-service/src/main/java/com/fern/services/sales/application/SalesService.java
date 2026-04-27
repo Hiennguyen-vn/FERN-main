@@ -28,10 +28,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class SalesService {
+
+  private static final Logger log = LoggerFactory.getLogger(SalesService.class);
 
   static final String IDEMPOTENCY_SERVICE = "sales-service:create-order";
 
@@ -41,6 +45,7 @@ public class SalesService {
   private final IdempotencyGuard idempotencyGuard;
   private final ObjectMapper objectMapper;
   private final TieredCache<List<SalesDtos.MonthlyRevenueRow>> monthlyRevenueCache;
+  private final PosMetrics posMetrics;
 
   @Autowired
   public SalesService(
@@ -49,13 +54,15 @@ public class SalesService {
       Clock clock,
       IdempotencyGuard idempotencyGuard,
       ObjectMapper objectMapper,
-      RedisClientAdapter redisClientAdapter
+      RedisClientAdapter redisClientAdapter,
+      PosMetrics posMetrics
   ) {
     this.salesRepository = salesRepository;
     this.authorizationPolicyService = authorizationPolicyService;
     this.clock = clock;
     this.idempotencyGuard = idempotencyGuard;
     this.objectMapper = objectMapper;
+    this.posMetrics = posMetrics;
     this.monthlyRevenueCache = redisClientAdapter == null
         ? null
         : TieredCache.<List<SalesDtos.MonthlyRevenueRow>>builder("fern-sales-monthly-revenue")
@@ -76,7 +83,7 @@ public class SalesService {
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock
   ) {
-    this(salesRepository, authorizationPolicyService, clock, null, new ObjectMapper(), null);
+    this(salesRepository, authorizationPolicyService, clock, null, new ObjectMapper(), null, null);
   }
 
   public SalesService(
@@ -86,7 +93,7 @@ public class SalesService {
       IdempotencyGuard idempotencyGuard,
       ObjectMapper objectMapper
   ) {
-    this(salesRepository, authorizationPolicyService, clock, idempotencyGuard, objectMapper, null);
+    this(salesRepository, authorizationPolicyService, clock, idempotencyGuard, objectMapper, null, null);
   }
 
   public SalesDtos.PosSessionView openPosSession(SalesDtos.OpenPosSessionRequest request) {
@@ -119,8 +126,12 @@ public class SalesService {
   }
 
   public SalesDtos.SaleView submitSale(String idempotencyKey, SalesDtos.SubmitSaleRequest request) {
+    return submitSale(idempotencyKey, null, request);
+  }
+
+  public SalesDtos.SaleView submitSale(String idempotencyKey, Long deviceId, SalesDtos.SubmitSaleRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
-    requireSalesWrite(context);
+    requireSalesWriteForOutlet(context, request.outletId());
     if (request.payment() != null) {
       throw ServiceException.badRequest("Payment is captured with mark-payment-done after order approval");
     }
@@ -128,9 +139,10 @@ public class SalesService {
       return salesRepository.submitSale(request);
     }
     String normalizedKey = normalizeIdempotencyKey(idempotencyKey);
+    String namespace = buildIdempotencyNamespace(deviceId, request.outletId());
     String requestBody = serializeForHash(request);
     IdempotencyResult result = idempotencyGuard.execute(
-        IDEMPOTENCY_SERVICE,
+        namespace,
         normalizedKey,
         requestBody,
         TtlPolicy.BET,
@@ -140,6 +152,11 @@ public class SalesService {
         }
     );
     return deserializeResponse(result.responseBody());
+  }
+
+  private static String buildIdempotencyNamespace(Long deviceId, long outletId) {
+    String device = deviceId == null ? "nodev" : deviceId.toString();
+    return IDEMPOTENCY_SERVICE + ":outlet:" + outletId + ":device:" + device;
   }
 
   private static String normalizeIdempotencyKey(String raw) {
@@ -305,6 +322,10 @@ public class SalesService {
     requireSalesWriteForOutlet(context, existing.outletId());
     SalesDtos.SaleView paid = salesRepository.markPaymentDone(saleId, request);
     evictMonthlyRevenueCache();
+    if (posMetrics != null && existing.createdAt() != null) {
+      long elapsedNanos = Duration.between(existing.createdAt(), clock.instant()).toNanos();
+      posMetrics.orderCompletionTimer().record(elapsedNanos, java.util.concurrent.TimeUnit.NANOSECONDS);
+    }
     return paid;
   }
 
@@ -330,11 +351,13 @@ public class SalesService {
   // they are called from the internal sync path (device → server reconcile).
 
   public SalesDtos.SaleView submitSaleFromSync(java.util.Map<String, Object> payload) {
-    long outletId = toLong(payload.get("outlet_id"));
-    Long posSessionId = payload.containsKey("pos_session_id") && payload.get("pos_session_id") != null
-        ? toLong(payload.get("pos_session_id")) : null;
-    String currencyCode = toStr(payload.get("currency_code"), "VND");
+    long outletId = toLong(payloadValue(payload, "outlet_id", "outletId"));
+    Object posSessionValue = payloadValue(payload, "pos_session_id", "posSessionId");
+    Long posSessionId = posSessionValue != null ? toLong(posSessionValue) : null;
+    String currencyCode = toStr(payloadValue(payload, "currency_code", "currencyCode"), "VND");
     String note = toStr(payload.get("note"), null);
+    Object saleIdValue = payloadValue(payload, "sale_id", "saleId");
+    Long overrideSaleId = saleIdValue != null ? toLong(saleIdValue) : null;
 
     @SuppressWarnings("unchecked")
     java.util.List<java.util.Map<String, Object>> rawItems =
@@ -342,40 +365,113 @@ public class SalesService {
     if (rawItems == null || rawItems.isEmpty()) {
       throw new IllegalArgumentException("items must not be empty");
     }
+    if (posSessionId == null) {
+      throw ServiceException.conflict("Cashier sync events must include pos_session_id");
+    }
     java.util.List<SalesDtos.SaleLineRequest> lines = rawItems.stream().map(item -> {
-      long productId = toLong(item.get("product_id"));
+      long productId = toLong(payloadValue(item, "product_id", "productId"));
       java.math.BigDecimal qty = toBigDecimal(item.getOrDefault("quantity", 1));
-      java.math.BigDecimal discount = item.containsKey("discount_amount")
-          ? toBigDecimal(item.get("discount_amount")) : null;
-      java.math.BigDecimal tax = item.containsKey("tax_amount")
-          ? toBigDecimal(item.get("tax_amount")) : null;
+      Object discountValue = payloadValue(item, "discount_amount", "discountAmount");
+      java.math.BigDecimal discount = discountValue != null ? toBigDecimal(discountValue) : null;
+      Object taxValue = payloadValue(item, "tax_amount", "taxAmount");
+      java.math.BigDecimal tax = taxValue != null ? toBigDecimal(taxValue) : null;
       String itemNote = toStr(item.get("note"), null);
-      return new SalesDtos.SaleLineRequest(productId, qty, discount, tax, itemNote, null);
+      Object variantIdValue = payloadValue(item, "variant_id", "variantId");
+      Long variantId = variantIdValue != null ? toLong(variantIdValue) : null;
+      String variantName = toStr(payloadValue(item, "variant_name", "variantName"), null);
+      @SuppressWarnings("unchecked")
+      java.util.List<Object> rawModifierOptionIds =
+          (java.util.List<Object>) java.util.Objects.requireNonNullElse(
+              payloadValue(item, "modifier_option_ids", "modifierOptionIds"),
+              java.util.List.of());
+      java.util.Set<Long> modifierOptionIds = rawModifierOptionIds.stream()
+          .map(SalesService::toLong)
+          .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+      return new SalesDtos.SaleLineRequest(
+          productId, qty, discount, tax, itemNote, null, variantId, variantName,
+          modifierOptionIds.isEmpty() ? null : java.util.Set.copyOf(modifierOptionIds)
+      );
     }).toList();
 
     SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
-        outletId, posSessionId, currencyCode, "pos", note, lines, null
+        outletId, posSessionId, currencyCode, "dine_in", note, lines, null
     );
-    return salesRepository.submitSale(request);
+    return salesRepository.submitSale(request, overrideSaleId);
   }
 
-  public SalesDtos.SaleView approveSaleFromSync(long saleId, Long actorUserId) {
-    return salesRepository.approveSale(saleId, actorUserId);
+  public SalesDtos.SaleView approveSaleFromSync(java.util.Map<String, Object> payload) {
+    long saleId = toLong(payloadValue(payload, "sale_id", "saleId"));
+    Object actorUserIdValue = payloadValue(payload, "actor_user_id", "actorUserId");
+    Long actorUserId = actorUserIdValue != null ? toLong(actorUserIdValue) : null;
+
+    // Idempotent on retry: if sale already advanced past 'open', return current state instead of throwing 409.
+    SalesDtos.SaleView existing = salesRepository.findSale(saleId).orElse(null);
+    if (existing != null) {
+      String s = existing.status();
+      if ("order_approved".equalsIgnoreCase(s)
+          || "payment_done".equalsIgnoreCase(s)
+          || "completed".equalsIgnoreCase(s)
+          || "cancelled".equalsIgnoreCase(s)) {
+        return existing;
+      }
+    }
+
+    // Sync path = customer already paid offline. Allow oversell so central books match the
+    // physical sale; oversell_flag + sale_oversell_line capture the discrepancy for review.
+    SalesDtos.SaleView approved = salesRepository.approveSale(saleId, actorUserId, true);
+
+    // Persist manager override audit if edge attached one (manager unlocked the oversell at POS).
+    @SuppressWarnings("unchecked")
+    java.util.Map<String, Object> override =
+        (java.util.Map<String, Object>) payload.get("manager_override");
+    if (override != null && salesRepository.isSaleOversell(saleId)) {
+      Long managerUserId = override.containsKey("manager_user_id") && override.get("manager_user_id") != null
+          ? toLong(override.get("manager_user_id")) : null;
+      String pinHash = toStr(override.get("manager_pin_hash"), null);
+      String reason  = toStr(override.get("reason"), "oversell_offline");
+      Object deviceIdValue = payloadValue(override, "device_id", "deviceId");
+      Long deviceId = deviceIdValue != null ? toLong(deviceIdValue) : null;
+      String payloadJson;
+      try {
+        payloadJson = objectMapper.writeValueAsString(override);
+      } catch (Exception e) {
+        payloadJson = null;
+      }
+      salesRepository.recordManagerOverride(
+          approved.outletId(), saleId, "oversell",
+          managerUserId, pinHash, reason, deviceId, payloadJson);
+    }
+    return approved;
   }
 
   public SalesDtos.SaleView capturePaymentFromSync(java.util.Map<String, Object> payload) {
-    long saleId = toLong(payload.get("sale_id"));
+    long saleId = toLong(payloadValue(payload, "sale_id", "saleId"));
     java.math.BigDecimal amount = toBigDecimal(payload.get("amount"));
-    String paymentMethod = toStr(payload.get("payment_method"), "cash");
-    String transactionRef = toStr(payload.get("transaction_ref"), null);
-    String clientOccurredAt = toStr(payload.get("client_occurred_at"), null);
-    java.time.Instant paymentTime = clientOccurredAt != null
-        ? java.time.Instant.parse(clientOccurredAt) : clock.instant();
+    String paymentMethod = toStr(payloadValue(payload, "payment_method", "paymentMethod"), "cash");
+    String transactionRef = toStr(payloadValue(payload, "transaction_ref", "transactionRef"), null);
+    String clientOccurredAt = toStr(payloadValue(payload, "client_occurred_at", "clientOccurredAt"), null);
+    Object deviceIdValue = payloadValue(payload, "device_id", "deviceId");
+    Long deviceId = deviceIdValue != null ? toLong(deviceIdValue) : null;
+    java.time.Instant serverReceived = clock.instant();
+    java.time.Instant paymentTime = resolvePaymentTime(clientOccurredAt, serverReceived);
+
+    // Idempotent on retry: if payment already captured, return current view.
+    SalesDtos.SaleView existing = salesRepository.findSale(saleId).orElse(null);
+    if (existing != null) {
+      String s = existing.status();
+      if ("payment_done".equalsIgnoreCase(s) || "completed".equalsIgnoreCase(s)) {
+        return existing;
+      }
+      if ("cancelled".equalsIgnoreCase(s)) {
+        throw com.dorabets.common.middleware.ServiceException.conflict(
+            "Sale was cancelled before payment sync arrived: " + saleId);
+      }
+    }
 
     SalesDtos.MarkPaymentDoneRequest request = new SalesDtos.MarkPaymentDoneRequest(
         paymentMethod, amount, paymentTime, transactionRef, null
     );
-    SalesDtos.SaleView paid = salesRepository.markPaymentDone(saleId, request);
+    SalesDtos.SaleView paid = salesRepository.markPaymentDone(saleId, request, deviceId, paymentTime, true);
     evictMonthlyRevenueCache();
     return paid;
   }
@@ -394,26 +490,40 @@ public class SalesService {
   }
 
   public SalesDtos.PosSessionView openPosSessionFromSync(java.util.Map<String, Object> payload) {
-    long outletId = toLong(payload.get("outlet_id"));
-    long managerUserId = toLong(payload.get("manager_user_id"));
-    String currencyCode = toStr(payload.get("currency_code"), "VND");
-    String businessDateStr = toStr(payload.get("business_date"), null);
+    long outletId = toLong(payloadValue(payload, "outlet_id", "outletId"));
+    long managerUserId = toLong(payloadValue(payload, "manager_user_id", "managerUserId"));
+    String currencyCode = toStr(payloadValue(payload, "currency_code", "currencyCode"), "VND");
+    String businessDateStr = toStr(payloadValue(payload, "business_date", "businessDate"), null);
     java.time.LocalDate businessDate = businessDateStr != null
         ? java.time.LocalDate.parse(businessDateStr) : java.time.LocalDate.now(clock);
-    String clientOccurredAt = toStr(payload.get("client_occurred_at"), null);
+    Object sessionIdValue = payloadValue(payload, "session_id", "sessionId");
+    Long overrideSessionId = sessionIdValue != null ? toLong(sessionIdValue) : null;
+    Object deviceIdValue = payloadValue(payload, "device_id", "deviceId");
+    Long deviceId = deviceIdValue != null ? toLong(deviceIdValue) : null;
+    String registerCode = toStr(payloadValue(payload, "register_code", "registerCode"), null);
+    String openedByUsername = toStr(payloadValue(payload, "opened_by_username", "openedByUsername"), null);
 
-    // Check idempotency — if session already open for this outlet+date return existing
-    java.util.Optional<SalesDtos.PosSessionView> existingOpen =
-        salesRepository.findOpenPosSessionForOutlet(outletId, businessDate);
-    if (existingOpen.isPresent()) {
-      return existingOpen.get();
+    // Idempotent: same edge session id replayed → return existing.
+    if (overrideSessionId != null) {
+      java.util.Optional<SalesDtos.PosSessionView> existing =
+          salesRepository.findPosSession(overrideSessionId);
+      if (existing.isPresent()) return existing.get();
     }
 
-    String sessionCode = "SYNC-" + outletId + "-" + businessDate.toString().replace("-", "");
+    String sessionCode = overrideSessionId != null
+        ? "SYNC-" + outletId + "-" + businessDate.toString().replace("-", "")
+            + (deviceId == null ? "" : "-DEV-" + deviceId)
+            + (registerCode == null ? "" : "-REG-" + registerCode)
+            + "-" + overrideSessionId
+        : "SYNC-" + outletId + "-" + businessDate.toString().replace("-", "")
+            + (deviceId == null ? "" : "-DEV-" + deviceId)
+            + (registerCode == null ? "" : "-REG-" + registerCode);
     SalesDtos.OpenPosSessionRequest request = new SalesDtos.OpenPosSessionRequest(
-        sessionCode, outletId, currencyCode, managerUserId, businessDate, "opened_offline"
+        sessionCode, outletId, currencyCode, managerUserId, deviceId,
+        registerCode, openedByUsername,
+        businessDate, "opened_offline"
     );
-    return salesRepository.openPosSession(request);
+    return salesRepository.openPosSession(request, overrideSessionId);
   }
 
   public SalesDtos.PosSessionView closePosSessionFromSync(long sessionId) {
@@ -429,6 +539,31 @@ public class SalesService {
     }
   }
 
+  private java.time.Instant resolvePaymentTime(String clientOccurredAt, java.time.Instant serverReceived) {
+    if (clientOccurredAt == null || clientOccurredAt.isBlank()) {
+      return serverReceived;
+    }
+    java.time.Instant clientTime;
+    try {
+      clientTime = java.time.Instant.parse(clientOccurredAt);
+    } catch (Exception e) {
+      log.warn("Invalid client_occurred_at '{}', using server time", clientOccurredAt);
+      return serverReceived;
+    }
+    long skewSeconds = Math.abs(java.time.Duration.between(serverReceived, clientTime).getSeconds());
+    if (skewSeconds > 86_400) { // > 24h
+      throw com.dorabets.common.middleware.ServiceException.badRequest(
+          "Clock skew too large: client_occurred_at differs from server time by more than 24 hours");
+    }
+    // Clamp future timestamps: max = serverReceived + 5 min
+    java.time.Instant maxAllowed = serverReceived.plusSeconds(300);
+    if (clientTime.isAfter(maxAllowed)) {
+      log.warn("Clock skew clamped: client_occurred_at={} clamped to {}", clientOccurredAt, maxAllowed);
+      return maxAllowed;
+    }
+    return clientTime;
+  }
+
   private static long toLong(Object v) {
     if (v instanceof Number n) return n.longValue();
     return Long.parseLong(String.valueOf(v));
@@ -437,7 +572,10 @@ public class SalesService {
   static java.math.BigDecimal toBigDecimal(Object v) {
     if (v == null) return java.math.BigDecimal.ZERO;
     if (v instanceof java.math.BigDecimal bd) return bd;
-    if (v instanceof Number n) return java.math.BigDecimal.valueOf(n.doubleValue());
+    if (v instanceof Long l) return java.math.BigDecimal.valueOf(l);
+    if (v instanceof Integer i) return java.math.BigDecimal.valueOf(i);
+    if (v instanceof Short s) return java.math.BigDecimal.valueOf(s);
+    if (v instanceof Byte b) return java.math.BigDecimal.valueOf(b);
     return new java.math.BigDecimal(String.valueOf(v));
   }
 
@@ -445,6 +583,13 @@ public class SalesService {
     if (v == null) return defaultValue;
     String s = String.valueOf(v).trim();
     return s.isEmpty() ? defaultValue : s;
+  }
+
+  static Object payloadValue(Map<String, Object> payload, String snakeCase, String camelCase) {
+    if (payload.containsKey(snakeCase)) {
+      return payload.get(snakeCase);
+    }
+    return payload.get(camelCase);
   }
 
   public PagedResult<SalesDtos.PosSessionListItemView> listPosSessions(
@@ -651,16 +796,4 @@ public class SalesService {
 
   // Events now appended to outbox inside SalesRepository.markPaymentDone transaction.
   // OutboxRelay publishes to Kafka asynchronously — no direct publish here.
-
-  public void adjustInventoryFromSync(Map<String, Object> payload) {
-    long itemId      = toLong(payload.get("item_id"));
-    long outletId    = toLong(payload.get("outlet_id"));
-    BigDecimal delta = toBigDecimal(payload.get("qty_delta"));
-    String reason    = toStr(payload.get("reason"), "sync_adjustment");
-    String clientAt  = toStr(payload.get("client_occurred_at"), null);
-    Instant txnTime  = clientAt != null ? Instant.parse(clientAt) : Instant.now();
-    String txnType   = delta.compareTo(BigDecimal.ZERO) >= 0
-        ? "stock_adjustment_in" : "stock_adjustment_out";
-    salesRepository.insertAdjustmentTransaction(outletId, itemId, delta, txnType, txnTime, reason);
-  }
 }

@@ -93,7 +93,7 @@ class AuthorizationPolicyServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
 
     assertEquals(Set.of(10L, 11L), governedOutletIds);
   }

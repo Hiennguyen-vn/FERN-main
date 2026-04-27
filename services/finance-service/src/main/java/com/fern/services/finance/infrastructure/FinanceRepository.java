@@ -68,7 +68,7 @@ public class FinanceRepository extends BaseRepository {
   }
 
   public PagedResult<ExpenseRecord> listExpenses(
-      Long outletId,
+      Set<Long> outletIds,
       LocalDate startDate,
       LocalDate endDate,
       String sourceType,
@@ -78,6 +78,9 @@ public class FinanceRepository extends BaseRepository {
       int limit,
       int offset
   ) {
+    if (outletIds != null && outletIds.isEmpty()) {
+      return PagedResult.of(List.of(), limit, offset, 0);
+    }
     return executeInTransaction(conn -> {
       StringBuilder sql = new StringBuilder(
           """
@@ -87,10 +90,7 @@ public class FinanceRepository extends BaseRepository {
       );
       sql.append(baseExpenseSql()).append(" WHERE 1 = 1");
       List<Object> params = new ArrayList<>();
-      if (outletId != null) {
-        sql.append(" AND er.outlet_id = ?");
-        params.add(outletId);
-      }
+      appendOutletFilter(sql, params, "er.outlet_id", outletIds);
       if (startDate != null) {
         sql.append(" AND er.business_date >= ?");
         params.add(Date.valueOf(startDate));
@@ -143,10 +143,13 @@ public class FinanceRepository extends BaseRepository {
   }
 
   public List<FinanceDtos.MonthlyExpenseRow> monthlyExpenses(
-      Long outletId,
+      Set<Long> outletIds,
       LocalDate startDate,
       LocalDate endDate
   ) {
+    if (outletIds != null && outletIds.isEmpty()) {
+      return List.of();
+    }
     return executeInTransaction(conn -> {
       StringBuilder sql = new StringBuilder(
           """
@@ -162,10 +165,7 @@ public class FinanceRepository extends BaseRepository {
           """
       );
       List<Object> params = new ArrayList<>();
-      if (outletId != null) {
-        sql.append(" AND er.outlet_id = ?");
-        params.add(outletId);
-      }
+      appendOutletFilter(sql, params, "er.outlet_id", outletIds);
       if (startDate != null) {
         sql.append(" AND er.business_date >= ?");
         params.add(Date.valueOf(startDate));
@@ -209,6 +209,26 @@ public class FinanceRepository extends BaseRepository {
       case "businessDate" -> "expense_rows.business_date " + direction + ", expense_rows.created_at " + direction + ", expense_rows.id " + direction;
       default -> throw new IllegalArgumentException("Unsupported expense sort key");
     };
+  }
+
+  private void appendOutletFilter(StringBuilder sql, List<Object> params, String column, Set<Long> outletIds) {
+    if (outletIds == null) {
+      return;
+    }
+    if (outletIds.isEmpty()) {
+      sql.append(" AND 1 = 0");
+      return;
+    }
+    sql.append(" AND ").append(column).append(" IN (");
+    int index = 0;
+    for (Long outletId : outletIds.stream().sorted().toList()) {
+      if (index++ > 0) {
+        sql.append(", ");
+      }
+      sql.append("?");
+      params.add(outletId);
+    }
+    sql.append(")");
   }
 
   public ExpenseRecord createOperatingExpense(

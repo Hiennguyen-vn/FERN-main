@@ -255,4 +255,59 @@ public final class AuthDtos {
       Instant offlineGraceUntil
   ) {
   }
+
+  /* ── S3: Device pairing ── */
+
+  public record DevicePairTokenRequest(
+      @NotNull Long outletId,
+      @NotBlank String deviceLabel,
+      @NotNull Integer workerId
+  ) {
+  }
+
+  public record DevicePairTokenResponse(
+      long pairTokenId,
+      String pairToken,
+      long outletId,
+      String deviceLabel,
+      Instant expiresAt
+  ) {
+  }
+
+  public record DeviceRedeemRequest(
+      @NotBlank String pairToken
+  ) {
+  }
+
+  public record DeviceTokenResponse(
+      long deviceId,
+      long outletId,
+      String deviceLabel,
+      int workerId,
+      String deviceToken,
+      long expiresInSeconds,
+      Instant expiresAt,
+      Instant pairedAt
+  ) {
+  }
+
+  public record DeviceRefreshResponse(
+      long deviceId,
+      long outletId,
+      String deviceToken,
+      long expiresInSeconds,
+      Instant expiresAt
+  ) {
+  }
+
+  public record DeviceView(
+      long id,
+      long outletId,
+      String deviceLabel,
+      int workerId,
+      Instant pairedAt,
+      Instant lastSeenAt,
+      Instant revokedAt
+  ) {
+  }
 }

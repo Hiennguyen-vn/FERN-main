@@ -59,7 +59,7 @@ class ShiftServiceTest {
         false,
         true,
         "inventory-service"
-    ));
+    , null, null));
     when(idGenerator.generateId()).thenReturn(101L);
     when(shiftRepository.existsByOutletIdAndCode(10L, "MORNING")).thenReturn(false);
     when(roleRequirementRepository.findByShiftId(101L)).thenReturn(List.of());
@@ -116,7 +116,7 @@ class ShiftServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
 
     ShiftService service = new ShiftService(
         shiftRepository,
@@ -151,7 +151,7 @@ class ShiftServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(authorizationPolicyService.resolveUserProfile(9L))
         .thenReturn(profile(9L, assignment(CanonicalRole.OUTLET_MANAGER, 10L)));
     when(permissionMatrixService.load(9L)).thenReturn(new com.dorabets.common.spring.auth.PermissionMatrix(9L, java.util.Map.of(), java.util.Map.of()));

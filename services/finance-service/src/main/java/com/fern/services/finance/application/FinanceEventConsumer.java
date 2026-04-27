@@ -3,6 +3,7 @@ package com.fern.services.finance.application;
 import com.dorabets.idempotency.IdempotencyGuard;
 import com.dorabets.idempotency.model.IdempotencyResult;
 import com.dorabets.idempotency.model.TtlPolicy;
+import com.dorabets.common.spring.auth.InternalExecutionContext;
 import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,6 +11,7 @@ import com.fern.events.core.EventEnvelope;
 import com.fern.events.finance.ExpenseRecordCreatedEvent;
 import com.fern.events.payroll.PayrollApprovedEvent;
 import com.fern.events.procurement.InvoiceApprovedEvent;
+import com.fern.events.sales.PaymentCapturedEvent;
 import com.fern.services.finance.infrastructure.FinanceRepository;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Clock;
@@ -32,6 +34,7 @@ public class FinanceEventConsumer {
   private final ObjectMapper objectMapper;
   private final Clock clock;
   private final FinanceService financeService;
+  private final InvoiceService invoiceService;
 
   @Autowired
   public FinanceEventConsumer(
@@ -41,7 +44,8 @@ public class FinanceEventConsumer {
       TypedKafkaEventPublisher eventPublisher,
       ObjectMapper objectMapper,
       Clock clock,
-      FinanceService financeService
+      FinanceService financeService,
+      InvoiceService invoiceService
   ) {
     this.financeRepository = financeRepository;
     this.idempotencyGuard = idempotencyGuard;
@@ -50,6 +54,7 @@ public class FinanceEventConsumer {
     this.objectMapper = objectMapper;
     this.clock = clock;
     this.financeService = financeService;
+    this.invoiceService = invoiceService;
   }
 
   public FinanceEventConsumer(
@@ -60,7 +65,7 @@ public class FinanceEventConsumer {
       ObjectMapper objectMapper,
       Clock clock
   ) {
-    this(financeRepository, idempotencyGuard, idGenerator, eventPublisher, objectMapper, clock, null);
+    this(financeRepository, idempotencyGuard, idGenerator, eventPublisher, objectMapper, clock, null, null);
   }
 
   @KafkaListener(topics = "fern.procurement.invoice-approved")
@@ -73,7 +78,49 @@ public class FinanceEventConsumer {
     handlePayrollApproved(message);
   }
 
+  @KafkaListener(topics = "fern.sales.payment-captured", groupId = "finance-service-invoice")
+  public void consumePaymentCapturedEvent(String message) {
+    handlePaymentCaptured(message);
+  }
+
+  void handlePaymentCaptured(String rawMessage) {
+    InternalExecutionContext.run("finance-service", () -> handlePaymentCapturedInternal(rawMessage));
+  }
+
+  private void handlePaymentCapturedInternal(String rawMessage) {
+    try {
+      EventEnvelope<PaymentCapturedEvent> envelope = objectMapper.readValue(
+          rawMessage,
+          new TypeReference<EventEnvelope<PaymentCapturedEvent>>() { }
+      );
+      PaymentCapturedEvent event = envelope.payload();
+      if (event == null) {
+        log.warn("Skipping empty payment-captured payload");
+        return;
+      }
+      idempotencyGuard.execute(
+          "finance-service",
+          envelope.eventId(),
+          rawMessage,
+          TtlPolicy.SETTLEMENT,
+          () -> {
+            var view = invoiceService.issueInvoice(event);
+            return IdempotencyResult.created(
+                toJson(Map.of("invoiceId", view.id(), "invoiceNumber", view.invoiceNumber())),
+                Long.toString(view.id())
+            );
+          }
+      );
+    } catch (Exception e) {
+      throw new IllegalStateException("Failed to process payment-captured event", e);
+    }
+  }
+
   void handleInvoiceApproved(String rawMessage) {
+    InternalExecutionContext.run("finance-service", () -> handleInvoiceApprovedInternal(rawMessage));
+  }
+
+  private void handleInvoiceApprovedInternal(String rawMessage) {
     try {
       EventEnvelope<InvoiceApprovedEvent> envelope = objectMapper.readValue(
           rawMessage,
@@ -115,6 +162,10 @@ public class FinanceEventConsumer {
   }
 
   void handlePayrollApproved(String rawMessage) {
+    InternalExecutionContext.run("finance-service", () -> handlePayrollApprovedInternal(rawMessage));
+  }
+
+  private void handlePayrollApprovedInternal(String rawMessage) {
     try {
       EventEnvelope<PayrollApprovedEvent> envelope = objectMapper.readValue(
           rawMessage,

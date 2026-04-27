@@ -81,7 +81,7 @@ if [[ -f "${REPO_ROOT}/db/pom.xml" ]]; then
 else
   # Fall back: sales-service carries the migration scripts
   info "No db/pom.xml found — running flyway:migrate via sales-service module."
-  mvn -pl sales-service flyway:migrate "${FLYWAY_PROPS[@]}"
+  mvn -pl services/sales-service flyway:migrate "${FLYWAY_PROPS[@]}"
 fi
 
 # ── 6. Print migration status ─────────────────────────────────────────────────
@@ -90,7 +90,7 @@ info "Migration complete. Fetching status..."
 if [[ -f "${REPO_ROOT}/db/pom.xml" ]]; then
   mvn -pl db flyway:info "${FLYWAY_PROPS[@]}" 2>/dev/null || true
 else
-  mvn -pl sales-service flyway:info "${FLYWAY_PROPS[@]}" 2>/dev/null || true
+  mvn -pl services/sales-service flyway:info "${FLYWAY_PROPS[@]}" 2>/dev/null || true
 fi
 
 echo ""

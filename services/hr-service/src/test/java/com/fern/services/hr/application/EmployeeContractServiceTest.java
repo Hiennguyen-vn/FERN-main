@@ -43,7 +43,7 @@ class EmployeeContractServiceTest {
   void createContractUsesSnowflakeAndDefaultStatus() {
     RequestUserContextHolder.set(new RequestUserContext(
         7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canManageContractForUser(RequestUserContextHolder.get(), 200L, "VN")).thenReturn(true);
     when(idGenerator.generateId()).thenReturn(901L);
     when(contractRepository.findById(901L)).thenReturn(java.util.Optional.of(new EmployeeContractRepository.ContractRecord(
@@ -106,7 +106,7 @@ class EmployeeContractServiceTest {
   void updateContractRejectsInvalidDates() {
     RequestUserContextHolder.set(new RequestUserContext(
         7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canManageContractForUser(RequestUserContextHolder.get(), 200L, "VN")).thenReturn(true);
     when(contractRepository.findById(901L)).thenReturn(java.util.Optional.of(new EmployeeContractRepository.ContractRecord(
         901L,
@@ -149,7 +149,7 @@ class EmployeeContractServiceTest {
   void createContractRejectsWhenBusinessScopeIsMissing() {
     RequestUserContextHolder.set(new RequestUserContext(
         17L, "manager", "sess-17", Set.of("outlet_manager"), Set.of(), Set.of(10L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canManageContractForUser(RequestUserContextHolder.get(), 200L, "VN")).thenReturn(false);
 
     EmployeeContractService service = new EmployeeContractService(contractRepository, idGenerator, authorizationPolicyService);

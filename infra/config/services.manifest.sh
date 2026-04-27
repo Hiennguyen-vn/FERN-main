@@ -55,4 +55,5 @@ FERN_KAFKA_TOPICS=(
   "fern.auth.user-role-changed|6"
   "fern.org.outlet-updated|6"
   "fern.product.product-price-changed|12"
+  "fern.outbox.dlq|6"
 )

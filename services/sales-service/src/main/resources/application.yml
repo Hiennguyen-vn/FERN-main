@@ -7,6 +7,13 @@ spring:
   threads:
     virtual:
       enabled: true
+  flyway:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/fern}
+    user: ${POSTGRES_APP_USER:${POSTGRES_USER:fern}}
+    password: ${POSTGRES_APP_PASSWORD:${POSTGRES_PASSWORD:fern}}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
 
 management:
   endpoints:
@@ -25,8 +32,8 @@ info:
 dependencies:
   postgres:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/fern}
-    username: ${POSTGRES_USER:fern}
-    password: ${POSTGRES_PASSWORD:fern}
+    username: ${POSTGRES_APP_USER:${POSTGRES_USER:fern}}
+    password: ${POSTGRES_APP_PASSWORD:${POSTGRES_PASSWORD:fern}}
     poolSize: ${DB_POOL_SIZE:16}
   redis:
     host: ${REDIS_HOST:localhost}
@@ -35,3 +42,12 @@ dependencies:
     bootstrap: ${KAFKA_BOOTSTRAP:localhost:9092}
   masterNode:
     baseUrl: ${MASTER_NODE_URL:http://localhost:8082}
+
+outbox:
+  relay:
+    enabled: ${OUTBOX_RELAY_ENABLED:true}
+    fixed-delay-ms: ${OUTBOX_RELAY_FIXED_DELAY_MS:1000}
+  dlq:
+    enabled: ${OUTBOX_DLQ_ENABLED:true}
+    fixed-delay-ms: ${OUTBOX_DLQ_FIXED_DELAY_MS:5000}
+    topic: ${OUTBOX_DLQ_TOPIC:fern.outbox.dlq}

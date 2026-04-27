@@ -181,7 +181,7 @@ class AuthServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     AuthUserRecord user = new AuthUserRecord(
         42L,
         "alice",
@@ -239,7 +239,7 @@ class AuthServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     AuthUserRecord user = new AuthUserRecord(
         42L,
         "alice",
@@ -299,7 +299,7 @@ class AuthServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(authSessionService.logoutSession("sess-42", 42L))
         .thenReturn(sessionRecord("sess-42", 42L, "2026-03-27T00:00:00Z", "2026-03-27T00:10:00Z",
             "2026-03-27T00:02:00Z"));
@@ -334,7 +334,7 @@ class AuthServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(authSessionService.listSessions(42L)).thenReturn(List.of(
         sessionRecord("sess-current", 42L, "2026-03-27T00:00:00Z", "2026-03-27T00:10:00Z"),
         sessionRecord("sess-old", 42L, "2026-03-26T00:00:00Z", "2026-03-26T00:10:00Z", "2026-03-26T00:05:00Z")
@@ -373,7 +373,7 @@ class AuthServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(authSessionService.findSession("sess-other"))
         .thenReturn(Optional.of(sessionRecord("sess-other", 84L, "2026-03-26T00:00:00Z", "2026-03-26T00:10:00Z")));
 
@@ -405,7 +405,7 @@ class AuthServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(authUserRepository.countActiveUsers()).thenReturn(1L);
     when(authorizationPolicyService.resolveUserProfile(7L))
         .thenReturn(profile(7L, assignment(CanonicalRole.ADMIN, ScopeType.OUTLET, 7L, "OUTLET-7", Set.of(7L))));
@@ -476,7 +476,7 @@ class AuthServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(authUserRepository.replaceRolePermissions("manager", Set.of("org.write", "product.catalog.write")))
         .thenReturn(new RolePermissionUpdateResult(
             "manager",

@@ -60,7 +60,7 @@ public class IdempotencyGuard {
                 IdempotencyResult existing = checkL2(conn, serviceName, idempotencyKey, requestHash);
                 if (existing != null) {
                     conn.commit();
-                    cacheInRedis(redisKey, existing, ttl);
+                    cacheInRedis(redisKey, requestHash, existing, ttl);
                     return existing;
                 }
 
@@ -76,6 +76,8 @@ public class IdempotencyGuard {
                 }
                 throw e;
             }
+        } catch (IdempotencyException e) {
+            throw e;
         } catch (Exception e) {
             throw new IdempotencyException("L2 check failed", e);
         }
@@ -92,7 +94,7 @@ public class IdempotencyGuard {
         // ── Persist result ──
         updateL2Status(serviceName, idempotencyKey, "completed",
                 result.responseBody(), result.responseCode(), result.resourceId());
-        cacheInRedis(redisKey, result, ttl);
+        cacheInRedis(redisKey, requestHash, result, ttl);
 
         return result;
     }
@@ -107,7 +109,7 @@ public class IdempotencyGuard {
             return new IdempotencyResult(
                     true,
                     node.get("c").asInt(),
-                    node.get("b").toString(),
+                    node.get("b").asText(),
                     node.has("r") ? node.get("r").asText() : null
             );
         } catch (IdempotencyConflictException e) {
@@ -131,7 +133,9 @@ public class IdempotencyGuard {
                     throw new IdempotencyConflictException("Idempotency key reused with different payload");
                 }
                 String status = rs.getString("status");
-                if ("started".equals(status)) return null; // in-flight
+                if ("started".equals(status)) {
+                    throw new IdempotencyInProgressException("Idempotency key is already in progress");
+                }
                 return new IdempotencyResult(
                         true,
                         rs.getInt("response_code"),
@@ -173,10 +177,10 @@ public class IdempotencyGuard {
         }
     }
 
-    private void cacheInRedis(String key, IdempotencyResult result, TtlPolicy ttl) {
+    private void cacheInRedis(String key, String requestHash, IdempotencyResult result, TtlPolicy ttl) {
         try (var jedis = redisPool.getResource()) {
             String json = mapper.writeValueAsString(new java.util.LinkedHashMap<>() {{
-                put("h", sha256(result.responseBody() != null ? result.responseBody() : ""));
+                put("h", requestHash);
                 put("c", result.responseCode());
                 put("b", result.responseBody());
                 put("r", result.resourceId());

@@ -1,9 +1,22 @@
 server:
   port: ${PORT:8080}
 
+logging:
+  level:
+    root: INFO
+
 spring:
   application:
     name: gateway
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: ${GATEWAY_HTTPCLIENT_CONNECT_TIMEOUT_MS:2000}
+        response-timeout: ${GATEWAY_HTTPCLIENT_RESPONSE_TIMEOUT:10s}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
   threads:
     virtual:
       enabled: true
@@ -24,6 +37,78 @@ info:
     name: ${spring.application.name}
     description: Spring Cloud Gateway ingress for FERN ERP.
 
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 20
+        minimumNumberOfCalls: 10
+        permittedNumberOfCallsInHalfOpenState: 5
+        failureRateThreshold: 50
+        slowCallRateThreshold: 50
+        slowCallDurationThreshold: ${GATEWAY_CIRCUIT_SLOW_CALL_THRESHOLD:2s}
+        waitDurationInOpenState: ${GATEWAY_CIRCUIT_OPEN_WAIT:30s}
+    instances:
+      auth-service:
+        baseConfig: default
+      master-node:
+        baseConfig: default
+      org-service:
+        baseConfig: default
+      hr-service:
+        baseConfig: default
+      product-service:
+        baseConfig: default
+      procurement-service:
+        baseConfig: default
+      sales-service:
+        baseConfig: default
+      inventory-service:
+        baseConfig: default
+      payroll-service:
+        baseConfig: default
+      finance-service:
+        baseConfig: default
+      audit-service:
+        baseConfig: default
+      report-service:
+        baseConfig: default
+  timelimiter:
+    configs:
+      default:
+        timeoutDuration: ${GATEWAY_CIRCUIT_TIMEOUT:8s}
+        cancelRunningFuture: true
+    instances:
+      auth-service:
+        baseConfig: default
+      master-node:
+        baseConfig: default
+      org-service:
+        baseConfig: default
+      hr-service:
+        baseConfig: default
+      product-service:
+        baseConfig: default
+      procurement-service:
+        baseConfig: default
+      sales-service:
+        baseConfig: default
+      inventory-service:
+        baseConfig: default
+      payroll-service:
+        baseConfig: default
+      finance-service:
+        baseConfig: default
+      audit-service:
+        baseConfig: default
+      report-service:
+        baseConfig: default
+
+sync:
+  ws:
+    outlet-ids: ${SYNC_WS_OUTLET_IDS:1,2,3,4,5}
+
 fern:
   gateway:
     cors:
@@ -35,8 +120,8 @@ fern:
 dependencies:
   postgres:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/fern}
-    username: ${POSTGRES_USER:fern}
-    password: ${POSTGRES_PASSWORD:fern}
+    username: ${POSTGRES_APP_USER:${POSTGRES_USER:fern}}
+    password: ${POSTGRES_APP_PASSWORD:${POSTGRES_PASSWORD:fern}}
     poolSize: ${DB_POOL_SIZE:8}
   redis:
     host: ${REDIS_HOST:localhost}

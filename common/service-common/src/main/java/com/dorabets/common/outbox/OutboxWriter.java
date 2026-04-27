@@ -5,7 +5,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.Instant;
-
 /**
  * Appends outbox events within the same DB connection/transaction as the business operation.
  * Caller must pass the active Connection so the INSERT is atomic with the business write.
@@ -44,7 +43,15 @@ public class OutboxWriter {
                 ps.executeUpdate();
             }
         } catch (Exception e) {
-            throw new RuntimeException("OutboxWriter.append failed for aggregate=" + aggregateType + ":" + aggregateId, e);
+            Throwable root = e;
+            while (root.getCause() != null) {
+                root = root.getCause();
+            }
+            String detail = root.getClass().getSimpleName() + ": " + root.getMessage();
+            throw new RuntimeException(
+                "OutboxWriter.append failed for aggregate=" + aggregateType + ":" + aggregateId + " (" + detail + ")",
+                e
+            );
         }
     }
 

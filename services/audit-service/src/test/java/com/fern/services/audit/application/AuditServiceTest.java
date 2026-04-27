@@ -37,7 +37,7 @@ class AuditServiceTest {
   void listAuditLogsRejectsNonAdminUsers() {
     RequestUserContextHolder.set(new RequestUserContext(
         12L, "workflow.hcm.manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canReadAudit(any())).thenReturn(false);
     AuditService service = new AuditService(auditRepository, authorizationPolicyService);
 
@@ -62,7 +62,7 @@ class AuditServiceTest {
   void listAuditLogsDelegatesSanitizedLimitAndOffsetForAdmin() {
     RequestUserContextHolder.set(new RequestUserContext(
         1L, "workflow.admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(2000L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canReadAudit(any())).thenReturn(true);
     when(auditRepository.listLogs(
         "purchase_order",

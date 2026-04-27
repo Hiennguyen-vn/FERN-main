@@ -72,7 +72,7 @@ class PayrollServiceTest {
   void calculateSalaryReturnsResultForHourlyWorker() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findTimesheetScope(70L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollTimesheetScopeRecord(70L, 11L, 1002L, "VN", 3012L, null)
     ));
@@ -99,7 +99,7 @@ class PayrollServiceTest {
   void calculateSalaryReturnsResultForFullTimeMonthlyWithOvertime() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findTimesheetScope(71L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollTimesheetScopeRecord(71L, 11L, 1002L, "VN", 3013L, null)
     ));
@@ -127,7 +127,7 @@ class PayrollServiceTest {
   void calculateSalaryThrows400WhenNoActiveContract() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findTimesheetScope(72L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollTimesheetScopeRecord(72L, 11L, 1002L, "VN", 3014L, null)
     ));
@@ -150,7 +150,7 @@ class PayrollServiceTest {
   void generatePayrollAutoCalculatesWhenSalaryFieldsAbsent() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findTimesheetScope(80L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollTimesheetScopeRecord(80L, 11L, 1002L, "VN", 3015L, null)
     ));
@@ -183,7 +183,7 @@ class PayrollServiceTest {
   void generatePayrollUsesManualOverrideWhenSalaryFieldsProvided() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findTimesheetScope(81L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollTimesheetScopeRecord(81L, 11L, 1002L, "VN", 3016L, null)
     ));
@@ -207,7 +207,7 @@ class PayrollServiceTest {
   void generatePayrollRejectsDuplicateTimesheet() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findTimesheetScope(70L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollTimesheetScopeRecord(70L, 11L, 1002L, "US", 3012L, 2001L)
     ));
@@ -241,7 +241,7 @@ class PayrollServiceTest {
   void createTimesheetRejectsDuplicateUserInPayrollPeriod() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findPeriodScope(70L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollPeriodScopeRecord(70L, 1002L, "US")
     ));
@@ -286,7 +286,7 @@ class PayrollServiceTest {
   void createTimesheetRejectsOutletOutsidePayrollRegionScope() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findPeriodScope(70L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollPeriodScopeRecord(70L, 1002L, "US")
     ));
@@ -316,7 +316,7 @@ class PayrollServiceTest {
   void createTimesheetRejectsUserWithoutOutletScope() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findPeriodScope(70L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollPeriodScopeRecord(70L, 1002L, "US")
     ));
@@ -347,7 +347,7 @@ class PayrollServiceTest {
   void generatePayrollRejectsMissingTimesheet() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findTimesheetScope(70L)).thenReturn(Optional.empty());
 
     PayrollService service = service();
@@ -363,7 +363,7 @@ class PayrollServiceTest {
   void approvePayrollPublishesEvent() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
 
     PayrollRepository.PayrollRecord payroll = new PayrollRepository.PayrollRecord(
         99L,
@@ -415,7 +415,7 @@ class PayrollServiceTest {
   void rejectPayrollUpdatesDraftRun() {
     RequestUserContextHolder.set(new RequestUserContext(
         5L, "finance", "sess-5", Set.of("finance"), Set.of(), Set.of(), true, false, null
-    ));
+    , null, null));
     when(payrollRepository.findPayrollScope(99L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollScopeRecord(99L, 88L, 11L, 1002L, "US", 12L, 13L)
     ));
@@ -464,7 +464,7 @@ class PayrollServiceTest {
   void approvePayrollRejectsNonDraftRuns() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findPayrollScope(99L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollScopeRecord(99L, 88L, 11L, 1002L, "US", 12L, 13L)
     ));
@@ -495,7 +495,7 @@ class PayrollServiceTest {
   void createPeriodRejectsPayDateBeforeEndDate() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     PayrollService service = service();
 
     assertThrows(ServiceException.class, () -> service.createPeriod(new PayrollDtos.CreatePayrollPeriodRequest(
@@ -512,7 +512,7 @@ class PayrollServiceTest {
   void createPeriodRejectsDuplicateRegionWindow() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.findPeriodByRegionAndWindow(
         1002L,
         LocalDate.parse("2026-04-01"),
@@ -549,7 +549,7 @@ class PayrollServiceTest {
   void listPeriodsRejectsNonAdminUsers() {
     RequestUserContextHolder.set(new RequestUserContext(
         15L, "manager", "sess-15", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.resolveUserProfile(15L))
         .thenReturn(new BusinessUserProfile(15L, Set.of(), List.of(), Set.of(2000L)));
     PayrollService service = service();
@@ -572,7 +572,7 @@ class PayrollServiceTest {
   void listTimesheetsDelegatesFiltersAndCapsLimitForAdmin() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.listTimesheets(null, 11L, 12L, 13L, null, null, null, 200, 0))
         .thenReturn(PagedResult.of(java.util.List.of(), 200, 0, 0));
 
@@ -586,7 +586,7 @@ class PayrollServiceTest {
   void listPayrollDelegatesStatusFilterForAdmin() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.listPayroll(null, 11L, 12L, 13L, "approved", null, null, null, 50, 0))
         .thenReturn(PagedResult.of(java.util.List.of(), 50, 0, 0));
 
@@ -600,7 +600,7 @@ class PayrollServiceTest {
   void listPeriodsDelegatesLimitAndOffsetForAdmin() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(payrollRepository.listPeriods(null, 7L, LocalDate.parse("2026-03-01"), LocalDate.parse("2026-03-31"), null, null, null, 200, 5))
         .thenReturn(PagedResult.of(java.util.List.of(), 200, 5, 0));
 

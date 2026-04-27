@@ -56,7 +56,7 @@ class SupplierInvoiceServiceTest {
   void approveInvoicePublishesFinanceEvent() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(authorizationPolicyService.canWriteProcurement(any(), anyLong())).thenReturn(true);
     ProcurementDtos.SupplierInvoiceView invoice = new ProcurementDtos.SupplierInvoiceView(
         300L,
@@ -148,7 +148,7 @@ class SupplierInvoiceServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     ProcurementDtos.SupplierInvoiceView invoice = new ProcurementDtos.SupplierInvoiceView(
         300L,
         "INV-300",
@@ -238,7 +238,7 @@ class SupplierInvoiceServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(700L));
     SupplierInvoiceService service = new SupplierInvoiceService(
         procurementRepository,
@@ -277,7 +277,7 @@ class SupplierInvoiceServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(700L));
     when(procurementRepository.listSupplierInvoices(
         Set.of(700L),

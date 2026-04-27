@@ -329,8 +329,12 @@ public class InventoryRepository extends BaseRepository {
       try (PreparedStatement ps = conn.prepareStatement(
           """
           INSERT INTO core.waste_record (
-            inventory_transaction_id, reason, approved_by_user_id
-          ) VALUES (?, ?, ?)
+            inventory_transaction_id, txn_time, reason, approved_by_user_id
+          )
+          SELECT ?, txn_time, ?, ?
+          FROM core.inventory_transaction
+          WHERE id = ?
+          LIMIT 1
           """
       )) {
         ps.setLong(1, transactionId);
@@ -340,6 +344,7 @@ public class InventoryRepository extends BaseRepository {
         } else {
           ps.setLong(3, actorUserId);
         }
+        ps.setLong(4, transactionId);
         ps.executeUpdate();
       }
       return loadWasteView(conn, transactionId)
@@ -465,14 +470,27 @@ public class InventoryRepository extends BaseRepository {
     });
   }
 
-  public int applySaleCompleted(
+  public int applySaleApproved(
       long saleId,
       long outletId,
       LocalDate businessDate,
+      Instant saleCreatedAt,
       Instant txnTime,
+      Long actorUserId,
+      boolean allowOversell,
       List<SaleComponentMovement> movements
   ) {
     return executeInTransaction(conn -> {
+      acquireSaleInventoryLock(conn, saleId);
+      Instant effectiveSaleCreatedAt = saleCreatedAt == null
+          ? findSaleCreatedAt(conn, saleId)
+              .orElseThrow(() -> ServiceException.notFound("Sale not found for inventory movement: " + saleId))
+          : saleCreatedAt;
+      if (allowOversell) {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT set_config('fern.allow_oversell', 'true', true)")) {
+          ps.executeQuery();
+        }
+      }
       int inserted = 0;
       for (SaleComponentMovement movement : movements) {
         if (saleItemTransactionExists(conn, saleId, movement.productId(), movement.itemId())) {
@@ -489,23 +507,81 @@ public class InventoryRepository extends BaseRepository {
             txnTime,
             "sale_usage",
             currentUnitCost(conn, outletId, movement.itemId()),
-            null,
+            actorUserId,
             "Sale " + saleId + " product " + movement.productId()
         );
         try (PreparedStatement ps = conn.prepareStatement(
             """
             INSERT INTO core.sale_item_transaction (
-              inventory_transaction_id, sale_id, product_id, item_id
-            ) VALUES (?, ?, ?, ?)
+              inventory_transaction_id, sale_id, sale_created_at, product_id, item_id, txn_time
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """
         )) {
           ps.setLong(1, transactionId);
           ps.setLong(2, saleId);
-          ps.setLong(3, movement.productId());
-          ps.setLong(4, movement.itemId());
+          ps.setTimestamp(3, Timestamp.from(effectiveSaleCreatedAt));
+          ps.setLong(4, movement.productId());
+          ps.setLong(5, movement.itemId());
+          ps.setTimestamp(6, Timestamp.from(txnTime));
           ps.executeUpdate();
         }
         inserted++;
+      }
+      return inserted;
+    });
+  }
+
+  public int reverseSaleUsage(
+      long saleId,
+      long outletId,
+      LocalDate businessDate,
+      Instant txnTime,
+      Long actorUserId,
+      String note
+  ) {
+    return executeInTransaction(conn -> {
+      acquireSaleInventoryLock(conn, saleId);
+      List<SaleUsageTransaction> originals = findSaleUsageTransactions(conn, saleId);
+      int inserted = 0;
+      for (SaleUsageTransaction original : originals) {
+        if (saleReversalExists(conn, original.inventoryTransactionId())) {
+          continue;
+        }
+        long reversalTransactionId = snowflakeIdGenerator.generateId();
+        insertInventoryTransaction(
+            conn,
+            reversalTransactionId,
+            outletId,
+            original.itemId(),
+            original.qtyChange().abs(),
+            businessDate,
+            txnTime,
+            "sale_reversal",
+            original.unitCost(),
+            actorUserId,
+            note == null ? "Reverse sale " + saleId : note
+        );
+        try (PreparedStatement ps = conn.prepareStatement(
+            """
+            INSERT INTO core.sale_inventory_reversal (
+              sale_id, product_id, item_id,
+              original_inventory_transaction_id, original_inventory_txn_time,
+              reversal_inventory_transaction_id, reversal_inventory_txn_time,
+              reversed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """
+        )) {
+          ps.setLong(1, saleId);
+          ps.setLong(2, original.productId());
+          ps.setLong(3, original.itemId());
+          ps.setLong(4, original.inventoryTransactionId());
+          ps.setTimestamp(5, Timestamp.from(original.txnTime()));
+          ps.setLong(6, reversalTransactionId);
+          ps.setTimestamp(7, Timestamp.from(txnTime));
+          ps.setTimestamp(8, Timestamp.from(txnTime));
+          ps.executeUpdate();
+          inserted++;
+        }
       }
       return inserted;
     });
@@ -538,12 +614,13 @@ public class InventoryRepository extends BaseRepository {
         try (PreparedStatement ps = conn.prepareStatement(
             """
             INSERT INTO core.goods_receipt_transaction (
-              inventory_transaction_id, goods_receipt_item_id
-            ) VALUES (?, ?)
+              inventory_transaction_id, txn_time, goods_receipt_item_id
+            ) VALUES (?, ?, ?)
             """
         )) {
           ps.setLong(1, transactionId);
-          ps.setLong(2, movement.goodsReceiptItemId());
+          ps.setTimestamp(2, Timestamp.from(txnTime));
+          ps.setLong(3, movement.goodsReceiptItemId());
           ps.executeUpdate();
         }
         inserted++;
@@ -966,6 +1043,16 @@ public class InventoryRepository extends BaseRepository {
   public record SaleComponentMovement(long productId, long itemId, BigDecimal qtyChange) {
   }
 
+  private record SaleUsageTransaction(
+      long inventoryTransactionId,
+      Instant txnTime,
+      long productId,
+      long itemId,
+      BigDecimal qtyChange,
+      BigDecimal unitCost
+  ) {
+  }
+
   private boolean saleItemTransactionExists(Connection conn, long saleId, long productId, long itemId)
       throws SQLException {
     try (PreparedStatement ps = conn.prepareStatement(
@@ -982,6 +1069,80 @@ public class InventoryRepository extends BaseRepository {
       ps.setLong(3, itemId);
       try (ResultSet rs = ps.executeQuery()) {
         return rs.next();
+      }
+    }
+  }
+
+  private List<SaleUsageTransaction> findSaleUsageTransactions(Connection conn, long saleId) throws SQLException {
+    List<SaleUsageTransaction> results = new ArrayList<>();
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT sit.inventory_transaction_id, sit.txn_time, sit.product_id, sit.item_id,
+               it.qty_change, it.unit_cost
+        FROM core.sale_item_transaction sit
+        JOIN core.inventory_transaction it
+          ON it.id = sit.inventory_transaction_id
+         AND it.txn_time = sit.txn_time
+        WHERE sit.sale_id = ?
+          AND it.txn_type = 'sale_usage'::inventory_txn_type_enum
+        FOR UPDATE OF it
+        """
+    )) {
+      ps.setLong(1, saleId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          results.add(new SaleUsageTransaction(
+              rs.getLong("inventory_transaction_id"),
+              rs.getTimestamp("txn_time").toInstant(),
+              rs.getLong("product_id"),
+              rs.getLong("item_id"),
+              rs.getBigDecimal("qty_change"),
+              rs.getBigDecimal("unit_cost")
+          ));
+        }
+      }
+    }
+    return results;
+  }
+
+  private boolean saleReversalExists(Connection conn, long originalInventoryTransactionId) throws SQLException {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT 1
+        FROM core.sale_inventory_reversal
+        WHERE original_inventory_transaction_id = ?
+        """
+    )) {
+      ps.setLong(1, originalInventoryTransactionId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
+  }
+
+  private void acquireSaleInventoryLock(Connection conn, long saleId) throws SQLException {
+    try (PreparedStatement ps = conn.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
+      ps.setLong(1, 0x53414c455f494e56L ^ saleId);
+      ps.executeQuery();
+    }
+  }
+
+  private Optional<Instant> findSaleCreatedAt(Connection conn, long saleId) throws SQLException {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT created_at
+        FROM core.sale_record
+        WHERE id = ?
+        LIMIT 1
+        """
+    )) {
+      ps.setLong(1, saleId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) {
+          return Optional.empty();
+        }
+        Timestamp createdAt = rs.getTimestamp("created_at");
+        return createdAt == null ? Optional.empty() : Optional.of(createdAt.toInstant());
       }
     }
   }

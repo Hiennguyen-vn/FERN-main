@@ -52,8 +52,8 @@ class FinanceServiceTest {
   void createOperatingExpenseUsesSnowflakeAndPublishesEvent() {
     RequestUserContextHolder.set(new RequestUserContext(
         9L, "admin", "sess-9", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
-    ));
-    when(authorizationPolicyService.canWriteFinance(any())).thenReturn(true);
+    , null, null));
+    when(authorizationPolicyService.canWriteFinanceForOutlet(any(), eq(7L))).thenReturn(true);
     when(idGenerator.generateId()).thenReturn(501L);
     when(financeRepository.createOperatingExpense(
         501L,
@@ -101,10 +101,10 @@ class FinanceServiceTest {
 
   @Test
   void createOtherExpenseUsesSnowflakeAndPublishesEvent() {
-    when(authorizationPolicyService.canWriteFinance(any())).thenReturn(true);
+    when(authorizationPolicyService.canWriteFinanceForOutlet(any(), eq(7L))).thenReturn(true);
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "audit-service"
-    ));
+    , null, null));
     when(idGenerator.generateId()).thenReturn(502L);
     when(financeRepository.createOtherExpense(
         502L,
@@ -154,7 +154,7 @@ class FinanceServiceTest {
   void listExpensesRejectsNonAdminUsers() {
     RequestUserContextHolder.set(new RequestUserContext(
         11L, "workflow.hcm.manager", "sess-11", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canReadFinance(any())).thenReturn(false);
     FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
 
@@ -177,10 +177,11 @@ class FinanceServiceTest {
   void listExpensesDelegatesLimitAndOffsetForAdmin() {
     RequestUserContextHolder.set(new RequestUserContext(
         9L, "admin", "sess-9", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canReadFinance(any())).thenReturn(true);
+    when(authorizationPolicyService.canReadFinanceForOutlet(any(), eq(7L))).thenReturn(true);
     when(financeRepository.listExpenses(
-        7L,
+        Set.of(7L),
         LocalDate.parse("2026-03-01"),
         LocalDate.parse("2026-03-31"),
         "operating_expense",
@@ -205,7 +206,7 @@ class FinanceServiceTest {
     );
 
     verify(financeRepository).listExpenses(
-        7L,
+        Set.of(7L),
         LocalDate.parse("2026-03-01"),
         LocalDate.parse("2026-03-31"),
         "operating_expense",

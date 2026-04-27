@@ -7,7 +7,7 @@ public class SyncDtos {
   // ── Push (Edge → Cloud) ──────────────────────────────────────────────────
 
   public record PushRequest(
-      long deviceId,
+      String deviceId,
       List<PushEvent> events
   ) {}
 
@@ -41,6 +41,7 @@ public class SyncDtos {
       String categoryName,
       boolean isAvailable,
       long priceCents,
+      long taxBasisPoints,
       long updatedAt   // epoch millis
   ) {}
 
@@ -53,12 +54,111 @@ public class SyncDtos {
       long lastMovementAt  // epoch millis
   ) {}
 
+  // ── Pull / Recipes (Cloud → Edge) ────────────────────────────────────────
+
+  public record RecipeComponentRow(
+      long itemId,
+      String itemCode,
+      String itemName,
+      String componentQty,
+      String yieldQty,
+      String componentUomCode,
+      String itemBaseUomCode,
+      String conversionFactor
+  ) {}
+
+  public record RecipeRow(
+      long productId,
+      String version,
+      String yieldQty,
+      String yieldUomCode,
+      String status,
+      long updatedAt,
+      List<RecipeComponentRow> components
+  ) {}
+
+  // ── Pull / Menu snapshot (Cloud → Edge hub) ───────────────────────────────
+
+  public record MenuProductRow(
+      long id,
+      long outletId,
+      String code,
+      String name,
+      long categoryId,
+      String categoryName,
+      boolean isActive,
+      boolean isAvailable,
+      long priceCents,
+      long taxBasisPoints
+  ) {}
+
+  public record MenuVariantRow(
+      long id,
+      long productId,
+      String code,
+      String name,
+      String priceModifierType,
+      String priceModifierValue,
+      int displayOrder,
+      boolean isActive
+  ) {}
+
+  public record MenuModifierGroupRow(
+      long id,
+      String code,
+      String name,
+      String selectionType,
+      int minSelections,
+      int maxSelections,
+      int displayOrder,
+      boolean isActive
+  ) {}
+
+  public record MenuModifierOptionRow(
+      long id,
+      long modifierGroupId,
+      String code,
+      String name,
+      String priceAdjustment,
+      int displayOrder,
+      boolean isActive
+  ) {}
+
+  public record MenuProductModifierGroupRow(
+      long productId,
+      long modifierGroupId,
+      boolean isRequired,
+      int displayOrder
+  ) {}
+
+  public record MenuSnapshot(
+      long outletId,
+      long version,
+      List<MenuProductRow> products,
+      List<MenuVariantRow> variants,
+      List<MenuModifierGroupRow> modifierGroups,
+      List<MenuModifierOptionRow> modifierOptions,
+      List<MenuProductModifierGroupRow> productModifierGroups
+  ) {}
+
   // ── Manifest ─────────────────────────────────────────────────────────────
 
   public record ManifestResponse(
       long catalogVersion,
       long priceVersion,
       long stockVersion,
+      long recipeVersion,
+      long menuVersion,
       String serverTime
+  ) {}
+
+  public record TaxRuleRow(
+      long id,
+      long outletId,
+      String productCategoryCode,  // null = applies to all categories
+      java.math.BigDecimal ratePct,
+      boolean inclusive,
+      java.time.LocalDate effectiveFrom,
+      java.time.LocalDate effectiveTo    // null = open-ended
   ) {}
 }

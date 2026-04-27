@@ -7,13 +7,15 @@ COPY pom.xml pom.xml
 COPY common common
 COPY gateway gateway
 COPY services services
+COPY tools tools
 
-RUN mvn -pl gateway -am -DskipTests package
+RUN mvn -pl gateway -am -DskipTests package && \
+    rm -f /workspace/gateway/target/*.jar.original
 
 FROM eclipse-temurin:21-jre
 
 WORKDIR /app
 
-COPY --from=build /workspace/gateway/target/gateway.jar /app/app.jar
+COPY --from=build /workspace/gateway/target/*.jar /app/app.jar
 
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

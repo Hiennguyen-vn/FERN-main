@@ -185,7 +185,7 @@ class ControlPlaneRegistryServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     MutableClock clock = new MutableClock(Instant.parse("2026-03-26T00:00:00Z"));
     ControlPlaneRegistryService service = new ControlPlaneRegistryService(
         clock,
@@ -219,7 +219,7 @@ class ControlPlaneRegistryServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     assertEquals(1, service.listServices().size());
   }
 
@@ -234,7 +234,7 @@ class ControlPlaneRegistryServiceTest {
         false,
         true,
         callerService
-    ));
+    , null, null));
   }
 
   private static final class MutableClock extends Clock {

@@ -2,6 +2,7 @@ package com.dorabets.common.spring.web;
 
 import com.dorabets.common.middleware.ServiceException;
 import com.dorabets.idempotency.IdempotencyConflictException;
+import com.dorabets.idempotency.IdempotencyInProgressException;
 import java.sql.SQLException;
 import java.time.Instant;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -86,6 +87,16 @@ public class ServiceExceptionHandler {
         "idempotency_conflict",
         exception.getMessage() == null ? "Idempotency key reused with different payload" : exception.getMessage(),
         null
+    );
+  }
+
+  @ExceptionHandler(IdempotencyInProgressException.class)
+  public ResponseEntity<Map<String, Object>> handleIdempotencyInProgress(IdempotencyInProgressException exception) {
+    return response(
+        HttpStatus.CONFLICT,
+        "idempotency_in_progress",
+        exception.getMessage() == null ? "Idempotency key is already in progress" : exception.getMessage(),
+        Map.of("retryable", true)
     );
   }
 

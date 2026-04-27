@@ -77,11 +77,11 @@ CREATE TABLE core.audit_log_2026_12 PARTITION OF core.audit_log
 CREATE TABLE core.audit_log_default PARTITION OF core.audit_log DEFAULT;
 
 -- Indexes
-CREATE INDEX idx_audit_log_actor_user_id ON core.audit_log(actor_user_id);
-CREATE INDEX idx_audit_log_action         ON core.audit_log(action);
-CREATE INDEX idx_audit_log_entity_name    ON core.audit_log(entity_name);
-CREATE INDEX idx_audit_log_entity_lookup  ON core.audit_log(entity_name, entity_id);
-CREATE INDEX idx_audit_log_created_at     ON core.audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor_user_id ON core.audit_log(actor_user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action         ON core.audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_entity_name    ON core.audit_log(entity_name);
+CREATE INDEX IF NOT EXISTS idx_audit_log_entity_lookup  ON core.audit_log(entity_name, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at     ON core.audit_log(created_at);
 
 -- ─── 3. Backfill ─────────────────────────────────────────────────────────────
 

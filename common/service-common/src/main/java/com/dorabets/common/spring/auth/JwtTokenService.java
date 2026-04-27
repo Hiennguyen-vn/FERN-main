@@ -38,6 +38,26 @@ public class JwtTokenService {
     this.audience = normalizeOrDefault(audience, DEFAULT_AUDIENCE);
   }
 
+  public String issueDeviceToken(long deviceId, long outletId, long ttlSeconds) {
+    Instant now = Instant.now();
+    JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
+        .issuer(issuer)
+        .audience(audience)
+        .subject("device:" + deviceId)
+        .claim("device_id", deviceId)
+        .claim("device_outlet_id", outletId)
+        .issueTime(Date.from(now))
+        .expirationTime(Date.from(now.plusSeconds(ttlSeconds)))
+        .build();
+    try {
+      SignedJWT signedJwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), claimsSet);
+      signedJwt.sign(new MACSigner(secret));
+      return signedJwt.serialize();
+    } catch (JOSEException e) {
+      throw new IllegalStateException("Unable to issue device JWT", e);
+    }
+  }
+
   public String issueAccessToken(
       long userId,
       String username,
@@ -92,15 +112,24 @@ public class JwtTokenService {
       Instant now = Instant.now();
       Instant issuedAt = claimsSet.getIssueTime() == null ? now : claimsSet.getIssueTime().toInstant();
       Instant expiresAt = claimsSet.getExpirationTime() == null ? now : claimsSet.getExpirationTime().toInstant();
+      Long deviceId = claimsSet.getLongClaim("device_id");
+      Long deviceOutletId = claimsSet.getLongClaim("device_outlet_id");
+      Long userId = claimsSet.getLongClaim("uid");
+      if (userId == null && deviceId == null) {
+        String subject = claimsSet.getSubject();
+        if (subject != null && !subject.startsWith("device:")) {
+          userId = Long.parseLong(subject);
+        }
+      }
       JwtClaims claims = new JwtClaims(
-          claimsSet.getLongClaim("uid") != null
-              ? claimsSet.getLongClaim("uid")
-              : Long.parseLong(claimsSet.getSubject()),
+          userId,
           claimsSet.getStringClaim("username"),
           claimsSet.getStringClaim("sid"),
           asStringSet(claimsSet.getClaim("roles")),
           asStringSet(claimsSet.getClaim("permissions")),
           asLongSet(claimsSet.getClaim("outletIds")),
+          deviceId,
+          deviceOutletId,
           issuedAt,
           expiresAt
       );

@@ -74,3 +74,73 @@ groups:
         annotations:
           summary: "Outbox FAILED events > 50 in 10min"
           description: "{{ $value }} events failed recently. Check DLQ and Kafka connectivity."
+
+      # P1 — DLQ has real events waiting for intervention
+      - alert: OutboxDlqDepthHigh
+        expr: outbox_dlq_pending_depth > 0
+        for: 5m
+        labels:
+          severity: P1
+        annotations:
+          summary: "Outbox DLQ contains failed events"
+          description: "FAILED outbox rows are still waiting for Kafka DLQ publication. Inspect outbox_dlq_pending_depth and the DLQ forwarder."
+
+      # P1 — Pending DLQ rows are aging, meaning Kafka quarantine is not catching up
+      - alert: OutboxDlqOldestAgeHigh
+        expr: outbox_dlq_oldest_age_seconds > 300
+        for: 5m
+        labels:
+          severity: P1
+        annotations:
+          summary: "Outbox DLQ publish lag > 5min"
+          description: "The oldest FAILED row still waiting for fern.outbox.dlq publication is {{ $value | humanizeDuration }} old."
+
+      # P1 — DLQ publish activity means business events are being quarantined now
+      - alert: OutboxDlqPublished
+        expr: increase(outbox_dlq_published_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: P1
+        annotations:
+          summary: "Outbox events published to DLQ"
+          description: "{{ $value }} outbox events were quarantined into fern.outbox.dlq in the last 10 minutes."
+
+      # P1 — Even DLQ forwarding is broken
+      - alert: OutboxDlqPublishFailures
+        expr: increase(outbox_dlq_publish_failures_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: P1
+        annotations:
+          summary: "DLQ publish failures detected"
+          description: "{{ $value }} DLQ publish attempts failed in the last 10 minutes. FAILED rows may exist without Kafka quarantine copies."
+
+      # P2 — Waste rate > 5% signals spoilage or staff fraud
+      - alert: WasteRateHigh
+        expr: pos_waste_rate > 0.05
+        for: 30m
+        labels:
+          severity: P2
+        annotations:
+          summary: "Waste rate > 5% over last 24h"
+          description: "Waste rate: {{ $value | humanizePercentage }}. Review waste_record logs and approve with manager PIN check."
+
+      # P2 — Cash shift variance > 50k VND (5,000,000 cents)
+      - alert: ShiftVarianceHigh
+        expr: pos_shift_variance_vnd_abs_max > 5000000
+        for: 5m
+        labels:
+          severity: P2
+        annotations:
+          summary: "Largest cash shift variance > 50,000 VND"
+          description: "Max abs discrepancy: {{ $value }} cents ({{ $value | humanize }} VND-cents) in last 24h. Cashier audit required."
+
+      # P2 — Orders taking unusually long to complete end-to-end
+      - alert: OrderCompletionSlow
+        expr: histogram_quantile(0.95, rate(pos_order_completion_seconds_bucket[10m])) > 300
+        for: 5m
+        labels:
+          severity: P2
+        annotations:
+          summary: "P95 order completion > 5 minutes"
+          description: "P95 end-to-end order time: {{ $value | humanizeDuration }}. Payment or approval step may be stuck."

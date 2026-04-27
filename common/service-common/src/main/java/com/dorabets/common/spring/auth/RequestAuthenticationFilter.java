@@ -22,21 +22,25 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
       "/api/v1/sales/public",
       "/api/v1/gateway/info",
       "/api/v1/gateway/routes",
-      "/api/v1/gateway/targets"
+      "/api/v1/gateway/targets",
+      "/api/v1/devices/pair"
   );
 
   private final JwtTokenService jwtTokenService;
   private final SpringInternalServiceAuth internalServiceAuth;
   private final AuthSessionService authSessionService;
+  private final DeviceTokenRegistry deviceTokenRegistry;
 
   public RequestAuthenticationFilter(
       JwtTokenService jwtTokenService,
       SpringInternalServiceAuth internalServiceAuth,
-      AuthSessionService authSessionService
+      AuthSessionService authSessionService,
+      DeviceTokenRegistry deviceTokenRegistry
   ) {
     this.jwtTokenService = jwtTokenService;
     this.internalServiceAuth = internalServiceAuth;
     this.authSessionService = authSessionService;
+    this.deviceTokenRegistry = deviceTokenRegistry;
   }
 
   @Override
@@ -46,7 +50,9 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
       FilterChain filterChain
   ) throws ServletException, IOException {
     try {
-      RequestUserContextHolder.set(resolveContext(request));
+      RequestUserContext ctx = resolveContext(request);
+      RequestUserContextHolder.set(ctx);
+      applyOutletScope(ctx, request);
       filterChain.doFilter(request, response);
     } catch (ServiceException exception) {
       response.setStatus(exception.getStatusCode());
@@ -58,7 +64,46 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
       response.getWriter().write("{\"error\":\"unauthorized\",\"message\":\"" + exception.getMessage() + "\"}");
     } finally {
       RequestUserContextHolder.clear();
+      OutletScopeContext.clear();
     }
+  }
+
+  private static void applyOutletScope(RequestUserContext ctx, HttpServletRequest request) {
+    if (ctx.isDeviceContext()) {
+      OutletScopeContext.set(ctx.deviceOutletId());
+      return;
+    }
+    // Internal services (sync, OutboxRelay drain, report aggregator) act across outlets.
+    if (ctx.internalService()) {
+      OutletScopeContext.set(OutletScopeContext.ALL);
+      return;
+    }
+    Set<Long> outlets = ctx.outletIds();
+    if (outlets == null || outlets.isEmpty()) {
+      if (ctx.hasRole("superadmin")) {
+        OutletScopeContext.set(OutletScopeContext.ALL);
+      } else {
+        OutletScopeContext.clear();
+      }
+      return;
+    }
+    // Caller may pin which outlet they want via X-Outlet-Id (POS device must always send it).
+    String pinned = request.getHeader("X-Outlet-Id");
+    if (pinned != null && !pinned.isBlank()) {
+      try {
+        long outletId = Long.parseLong(pinned.trim());
+        if (outlets.contains(outletId)) {
+          OutletScopeContext.set(outletId);
+          return;
+        }
+        OutletScopeContext.clear();
+        return;
+      } catch (NumberFormatException ignored) {
+        OutletScopeContext.clear();
+        return;
+      }
+    }
+    OutletScopeContext.setAllowedOutletIds(outlets);
   }
 
   @Override
@@ -67,13 +112,37 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
     if (path == null) {
       return false;
     }
-    return PUBLIC_PREFIXES.stream().anyMatch(path::startsWith);
+    return PUBLIC_PREFIXES.stream().anyMatch(prefix -> matchesPublicPath(path, prefix));
+  }
+
+  private static boolean matchesPublicPath(String path, String prefix) {
+    return path.equals(prefix) || path.startsWith(prefix + "/");
   }
 
   private RequestUserContext resolveContext(HttpServletRequest request) {
     HttpHeaders headers = extractHeaders(request);
     SpringInternalServiceAuth.AuthenticatedService internal = internalServiceAuth.authenticate(headers);
     if (internal != null) {
+      if ("pos-edge-agent".equals(internal.serviceName())) {
+        throw ServiceException.forbidden("POS edge mini server must use device JWT authentication");
+      }
+      if (isDevicePath(request.getRequestURI()) && !"pos-device".equals(internal.serviceName())) {
+        throw ServiceException.forbidden("Sync endpoints require device JWT authentication");
+      }
+      if ("pos-device".equals(internal.serviceName())) {
+        if (!isDevicePath(request.getRequestURI())) {
+          throw ServiceException.forbidden("Device token cannot access this endpoint");
+        }
+        Long deviceId = parseLongHeader(request, "X-Internal-Device-Id");
+        Long deviceOutletId = parseLongHeader(request, "X-Internal-Device-Outlet-Id");
+        if (deviceId == null || deviceOutletId == null) {
+          throw ServiceException.unauthorized("Missing trusted device context");
+        }
+        return new RequestUserContext(
+            null, null, null, Set.of(), Set.of(), Set.of(),
+            true, false, internal.serviceName(), deviceId, deviceOutletId
+        );
+      }
       boolean gatewayForwardedUser = "gateway".equals(internal.serviceName()) && internal.userId() != null;
       if (gatewayForwardedUser) {
         authSessionService.requireActiveSession(internal.sessionId(), internal.userId());
@@ -87,7 +156,9 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
           internal.outletIds(),
           internal.userId() != null,
           !gatewayForwardedUser,
-          internal.serviceName()
+          internal.serviceName(),
+          null,
+          null
       );
     }
 
@@ -98,7 +169,21 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
     if (!authorization.startsWith("Bearer ")) {
       throw ServiceException.unauthorized("Unsupported authorization type");
     }
-    JwtClaims claims = jwtTokenService.verify(authorization.substring("Bearer ".length()).trim());
+    String token = authorization.substring("Bearer ".length()).trim();
+    JwtClaims claims = jwtTokenService.verify(token);
+    if (claims.isDeviceToken()) {
+      if (!isDevicePath(request.getRequestURI())) {
+        throw ServiceException.forbidden("Device token cannot access this endpoint");
+      }
+      deviceTokenRegistry.requireActiveDevice(claims, token);
+      return new RequestUserContext(
+          null, null, null, Set.of(), Set.of(), Set.of(),
+          true, false, null, claims.deviceId(), claims.deviceOutletId()
+      );
+    }
+    if (isDevicePath(request.getRequestURI())) {
+      throw ServiceException.forbidden("Sync endpoints require device JWT authentication");
+    }
     authSessionService.requireActiveSession(claims.sessionId(), claims.userId());
     return new RequestUserContext(
         claims.userId(),
@@ -109,6 +194,8 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
         claims.outletIds(),
         true,
         false,
+        null,
+        null,
         null
     );
   }
@@ -130,5 +217,23 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
       }
     }
     return headers;
+  }
+
+  private static boolean isDevicePath(String path) {
+    return path != null
+        && (path.startsWith("/api/v1/sync/")
+            || path.startsWith("/api/v1/devices/refresh"));
+  }
+
+  private static Long parseLongHeader(HttpServletRequest request, String name) {
+    String value = request.getHeader(name);
+    if (value == null || value.isBlank()) {
+      return null;
+    }
+    try {
+      return Long.parseLong(value.trim());
+    } catch (NumberFormatException ex) {
+      throw ServiceException.unauthorized("Invalid " + name);
+    }
   }
 }

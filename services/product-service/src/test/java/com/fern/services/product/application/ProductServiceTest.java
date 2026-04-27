@@ -57,7 +57,7 @@ class ProductServiceTest {
   void listPricesAllowsScopedOutletAccess() {
     RequestUserContextHolder.set(new RequestUserContext(
         21L, "manager", "sess-21", Set.of("outlet_manager"), Set.of(), Set.of(7L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canReadCatalogForOutlet(any(), eq(7L))).thenReturn(true);
     LocalDate businessDate = LocalDate.parse("2026-03-27");
     List<ProductDtos.PriceView> prices = List.of(new ProductDtos.PriceView(
@@ -89,7 +89,7 @@ class ProductServiceTest {
   void createProductDelegatesWithAuthenticatedActor() {
     RequestUserContextHolder.set(new RequestUserContext(
         10L, "admin", "sess-10", Set.of("admin"), Set.of(), Set.of(), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canMutateCatalog(any())).thenReturn(true);
     ProductDtos.CreateProductRequest request = new ProductDtos.CreateProductRequest(
         "CF-01",
@@ -119,7 +119,7 @@ class ProductServiceTest {
   void findPriceUsesCacheLookup() {
     RequestUserContextHolder.set(new RequestUserContext(
         21L, "manager", "sess-21", Set.of("outlet_manager"), Set.of(), Set.of(7L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canReadCatalogForOutlet(any(), eq(7L))).thenReturn(true);
     LocalDate businessDate = LocalDate.parse("2026-03-27");
     ProductDtos.PriceView price = new ProductDtos.PriceView(
@@ -149,7 +149,7 @@ class ProductServiceTest {
   void findPriceRejectsOutOfScopeOutlet() {
     RequestUserContextHolder.set(new RequestUserContext(
         21L, "manager", "sess-21", Set.of("outlet_manager"), Set.of(), Set.of(7L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canReadCatalogForOutlet(any(), eq(9L))).thenReturn(false);
     ProductService service = new ProductService(
         productRepository,
@@ -167,7 +167,7 @@ class ProductServiceTest {
   void upsertPriceEvictsCacheAndPublishesEvent() {
     RequestUserContextHolder.set(new RequestUserContext(
         10L, "admin", "sess-10", Set.of("admin"), Set.of(), Set.of(), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canMutateCatalog(any())).thenReturn(true);
     ProductDtos.UpsertPriceRequest request = new ProductDtos.UpsertPriceRequest(
         11L,
@@ -210,7 +210,7 @@ class ProductServiceTest {
   void upsertRecipePublishesRecipeUpdatedEvent() {
     RequestUserContextHolder.set(new RequestUserContext(
         10L, "admin", "sess-10", Set.of("admin"), Set.of(), Set.of(), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canMutateCatalog(any())).thenReturn(true);
     ProductDtos.UpsertRecipeRequest request = new ProductDtos.UpsertRecipeRequest(
         "v1",

@@ -369,11 +369,11 @@ class OrgServiceTest {
   }
 
   private RequestUserContext adminContext() {
-    return new RequestUserContext(7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null);
+    return new RequestUserContext(7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(), true, false, null, null, null);
   }
 
   private RequestUserContext outletManagerContext() {
-    return new RequestUserContext(12L, "manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null);
+    return new RequestUserContext(12L, "manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null, null, null);
   }
 
   private OrgDtos.OutletView outletView(long id, long regionId, String code, String name, String status) {

@@ -43,7 +43,7 @@ class SupplierPaymentServiceTest {
   void postPaymentTransitionsToPostedStatus() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(authorizationPolicyService.canWriteProcurement(any(), anyLong())).thenReturn(true);
     ProcurementDtos.SupplierPaymentView payment = new ProcurementDtos.SupplierPaymentView(
         "100",
@@ -138,7 +138,7 @@ class SupplierPaymentServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
 
     when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(700L));
     SupplierPaymentService service = new SupplierPaymentService(procurementRepository, idGenerator, authorizationPolicyService);
@@ -170,7 +170,7 @@ class SupplierPaymentServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(700L));
     when(procurementRepository.listSupplierPayments(
         Set.of(700L),

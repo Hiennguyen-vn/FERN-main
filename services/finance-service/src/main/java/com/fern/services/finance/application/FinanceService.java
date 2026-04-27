@@ -19,7 +19,9 @@ import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -73,7 +75,7 @@ public class FinanceService {
   }
 
   public FinanceDtos.ExpenseView createOperatingExpense(FinanceDtos.CreateOperatingExpenseRequest request) {
-    requireFinanceWrite();
+    requireFinanceWrite(request.outletId());
     long expenseId = idGenerator.generateId();
     FinanceRepository.ExpenseRecord record = financeRepository.createOperatingExpense(
         expenseId,
@@ -91,7 +93,7 @@ public class FinanceService {
   }
 
   public FinanceDtos.ExpenseView createOtherExpense(FinanceDtos.CreateOtherExpenseRequest request) {
-    requireFinanceWrite();
+    requireFinanceWrite(request.outletId());
     long expenseId = idGenerator.generateId();
     FinanceRepository.ExpenseRecord record = financeRepository.createOtherExpense(
         expenseId,
@@ -110,9 +112,10 @@ public class FinanceService {
 
   public FinanceDtos.ExpenseView getExpense(long expenseId) {
     requireFinanceRead();
-    return financeRepository.findExpense(expenseId)
-        .map(this::toDto)
+    FinanceRepository.ExpenseRecord record = financeRepository.findExpense(expenseId)
         .orElseThrow(() -> ServiceException.notFound("Expense not found: " + expenseId));
+    requireFinanceRead(record.outletId());
+    return toDto(record);
   }
 
   public PagedResult<FinanceDtos.ExpenseView> listExpenses(
@@ -127,8 +130,9 @@ public class FinanceService {
       Integer offset
   ) {
     requireFinanceRead();
+    Set<Long> scopedOutletIds = resolveReadableOutletIds(outletId);
     return financeRepository.listExpenses(
-            outletId,
+            scopedOutletIds,
             startDate,
             endDate,
             sourceType,
@@ -146,15 +150,16 @@ public class FinanceService {
       LocalDate endDate
   ) {
     requireFinanceRead();
+    Set<Long> scopedOutletIds = resolveReadableOutletIds(outletId);
     if (monthlyExpenseCache == null) {
-      return financeRepository.monthlyExpenses(outletId, startDate, endDate);
+      return financeRepository.monthlyExpenses(scopedOutletIds, startDate, endDate);
     }
-    String key = "outlet:" + (outletId == null ? "all" : outletId)
+    String key = "outlets:" + cacheOutletKey(scopedOutletIds)
         + "|start:" + (startDate == null ? "" : startDate)
         + "|end:" + (endDate == null ? "" : endDate);
     return monthlyExpenseCache.getOrCompute(
         key,
-        () -> financeRepository.monthlyExpenses(outletId, startDate, endDate),
+        () -> financeRepository.monthlyExpenses(scopedOutletIds, startDate, endDate),
         Duration.ofMinutes(10)
     );
   }
@@ -179,12 +184,12 @@ public class FinanceService {
     );
   }
 
-  private void requireFinanceWrite() {
+  private void requireFinanceWrite(long outletId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (authorizationPolicyService.canWriteFinance(context)) {
+    if (authorizationPolicyService.canWriteFinanceForOutlet(context, outletId)) {
       return;
     }
-    throw ServiceException.forbidden("Finance write access is required");
+    throw ServiceException.forbidden("Finance write access denied for outlet " + outletId);
   }
 
   private void requireFinanceRead() {
@@ -193,6 +198,40 @@ public class FinanceService {
       return;
     }
     throw ServiceException.forbidden("Finance read access is required");
+  }
+
+  private void requireFinanceRead(long outletId) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (authorizationPolicyService.canReadFinanceForOutlet(context, outletId)) {
+      return;
+    }
+    throw ServiceException.forbidden("Finance read access denied for outlet " + outletId);
+  }
+
+  private Set<Long> resolveReadableOutletIds(Long requestedOutletId) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (!authorizationPolicyService.canReadFinance(context)) {
+      throw ServiceException.forbidden("Finance read access is required");
+    }
+    if (requestedOutletId != null) {
+      requireFinanceRead(requestedOutletId);
+      return Set.of(requestedOutletId);
+    }
+    Set<Long> readable = authorizationPolicyService.resolveFinanceReadableOutletIds(context);
+    if (readable == null) {
+      return null;
+    }
+    return Set.copyOf(new LinkedHashSet<>(readable));
+  }
+
+  private String cacheOutletKey(Set<Long> outletIds) {
+    if (outletIds == null) {
+      return "all";
+    }
+    if (outletIds.isEmpty()) {
+      return "none";
+    }
+    return outletIds.stream().sorted().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("none");
   }
 
   private static String trimToNull(String value) {

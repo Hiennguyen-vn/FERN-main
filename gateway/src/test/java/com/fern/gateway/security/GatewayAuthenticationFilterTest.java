@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.dorabets.common.auth.InternalServiceAuth;
 import com.dorabets.common.spring.auth.AuthSessionService;
 import com.dorabets.common.config.RuntimeEnvironment;
+import com.dorabets.common.spring.auth.DeviceTokenRegistry;
 import com.dorabets.common.spring.auth.JwtTokenService;
 import com.dorabets.common.spring.auth.SpringInternalServiceAuth;
 import com.dorabets.common.spring.web.CorrelationIdFilter;
@@ -45,6 +46,7 @@ class GatewayAuthenticationFilterTest {
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         Mockito.mock(AuthSessionService.class),
+        Mockito.mock(DeviceTokenRegistry.class),
         AUTH_COOKIE_NAME
     );
 
@@ -75,6 +77,7 @@ class GatewayAuthenticationFilterTest {
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         Mockito.mock(AuthSessionService.class),
+        Mockito.mock(DeviceTokenRegistry.class),
         AUTH_COOKIE_NAME
     );
 
@@ -103,6 +106,7 @@ class GatewayAuthenticationFilterTest {
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         Mockito.mock(AuthSessionService.class),
+        Mockito.mock(DeviceTokenRegistry.class),
         AUTH_COOKIE_NAME
     );
 
@@ -126,6 +130,7 @@ class GatewayAuthenticationFilterTest {
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         Mockito.mock(AuthSessionService.class),
+        Mockito.mock(DeviceTokenRegistry.class),
         AUTH_COOKIE_NAME
     );
 
@@ -150,6 +155,7 @@ class GatewayAuthenticationFilterTest {
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         Mockito.mock(AuthSessionService.class),
+        Mockito.mock(DeviceTokenRegistry.class),
         AUTH_COOKIE_NAME
     );
 
@@ -184,6 +190,7 @@ class GatewayAuthenticationFilterTest {
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         Mockito.mock(AuthSessionService.class),
+        Mockito.mock(DeviceTokenRegistry.class),
         AUTH_COOKIE_NAME
     );
 
@@ -212,6 +219,7 @@ class GatewayAuthenticationFilterTest {
         jwtTokenService,
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         authSessionService,
+        Mockito.mock(DeviceTokenRegistry.class),
         AUTH_COOKIE_NAME
     );
 
@@ -257,6 +265,109 @@ class GatewayAuthenticationFilterTest {
   }
 
   @Test
+  void userJwtCannotReachDeviceSyncEndpoint() {
+    JwtTokenService jwtTokenService = new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET);
+    AuthSessionService authSessionService = Mockito.mock(AuthSessionService.class);
+    GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
+        jwtTokenService,
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        authSessionService,
+        Mockito.mock(DeviceTokenRegistry.class),
+        AUTH_COOKIE_NAME
+    );
+
+    String token = jwtTokenService.issueAccessToken(
+        1001L,
+        "cashier",
+        "session-1001",
+        Set.of("staff"),
+        Set.of("sales.order.write"),
+        Set.of(7L),
+        3600
+    );
+
+    MockServerWebExchange exchange = MockServerWebExchange.from(
+        MockServerHttpRequest.post("/api/v1/sync/push")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .build()
+    );
+    AtomicBoolean chainInvoked = new AtomicBoolean(false);
+
+    filter.filter(exchange, currentExchange -> {
+      chainInvoked.set(true);
+      return Mono.empty();
+    }).block();
+
+    assertEquals(HttpStatus.FORBIDDEN, exchange.getResponse().getStatusCode());
+    assertFalse(chainInvoked.get());
+    Mockito.verifyNoInteractions(authSessionService);
+  }
+
+  @Test
+  void deviceJwtForSyncBecomesScopedPosDeviceInternalContext() {
+    JwtTokenService jwtTokenService = new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET);
+    DeviceTokenRegistry deviceTokenRegistry = Mockito.mock(DeviceTokenRegistry.class);
+    GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
+        jwtTokenService,
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        Mockito.mock(AuthSessionService.class),
+        deviceTokenRegistry,
+        AUTH_COOKIE_NAME
+    );
+
+    String token = jwtTokenService.issueDeviceToken(55L, 7L, 3600);
+    MockServerHttpRequest request = MockServerHttpRequest.get("/api/v1/sync/pull/stock?outlet_id=7")
+        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+        .header(InternalServiceAuth.HEADER_SERVICE_NAME, "spoofed-service")
+        .header("X-Internal-Device-Id", "999")
+        .build();
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+    AtomicReference<ServerHttpRequest> forwarded = new AtomicReference<>();
+
+    filter.filter(exchange, currentExchange -> {
+      forwarded.set(currentExchange.getRequest());
+      return Mono.empty();
+    }).block();
+
+    ServerHttpRequest forwardedRequest = forwarded.get();
+    assertNotNull(forwardedRequest);
+    assertEquals("pos-device", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SERVICE_NAME));
+    assertEquals(INTERNAL_TOKEN,
+        forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SERVICE_TOKEN));
+    assertEquals("55", forwardedRequest.getHeaders().getFirst("X-Internal-Device-Id"));
+    assertEquals("7", forwardedRequest.getHeaders().getFirst("X-Internal-Device-Outlet-Id"));
+    assertNull(exchange.getResponse().getStatusCode());
+    Mockito.verify(deviceTokenRegistry).requireActiveDevice(Mockito.any(), Mockito.eq(token));
+  }
+
+  @Test
+  void internalServiceHeadersCannotReachDeviceSyncEndpoint() {
+    RuntimeEnvironment.setTestArguments(java.util.List.of(), java.util.List.of("--dev"));
+    GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
+        new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        Mockito.mock(AuthSessionService.class),
+        Mockito.mock(DeviceTokenRegistry.class),
+        AUTH_COOKIE_NAME
+    );
+
+    MockServerHttpRequest request = MockServerHttpRequest.post("/api/v1/sync/push")
+        .header(InternalServiceAuth.HEADER_SERVICE_NAME, "inventory-service")
+        .header(InternalServiceAuth.HEADER_SERVICE_TOKEN, INTERNAL_TOKEN)
+        .build();
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+    AtomicBoolean chainInvoked = new AtomicBoolean(false);
+
+    filter.filter(exchange, currentExchange -> {
+      chainInvoked.set(true);
+      return Mono.empty();
+    }).block();
+
+    assertEquals(HttpStatus.FORBIDDEN, exchange.getResponse().getStatusCode());
+    assertFalse(chainInvoked.get());
+  }
+
+  @Test
   void validSessionCookieAddsTrustedInternalHeaders() {
     JwtTokenService jwtTokenService = new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET);
     AuthSessionService authSessionService = Mockito.mock(AuthSessionService.class);
@@ -264,6 +375,7 @@ class GatewayAuthenticationFilterTest {
         jwtTokenService,
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         authSessionService,
+        Mockito.mock(DeviceTokenRegistry.class),
         AUTH_COOKIE_NAME
     );
 

@@ -56,7 +56,7 @@ class GoodsReceiptServiceTest {
   void postGoodsReceiptPublishesInventoryEvent() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(authorizationPolicyService.canWriteProcurement(any(), anyLong())).thenReturn(true);
     ProcurementDtos.GoodsReceiptView receipt = new ProcurementDtos.GoodsReceiptView(
         500L,
@@ -137,7 +137,7 @@ class GoodsReceiptServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     ProcurementDtos.GoodsReceiptView receipt = new ProcurementDtos.GoodsReceiptView(
         500L,
         600L,
@@ -205,7 +205,7 @@ class GoodsReceiptServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(700L));
     GoodsReceiptService service = new GoodsReceiptService(
         procurementRepository,
@@ -243,7 +243,7 @@ class GoodsReceiptServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(700L));
     when(procurementRepository.listGoodsReceipts(
         Set.of(700L),

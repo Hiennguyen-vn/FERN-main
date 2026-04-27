@@ -9,7 +9,8 @@ import com.dorabets.common.spring.web.PagedResult;
 import com.dorabets.common.spring.web.QueryConventions;
 import com.fern.events.inventory.StockLowThresholdEvent;
 import com.fern.events.procurement.GoodsReceiptPostedEvent;
-import com.fern.events.sales.SaleCompletedEvent;
+import com.fern.events.sales.SaleApprovedEvent;
+import com.fern.events.sales.SaleCancelledEvent;
 import com.fern.events.sales.SaleCompletedLineItem;
 import com.fern.services.inventory.api.InventoryDtos;
 import com.fern.services.inventory.infrastructure.InventoryRepository;
@@ -174,7 +175,7 @@ public class InventoryService {
   }
 
   @Transactional
-  public int applySaleCompleted(SaleCompletedEvent event) {
+  public int applySaleApproved(SaleApprovedEvent event) {
     List<InventoryRepository.SaleComponentMovement> movements = new ArrayList<>();
     for (SaleCompletedLineItem saleItem : event.lineItems()) {
       inventoryRepository.findLatestActiveRecipe(saleItem.productId()).ifPresent(recipe -> {
@@ -191,16 +192,32 @@ public class InventoryService {
         }
       });
     }
-    int inserted = inventoryRepository.applySaleCompleted(
+    int inserted = inventoryRepository.applySaleApproved(
         event.saleId(),
         event.outletId(),
         event.businessDate(),
-        event.completedAt() == null ? clock.instant() : event.completedAt(),
+        event.saleCreatedAt(),
+        event.approvedAt() == null ? clock.instant() : event.approvedAt(),
+        event.approvedByUserId(),
+        event.allowOversell() || event.oversell(),
         movements
     );
     for (InventoryRepository.SaleComponentMovement movement : movements) {
       publishLowStockIfNeeded(event.outletId(), movement.itemId(), "sale:" + event.saleId());
     }
+    return inserted;
+  }
+
+  @Transactional
+  public int applySaleCancelled(SaleCancelledEvent event) {
+    int inserted = inventoryRepository.reverseSaleUsage(
+        event.saleId(),
+        event.outletId(),
+        event.businessDate(),
+        event.cancelledAt() == null ? clock.instant() : event.cancelledAt(),
+        event.cancelledByUserId(),
+        "Sale " + event.saleId() + " cancelled"
+    );
     return inserted;
   }
 

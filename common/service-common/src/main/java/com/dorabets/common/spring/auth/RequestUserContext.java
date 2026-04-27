@@ -13,7 +13,9 @@ public record RequestUserContext(
     Set<Long> outletIds,
     boolean authenticated,
     boolean internalService,
-    String callerService
+    String callerService,
+    Long deviceId,
+    Long deviceOutletId
 ) {
 
   public RequestUserContext {
@@ -23,7 +25,11 @@ public record RequestUserContext(
   }
 
   public static RequestUserContext anonymous() {
-    return new RequestUserContext(null, null, null, Set.of(), Set.of(), Set.of(), false, false, null);
+    return new RequestUserContext(null, null, null, Set.of(), Set.of(), Set.of(), false, false, null, null, null);
+  }
+
+  public boolean isDeviceContext() {
+    return deviceId != null && deviceOutletId != null;
   }
 
   public long requireUserId() {

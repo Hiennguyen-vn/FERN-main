@@ -25,8 +25,8 @@ info:
 dependencies:
   postgres:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/fern}
-    username: ${POSTGRES_USER:fern}
-    password: ${POSTGRES_PASSWORD:fern}
+    username: ${POSTGRES_APP_USER:${POSTGRES_USER:fern}}
+    password: ${POSTGRES_APP_PASSWORD:${POSTGRES_PASSWORD:fern}}
     poolSize: ${DB_POOL_SIZE:16}
   redis:
     host: ${REDIS_HOST:localhost}
@@ -35,3 +35,9 @@ dependencies:
     bootstrap: ${KAFKA_BOOTSTRAP:localhost:9092}
   masterNode:
     baseUrl: ${MASTER_NODE_URL:http://localhost:8082}
+
+invoice:
+  vat-percent: ${INVOICE_VAT_PERCENT:8.00}
+
+sales-service:
+  base-url: ${SALES_SERVICE_URL:http://sales-service:8080}

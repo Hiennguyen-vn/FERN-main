@@ -53,7 +53,7 @@ class WorkShiftServiceTest {
   void createWorkShiftUsesSnowflakeAndDefaultStatuses() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "inventory-service"
-    ));
+    , null, null));
     when(shiftRepository.findById(10L)).thenReturn(java.util.Optional.of(new ShiftRepository.ShiftRecord(
         10L,
         7L,
@@ -118,7 +118,7 @@ class WorkShiftServiceTest {
   void approveWorkShiftDelegatesToRepository() {
     RequestUserContextHolder.set(new RequestUserContext(
         9L, "manager", "sess-9", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
-    ));
+    , null, null));
     when(workShiftRepository.findById(501L)).thenReturn(java.util.Optional.of(new WorkShiftRepository.WorkShiftRecord(
         501L,
         10L,
@@ -183,7 +183,7 @@ class WorkShiftServiceTest {
   void updateAttendanceRejectsInvertedActualTimes() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "inventory-service"
-    ));
+    , null, null));
     when(workShiftRepository.findById(501L)).thenReturn(java.util.Optional.of(new WorkShiftRepository.WorkShiftRecord(
         501L,
         10L,
@@ -236,7 +236,7 @@ class WorkShiftServiceTest {
         true,
         false,
         null
-    ));
+    , null, null));
     when(workShiftRepository.findById(501L)).thenReturn(java.util.Optional.of(new WorkShiftRepository.WorkShiftRecord(
         501L,
         10L,

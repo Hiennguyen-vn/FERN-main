@@ -22,6 +22,9 @@ public final class SalesDtos {
       long outletId,
       String currencyCode,
       long managerId,
+      Long deviceId,
+      String registerCode,
+      String openedByUsername,
       Instant openedAt,
       Instant closedAt,
       LocalDate businessDate,
@@ -36,6 +39,9 @@ public final class SalesDtos {
       long outletId,
       String currencyCode,
       long managerId,
+      Long deviceId,
+      String registerCode,
+      String openedByUsername,
       Instant openedAt,
       Instant closedAt,
       LocalDate businessDate,
@@ -90,8 +96,21 @@ public final class SalesDtos {
       @NotNull Long outletId,
       @NotBlank String currencyCode,
       @NotNull Long managerId,
+      Long deviceId,
+      String registerCode,
+      String openedByUsername,
       @NotNull LocalDate businessDate,
       String note
+  ) {
+  }
+
+  public record SaleLineModifierView(
+      long modifierOptionId,
+      String groupCode,
+      String groupName,
+      String optionCode,
+      String optionName,
+      BigDecimal priceAddAmount
   ) {
   }
 
@@ -101,7 +120,10 @@ public final class SalesDtos {
       BigDecimal discountAmount,
       BigDecimal taxAmount,
       String note,
-      Set<Long> promotionIds
+      Set<Long> promotionIds,
+      Long variantId,
+      String variantName,
+      Set<Long> modifierOptionIds
   ) {
   }
 
@@ -145,7 +167,10 @@ public final class SalesDtos {
       BigDecimal taxAmount,
       BigDecimal lineTotal,
       Set<Long> promotionIds,
-      String note
+      String note,
+      Long variantId,
+      String variantName,
+      List<SaleLineModifierView> modifiers
   ) {
   }
 

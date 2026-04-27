@@ -45,7 +45,7 @@ class PurchaseOrderServiceTest {
   void approvePurchaseOrderDelegatesToRepository() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
-    ));
+    , null, null));
     when(authorizationPolicyService.canApproveProcurement(any(), anyLong())).thenReturn(true);
     ProcurementDtos.PurchaseOrderView draft = new ProcurementDtos.PurchaseOrderView(
         600L,
@@ -95,7 +95,7 @@ class PurchaseOrderServiceTest {
   void listPurchaseOrdersRejectsRequestedOutletOutsideScope() {
     RequestUserContextHolder.set(new RequestUserContext(
         12L, "manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(2000L));
     PurchaseOrderService service = new PurchaseOrderService(procurementRepository, idGenerator, authorizationPolicyService);
 
@@ -119,7 +119,7 @@ class PurchaseOrderServiceTest {
   void listPurchaseOrdersDelegatesLimitAndOutletScope() {
     RequestUserContextHolder.set(new RequestUserContext(
         12L, "manager", "sess-12", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.resolveProcurementReadableOutletIds(any())).thenReturn(Set.of(2000L));
     when(procurementRepository.listPurchaseOrders(
         Set.of(2000L),

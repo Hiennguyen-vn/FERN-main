@@ -14,3 +14,8 @@ CREATE TABLE core.device_registry (
 );
 
 CREATE INDEX ix_device_registry_outlet ON core.device_registry(outlet_id);
+
+-- Add FK from payment.device_id (column added in V21 without FK due to ordering)
+ALTER TABLE core.payment
+  ADD CONSTRAINT fk_payment_device
+  FOREIGN KEY (device_id) REFERENCES core.device_registry(id);

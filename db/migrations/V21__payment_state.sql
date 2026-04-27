@@ -5,8 +5,8 @@ ALTER TABLE core.payment
     CHECK (state IN ('PENDING_OFFLINE','QUEUED','COMPLETED','RECONCILED','FAILED')),
   ADD COLUMN IF NOT EXISTS offline_captured_at  TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS reconciled_at        TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS device_id            BIGINT
-    REFERENCES core.device_registry(id);
+  ADD COLUMN IF NOT EXISTS device_id            BIGINT;
+-- FK to device_registry added in V27 after that table is created
 
 -- Backfill: existing payments are already completed
 UPDATE core.payment SET state = 'COMPLETED' WHERE state IS NULL OR state = 'COMPLETED';

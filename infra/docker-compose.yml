@@ -117,6 +117,8 @@ services:
       DB_REPLICA_URL: jdbc:postgresql://postgres-replica:5432/${POSTGRES_DB:-fern}
       POSTGRES_USER: ${POSTGRES_USER:-fern}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fern}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-fern_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-fern_app}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP: kafka:29092
@@ -149,9 +151,13 @@ services:
       dockerfile: infra/docker/Dockerfile.gateway
     restart: unless-stopped
     environment:
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-fern}
+      DB_REPLICA_URL: jdbc:postgresql://postgres-replica:5432/${POSTGRES_DB:-fern}
+      POSTGRES_USER: ${POSTGRES_USER:-fern}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fern}
+      POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-core}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      KAFKA_BOOTSTRAP: kafka:9092
       MASTER_NODE_URL: http://master-node:8082
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set}
       AUTH_SERVICE_URL: http://auth-service:8081
@@ -165,7 +171,9 @@ services:
       FINANCE_SERVICE_URL: http://finance-service:8090
       AUDIT_SERVICE_URL: http://audit-service:8091
       REPORT_SERVICE_URL: http://report-service:8092
+      KAFKA_BOOTSTRAP: kafka:29092
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      SYNC_WS_OUTLET_IDS: ${SYNC_WS_OUTLET_IDS:-1,2,3,4,5}
       AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-dorabets_session}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       AUTH_COOKIE_SAME_SITE: ${AUTH_COOKIE_SAME_SITE:-Lax}
@@ -425,7 +433,7 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:RELEASE.2024-01-01T00-00-00Z
+    image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -497,7 +505,7 @@ services:
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
       CONNECT_LOG4J_LOGGERS: org.apache.kafka.connect.runtime.rest=WARN,org.reflections=ERROR
     ports:
-      - "127.0.0.1:${KAFKA_CONNECT_PORT:-8083}:8083"
+      - "127.0.0.1:${KAFKA_CONNECT_PORT:-8093}:8083"
     volumes:
       - ./kafka-connect/connectors:/connectors:ro
       - ./kafka-connect/register-connectors.sh:/register-connectors.sh:ro

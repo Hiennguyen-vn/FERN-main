@@ -3,11 +3,13 @@ package com.fern.services.inventory.application;
 import com.dorabets.idempotency.IdempotencyGuard;
 import com.dorabets.idempotency.model.IdempotencyResult;
 import com.dorabets.idempotency.model.TtlPolicy;
+import com.dorabets.common.spring.auth.InternalExecutionContext;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.core.EventEnvelope;
 import com.fern.events.procurement.GoodsReceiptPostedEvent;
-import com.fern.events.sales.SaleCompletedEvent;
+import com.fern.events.sales.SaleApprovedEvent;
+import com.fern.events.sales.SaleCancelledEvent;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,17 +35,21 @@ public class InventoryEventConsumer {
     this.objectMapper = objectMapper;
   }
 
-  @KafkaListener(topics = "fern.sales.sale-completed")
-  public void consumeSaleCompleted(String message) {
+  @KafkaListener(topics = "fern.sales.sale-approved")
+  public void consumeSaleApproved(String message) {
+    InternalExecutionContext.run("inventory-service", () -> consumeSaleApprovedInternal(message));
+  }
+
+  private void consumeSaleApprovedInternal(String message) {
     try {
-      EventEnvelope<SaleCompletedEvent> envelope = objectMapper.readValue(
+      EventEnvelope<SaleApprovedEvent> envelope = objectMapper.readValue(
           message,
-          new TypeReference<EventEnvelope<SaleCompletedEvent>>() {
+          new TypeReference<EventEnvelope<SaleApprovedEvent>>() {
           }
       );
-      SaleCompletedEvent event = envelope.payload();
+      SaleApprovedEvent event = envelope.payload();
       if (event == null) {
-        log.warn("Ignoring sale-completed event with empty payload");
+        log.warn("Ignoring sale-approved event with empty payload");
         return;
       }
       idempotencyGuard.execute(
@@ -52,7 +58,7 @@ public class InventoryEventConsumer {
           message,
           TtlPolicy.BET,
           () -> {
-            int movements = inventoryService.applySaleCompleted(event);
+            int movements = inventoryService.applySaleApproved(event);
             return IdempotencyResult.created(jsonBody(Map.of(
                 "saleId", event.saleId(),
                 "movements", movements
@@ -60,12 +66,51 @@ public class InventoryEventConsumer {
           }
       );
     } catch (Exception ex) {
-      throw new IllegalStateException("Failed to process fern.sales.sale-completed", ex);
+      throw new IllegalStateException("Failed to process fern.sales.sale-approved", ex);
+    }
+  }
+
+  @KafkaListener(topics = "fern.sales.sale-cancelled")
+  public void consumeSaleCancelled(String message) {
+    InternalExecutionContext.run("inventory-service", () -> consumeSaleCancelledInternal(message));
+  }
+
+  private void consumeSaleCancelledInternal(String message) {
+    try {
+      EventEnvelope<SaleCancelledEvent> envelope = objectMapper.readValue(
+          message,
+          new TypeReference<EventEnvelope<SaleCancelledEvent>>() {
+          }
+      );
+      SaleCancelledEvent event = envelope.payload();
+      if (event == null) {
+        log.warn("Ignoring sale-cancelled event with empty payload");
+        return;
+      }
+      idempotencyGuard.execute(
+          "inventory-service",
+          envelope.eventId(),
+          message,
+          TtlPolicy.BET,
+          () -> {
+            int movements = inventoryService.applySaleCancelled(event);
+            return IdempotencyResult.created(jsonBody(Map.of(
+                "saleId", event.saleId(),
+                "reversals", movements
+            )), Long.toString(event.saleId()));
+          }
+      );
+    } catch (Exception ex) {
+      throw new IllegalStateException("Failed to process fern.sales.sale-cancelled", ex);
     }
   }
 
   @KafkaListener(topics = "fern.procurement.goods-receipt-posted")
   public void consumeGoodsReceiptPosted(String message) {
+    InternalExecutionContext.run("inventory-service", () -> consumeGoodsReceiptPostedInternal(message));
+  }
+
+  private void consumeGoodsReceiptPostedInternal(String message) {
     try {
       EventEnvelope<GoodsReceiptPostedEvent> envelope = objectMapper.readValue(
           message,

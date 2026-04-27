@@ -65,11 +65,11 @@ class AuthorizationPolicyDomainAccessTest {
   }
 
   private RequestUserContext ctx(long userId, Set<String> roles, Set<String> permissions, Set<Long> outletIds) {
-    return new RequestUserContext(userId, "test-user", "sess", roles, permissions, outletIds, true, false, null);
+    return new RequestUserContext(userId, "test-user", "sess", roles, permissions, outletIds, true, false, null, null, null);
   }
 
   private RequestUserContext internalCtx() {
-    return new RequestUserContext(null, null, null, Set.of(), Set.of(), Set.of(), false, true, "test-service");
+    return new RequestUserContext(null, null, null, Set.of(), Set.of(), Set.of(), false, true, "test-service", null, null);
   }
 
   // =========================================================================

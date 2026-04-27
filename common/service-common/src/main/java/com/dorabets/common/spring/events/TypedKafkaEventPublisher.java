@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.core.EventEnvelope;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.util.concurrent.TimeUnit;
 import java.util.UUID;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -32,6 +33,25 @@ public class TypedKafkaEventPublisher {
   }
 
   public <T> void publish(String topic, String aggregateId, String eventType, T payload, String traceId) {
+    publishInternal(topic, aggregateId, eventType, payload, traceId, false);
+  }
+
+  public <T> void publishAndAwait(String topic, String aggregateId, String eventType, T payload) {
+    publishAndAwait(topic, aggregateId, eventType, payload, null);
+  }
+
+  public <T> void publishAndAwait(String topic, String aggregateId, String eventType, T payload, String traceId) {
+    publishInternal(topic, aggregateId, eventType, payload, traceId, true);
+  }
+
+  private <T> void publishInternal(
+      String topic,
+      String aggregateId,
+      String eventType,
+      T payload,
+      String traceId,
+      boolean awaitAck
+  ) {
     try {
       EventEnvelope<T> envelope = new EventEnvelope<>(
         UUID.randomUUID().toString(),
@@ -50,7 +70,11 @@ public class TypedKafkaEventPublisher {
       if (traceId != null && !traceId.isBlank()) {
         record.headers().add("x-trace-id", traceId.getBytes(StandardCharsets.UTF_8));
       }
-      kafkaProducer.send(record);
+      if (awaitAck) {
+        kafkaProducer.send(record).get(30, TimeUnit.SECONDS);
+      } else {
+        kafkaProducer.send(record);
+      }
     } catch (Exception e) {
       throw new IllegalStateException("Failed to publish Kafka event " + eventType + " to " + topic, e);
     }

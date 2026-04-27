@@ -56,9 +56,10 @@ public class SalesController {
   @ResponseStatus(HttpStatus.CREATED)
   public SalesDtos.SaleView submitSale(
       @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+      @RequestHeader(value = "X-Device-Id", required = false) Long deviceId,
       @Valid @RequestBody SalesDtos.SubmitSaleRequest request
   ) {
-    return salesService.submitSale(idempotencyKey, request);
+    return salesService.submitSale(idempotencyKey, deviceId, request);
   }
 
   @GetMapping("/ordering-tables")

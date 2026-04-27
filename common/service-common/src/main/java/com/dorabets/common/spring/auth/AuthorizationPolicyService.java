@@ -584,6 +584,20 @@ public class AuthorizationPolicyService {
         || profile.canonicalRoles().contains(CanonicalRole.OUTLET_MANAGER);
   }
 
+  public boolean canWriteFinanceForOutlet(RequestUserContext context, long outletId) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)
+        || profile.hasGlobalRole(CanonicalRole.FINANCE)) {
+      return true;
+    }
+    return profile.hasRoleForOutlet(CanonicalRole.FINANCE, outletId)
+        || profile.hasRoleForOutlet(CanonicalRole.OUTLET_MANAGER, outletId);
+  }
+
   public boolean canReadFinance(RequestUserContext context) {
     if (context.internalService()) {
       return true;
@@ -598,6 +612,21 @@ public class AuthorizationPolicyService {
         || profile.canonicalRoles().contains(CanonicalRole.OUTLET_MANAGER);
   }
 
+  public boolean canReadFinanceForOutlet(RequestUserContext context, long outletId) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)
+        || profile.hasGlobalRole(CanonicalRole.FINANCE)) {
+      return true;
+    }
+    return profile.hasRoleForOutlet(CanonicalRole.FINANCE, outletId)
+        || profile.hasRoleForOutlet(CanonicalRole.REGION_MANAGER, outletId)
+        || profile.hasRoleForOutlet(CanonicalRole.OUTLET_MANAGER, outletId);
+  }
+
   public Set<Long> resolveFinanceReadableOutletIds(RequestUserContext context) {
     if (context.internalService()) {
       return null;
@@ -607,11 +636,14 @@ public class AuthorizationPolicyService {
     if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
       return null;
     }
+    if (profile.hasGlobalRole(CanonicalRole.FINANCE)) {
+      return null;
+    }
     LinkedHashSet<Long> result = new LinkedHashSet<>();
     result.addAll(profile.outletsForRole(CanonicalRole.FINANCE));
     result.addAll(profile.outletsForRole(CanonicalRole.REGION_MANAGER));
     result.addAll(profile.outletsForRole(CanonicalRole.OUTLET_MANAGER));
-    return result.isEmpty() ? null : Set.copyOf(result);
+    return Set.copyOf(result);
   }
 
   // --- Audit domain ---

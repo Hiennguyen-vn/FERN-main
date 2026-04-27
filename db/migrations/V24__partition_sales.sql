@@ -18,9 +18,9 @@ CREATE TABLE core.sale_record (
   outlet_id        BIGINT        NOT NULL REFERENCES core.outlet(id),
   pos_session_id   BIGINT        REFERENCES core.pos_session(id),
   currency_code    VARCHAR(10)   NOT NULL REFERENCES core.currency(code),
-  order_type       order_type_enum NOT NULL DEFAULT 'dine_in',
-  status           sale_order_status_enum NOT NULL DEFAULT 'open',
-  payment_status   payment_status_enum NOT NULL DEFAULT 'unpaid',
+  order_type       core.order_type_enum NOT NULL DEFAULT 'dine_in',
+  status           core.sale_order_status_enum NOT NULL DEFAULT 'open',
+  payment_status   core.payment_status_enum NOT NULL DEFAULT 'unpaid',
   subtotal         NUMERIC(18,2) NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
   discount         NUMERIC(18,2) NOT NULL DEFAULT 0 CHECK (discount >= 0),
   tax_amount       NUMERIC(18,2) NOT NULL DEFAULT 0 CHECK (tax_amount >= 0),
@@ -88,10 +88,10 @@ CREATE TABLE core.sale_record_2026_12 PARTITION OF core.sale_record
 CREATE TABLE core.sale_record_default PARTITION OF core.sale_record DEFAULT;
 
 -- Indexes on partitioned table (created on parent, inherited by partitions)
-CREATE INDEX idx_sale_record_outlet_id      ON core.sale_record(outlet_id);
-CREATE INDEX idx_sale_record_pos_session_id ON core.sale_record(pos_session_id);
-CREATE INDEX idx_sale_record_status         ON core.sale_record(status);
-CREATE INDEX idx_sale_record_created_at     ON core.sale_record(created_at);
+CREATE INDEX IF NOT EXISTS idx_sale_record_outlet_id      ON core.sale_record(outlet_id);
+CREATE INDEX IF NOT EXISTS idx_sale_record_pos_session_id ON core.sale_record(pos_session_id);
+CREATE INDEX IF NOT EXISTS idx_sale_record_status         ON core.sale_record(status);
+CREATE INDEX IF NOT EXISTS idx_sale_record_created_at     ON core.sale_record(created_at);
 
 -- ─── 3. Create partitioned sale_item ─────────────────────────────────────────
 -- Denormalized sale_created_at enables composite FK + partition pruning.
@@ -164,9 +164,9 @@ CREATE TABLE core.sale_item_2026_12 PARTITION OF core.sale_item
   FOR VALUES FROM ('2026-12-01') TO ('2027-01-01');
 CREATE TABLE core.sale_item_default PARTITION OF core.sale_item DEFAULT;
 
-CREATE INDEX idx_sale_item_product_id  ON core.sale_item(product_id);
-CREATE INDEX idx_sale_item_outlet_id   ON core.sale_item(outlet_id);
-CREATE INDEX idx_sale_item_sale_id     ON core.sale_item(sale_id);
+CREATE INDEX IF NOT EXISTS idx_sale_item_product_id  ON core.sale_item(product_id);
+CREATE INDEX IF NOT EXISTS idx_sale_item_outlet_id   ON core.sale_item(outlet_id);
+CREATE INDEX IF NOT EXISTS idx_sale_item_sale_id     ON core.sale_item(sale_id);
 
 -- ─── 4. Create partitioned payment ───────────────────────────────────────────
 
@@ -175,9 +175,9 @@ CREATE TABLE core.payment (
   sale_created_at      TIMESTAMPTZ   NOT NULL,  -- denorm for partition FK
   outlet_id            BIGINT        NOT NULL,  -- denorm for shard-ready
   pos_session_id       BIGINT        REFERENCES core.pos_session(id),
-  payment_method       payment_method_enum NOT NULL,
+  payment_method       core.payment_method_enum NOT NULL,
   amount               NUMERIC(18,2) NOT NULL CHECK (amount >= 0),
-  status               payment_txn_status_enum NOT NULL DEFAULT 'pending',
+  status               core.payment_txn_status_enum NOT NULL DEFAULT 'pending',
   payment_time         TIMESTAMPTZ   NOT NULL,
   transaction_ref      VARCHAR(100),
   note                 TEXT,
@@ -186,7 +186,7 @@ CREATE TABLE core.payment (
     CHECK (state IN ('PENDING_OFFLINE','QUEUED','COMPLETED','RECONCILED','FAILED')),
   offline_captured_at  TIMESTAMPTZ,
   reconciled_at        TIMESTAMPTZ,
-  device_id            BIGINT        REFERENCES core.device_registry(id),
+  device_id            BIGINT,  -- FK to device_registry added in V27
   created_at           TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
   updated_at           TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
   PRIMARY KEY (sale_id, sale_created_at),
@@ -244,12 +244,12 @@ CREATE TABLE core.payment_2026_12 PARTITION OF core.payment
   FOR VALUES FROM ('2026-12-01') TO ('2027-01-01');
 CREATE TABLE core.payment_default PARTITION OF core.payment DEFAULT;
 
-CREATE INDEX idx_payment_pos_session_id  ON core.payment(pos_session_id);
-CREATE INDEX idx_payment_payment_method  ON core.payment(payment_method);
-CREATE INDEX idx_payment_payment_time    ON core.payment(payment_time);
-CREATE INDEX idx_payment_status          ON core.payment(status);
-CREATE INDEX idx_payment_outlet_id       ON core.payment(outlet_id);
-CREATE INDEX idx_payment_state           ON core.payment(state)
+CREATE INDEX IF NOT EXISTS idx_payment_pos_session_id  ON core.payment(pos_session_id);
+CREATE INDEX IF NOT EXISTS idx_payment_payment_method  ON core.payment(payment_method);
+CREATE INDEX IF NOT EXISTS idx_payment_payment_time    ON core.payment(payment_time);
+CREATE INDEX IF NOT EXISTS idx_payment_status          ON core.payment(status);
+CREATE INDEX IF NOT EXISTS idx_payment_outlet_id       ON core.payment(outlet_id);
+CREATE INDEX IF NOT EXISTS idx_payment_state           ON core.payment(state)
   WHERE state IN ('PENDING_OFFLINE','QUEUED');
 
 -- ─── 5. Backfill data from legacy ────────────────────────────────────────────

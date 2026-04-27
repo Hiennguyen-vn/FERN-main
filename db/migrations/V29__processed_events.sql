@@ -61,8 +61,9 @@ SELECT partman.create_parent(
   p_control        => 'server_received_at',
   p_type           => 'range',
   p_interval       => '1 month',
-  p_premake        => 12,
-  p_start_partition => date_trunc('month', NOW())::text
+  p_premake        => 1,
+  p_start_partition => '2027-05-01',
+  p_default_table  => false
 );
 
 UPDATE partman.part_config SET

@@ -40,7 +40,7 @@ class ReportServiceTest {
   void salesSummaryAllowsScopedOutletAccess() {
     RequestUserContextHolder.set(new RequestUserContext(
         10L, "user", null, Set.of(), Set.of(), Set.of(7L), true, false, null
-    ));
+    , null, null));
     when(authorizationPolicyService.canReadReport(any(), eq(7L))).thenReturn(true);
     when(reportRepository.salesSummary(
         7L,
@@ -80,7 +80,7 @@ class ReportServiceTest {
   void lowStockRejectsUnauthorizedOutlet() {
     RequestUserContextHolder.set(new RequestUserContext(
         10L, "user", null, Set.of(), Set.of(), Set.of(8L), true, false, null
-    ));
+    , null, null));
 
     when(authorizationPolicyService.canReadReport(any(), eq(7L))).thenReturn(false);
     ReportService service = new ReportService(reportRepository, authorizationPolicyService);
@@ -91,7 +91,7 @@ class ReportServiceTest {
   void internalServiceBypassesOutletScopeChecks() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "gateway"
-    ));
+    , null, null));
     when(authorizationPolicyService.canReadReport(any(), eq(7L))).thenReturn(true);
     when(reportRepository.lowStock(
         7L,

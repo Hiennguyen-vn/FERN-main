@@ -39,7 +39,7 @@ CREATE TABLE core.inventory_transaction (
   ),
   business_date       DATE          NOT NULL,
   txn_time            TIMESTAMPTZ   NOT NULL,
-  txn_type            inventory_txn_type_enum NOT NULL,
+  txn_type            core.inventory_txn_type_enum NOT NULL,
   unit_cost           NUMERIC(18,4) CHECK (unit_cost IS NULL OR unit_cost >= 0),
   created_by_user_id  BIGINT        REFERENCES core.app_user(id) ON DELETE SET NULL,
   note                TEXT,
@@ -100,15 +100,15 @@ CREATE TABLE core.inventory_transaction_2026_12 PARTITION OF core.inventory_tran
 CREATE TABLE core.inventory_transaction_default PARTITION OF core.inventory_transaction DEFAULT;
 
 -- Indexes
-CREATE INDEX idx_inventory_transaction_outlet_id
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_outlet_id
   ON core.inventory_transaction(outlet_id);
-CREATE INDEX idx_inventory_transaction_item_id
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_item_id
   ON core.inventory_transaction(item_id);
-CREATE INDEX idx_inventory_transaction_business_date
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_business_date
   ON core.inventory_transaction(business_date);
-CREATE INDEX idx_inventory_transaction_txn_type
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_txn_type
   ON core.inventory_transaction(txn_type);
-CREATE INDEX idx_inventory_transaction_outlet_item_time
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_outlet_item_time
   ON core.inventory_transaction(outlet_id, item_id, txn_time);
 
 -- Reattach immutable trigger (V22 recreated it on old table name, so reapply)
@@ -190,9 +190,13 @@ ALTER TABLE core.manufacturing_transaction
     FOREIGN KEY (inventory_transaction_id, txn_time)
     REFERENCES core.inventory_transaction(id, txn_time) ON DELETE CASCADE;
 
--- ─── 5. Drop legacy (uncomment after row-count verification) ─────────────────
--- SELECT COUNT(*) FROM core.inventory_transaction;
--- SELECT COUNT(*) FROM core.inventory_transaction_legacy;
+-- ─── 5. Drop legacy ───────────────────────────────────────────────────────────
+-- Drop remaining FKs pointing to legacy table before dropping it
+ALTER TABLE core.waste_record               DROP CONSTRAINT IF EXISTS waste_record_inventory_transaction_id_fkey;
+ALTER TABLE core.goods_receipt_transaction  DROP CONSTRAINT IF EXISTS goods_receipt_transaction_inventory_transaction_id_fkey;
+ALTER TABLE core.sale_item_transaction      DROP CONSTRAINT IF EXISTS sale_item_transaction_inventory_transaction_id_fkey;
+ALTER TABLE core.manufacturing_transaction  DROP CONSTRAINT IF EXISTS manufacturing_transaction_inventory_transaction_id_fkey;
+ALTER TABLE core.inventory_adjustment       DROP CONSTRAINT IF EXISTS inventory_adjustment_inventory_transaction_id_fkey;
 DROP TABLE core.inventory_transaction_legacy;
 
 COMMIT;

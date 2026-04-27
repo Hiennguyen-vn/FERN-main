@@ -1,8 +1,13 @@
 package com.dorabets.common.spring.config;
 
 import com.dorabets.common.event.EventPublisher;
+import com.dorabets.common.outbox.OutboxDlqForwarder;
+import com.dorabets.common.outbox.OutboxRelay;
+import com.dorabets.common.outbox.OutboxWriter;
+import com.dorabets.common.outbox.OutboxWriter.IdGenerator;
 import com.dorabets.idempotency.IdempotencyGuard;
 import com.dorabets.common.spring.auth.JwtTokenService;
+import com.dorabets.common.spring.auth.DeviceTokenRegistry;
 import com.dorabets.common.spring.auth.SpringInternalServiceAuth;
 import com.dorabets.common.spring.cache.JacksonCacheSerializer;
 import com.dorabets.common.spring.cache.JedisRedisClientAdapter;
@@ -10,6 +15,7 @@ import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.natsu.common.model.cache.RedisClientAdapter;
 import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
 import com.zaxxer.hikari.HikariConfig;
@@ -23,6 +29,7 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -124,6 +131,50 @@ public class FernSharedConfiguration {
     return new SnowflakeIdGenerator(workerId);
   }
 
+  @Bean
+  @ConditionalOnMissingBean
+  public IdGenerator outboxIdGenerator(SnowflakeIdGenerator snowflakeIdGenerator) {
+    return snowflakeIdGenerator::generateId;
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public OutboxWriter outboxWriter(ObjectMapper objectMapper, IdGenerator outboxIdGenerator) {
+    return new OutboxWriter(objectMapper, outboxIdGenerator);
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public OutboxRelay outboxRelay(
+      javax.sql.DataSource dataSource,
+      TypedKafkaEventPublisher typedKafkaEventPublisher,
+      ObjectMapper objectMapper,
+      ObjectProvider<MeterRegistry> meterRegistryProvider
+  ) {
+    return new OutboxRelay(
+        dataSource,
+        typedKafkaEventPublisher,
+        objectMapper,
+        java.util.Optional.ofNullable(meterRegistryProvider.getIfAvailable())
+    );
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public OutboxDlqForwarder outboxDlqForwarder(
+      javax.sql.DataSource dataSource,
+      TypedKafkaEventPublisher typedKafkaEventPublisher,
+      ObjectProvider<MeterRegistry> meterRegistryProvider,
+      @Value("${outbox.dlq.topic:fern.outbox.dlq}") String outboxDlqTopic
+  ) {
+    return new OutboxDlqForwarder(
+        dataSource,
+        typedKafkaEventPublisher,
+        outboxDlqTopic,
+        java.util.Optional.ofNullable(meterRegistryProvider.getIfAvailable())
+    );
+  }
+
   @Bean(destroyMethod = "close")
   @ConditionalOnMissingBean
   public KafkaProducer<String, String> kafkaProducer(
@@ -200,6 +251,12 @@ public class FernSharedConfiguration {
   @ConditionalOnMissingBean
   public JwtTokenService jwtTokenService(ObjectMapper objectMapper) {
     return new JwtTokenService(objectMapper, requireEnv("JWT_SECRET"));
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public DeviceTokenRegistry deviceTokenRegistry(DataSource dataSource, Clock clock) {
+    return new DeviceTokenRegistry(dataSource, clock);
   }
 
   @Bean

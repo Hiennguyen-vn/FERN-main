@@ -11,6 +11,8 @@ public record JwtClaims(
     Set<String> roles,
     Set<String> permissions,
     Set<Long> outletIds,
+    Long deviceId,
+    Long deviceOutletId,
     Instant issuedAt,
     Instant expiresAt
 ) {
@@ -19,6 +21,10 @@ public record JwtClaims(
     roles = roles == null ? Set.of() : Set.copyOf(new LinkedHashSet<>(roles));
     permissions = permissions == null ? Set.of() : Set.copyOf(new LinkedHashSet<>(permissions));
     outletIds = outletIds == null ? Set.of() : Set.copyOf(new LinkedHashSet<>(outletIds));
+  }
+
+  public boolean isDeviceToken() {
+    return deviceId != null && deviceOutletId != null;
   }
 
   public boolean isExpired(Instant now) {

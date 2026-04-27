@@ -118,7 +118,8 @@ class PublicPosServiceTest {
                             BigDecimal.ZERO,
                             new BigDecimal("35000.00"),
                             java.util.Set.of(),
-                            null)),
+                            null,
+                            null, null, null)),
                     null,
                     Instant.parse("2026-03-31T08:35:00Z"))));
 
