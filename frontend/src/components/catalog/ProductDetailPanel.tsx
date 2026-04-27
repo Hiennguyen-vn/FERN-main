@@ -187,8 +187,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
     }
     setUploadingImage(true);
     try {
-      const { uploadUrl, finalUrl } = await productApi.presignProductImageUpload(token, pid, file.type, file.size);
-      await productApi.uploadProductImageToS3(uploadUrl, file);
+      const { finalUrl } = await productApi.uploadProductImage(token, pid, file);
       await productApi.updateProduct(token, pid, { imageUrl: finalUrl });
       toast.success('Image updated');
       onProductUpdated();
@@ -213,8 +212,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
     }
     setUploadingImage(true);
     try {
-      const { uploadUrl, finalUrl } = await productApi.presignProductImageUpload(token, pid, file.type, file.size);
-      await productApi.uploadProductImageToS3(uploadUrl, file);
+      const { finalUrl } = await productApi.uploadProductImage(token, pid, file);
       setEditForm((f) => ({ ...f, imageUrl: finalUrl }));
       toast.success('Image uploaded. Click Save to apply.');
     } catch (e) {

@@ -280,6 +280,15 @@ function trimToNull(value: unknown): string | null {
   return text ? text : null;
 }
 
+const PRODUCT_IMAGE_UPLOAD_TIMEOUT_MS = 30_000;
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === 'AbortError')
+    || Boolean(error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError')
+  );
+}
+
 function decodeProduct(value: unknown): ProductView {
   const record = asRecord(value) ?? {};
   return {
@@ -489,15 +498,58 @@ export const productApi = {
       contentType: String(raw.contentType ?? contentType),
     };
   },
-  uploadProductImageToS3: async (uploadUrl: string, file: File): Promise<void> => {
-    const res = await fetch(uploadUrl, {
-      method: 'PUT',
-      body: file,
-      headers: { 'Content-Type': file.type },
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`S3 upload failed (${res.status}): ${text.slice(0, 200)}`);
+  uploadProductImage: async (
+    token: string,
+    productId: string,
+    file: File,
+  ): Promise<{ uploadUrl: string; finalUrl: string; expiresAt: string; contentType: string }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const raw = asRecord(
+      await apiRequest(`/api/v1/product/products/${productId}/image/upload`, {
+        method: 'POST',
+        token,
+        body: formData,
+      }),
+    ) ?? {};
+    return {
+      uploadUrl: String(raw.uploadUrl ?? ''),
+      finalUrl: String(raw.finalUrl ?? ''),
+      expiresAt: String(raw.expiresAt ?? ''),
+      contentType: String(raw.contentType ?? file.type),
+    };
+  },
+  uploadProductImageToS3: async (
+    uploadUrl: string,
+    file: File,
+    timeoutMs = PRODUCT_IMAGE_UPLOAD_TIMEOUT_MS,
+  ): Promise<void> => {
+    const trimmedUploadUrl = uploadUrl.trim();
+    if (!trimmedUploadUrl) {
+      throw new Error('Image upload URL is missing.');
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(trimmedUploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': file.type },
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`S3 upload failed (${res.status}): ${text.slice(0, 200)}`);
+      }
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new Error('Image storage upload timed out. Check the S3/MinIO endpoint and CORS configuration.');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
     }
   },
   updateItem: async (

@@ -66,8 +66,9 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
   const { method = 'GET', token, body, query, signal, headers: extraHeaders } = options;
   const queryString = toQueryString(query);
   const url = `${API_BASE}${path}${queryString}`;
+  const bodyIsFormData = typeof FormData !== 'undefined' && body instanceof FormData;
   const headers: Record<string, string> = {};
-  if (body !== undefined) {
+  if (body !== undefined && !bodyIsFormData) {
     headers['Content-Type'] = 'application/json';
   }
   if (token && !isCookieBackedSessionToken(token)) {
@@ -86,7 +87,7 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
     signal,
     credentials: 'include',
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? (bodyIsFormData ? body as BodyInit : JSON.stringify(body)) : undefined,
   });
 
   const parsed = await parseBody(response);

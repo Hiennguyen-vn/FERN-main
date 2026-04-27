@@ -101,6 +101,37 @@ class GatewayAuthenticationFilterTest {
   }
 
   @Test
+  void publicProductImagePathsBypassJwtAndRemainPublic() {
+    GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
+        new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        Mockito.mock(AuthSessionService.class),
+        Mockito.mock(DeviceTokenRegistry.class),
+        AUTH_COOKIE_NAME
+    );
+
+    MockServerHttpRequest request = MockServerHttpRequest.get(
+            "/api/v1/product/product-images?key=products%2F5001%2Fimage.png"
+        )
+        .header(InternalServiceAuth.HEADER_SERVICE_NAME, "spoofed-service")
+        .header(InternalServiceAuth.HEADER_USER_ID, "999")
+        .build();
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+    AtomicReference<ServerHttpRequest> forwarded = new AtomicReference<>();
+
+    filter.filter(exchange, currentExchange -> {
+      forwarded.set(currentExchange.getRequest());
+      return Mono.empty();
+    }).block();
+
+    ServerHttpRequest forwardedRequest = forwarded.get();
+    assertNotNull(forwardedRequest);
+    assertNull(forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SERVICE_NAME));
+    assertNull(forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_USER_ID));
+    assertEquals("gateway", forwardedRequest.getHeaders().getFirst("X-Forwarded-By"));
+  }
+
+  @Test
   void protectedPathsReturnUnauthorizedWithoutBearerToken() {
     GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),

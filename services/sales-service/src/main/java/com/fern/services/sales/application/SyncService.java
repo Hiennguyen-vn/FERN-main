@@ -1,6 +1,7 @@
 package com.fern.services.sales.application;
 
 import com.dorabets.common.middleware.ServiceException;
+import com.dorabets.common.outbox.OutboxWriter;
 import com.dorabets.common.repository.BaseRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.dorabets.common.spring.auth.RequestUserContext;
@@ -33,19 +34,22 @@ public class SyncService extends BaseRepository {
     private final PosMetrics posMetrics;
     private final SnowflakeIdGenerator snowflake;
     private final ObjectMapper objectMapper;
+    private final OutboxWriter outboxWriter;
 
     public SyncService(
         DataSource dataSource,
         SalesService salesService,
         PosMetrics posMetrics,
         SnowflakeIdGenerator snowflake,
-        ObjectMapper objectMapper
+        ObjectMapper objectMapper,
+        OutboxWriter outboxWriter
     ) {
         super(dataSource);
         this.salesService = salesService;
         this.posMetrics = posMetrics;
         this.snowflake = snowflake;
         this.objectMapper = objectMapper;
+        this.outboxWriter = outboxWriter;
     }
 
     // ── Catalog pull ──────────────────────────────────────────────────────────
@@ -733,6 +737,10 @@ public class SyncService extends BaseRepository {
                 Map<String, Object> p = (Map<String, Object>) event.payload();
                 salesService.capturePaymentFromSync(p);
             }
+            case "pos.audit.recorded" -> {
+                Map<String, Object> p = (Map<String, Object>) event.payload();
+                appendPosAuditRecorded(event, p);
+            }
             case "pos.sale.refunded" -> {
                 throw ServiceException.conflict("Offline refund is disabled");
             }
@@ -750,6 +758,21 @@ public class SyncService extends BaseRepository {
             }
             default -> throw ServiceException.badRequest("Unknown event type: " + event.type());
         }
+    }
+
+    private void appendPosAuditRecorded(SyncDtos.PushEvent event, Map<String, Object> payload) {
+        long auditId = toLong(payloadValue(payload, "event_id", "eventId"));
+        executeInTransaction(conn -> {
+            outboxWriter.append(
+                conn,
+                "pos.audit.recorded",
+                auditId,
+                "fern.audit.pos-recorded",
+                event.eventId(),
+                payload
+            );
+            return null;
+        });
     }
 
     private static long toLong(Object v) {

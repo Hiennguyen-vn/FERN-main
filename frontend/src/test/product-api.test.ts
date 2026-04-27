@@ -3,6 +3,7 @@ import { productApi } from '@/api/fern-api';
 
 describe('productApi', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -100,5 +101,57 @@ describe('productApi', () => {
       uomCode: 'kg',
       qtyRequired: 0.018,
     });
+  });
+
+  it('uploads product images through the backend multipart endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        finalUrl: '/api/v1/product/product-images?key=products%2F123%2Fproduct.png',
+        contentType: 'image/png',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = new File([new Uint8Array([1])], 'product.png', { type: 'image/png' });
+    const result = await productApi.uploadProductImage('token', '123', file);
+
+    expect(result.finalUrl).toBe('/api/v1/product/product-images?key=products%2F123%2Fproduct.png');
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/product/products/123/image/upload', expect.objectContaining({
+      method: 'POST',
+      body: expect.any(FormData),
+      credentials: 'include',
+    }));
+    const [, options] = fetchMock.mock.calls[0];
+    const headers = options?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer token');
+    expect(headers['Content-Type']).toBeUndefined();
+    expect((options?.body as FormData).get('file')).toBe(file);
+  });
+
+  it('times out stalled product image uploads', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, options?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('Aborted', 'AbortError'));
+      });
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = new File([new Uint8Array([1])], 'product.png', { type: 'image/png' });
+    const upload = productApi.uploadProductImageToS3('https://storage.example/upload', file, 1000);
+    const expectation = expect(upload).rejects.toThrow('Image storage upload timed out');
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expectation;
+    expect(fetchMock).toHaveBeenCalledWith('https://storage.example/upload', expect.objectContaining({
+      method: 'PUT',
+      body: file,
+      headers: { 'Content-Type': 'image/png' },
+      signal: expect.any(AbortSignal),
+    }));
   });
 });

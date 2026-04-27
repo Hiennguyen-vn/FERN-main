@@ -165,6 +165,7 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
         || path.startsWith("/internal/gateway/fallback")
         || path.startsWith("/api/v1/auth/login")
         || path.startsWith("/api/v1/sales/public")
+        || path.startsWith("/api/v1/product/product-images")
         || path.equals("/api/v1/devices/pair");
   }
 

@@ -270,6 +270,7 @@ services:
       S3_BUCKET_PRODUCT_IMAGES: ${S3_BUCKET_PRODUCT_IMAGES:-}
       S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
       S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_CONSOLE_ENDPOINT: ${S3_CONSOLE_ENDPOINT:-}
       S3_PATH_STYLE: ${S3_PATH_STYLE:-false}
     depends_on:
       master-node:

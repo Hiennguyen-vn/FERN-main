@@ -1,5 +1,9 @@
 # 00 — Current State Audit
 
+> Lưu ý 2026-04-27: tài liệu này là audit lịch sử ở giai đoạn trước khi POS
+> edge/mini server LAN được triển khai đầy đủ. Để xem implementation hiện có,
+> đọc [08-current-implementation-overview.md](08-current-implementation-overview.md).
+
 Audit sâu mã hiện tại để xác định gap với target offline-first. Mọi kết luận có file:line.
 
 ## 1. Stack Tổng Thể
