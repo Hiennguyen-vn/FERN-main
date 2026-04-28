@@ -1,17 +1,17 @@
 package com.fern.services.procurement.application;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.AuthorizationPolicyService;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
-import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.events.TypedKafkaEventPublisher;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
 import com.fern.events.procurement.GoodsReceiptPostedEvent;
 import com.fern.events.procurement.GoodsReceiptPostedLineItem;
 import com.fern.services.procurement.api.ProcurementDtos;
 import com.fern.services.procurement.infrastructure.ProcurementRepository;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;

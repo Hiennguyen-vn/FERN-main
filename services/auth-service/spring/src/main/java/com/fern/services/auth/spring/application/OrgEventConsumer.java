@@ -1,6 +1,6 @@
 package com.fern.services.auth.spring.application;
 
-import com.dorabets.common.spring.auth.PermissionMatrixService;
+import com.fern.common.spring.auth.PermissionMatrixService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.core.EventEnvelope;
@@ -12,7 +12,13 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.kafka.annotation.DltHandler;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.annotation.RetryableTopic;
+import org.springframework.kafka.retrytopic.DltStrategy;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.retry.annotation.Backoff;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -37,19 +43,42 @@ public class OrgEventConsumer {
     this.meterRegistry = meterRegistry;
   }
 
+  @RetryableTopic(
+      attempts = "3",
+      backoff = @Backoff(delay = 1000, multiplier = 4.0),
+      dltStrategy = DltStrategy.FAIL_ON_ERROR,
+      autoCreateTopics = "true"
+  )
   @KafkaListener(topics = "fern.org.outlet-created")
   public void consumeOutletCreated(String message) {
     handleOutletCreated(message);
   }
 
+  @RetryableTopic(
+      attempts = "3",
+      backoff = @Backoff(delay = 1000, multiplier = 4.0),
+      dltStrategy = DltStrategy.FAIL_ON_ERROR,
+      autoCreateTopics = "true"
+  )
   @KafkaListener(topics = "fern.org.outlet-updated")
   public void consumeOutletUpdated(String message) {
     handleOutletUpdated(message);
   }
 
+  @RetryableTopic(
+      attempts = "3",
+      backoff = @Backoff(delay = 1000, multiplier = 4.0),
+      dltStrategy = DltStrategy.FAIL_ON_ERROR,
+      autoCreateTopics = "true"
+  )
   @KafkaListener(topics = "fern.org.region-updated")
   public void consumeRegionUpdated(String message) {
     handleRegionUpdated(message);
+  }
+
+  @DltHandler
+  public void handleDlt(String message, @Header(KafkaHeaders.ORIGINAL_TOPIC) String topic) {
+    log.error("Auth-org DLT: topic={} payload={}", topic, message);
   }
 
   void handleOutletCreated(String rawMessage) {

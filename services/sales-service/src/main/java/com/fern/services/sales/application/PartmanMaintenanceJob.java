@@ -1,6 +1,6 @@
 package com.fern.services.sales.application;
 
-import com.dorabets.common.repository.BaseRepository;
+import com.fern.common.repository.BaseRepository;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

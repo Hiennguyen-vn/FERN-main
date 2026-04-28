@@ -3,7 +3,7 @@ package com.fern.services.payroll.application;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import com.dorabets.common.middleware.ServiceException;
+import com.fern.common.middleware.ServiceException;
 import com.fern.services.payroll.api.PayrollDtos;
 import com.fern.services.payroll.infrastructure.PayrollRepository;
 import java.math.BigDecimal;

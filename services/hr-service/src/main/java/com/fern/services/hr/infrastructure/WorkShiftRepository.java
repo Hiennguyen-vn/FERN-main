@@ -1,9 +1,9 @@
 package com.fern.services.hr.infrastructure;
 
-import com.dorabets.common.repository.BaseRepository;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
-import com.dorabets.common.middleware.ServiceException;
+import com.fern.common.repository.BaseRepository;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
+import com.fern.common.middleware.ServiceException;
 import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.SQLException;

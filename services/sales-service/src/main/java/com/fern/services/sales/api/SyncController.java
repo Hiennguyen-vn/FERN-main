@@ -1,9 +1,9 @@
 package com.fern.services.sales.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.services.sales.application.DeviceService;
 import com.fern.services.sales.application.SyncService;
 import java.util.List;

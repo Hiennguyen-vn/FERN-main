@@ -1,8 +1,8 @@
 package com.fern.services.audit.infrastructure;
 
-import com.dorabets.common.repository.BaseRepository;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
+import com.fern.common.repository.BaseRepository;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.services.audit.api.AuditDtos;

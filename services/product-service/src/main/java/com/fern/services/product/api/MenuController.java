@@ -35,7 +35,7 @@ public class MenuController {
   @GetMapping("/menus/{menuId}")
   public ProductDtos.MenuView getMenu(@PathVariable long menuId) {
     return menuService.findMenu(menuId)
-        .orElseThrow(() -> com.dorabets.common.middleware.ServiceException.notFound("Menu not found: " + menuId));
+        .orElseThrow(() -> com.fern.common.middleware.ServiceException.notFound("Menu not found: " + menuId));
   }
 
   @PostMapping("/menus")

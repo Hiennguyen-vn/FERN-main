@@ -1,8 +1,8 @@
 package com.fern.services.payroll.infrastructure;
 
-import com.dorabets.common.repository.BaseRepository;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
+import com.fern.common.repository.BaseRepository;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.Date;

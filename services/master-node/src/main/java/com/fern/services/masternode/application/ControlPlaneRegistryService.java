@@ -1,14 +1,14 @@
 package com.fern.services.masternode.application;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.services.masternode.api.ControlPlaneDtos;
 import com.fern.services.masternode.infrastructure.ControlPlanePersistenceRepository;
 import com.fern.services.masternode.infrastructure.ControlPlanePersistenceRepository.AssignmentRecord;
 import com.fern.services.masternode.infrastructure.ControlPlanePersistenceRepository.ServiceInstanceRecord;
 import com.fern.services.masternode.infrastructure.ControlPlaneRedisStore;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;

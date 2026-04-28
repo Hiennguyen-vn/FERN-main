@@ -1,8 +1,8 @@
 package com.fern.services.product.infrastructure;
 
-import com.dorabets.common.repository.BaseRepository;
+import com.fern.common.repository.BaseRepository;
 import com.fern.services.product.api.ProductDtos;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;

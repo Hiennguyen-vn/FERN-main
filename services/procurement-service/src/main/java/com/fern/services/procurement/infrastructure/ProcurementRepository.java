@@ -1,11 +1,11 @@
 package com.fern.services.procurement.infrastructure;
 
-import com.dorabets.common.repository.BaseRepository;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
-import com.dorabets.common.middleware.ServiceException;
+import com.fern.common.repository.BaseRepository;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
+import com.fern.common.middleware.ServiceException;
 import com.fern.services.procurement.api.ProcurementDtos;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.Date;

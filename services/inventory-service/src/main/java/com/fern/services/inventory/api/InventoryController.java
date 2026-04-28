@@ -1,6 +1,6 @@
 package com.fern.services.inventory.api;
 
-import com.dorabets.common.spring.web.PagedResult;
+import com.fern.common.spring.web.PagedResult;
 import com.fern.services.inventory.application.InventoryService;
 import jakarta.validation.Valid;
 import java.time.LocalDate;

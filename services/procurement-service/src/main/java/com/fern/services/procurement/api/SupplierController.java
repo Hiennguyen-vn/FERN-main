@@ -1,6 +1,6 @@
 package com.fern.services.procurement.api;
 
-import com.dorabets.common.spring.web.PagedResult;
+import com.fern.common.spring.web.PagedResult;
 import com.fern.services.procurement.application.SupplierService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;

@@ -1,12 +1,12 @@
 package com.fern.services.inventory;
 
-import com.dorabets.common.config.RuntimeEnvironment;
+import com.fern.common.config.RuntimeEnvironment;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-@SpringBootApplication(scanBasePackages = {"com.fern.services.inventory", "com.dorabets.common.spring"})
+@SpringBootApplication(scanBasePackages = {"com.fern.services.inventory", "com.fern.common.spring"})
 @EnableKafka
 @EnableScheduling
 public class InventoryServiceApplication {

@@ -1,10 +1,10 @@
 package com.fern.services.finance.application;
 
-import com.dorabets.idempotency.IdempotencyGuard;
-import com.dorabets.idempotency.model.IdempotencyResult;
-import com.dorabets.idempotency.model.TtlPolicy;
-import com.dorabets.common.spring.auth.InternalExecutionContext;
-import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
+import com.fern.common.idempotency.IdempotencyGuard;
+import com.fern.common.idempotency.model.IdempotencyResult;
+import com.fern.common.idempotency.model.TtlPolicy;
+import com.fern.common.spring.auth.InternalExecutionContext;
+import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.core.EventEnvelope;
@@ -13,13 +13,19 @@ import com.fern.events.payroll.PayrollApprovedEvent;
 import com.fern.events.procurement.InvoiceApprovedEvent;
 import com.fern.events.sales.PaymentCapturedEvent;
 import com.fern.services.finance.infrastructure.FinanceRepository;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Clock;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.kafka.annotation.DltHandler;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.annotation.RetryableTopic;
+import org.springframework.kafka.retrytopic.DltStrategy;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.retry.annotation.Backoff;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -68,19 +74,42 @@ public class FinanceEventConsumer {
     this(financeRepository, idempotencyGuard, idGenerator, eventPublisher, objectMapper, clock, null, null);
   }
 
+  @RetryableTopic(
+      attempts = "3",
+      backoff = @Backoff(delay = 1000, multiplier = 4.0),
+      dltStrategy = DltStrategy.FAIL_ON_ERROR,
+      autoCreateTopics = "true"
+  )
   @KafkaListener(topics = "fern.procurement.invoice-approved")
   public void consumeInvoiceApprovedEvent(String message) {
     handleInvoiceApproved(message);
   }
 
+  @RetryableTopic(
+      attempts = "3",
+      backoff = @Backoff(delay = 1000, multiplier = 4.0),
+      dltStrategy = DltStrategy.FAIL_ON_ERROR,
+      autoCreateTopics = "true"
+  )
   @KafkaListener(topics = "fern.payroll.payroll-approved")
   public void consumePayrollApprovedEvent(String message) {
     handlePayrollApproved(message);
   }
 
+  @RetryableTopic(
+      attempts = "3",
+      backoff = @Backoff(delay = 1000, multiplier = 4.0),
+      dltStrategy = DltStrategy.FAIL_ON_ERROR,
+      autoCreateTopics = "true"
+  )
   @KafkaListener(topics = "fern.sales.payment-captured", groupId = "finance-service-invoice")
   public void consumePaymentCapturedEvent(String message) {
     handlePaymentCaptured(message);
+  }
+
+  @DltHandler
+  public void handleDlt(String message, @Header(KafkaHeaders.ORIGINAL_TOPIC) String topic) {
+    log.error("Finance DLT: topic={} payload={}", topic, message);
   }
 
   void handlePaymentCaptured(String rawMessage) {

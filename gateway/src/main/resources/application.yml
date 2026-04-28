@@ -31,11 +31,39 @@ management:
   endpoint:
     health:
       show-details: when_authorized
+  tracing:
+    sampling:
+      probability: ${OTEL_SAMPLE_RATIO:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
 
 info:
   service:
     name: ${spring.application.name}
     description: Spring Cloud Gateway ingress for FERN ERP.
+
+spring.config.import: ${VAULT_CONFIG_IMPORT:optional:vault://}
+spring.cloud.vault:
+  enabled: ${VAULT_ENABLED:false}
+  uri: ${VAULT_ADDR:http://localhost:8200}
+  token: ${VAULT_TOKEN:}
+  authentication: ${VAULT_AUTHENTICATION:TOKEN}
+  app-role:
+    role-id: ${VAULT_ROLE_ID:}
+    secret-id: ${VAULT_SECRET_ID:}
+  database:
+    enabled: ${VAULT_DATABASE_ENABLED:false}
+    backend: ${VAULT_DATABASE_BACKEND:database}
+    role: ${VAULT_DATABASE_ROLE:fern-${spring.application.name}}
+    username-property: dependencies.postgres.username
+    password-property: dependencies.postgres.password
+  fail-fast: false
+  kv:
+    enabled: true
+    backend: kv
+    default-context: fern/shared
+    application-name: fern/services/${spring.application.name}
 
 resilience4j:
   circuitbreaker:
@@ -120,8 +148,8 @@ fern:
 dependencies:
   postgres:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/fern}
-    username: ${POSTGRES_APP_USER:${POSTGRES_USER:fern}}
-    password: ${POSTGRES_APP_PASSWORD:${POSTGRES_PASSWORD:fern}}
+    username: ${VAULT_DB_USERNAME:${spring.datasource.username:${POSTGRES_APP_USER:${POSTGRES_USER:fern}}}}
+    password: ${VAULT_DB_PASSWORD:${spring.datasource.password:${POSTGRES_APP_PASSWORD:${POSTGRES_PASSWORD:fern}}}}
     poolSize: ${DB_POOL_SIZE:8}
   redis:
     host: ${REDIS_HOST:localhost}

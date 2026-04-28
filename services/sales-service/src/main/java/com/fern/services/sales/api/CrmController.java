@@ -1,6 +1,6 @@
 package com.fern.services.sales.api;
 
-import com.dorabets.common.spring.web.PagedResult;
+import com.fern.common.spring.web.PagedResult;
 import com.fern.services.sales.application.CrmService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;

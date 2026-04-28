@@ -1,10 +1,10 @@
 package com.fern.services.org.application;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.AuthorizationPolicyService;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
-import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.events.org.ExchangeRateUpdatedEvent;
 import com.fern.events.org.OutletCreatedEvent;
 import com.fern.events.org.OutletUpdatedEvent;

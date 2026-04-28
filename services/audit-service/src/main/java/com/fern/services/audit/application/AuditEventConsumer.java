@@ -1,21 +1,31 @@
 package com.fern.services.audit.application;
 
-import com.dorabets.idempotency.IdempotencyGuard;
-import com.dorabets.idempotency.model.IdempotencyResult;
-import com.dorabets.idempotency.model.TtlPolicy;
+import com.fern.common.idempotency.IdempotencyGuard;
+import com.fern.common.idempotency.model.IdempotencyResult;
+import com.fern.common.idempotency.model.TtlPolicy;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.core.EventEnvelope;
 import com.fern.services.audit.infrastructure.AuditRepository;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Instant;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.kafka.annotation.DltHandler;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.annotation.RetryableTopic;
+import org.springframework.kafka.retrytopic.DltStrategy;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.retry.annotation.Backoff;
 import org.springframework.stereotype.Service;
 
 @Service
 public class AuditEventConsumer {
+
+  private static final Logger log = LoggerFactory.getLogger(AuditEventConsumer.class);
 
   private final AuditRepository auditRepository;
   private final IdempotencyGuard idempotencyGuard;
@@ -34,6 +44,12 @@ public class AuditEventConsumer {
     this.snowflakeIdGenerator = snowflakeIdGenerator;
   }
 
+  @RetryableTopic(
+      attempts = "3",
+      backoff = @Backoff(delay = 1000, multiplier = 4.0),
+      dltStrategy = DltStrategy.FAIL_ON_ERROR,
+      autoCreateTopics = "true"
+  )
   @KafkaListener(topicPattern = "fern\\..+")
   public void consume(String message) {
     try {
@@ -173,6 +189,11 @@ public class AuditEventConsumer {
       case "inventory.stock.low-threshold" -> "stock_balance";
       default -> "event";
     };
+  }
+
+  @DltHandler
+  public void handleDlt(String message, @Header(KafkaHeaders.ORIGINAL_TOPIC) String topic) {
+    log.error("Audit DLT: topic={} payload={}", topic, message);
   }
 
   private String jsonBody(Map<String, Object> body) {

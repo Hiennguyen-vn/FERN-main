@@ -1,6 +1,6 @@
 package com.fern.services.sales.application;
 
-import com.dorabets.common.outbox.OutboxDlqForwarder;
+import com.fern.common.outbox.OutboxDlqForwarder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;

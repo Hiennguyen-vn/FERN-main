@@ -1,15 +1,18 @@
 package com.fern.services.sales.application;
 
-import com.dorabets.common.middleware.ServiceException;
+import com.fern.common.middleware.ServiceException;
 import com.fern.services.sales.api.PublicPosDtos;
 import com.fern.services.sales.api.SalesDtos;
 import com.fern.services.sales.infrastructure.SalesRepository;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -17,10 +20,19 @@ public class PublicPosService {
 
   private final SalesRepository salesRepository;
   private final Clock clock;
+  private final PromotionEngine promotionEngine;
+  private final boolean promotionEngineEnabled;
 
-  public PublicPosService(SalesRepository salesRepository, Clock clock) {
+  public PublicPosService(
+      SalesRepository salesRepository,
+      Clock clock,
+      PromotionEngine promotionEngine,
+      @Value("${promotion.engine.enabled:false}") boolean promotionEngineEnabled
+  ) {
     this.salesRepository = salesRepository;
     this.clock = clock;
+    this.promotionEngine = promotionEngine;
+    this.promotionEngineEnabled = promotionEngineEnabled;
   }
 
   public PublicPosDtos.PublicTableView getTable(String tableToken) {
@@ -57,9 +69,19 @@ public class PublicPosService {
                     Function.identity(),
                     (left, right) -> left,
                     java.util.LinkedHashMap::new));
+    PromotionEngine.Allocation promotionAllocation =
+        computePromotionDiscounts(table.outletId(), request, menuByProductId);
+    Map<Long, BigDecimal> discountByProduct = discountByProduct(promotionAllocation);
     SalesRepository.CreatedPublicOrder created;
     try {
-      created = salesRepository.submitPublicOrder(table, request, businessDate);
+      created = discountByProduct.isEmpty()
+          ? salesRepository.submitPublicOrder(table, request, businessDate)
+          : salesRepository.submitPublicOrder(
+              table,
+              request,
+              businessDate,
+              discountByProduct,
+              promotionAllocation.promotionId());
     } catch (ServiceException exception) {
       if (exception.getStatusCode() == 409 && exception.getDetails() != null) {
         throw ServiceException.conflict(
@@ -68,6 +90,39 @@ public class PublicPosService {
       throw exception;
     }
     return toReceipt(table, created.orderToken(), created.sale(), menuByProductId);
+  }
+
+  private PromotionEngine.Allocation computePromotionDiscounts(
+      long outletId,
+      PublicPosDtos.CreatePublicOrderRequest request,
+      Map<String, PublicPosDtos.PublicMenuItemView> menuByProductId
+  ) {
+    if (!promotionEngineEnabled) {
+      return PromotionEngine.Allocation.EMPTY;
+    }
+    List<PromotionEngine.CartLine> cart = new java.util.ArrayList<>();
+    for (PublicPosDtos.PublicOrderLineRequest item : request.items()) {
+      PublicPosDtos.PublicMenuItemView menuItem = menuByProductId.get(item.productId());
+      if (menuItem == null) continue;
+      long productId;
+      try {
+        productId = Long.parseLong(item.productId());
+      } catch (NumberFormatException ex) {
+        continue;
+      }
+      cart.add(new PromotionEngine.CartLine(productId, item.quantity(), menuItem.priceValue()));
+    }
+    if (cart.isEmpty()) return PromotionEngine.Allocation.EMPTY;
+    return promotionEngine.evaluateForCart(outletId, cart);
+  }
+
+  private Map<Long, BigDecimal> discountByProduct(PromotionEngine.Allocation allocation) {
+    if (allocation == null || allocation.lineDiscounts().isEmpty()) return Map.of();
+    Map<Long, BigDecimal> map = new HashMap<>();
+    for (PromotionEngine.LineDiscount ld : allocation.lineDiscounts()) {
+      map.merge(ld.productId(), ld.discountAmount(), BigDecimal::add);
+    }
+    return map;
   }
 
   private SalesRepository.PublicOrderingTableRecord requireActiveTable(String tableToken) {

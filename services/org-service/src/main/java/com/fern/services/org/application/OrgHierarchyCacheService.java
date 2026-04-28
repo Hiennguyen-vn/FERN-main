@@ -1,10 +1,10 @@
 package com.fern.services.org.application;
 
-import com.dorabets.common.spring.cache.JacksonCacheSerializer;
+import com.fern.common.spring.cache.JacksonCacheSerializer;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.natsu.common.model.cache.RedisClientAdapter;
-import com.natsu.common.model.cache.TieredCache;
+import com.fern.common.model.cache.RedisClientAdapter;
+import com.fern.common.model.cache.TieredCache;
 import java.time.Duration;
 import java.util.List;
 import org.springframework.stereotype.Service;

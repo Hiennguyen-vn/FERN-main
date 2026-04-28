@@ -1,11 +1,13 @@
 package com.fern.services.inventory.infrastructure;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.repository.BaseRepository;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.repository.BaseRepository;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
+import com.fern.events.inventory.OfflineInventoryMovementRecordedEvent;
+import com.fern.events.inventory.StockInSimpleRecordedEvent;
 import com.fern.services.inventory.api.InventoryDtos;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.Connection;
@@ -16,6 +18,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -629,6 +632,382 @@ public class InventoryRepository extends BaseRepository {
     });
   }
 
+  public OfflineStockInResult applyOfflineStockIn(StockInSimpleRecordedEvent event, Instant receivedAt) {
+    if (event.sourceEventId() == null || event.sourceEventId().isBlank()) {
+      throw ServiceException.badRequest("source_event_id is required");
+    }
+    return executeInTransaction(conn -> {
+      Optional<OfflineStockInResult> existing = findOfflineStockInResult(conn, event.sourceEventId());
+      if (existing.isPresent()) {
+        OfflineStockInResult current = existing.get();
+        return new OfflineStockInResult(
+            current.status(),
+            current.inventoryTransactionId(),
+            current.rejectedReason(),
+            true
+        );
+      }
+
+      long offlineMovementId = snowflakeIdGenerator.generateId();
+      if (!claimOfflineStockIn(conn, offlineMovementId, event, receivedAt)) {
+        return findOfflineStockInResult(conn, event.sourceEventId())
+            .orElse(new OfflineStockInResult("DUPLICATE", null, null, true));
+      }
+
+      String rejectedReason = validateOfflineStockIn(conn, event);
+      if (rejectedReason != null) {
+        markOfflineStockInRejected(conn, event.sourceEventId(), rejectedReason);
+        return new OfflineStockInResult("REJECTED", null, rejectedReason, false);
+      }
+
+      Instant txnTime = event.createdAtDevice() == null ? receivedAt : event.createdAtDevice();
+      LocalDate businessDate = event.businessDate() == null
+          ? LocalDate.ofInstant(txnTime, ZoneId.of("Asia/Ho_Chi_Minh"))
+          : event.businessDate();
+      long transactionId = snowflakeIdGenerator.generateId();
+      Long actorUserId = resolveExistingUserId(conn, event.actorUserId());
+      insertInventoryTransaction(
+          conn,
+          transactionId,
+          event.outletId(),
+          event.itemId(),
+          event.quantity().setScale(4, RoundingMode.HALF_UP),
+          businessDate,
+          txnTime,
+          "stock_in_simple",
+          currentUnitCost(conn, event.outletId(), event.itemId()),
+          actorUserId,
+          event.note()
+      );
+      markOfflineStockInApplied(conn, event.sourceEventId(), transactionId, txnTime);
+      return new OfflineStockInResult("APPLIED", transactionId, null, false);
+    });
+  }
+
+  public OfflineInventoryMovementResult applyOfflineWaste(OfflineInventoryMovementRecordedEvent event, Instant receivedAt) {
+    if (event.sourceEventId() == null || event.sourceEventId().isBlank()) {
+      throw ServiceException.badRequest("source_event_id is required");
+    }
+    return executeInTransaction(conn -> {
+      Optional<OfflineStockInResult> existing = findOfflineStockInResult(conn, event.sourceEventId());
+      if (existing.isPresent()) {
+        OfflineStockInResult current = existing.get();
+        return new OfflineInventoryMovementResult(
+            current.status(),
+            current.inventoryTransactionId(),
+            current.rejectedReason(),
+            true
+        );
+      }
+
+      long offlineMovementId = snowflakeIdGenerator.generateId();
+      if (!claimOfflineWaste(conn, offlineMovementId, event, receivedAt)) {
+        return findOfflineStockInResult(conn, event.sourceEventId())
+            .map(current -> new OfflineInventoryMovementResult(
+                current.status(),
+                current.inventoryTransactionId(),
+                current.rejectedReason(),
+                true
+            ))
+            .orElse(new OfflineInventoryMovementResult("DUPLICATE", null, null, true));
+      }
+
+      String rejectedReason = validateOfflineWaste(conn, event);
+      if (rejectedReason != null) {
+        markOfflineStockInRejected(conn, event.sourceEventId(), rejectedReason);
+        return new OfflineInventoryMovementResult("REJECTED", null, rejectedReason, false);
+      }
+
+      Instant txnTime = event.createdAtDevice() == null ? receivedAt : event.createdAtDevice();
+      LocalDate businessDate = event.businessDate() == null
+          ? LocalDate.ofInstant(txnTime, ZoneId.of("Asia/Ho_Chi_Minh"))
+          : event.businessDate();
+      long transactionId = snowflakeIdGenerator.generateId();
+      Long actorUserId = resolveExistingUserId(conn, event.actorUserId());
+      insertInventoryTransaction(
+          conn,
+          transactionId,
+          event.outletId(),
+          event.itemId(),
+          event.quantity().negate().setScale(4, RoundingMode.HALF_UP),
+          businessDate,
+          txnTime,
+          "waste_out",
+          event.unitCost() == null ? currentUnitCost(conn, event.outletId(), event.itemId()) : event.unitCost(),
+          actorUserId,
+          event.note()
+      );
+      insertWasteRecord(conn, transactionId, event.reason(), actorUserId);
+      markOfflineStockInApplied(conn, event.sourceEventId(), transactionId, txnTime);
+      return new OfflineInventoryMovementResult("APPLIED", transactionId, null, false);
+    });
+  }
+
+  private Optional<OfflineStockInResult> findOfflineStockInResult(Connection conn, String sourceEventId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT sync_status, inventory_transaction_id, rejected_reason
+        FROM core.offline_inventory_movement
+        WHERE source_event_id = ?
+        LIMIT 1
+        """
+    )) {
+      ps.setString(1, sourceEventId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) return Optional.empty();
+        return Optional.of(new OfflineStockInResult(
+            rs.getString("sync_status"),
+            rs.getObject("inventory_transaction_id", Long.class),
+            rs.getString("rejected_reason"),
+            true
+        ));
+      }
+    }
+  }
+
+  private boolean claimOfflineStockIn(
+      Connection conn,
+      long offlineMovementId,
+      StockInSimpleRecordedEvent event,
+      Instant receivedAt
+  ) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        INSERT INTO core.offline_inventory_movement (
+          id, source_event_id, source_idempotency_key, movement_type,
+          outlet_id, device_id, pos_session_id, terminal_id,
+          actor_user_id, actor_username, item_id, sku,
+          quantity, unit, reason, note, business_date, created_at_device,
+          source, needs_review, sync_status
+        ) VALUES (
+          ?, ?, ?, 'STOCK_IN_SIMPLE',
+          ?, ?, ?, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?,
+          COALESCE(?, 'POS_OFFLINE'), ?, 'PROCESSING'
+        )
+        ON CONFLICT (source_event_id) DO NOTHING
+        """
+    )) {
+      ps.setLong(1, offlineMovementId);
+      ps.setString(2, event.sourceEventId());
+      ps.setString(3, event.idempotencyKey());
+      ps.setLong(4, event.outletId());
+      setNullableLong(ps, 5, event.deviceId());
+      setNullableLong(ps, 6, event.posSessionId());
+      ps.setString(7, event.terminalId());
+      setNullableLong(ps, 8, event.actorUserId());
+      ps.setString(9, event.actorUsername());
+      ps.setLong(10, event.itemId());
+      ps.setString(11, event.sku());
+      ps.setBigDecimal(12, event.quantity());
+      ps.setString(13, event.unit());
+      ps.setString(14, event.reason());
+      ps.setString(15, event.note());
+      if (event.businessDate() == null) {
+        ps.setNull(16, java.sql.Types.DATE);
+      } else {
+        ps.setDate(16, Date.valueOf(event.businessDate()));
+      }
+      Instant createdAtDevice = event.createdAtDevice() == null ? receivedAt : event.createdAtDevice();
+      ps.setTimestamp(17, Timestamp.from(createdAtDevice));
+      ps.setString(18, event.source());
+      ps.setBoolean(19, event.reviewRequired());
+      return ps.executeUpdate() > 0;
+    }
+  }
+
+  private boolean claimOfflineWaste(
+      Connection conn,
+      long offlineMovementId,
+      OfflineInventoryMovementRecordedEvent event,
+      Instant receivedAt
+  ) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        INSERT INTO core.offline_inventory_movement (
+          id, source_event_id, source_idempotency_key, movement_type,
+          outlet_id, device_id, pos_session_id, terminal_id,
+          actor_user_id, actor_username, item_id, sku,
+          quantity, unit, reason, note, business_date, created_at_device,
+          source, needs_review, sync_status
+        ) VALUES (
+          ?, ?, ?, 'WASTE',
+          ?, ?, ?, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?,
+          COALESCE(?, 'POS_OFFLINE'), ?, 'PROCESSING'
+        )
+        ON CONFLICT (source_event_id) DO NOTHING
+        """
+    )) {
+      ps.setLong(1, offlineMovementId);
+      ps.setString(2, event.sourceEventId());
+      ps.setString(3, event.idempotencyKey());
+      ps.setLong(4, event.outletId());
+      setNullableLong(ps, 5, event.deviceId());
+      setNullableLong(ps, 6, event.posSessionId());
+      ps.setString(7, event.terminalId());
+      setNullableLong(ps, 8, event.actorUserId());
+      ps.setString(9, event.actorUsername());
+      ps.setLong(10, event.itemId());
+      ps.setString(11, event.sku());
+      ps.setBigDecimal(12, event.quantity());
+      ps.setString(13, event.unit());
+      ps.setString(14, event.reason());
+      ps.setString(15, event.note() == null ? "" : event.note());
+      if (event.businessDate() == null) {
+        ps.setNull(16, java.sql.Types.DATE);
+      } else {
+        ps.setDate(16, Date.valueOf(event.businessDate()));
+      }
+      Instant createdAtDevice = event.createdAtDevice() == null ? receivedAt : event.createdAtDevice();
+      ps.setTimestamp(17, Timestamp.from(createdAtDevice));
+      ps.setString(18, event.source());
+      ps.setBoolean(19, event.reviewRequired());
+      return ps.executeUpdate() > 0;
+    }
+  }
+
+  private String validateOfflineStockIn(Connection conn, StockInSimpleRecordedEvent event) throws Exception {
+    if (!"STOCK_IN_SIMPLE".equals(event.type())) {
+      return "unsupported movement type";
+    }
+    if (event.quantity() == null || event.quantity().compareTo(BigDecimal.ZERO) <= 0) {
+      return "quantity must be positive";
+    }
+    if (event.reason() == null || event.reason().isBlank()) {
+      return "reason is required";
+    }
+    if (event.note() == null || event.note().isBlank()) {
+      return "note is required";
+    }
+    if (!itemIsActive(conn, event.itemId())) {
+      return "item is not active or does not exist";
+    }
+    return null;
+  }
+
+  private String validateOfflineWaste(Connection conn, OfflineInventoryMovementRecordedEvent event) throws Exception {
+    if (!"WASTE".equals(event.movementType())) {
+      return "unsupported movement type";
+    }
+    if (event.quantity() == null || event.quantity().compareTo(BigDecimal.ZERO) <= 0) {
+      return "quantity must be positive";
+    }
+    if (event.reason() == null || event.reason().isBlank()) {
+      return "reason is required";
+    }
+    if (!itemIsActive(conn, event.itemId())) {
+      return "item is not active or does not exist";
+    }
+    return null;
+  }
+
+  private void insertWasteRecord(Connection conn, long transactionId, String reason, Long actorUserId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        INSERT INTO core.waste_record (
+          inventory_transaction_id, txn_time, reason, approved_by_user_id
+        )
+        SELECT ?, txn_time, ?, ?
+        FROM core.inventory_transaction
+        WHERE id = ?
+        LIMIT 1
+        """
+    )) {
+      ps.setLong(1, transactionId);
+      ps.setString(2, reason);
+      if (actorUserId == null) {
+        ps.setNull(3, java.sql.Types.BIGINT);
+      } else {
+        ps.setLong(3, actorUserId);
+      }
+      ps.setLong(4, transactionId);
+      ps.executeUpdate();
+    }
+  }
+
+  private boolean itemIsActive(Connection conn, long itemId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT 1
+        FROM core.item
+        WHERE id = ?
+          AND status = 'active'
+        LIMIT 1
+        """
+    )) {
+      ps.setLong(1, itemId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
+  }
+
+  private Long resolveExistingUserId(Connection conn, Long actorUserId) throws Exception {
+    if (actorUserId == null) return null;
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT id
+        FROM core.app_user
+        WHERE id = ?
+        LIMIT 1
+        """
+    )) {
+      ps.setLong(1, actorUserId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? actorUserId : null;
+      }
+    }
+  }
+
+  private void markOfflineStockInRejected(Connection conn, String sourceEventId, String rejectedReason) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        UPDATE core.offline_inventory_movement
+        SET sync_status = 'REJECTED',
+            review_status = 'REJECTED',
+            rejected_reason = ?
+        WHERE source_event_id = ?
+        """
+    )) {
+      ps.setString(1, rejectedReason);
+      ps.setString(2, sourceEventId);
+      ps.executeUpdate();
+    }
+  }
+
+  private void markOfflineStockInApplied(
+      Connection conn,
+      String sourceEventId,
+      long inventoryTransactionId,
+      Instant txnTime
+  ) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        UPDATE core.offline_inventory_movement
+        SET sync_status = 'APPLIED',
+            inventory_transaction_id = ?,
+            inventory_txn_time = ?
+        WHERE source_event_id = ?
+        """
+    )) {
+      ps.setLong(1, inventoryTransactionId);
+      ps.setTimestamp(2, Timestamp.from(txnTime));
+      ps.setString(3, sourceEventId);
+      ps.executeUpdate();
+    }
+  }
+
+  private void setNullableLong(PreparedStatement ps, int index, Long value) throws SQLException {
+    if (value == null) {
+      ps.setNull(index, java.sql.Types.BIGINT);
+    } else {
+      ps.setLong(index, value);
+    }
+  }
+
   public Optional<RecipeView> findLatestActiveRecipe(long productId) {
     return executeInTransaction(conn -> {
       try (PreparedStatement header = conn.prepareStatement(
@@ -1148,6 +1527,22 @@ public class InventoryRepository extends BaseRepository {
   }
 
   public record GoodsReceiptMovement(long goodsReceiptItemId, long itemId, BigDecimal qtyReceived, BigDecimal unitCost) {
+  }
+
+  public record OfflineStockInResult(
+      String status,
+      Long inventoryTransactionId,
+      String rejectedReason,
+      boolean duplicate
+  ) {
+  }
+
+  public record OfflineInventoryMovementResult(
+      String status,
+      Long inventoryTransactionId,
+      String rejectedReason,
+      boolean duplicate
+  ) {
   }
 
   public record LowStockState(long outletId, long itemId, BigDecimal qtyOnHand, BigDecimal reorderThreshold) {

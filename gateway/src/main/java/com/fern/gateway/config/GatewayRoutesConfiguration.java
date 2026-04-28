@@ -1,6 +1,6 @@
 package com.fern.gateway.config;
 
-import com.dorabets.common.auth.InternalServiceAuth;
+import com.fern.common.auth.InternalServiceAuth;
 import com.fern.gateway.routing.GatewayRoute;
 import com.fern.gateway.routing.GatewayRouteCatalog;
 import java.net.InetSocketAddress;

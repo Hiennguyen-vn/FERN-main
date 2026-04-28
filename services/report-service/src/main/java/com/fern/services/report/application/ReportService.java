@@ -1,14 +1,15 @@
 package com.fern.services.report.application;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.AuthorizationPolicyService;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
 import com.fern.services.report.api.ReportDtos;
 import com.fern.services.report.infrastructure.ReportRepository;
 import java.time.LocalDate;
+import java.util.List;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -110,6 +111,30 @@ public class ReportService {
         QueryConventions.sanitizeLimit(limit, 50, 200),
         QueryConventions.sanitizeOffset(offset)
     );
+  }
+
+  public List<ReportDtos.DailyPnl> dailyPnl(long outletId, LocalDate startDate, LocalDate endDate) {
+    requireOutletRead(outletId);
+    return reportRepository.dailyPnl(outletId, defaultStart(startDate), defaultEnd(endDate));
+  }
+
+  public List<ReportDtos.TopSku> topSkus(long outletId, LocalDate startDate, LocalDate endDate, Integer limit) {
+    requireOutletRead(outletId);
+    int safe = limit == null || limit <= 0 ? 10 : Math.min(limit, 100);
+    return reportRepository.topSkus(outletId, defaultStart(startDate), defaultEnd(endDate), safe);
+  }
+
+  public List<ReportDtos.StaffKpi> staffKpi(long outletId, LocalDate startDate, LocalDate endDate) {
+    requireOutletRead(outletId);
+    return reportRepository.staffKpi(outletId, defaultStart(startDate), defaultEnd(endDate));
+  }
+
+  public List<ReportDtos.CrossOutletCompare> crossOutletCompare(long regionId, LocalDate startDate, LocalDate endDate) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    if (context == null || !context.authenticated()) {
+      throw ServiceException.forbidden("Cross-outlet report requires authentication");
+    }
+    return reportRepository.crossOutletCompare(regionId, defaultStart(startDate), defaultEnd(endDate));
   }
 
   private void requireOutletRead(long outletId) {

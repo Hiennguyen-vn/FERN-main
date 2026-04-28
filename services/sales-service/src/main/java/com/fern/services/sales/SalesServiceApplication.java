@@ -1,11 +1,11 @@
 package com.fern.services.sales;
 
-import com.dorabets.common.config.RuntimeEnvironment;
+import com.fern.common.config.RuntimeEnvironment;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-@SpringBootApplication(scanBasePackages = {"com.fern.services.sales", "com.dorabets.common.spring"})
+@SpringBootApplication(scanBasePackages = {"com.fern.services.sales", "com.fern.common.spring"})
 @EnableScheduling
 public class SalesServiceApplication {
 

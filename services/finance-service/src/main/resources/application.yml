@@ -12,10 +12,19 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        include: health,info,prometheus,circuitbreakers,retries
   endpoint:
     health:
       show-details: when_authorized
+  tracing:
+    sampling:
+      probability: ${OTEL_SAMPLE_RATIO:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+  health:
+    circuitbreakers:
+      enabled: true
 
 info:
   service:
@@ -25,8 +34,8 @@ info:
 dependencies:
   postgres:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/fern}
-    username: ${POSTGRES_APP_USER:${POSTGRES_USER:fern}}
-    password: ${POSTGRES_APP_PASSWORD:${POSTGRES_PASSWORD:fern}}
+    username: ${VAULT_DB_USERNAME:${spring.datasource.username:${POSTGRES_APP_USER:${POSTGRES_USER:fern}}}}
+    password: ${VAULT_DB_PASSWORD:${spring.datasource.password:${POSTGRES_APP_PASSWORD:${POSTGRES_PASSWORD:fern}}}}
     poolSize: ${DB_POOL_SIZE:16}
   redis:
     host: ${REDIS_HOST:localhost}
@@ -41,3 +50,61 @@ invoice:
 
 sales-service:
   base-url: ${SALES_SERVICE_URL:http://sales-service:8080}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      sales-service:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 20
+        minimumNumberOfCalls: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        recordExceptions:
+          - org.springframework.web.client.RestClientException
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+        ignoreExceptions:
+          - org.springframework.web.client.HttpClientErrorException.NotFound
+      master-node:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 60
+        waitDurationInOpenState: 30s
+        recordExceptions:
+          - org.springframework.web.client.RestClientException
+          - java.io.IOException
+  retry:
+    instances:
+      sales-service:
+        maxAttempts: 3
+        waitDuration: 500ms
+        exponentialBackoffMultiplier: 2.0
+        retryExceptions:
+          - org.springframework.web.client.ResourceAccessException
+          - java.io.IOException
+
+spring.config.import: ${VAULT_CONFIG_IMPORT:optional:vault://}
+spring.cloud.vault:
+  enabled: ${VAULT_ENABLED:false}
+  uri: ${VAULT_ADDR:http://localhost:8200}
+  token: ${VAULT_TOKEN:}
+  authentication: ${VAULT_AUTHENTICATION:TOKEN}
+  app-role:
+    role-id: ${VAULT_ROLE_ID:}
+    secret-id: ${VAULT_SECRET_ID:}
+  database:
+    enabled: ${VAULT_DATABASE_ENABLED:false}
+    backend: ${VAULT_DATABASE_BACKEND:database}
+    role: ${VAULT_DATABASE_ROLE:fern-${spring.application.name}}
+    username-property: dependencies.postgres.username
+    password-property: dependencies.postgres.password
+  fail-fast: false
+  kv:
+    enabled: true
+    backend: kv
+    default-context: fern/shared
+    application-name: fern/services/${spring.application.name}

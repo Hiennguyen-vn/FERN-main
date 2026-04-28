@@ -1,9 +1,9 @@
 package com.fern.services.sales.application;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.repository.BaseRepository;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.repository.BaseRepository;
 import com.fern.services.sales.api.DeviceDtos;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
