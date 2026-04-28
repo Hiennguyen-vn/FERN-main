@@ -64,6 +64,7 @@ public class PostgresContainerExtension implements BeforeAllCallback, AfterAllCa
   @Override
   public void beforeAll(ExtensionContext context) {
     ensureStarted();
+    dataSource.getHikariPoolMXBean().softEvictConnections();
     flyway.clean();
     flyway.migrate();
   }
@@ -85,7 +86,7 @@ public class PostgresContainerExtension implements BeforeAllCallback, AfterAllCa
     container.start();
 
     HikariConfig hc = new HikariConfig();
-    hc.setJdbcUrl(container.getJdbcUrl());
+    hc.setJdbcUrl(withPostgresTestOptions(container.getJdbcUrl()));
     hc.setUsername(container.getUsername());
     hc.setPassword(container.getPassword());
     hc.setMaximumPoolSize(8);
@@ -100,31 +101,87 @@ public class PostgresContainerExtension implements BeforeAllCallback, AfterAllCa
       throw new IllegalStateException("Failed to set search_path", ex);
     }
 
+    boolean partmanAvailable = false;
     try (Connection conn = dataSource.getConnection();
          var st = conn.createStatement()) {
       st.execute("CREATE SCHEMA IF NOT EXISTS partman");
-      try {
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_available_extensions WHERE name = 'pg_partman'")) {
+        partmanAvailable = rs.next();
+      }
+      if (partmanAvailable) {
         st.execute("CREATE EXTENSION IF NOT EXISTS pg_partman SCHEMA partman");
-      } catch (Exception ignored) {
-        // extension unavailable in plain postgres image — partition migrations will be skipped
       }
     } catch (Exception ex) {
       throw new IllegalStateException("Failed to prepare partman schema", ex);
     }
+    if (!partmanAvailable) {
+      try (Connection conn = dataSource.getConnection();
+           var st = conn.createStatement()) {
+        // The plain postgres test image does not ship pg_partman. Keep migration coverage by
+        // installing a tiny compatibility shim for the partman calls used by repo migrations.
+        installPartmanShim(st);
+      } catch (Exception ex) {
+        throw new IllegalStateException("Failed to install partman test shim", ex);
+      }
+    }
 
     Path migrations = locateMigrations();
-    String target = System.getProperty("test.flyway.target", "26");
-    flyway = Flyway.configure()
+    String target = System.getProperty("test.flyway.target", "").trim();
+    var flywayConfig = Flyway.configure()
         .dataSource(dataSource)
         .locations("filesystem:" + migrations.toAbsolutePath())
         .schemas("core")
         .defaultSchema("core")
-        .target(target)
-        .cleanDisabled(false)
-        .load();
+        .cleanDisabled(false);
+    if (!target.isBlank()) {
+      flywayConfig.target(target);
+    }
+    flyway = flywayConfig.load();
 
     log.info("Postgres test container ready: url={} migrations={}", container.getJdbcUrl(), migrations);
     Runtime.getRuntime().addShutdownHook(new Thread(PostgresContainerExtension::shutdown));
+  }
+
+  private static String withPostgresTestOptions(String jdbcUrl) {
+    String separator = jdbcUrl.contains("?") ? "&" : "?";
+    return jdbcUrl + separator + "prepareThreshold=0";
+  }
+
+  private static void installPartmanShim(java.sql.Statement st) throws Exception {
+    st.execute(
+        """
+        CREATE TABLE IF NOT EXISTS partman.part_config (
+          parent_table TEXT PRIMARY KEY,
+          retention TEXT,
+          retention_keep_table BOOLEAN,
+          infinite_time_partitions BOOLEAN,
+          automatic_maintenance TEXT,
+          ignore_default_data BOOLEAN
+        )
+        """);
+    st.execute(
+        """
+        CREATE OR REPLACE FUNCTION partman.create_parent(
+          p_parent_table TEXT,
+          p_control TEXT,
+          p_type TEXT,
+          p_interval TEXT,
+          p_premake INTEGER DEFAULT NULL,
+          p_start_partition TEXT DEFAULT NULL,
+          p_default_table BOOLEAN DEFAULT NULL
+        )
+        RETURNS BOOLEAN
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+          INSERT INTO partman.part_config(parent_table)
+          VALUES (p_parent_table)
+          ON CONFLICT (parent_table) DO NOTHING;
+          RETURN TRUE;
+        END;
+        $$
+        """);
   }
 
   private static Path locateMigrations() {

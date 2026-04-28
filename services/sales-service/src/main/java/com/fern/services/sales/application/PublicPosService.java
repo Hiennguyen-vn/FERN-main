@@ -69,12 +69,19 @@ public class PublicPosService {
                     Function.identity(),
                     (left, right) -> left,
                     java.util.LinkedHashMap::new));
-    Map<Long, BigDecimal> discountByProduct = computePromotionDiscounts(table.outletId(), request, menuByProductId);
+    PromotionEngine.Allocation promotionAllocation =
+        computePromotionDiscounts(table.outletId(), request, menuByProductId);
+    Map<Long, BigDecimal> discountByProduct = discountByProduct(promotionAllocation);
     SalesRepository.CreatedPublicOrder created;
     try {
       created = discountByProduct.isEmpty()
           ? salesRepository.submitPublicOrder(table, request, businessDate)
-          : salesRepository.submitPublicOrder(table, request, businessDate, discountByProduct);
+          : salesRepository.submitPublicOrder(
+              table,
+              request,
+              businessDate,
+              discountByProduct,
+              promotionAllocation.promotionId());
     } catch (ServiceException exception) {
       if (exception.getStatusCode() == 409 && exception.getDetails() != null) {
         throw ServiceException.conflict(
@@ -85,13 +92,13 @@ public class PublicPosService {
     return toReceipt(table, created.orderToken(), created.sale(), menuByProductId);
   }
 
-  private Map<Long, BigDecimal> computePromotionDiscounts(
+  private PromotionEngine.Allocation computePromotionDiscounts(
       long outletId,
       PublicPosDtos.CreatePublicOrderRequest request,
       Map<String, PublicPosDtos.PublicMenuItemView> menuByProductId
   ) {
     if (!promotionEngineEnabled) {
-      return Map.of();
+      return PromotionEngine.Allocation.EMPTY;
     }
     List<PromotionEngine.CartLine> cart = new java.util.ArrayList<>();
     for (PublicPosDtos.PublicOrderLineRequest item : request.items()) {
@@ -105,12 +112,15 @@ public class PublicPosService {
       }
       cart.add(new PromotionEngine.CartLine(productId, item.quantity(), menuItem.priceValue()));
     }
-    if (cart.isEmpty()) return Map.of();
-    PromotionEngine.Allocation allocation = promotionEngine.evaluateForCart(outletId, cart);
-    if (allocation.lineDiscounts().isEmpty()) return Map.of();
+    if (cart.isEmpty()) return PromotionEngine.Allocation.EMPTY;
+    return promotionEngine.evaluateForCart(outletId, cart);
+  }
+
+  private Map<Long, BigDecimal> discountByProduct(PromotionEngine.Allocation allocation) {
+    if (allocation == null || allocation.lineDiscounts().isEmpty()) return Map.of();
     Map<Long, BigDecimal> map = new HashMap<>();
     for (PromotionEngine.LineDiscount ld : allocation.lineDiscounts()) {
-      map.put(ld.productId(), ld.discountAmount());
+      map.merge(ld.productId(), ld.discountAmount(), BigDecimal::add);
     }
     return map;
   }

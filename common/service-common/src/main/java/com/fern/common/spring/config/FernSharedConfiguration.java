@@ -21,7 +21,9 @@ import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.time.Clock;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import javax.sql.DataSource;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -297,8 +299,16 @@ public class FernSharedConfiguration {
 
   @Bean
   @ConditionalOnMissingBean
-  public SpringInternalServiceAuth springInternalServiceAuth() {
-    return new SpringInternalServiceAuth();
+  public SpringInternalServiceAuth springInternalServiceAuth(
+      @Value("${internal.service.token:}") String internalServiceTokenFromConfig,
+      @Value("${internal.service.allowlist:${INTERNAL_SERVICE_ALLOWLIST:}}") String internalServiceAllowlist
+  ) {
+    // Prefer Vault-bound `internal.service.token`. Fall back to INTERNAL_SERVICE_TOKEN so
+    // local dev, tests, and explicit env-fallback mode do not require Vault.
+    String token = (internalServiceTokenFromConfig != null && !internalServiceTokenFromConfig.isBlank())
+        ? internalServiceTokenFromConfig
+        : System.getenv("INTERNAL_SERVICE_TOKEN");
+    return new SpringInternalServiceAuth(token, parseCsv(internalServiceAllowlist));
   }
 
   @Bean
@@ -326,6 +336,20 @@ public class FernSharedConfiguration {
     config.setReadOnly(readOnly);
     config.setConnectionInitSql("SET search_path TO " + schema + ", public");
     return new HikariDataSource(config);
+  }
+
+  private static Set<String> parseCsv(String raw) {
+    if (raw == null || raw.isBlank()) {
+      return Set.of();
+    }
+    Set<String> values = new LinkedHashSet<>();
+    for (String token : raw.split(",")) {
+      String value = token.trim();
+      if (!value.isBlank()) {
+        values.add(value);
+      }
+    }
+    return Set.copyOf(values);
   }
 
   private static String requireEnv(String key) {

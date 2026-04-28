@@ -59,6 +59,14 @@ public final class TestFixtures {
               (21, 'NY-BRK', 'NY Brooklyn',    200, 'active', '2026-01-01')
             ON CONFLICT (id) DO NOTHING
             """);
+        st.execute("""
+            INSERT INTO core.app_user (id, username, password_hash, full_name, employee_code, email, status)
+            VALUES
+              (1, 'system-admin', '$2a$10$testhash', 'System Admin', 'SYS-001', 'system-admin@test.local', 'active'),
+              (2, 'outlet-manager-hcm', '$2a$10$testhash', 'HCM Outlet Manager', 'HCM-001', 'manager-hcm@test.local', 'active'),
+              (3, 'outlet-manager-ny', '$2a$10$testhash', 'NY Outlet Manager', 'NY-001', 'manager-ny@test.local', 'active')
+            ON CONFLICT (id) DO NOTHING
+            """);
       }
       conn.commit();
     } catch (SQLException e) {

@@ -2,6 +2,8 @@ package com.fern.services.sales.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,6 +18,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -139,6 +142,82 @@ class PublicPosServiceTest {
         org.mockito.ArgumentMatchers.any(),
         org.mockito.ArgumentMatchers.any(),
         org.mockito.ArgumentMatchers.eq(LocalDate.parse("2026-03-31")));
+  }
+
+  @Test
+  void createOrderWithPromotionEnginePassesDiscountsAndPromotionIdToRepository() {
+    PromotionEngine promotionEngine = mock(PromotionEngine.class);
+    when(salesRepository.findPublicOrderingTable("tbl_hcm1_u7k29q"))
+        .thenReturn(Optional.of(activeTable()));
+    when(salesRepository.listPublicMenu(2000L, LocalDate.parse("2026-03-31")))
+        .thenReturn(List.of(
+            new PublicPosDtos.PublicMenuItemView(
+                "501",
+                "CAPPUCCINO",
+                "Cappuccino",
+                "coffee",
+                null,
+                null,
+                new BigDecimal("35000.00"),
+                "VND")));
+    when(promotionEngine.evaluateForCart(eq(2000L), any()))
+        .thenReturn(new PromotionEngine.Allocation(
+            44L,
+            new BigDecimal("5000.00"),
+            List.of(new PromotionEngine.LineDiscount(501L, new BigDecimal("5000.00")))));
+    when(salesRepository.submitPublicOrder(
+        any(),
+        any(),
+        eq(LocalDate.parse("2026-03-31")),
+        eq(Map.of(501L, new BigDecimal("5000.00"))),
+        eq(44L)))
+        .thenReturn(new SalesRepository.CreatedPublicOrder(
+            "ord_public_9801",
+            new SalesDtos.SaleView(
+                "9801",
+                2000L,
+                null,
+                "ord_public_9801",
+                "T1",
+                "Table 1",
+                "VND",
+                "online",
+                "order_created",
+                "unpaid",
+                new BigDecimal("35000.00"),
+                new BigDecimal("5000.00"),
+                BigDecimal.ZERO,
+                new BigDecimal("30000.00"),
+                "QR order T1 (Table 1)",
+                List.of(new SalesDtos.SaleLineView(
+                    501L,
+                    "PROD-501",
+                    "Public Product",
+                    BigDecimal.ONE,
+                    new BigDecimal("35000.00"),
+                    new BigDecimal("5000.00"),
+                    BigDecimal.ZERO,
+                    new BigDecimal("30000.00"),
+                    java.util.Set.of(44L),
+                    null,
+                    null, null, null)),
+                null,
+                Instant.parse("2026-03-31T08:36:00Z"))));
+
+    PublicPosService service = new PublicPosService(salesRepository, clock, promotionEngine, true);
+    PublicPosDtos.PublicOrderReceiptView receipt = service.createOrder(
+        "tbl_hcm1_u7k29q",
+        new PublicPosDtos.CreatePublicOrderRequest(
+            List.of(new PublicPosDtos.PublicOrderLineRequest("501", BigDecimal.ONE, null)),
+            null));
+
+    assertEquals("ord_public_9801", receipt.orderToken());
+    verify(salesRepository).submitPublicOrder(
+        any(),
+        any(),
+        eq(LocalDate.parse("2026-03-31")),
+        eq(Map.of(501L, new BigDecimal("5000.00"))),
+        eq(44L));
   }
 
   @Test

@@ -568,19 +568,32 @@ public class SalesRepository extends BaseRepository {
       LocalDate businessDate,
       java.util.Map<Long, BigDecimal> discountByProductId
   ) {
+    return submitPublicOrder(table, request, businessDate, discountByProductId, null);
+  }
+
+  public CreatedPublicOrder submitPublicOrder(
+      PublicOrderingTableRecord table,
+      PublicPosDtos.CreatePublicOrderRequest request,
+      LocalDate businessDate,
+      java.util.Map<Long, BigDecimal> discountByProductId,
+      Long promotionId
+  ) {
     return executeInTransaction(conn -> {
       validatePublicOrderItems(conn, table.outletId(), businessDate, request.items());
       List<SalesDtos.SaleLineRequest> lines = request.items().stream()
           .map(item -> {
             long productId = parsePublicProductId(item.productId());
             BigDecimal discount = discountByProductId.getOrDefault(productId, BigDecimal.ZERO);
+            Set<Long> promotionIds = promotionId != null && discount.signum() > 0
+                ? Set.of(promotionId)
+                : Set.of();
             return new SalesDtos.SaleLineRequest(
                 productId,
                 item.quantity(),
                 discount,
                 BigDecimal.ZERO,
                 trimToNull(item.note()),
-                Set.of(),
+                promotionIds,
                 null,
                 null,
                 null
@@ -1006,7 +1019,7 @@ public class SalesRepository extends BaseRepository {
         Long.toString(saleId), event);
   }
 
-  private Optional<Long> findOpenPosSessionIdForOutlet(Connection conn, long outletId) throws Exception {
+  Optional<Long> findOpenPosSessionIdForOutlet(Connection conn, long outletId) throws Exception {
     try (PreparedStatement ps = conn.prepareStatement(
         """
         SELECT id FROM core.pos_session
@@ -1365,10 +1378,10 @@ public class SalesRepository extends BaseRepository {
         sql.append(" AND ps.opened_at < ?");
         params.add(Timestamp.from(endDate.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant()));
       }
-      if (status != null && !status.isBlank()) {
-        sql.append(" AND ps.status = ?::pos_session_status_enum");
-        params.add(status.trim());
-      }
+	      if (status != null && !status.isBlank()) {
+	        sql.append(" AND ps.status = ?::pos_session_status_enum ");
+	        params.add(status.trim());
+	      }
       if (managerId != null) {
         sql.append(" AND ps.manager_id = ?");
         params.add(managerId);
@@ -1380,16 +1393,18 @@ public class SalesRepository extends BaseRepository {
              AND (
                ps.id::text ILIKE ?
                OR ps.session_code ILIKE ?
-               OR ps.currency_code ILIKE ?
-               OR ps.status::text ILIKE ?
-               OR COALESCE(ps.note, '') ILIKE ?
-               OR COALESCE(ps.manager_id::text, '') ILIKE ?
-             )
-            """
-        );
-        for (int i = 0; i < 6; i++) {
-          params.add(pattern);
-        }
+	               OR ps.currency_code ILIKE ?
+	               OR ps.status::text ILIKE ?
+	               OR COALESCE(ps.note, '') ILIKE ?
+	               OR COALESCE(ps.manager_id::text, '') ILIKE ?
+	               OR COALESCE(ps.register_code, '') ILIKE ?
+	               OR COALESCE(ps.opened_by_username, '') ILIKE ?
+	             )
+	            """
+	        );
+	        for (int i = 0; i < 8; i++) {
+	          params.add(pattern);
+	        }
       }
       sql.append(" ORDER BY ").append(resolvePosSessionSortClause(sortBy, sortDir)).append(" LIMIT ? OFFSET ?");
       params.add(limit);
@@ -1712,6 +1727,8 @@ public class SalesRepository extends BaseRepository {
           }
         }
       }
+      replacePromotionRules(conn, promotionId, normalizedPromoType,
+          request.bxgyRule(), request.comboRule(), request.subsidyRule(), now);
       return findPromotion(conn, promotionId)
           .orElseThrow(() -> new IllegalStateException("Created promotion not found"));
     });
@@ -1784,6 +1801,15 @@ public class SalesRepository extends BaseRepository {
             ps.executeUpdate();
           }
         }
+      }
+      if (request.bxgyRule() != null || request.comboRule() != null || request.subsidyRule() != null) {
+        String effectiveType = request.promoType() == null
+            ? currentPromotionType(conn, promotionId)
+            : normalizePromotionType(request.promoType());
+        replacePromotionRules(conn, promotionId, effectiveType,
+            request.bxgyRule(), request.comboRule(), request.subsidyRule(), now);
+      } else if (request.promoType() != null) {
+        clearPromotionRules(conn, promotionId);
       }
       return findPromotion(conn, promotionId)
           .orElseThrow(() -> new IllegalStateException("Promotion not found after update"));
@@ -2764,17 +2790,7 @@ public class SalesRepository extends BaseRepository {
       ps.setLong(1, promotionId);
       try (ResultSet rs = ps.executeQuery()) {
         if (rs.next()) {
-          return Optional.of(new SalesDtos.PromotionView(
-              Long.toString(rs.getLong("id")),
-              rs.getString("name"),
-              rs.getString("promo_type"),
-              rs.getString("status"),
-              rs.getBigDecimal("value_amount"),
-              rs.getBigDecimal("value_percent"),
-              rs.getTimestamp("effective_from").toInstant(),
-              rs.getTimestamp("effective_to") == null ? null : rs.getTimestamp("effective_to").toInstant(),
-              loadPromotionScopes(conn, promotionId)
-          ));
+          return Optional.of(mapPromotion(rs, conn));
         }
         return Optional.empty();
       }
@@ -2792,8 +2808,147 @@ public class SalesRepository extends BaseRepository {
         rs.getBigDecimal("value_percent"),
         rs.getTimestamp("effective_from").toInstant(),
         rs.getTimestamp("effective_to") == null ? null : rs.getTimestamp("effective_to").toInstant(),
-        loadPromotionScopes(conn, promotionId)
+        loadPromotionScopes(conn, promotionId),
+        findBxgyRule(conn, promotionId).map(this::toDto).orElse(null),
+        findComboRule(conn, promotionId).map(this::toDto).orElse(null),
+        findSubsidyRule(conn, promotionId).map(this::toDto).orElse(null)
     );
+  }
+
+  private String currentPromotionType(Connection conn, long promotionId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        "SELECT promo_type::text FROM core.promotion WHERE id = ?"
+    )) {
+      ps.setLong(1, promotionId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) {
+          throw ServiceException.notFound("Promotion not found: " + promotionId);
+        }
+        return rs.getString(1);
+      }
+    }
+  }
+
+  private void replacePromotionRules(
+      Connection conn,
+      long promotionId,
+      String promoType,
+      SalesDtos.PromotionBxgyRule bxgyRule,
+      SalesDtos.PromotionComboRule comboRule,
+      SalesDtos.PromotionSubsidyRule subsidyRule,
+      Instant now
+  ) throws Exception {
+    clearPromotionRules(conn, promotionId);
+    switch (promoType) {
+      case "buy_x_get_y" -> {
+        if (bxgyRule != null) insertBxgyRule(conn, promotionId, bxgyRule, now);
+      }
+      case "combo_price" -> {
+        if (comboRule != null) insertComboRule(conn, promotionId, comboRule, now);
+      }
+      case "subsidy" -> {
+        if (subsidyRule != null) insertSubsidyRule(conn, promotionId, subsidyRule, now);
+      }
+      default -> {
+      }
+    }
+  }
+
+  private void clearPromotionRules(Connection conn, long promotionId) throws Exception {
+    for (String table : List.of(
+        "core.promotion_bxgy_rule",
+        "core.promotion_combo_rule",
+        "core.promotion_subsidy_rule")) {
+      try (PreparedStatement ps = conn.prepareStatement("DELETE FROM " + table + " WHERE promotion_id = ?")) {
+        ps.setLong(1, promotionId);
+        ps.executeUpdate();
+      }
+    }
+  }
+
+  private void insertBxgyRule(
+      Connection conn,
+      long promotionId,
+      SalesDtos.PromotionBxgyRule rule,
+      Instant now
+  ) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        INSERT INTO core.promotion_bxgy_rule (
+          promotion_id, buy_product_id, buy_quantity, get_product_id, get_quantity,
+          get_discount_percent, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
+    )) {
+      ps.setLong(1, promotionId);
+      ps.setLong(2, rule.buyProductId());
+      ps.setBigDecimal(3, rule.buyQuantity());
+      ps.setLong(4, rule.getProductId());
+      ps.setBigDecimal(5, rule.getQuantity());
+      ps.setBigDecimal(6, rule.getDiscountPercent());
+      ps.setTimestamp(7, Timestamp.from(now));
+      ps.setTimestamp(8, Timestamp.from(now));
+      ps.executeUpdate();
+    }
+  }
+
+  private void insertComboRule(
+      Connection conn,
+      long promotionId,
+      SalesDtos.PromotionComboRule rule,
+      Instant now
+  ) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        INSERT INTO core.promotion_combo_rule (promotion_id, combo_price, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        """
+    )) {
+      ps.setLong(1, promotionId);
+      ps.setBigDecimal(2, rule.comboPrice());
+      ps.setTimestamp(3, Timestamp.from(now));
+      ps.setTimestamp(4, Timestamp.from(now));
+      ps.executeUpdate();
+    }
+    for (SalesDtos.PromotionComboRuleItem item : rule.items()) {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.promotion_combo_rule_item (
+            promotion_id, product_id, quantity, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?)
+          """
+      )) {
+        ps.setLong(1, promotionId);
+        ps.setLong(2, item.productId());
+        ps.setBigDecimal(3, item.quantity());
+        ps.setTimestamp(4, Timestamp.from(now));
+        ps.setTimestamp(5, Timestamp.from(now));
+        ps.executeUpdate();
+      }
+    }
+  }
+
+  private void insertSubsidyRule(
+      Connection conn,
+      long promotionId,
+      SalesDtos.PromotionSubsidyRule rule,
+      Instant now
+  ) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        INSERT INTO core.promotion_subsidy_rule (
+          promotion_id, scope_product_id, funding_source, funding_account_code, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """
+    )) {
+      ps.setLong(1, promotionId);
+      if (rule.scopeProductId() == null) ps.setNull(2, Types.BIGINT); else ps.setLong(2, rule.scopeProductId());
+      ps.setString(3, rule.fundingSource());
+      ps.setString(4, rule.fundingAccountCode());
+      ps.setTimestamp(5, Timestamp.from(now));
+      ps.setTimestamp(6, Timestamp.from(now));
+      ps.executeUpdate();
+    }
   }
 
   private Set<Long> loadPromotionScopes(Connection conn, long promotionId) throws Exception {
@@ -4070,6 +4225,151 @@ public class SalesRepository extends BaseRepository {
       BigDecimal valuePercent,
       BigDecimal minOrderAmount,
       BigDecimal maxDiscountAmount
+  ) {
+  }
+
+  public java.util.Optional<BxgyRule> findBxgyRule(long promotionId) {
+    return executeInTransaction(conn -> findBxgyRule(conn, promotionId));
+  }
+
+  private java.util.Optional<BxgyRule> findBxgyRule(Connection conn, long promotionId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT promotion_id, buy_product_id, buy_quantity, get_product_id, get_quantity, get_discount_percent
+        FROM core.promotion_bxgy_rule
+        WHERE promotion_id = ?
+        """
+    )) {
+      ps.setLong(1, promotionId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) return java.util.Optional.<BxgyRule>empty();
+        return java.util.Optional.of(new BxgyRule(
+            rs.getLong("promotion_id"),
+            rs.getLong("buy_product_id"),
+            rs.getBigDecimal("buy_quantity"),
+            rs.getLong("get_product_id"),
+            rs.getBigDecimal("get_quantity"),
+            rs.getBigDecimal("get_discount_percent")
+        ));
+      }
+    }
+  }
+
+  public java.util.Optional<ComboRule> findComboRule(long promotionId) {
+    return executeInTransaction(conn -> findComboRule(conn, promotionId));
+  }
+
+  private java.util.Optional<ComboRule> findComboRule(Connection conn, long promotionId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT promotion_id, combo_price
+        FROM core.promotion_combo_rule
+        WHERE promotion_id = ?
+        """
+    )) {
+      ps.setLong(1, promotionId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) return java.util.Optional.<ComboRule>empty();
+        BigDecimal comboPrice = rs.getBigDecimal("combo_price");
+        List<ComboRuleItem> items = new ArrayList<>();
+        try (PreparedStatement itemPs = conn.prepareStatement(
+            """
+            SELECT product_id, quantity
+            FROM core.promotion_combo_rule_item
+            WHERE promotion_id = ?
+            ORDER BY product_id
+            """
+        )) {
+          itemPs.setLong(1, promotionId);
+          try (ResultSet itemRs = itemPs.executeQuery()) {
+            while (itemRs.next()) {
+              items.add(new ComboRuleItem(itemRs.getLong("product_id"), itemRs.getBigDecimal("quantity")));
+            }
+          }
+        }
+        return java.util.Optional.of(new ComboRule(promotionId, comboPrice, items));
+      }
+    }
+  }
+
+  public java.util.Optional<SubsidyRule> findSubsidyRule(long promotionId) {
+    return executeInTransaction(conn -> findSubsidyRule(conn, promotionId));
+  }
+
+  private java.util.Optional<SubsidyRule> findSubsidyRule(Connection conn, long promotionId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT promotion_id, scope_product_id, funding_source, funding_account_code
+        FROM core.promotion_subsidy_rule
+        WHERE promotion_id = ?
+        """
+    )) {
+      ps.setLong(1, promotionId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) return java.util.Optional.<SubsidyRule>empty();
+        Object scopeProductId = rs.getObject("scope_product_id");
+        return java.util.Optional.of(new SubsidyRule(
+            rs.getLong("promotion_id"),
+            scopeProductId == null ? null : ((Number) scopeProductId).longValue(),
+            rs.getString("funding_source"),
+            rs.getString("funding_account_code")
+        ));
+      }
+    }
+  }
+
+  private SalesDtos.PromotionBxgyRule toDto(BxgyRule rule) {
+    return new SalesDtos.PromotionBxgyRule(
+        rule.buyProductId(),
+        rule.buyQuantity(),
+        rule.getProductId(),
+        rule.getQuantity(),
+        rule.getDiscountPercent());
+  }
+
+  private SalesDtos.PromotionComboRule toDto(ComboRule rule) {
+    return new SalesDtos.PromotionComboRule(
+        rule.comboPrice(),
+        rule.items().stream()
+            .map(item -> new SalesDtos.PromotionComboRuleItem(item.productId(), item.quantity()))
+            .toList());
+  }
+
+  private SalesDtos.PromotionSubsidyRule toDto(SubsidyRule rule) {
+    return new SalesDtos.PromotionSubsidyRule(
+        rule.scopeProductId(),
+        rule.fundingSource(),
+        rule.fundingAccountCode());
+  }
+
+  public record BxgyRule(
+      long promotionId,
+      long buyProductId,
+      BigDecimal buyQuantity,
+      long getProductId,
+      BigDecimal getQuantity,
+      BigDecimal getDiscountPercent
+  ) {
+  }
+
+  public record ComboRule(
+      long promotionId,
+      BigDecimal comboPrice,
+      List<ComboRuleItem> items
+  ) {
+  }
+
+  public record ComboRuleItem(
+      long productId,
+      BigDecimal quantity
+  ) {
+  }
+
+  public record SubsidyRule(
+      long promotionId,
+      Long scopeProductId,
+      String fundingSource,
+      String fundingAccountCode
   ) {
   }
 }

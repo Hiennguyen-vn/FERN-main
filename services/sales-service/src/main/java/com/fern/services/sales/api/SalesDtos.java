@@ -279,8 +279,25 @@ public final class SalesDtos {
       BigDecimal maxDiscountAmount,
       @NotNull Instant effectiveFrom,
       Instant effectiveTo,
-      Set<Long> outletIds
+      Set<Long> outletIds,
+      PromotionBxgyRule bxgyRule,
+      PromotionComboRule comboRule,
+      PromotionSubsidyRule subsidyRule
   ) {
+    public CreatePromotionRequest(
+        String name,
+        String promoType,
+        BigDecimal valueAmount,
+        BigDecimal valuePercent,
+        BigDecimal minOrderAmount,
+        BigDecimal maxDiscountAmount,
+        Instant effectiveFrom,
+        Instant effectiveTo,
+        Set<Long> outletIds
+    ) {
+      this(name, promoType, valueAmount, valuePercent, minOrderAmount, maxDiscountAmount,
+          effectiveFrom, effectiveTo, outletIds, null, null, null);
+    }
   }
 
   public record UpdatePromotionRequest(
@@ -293,8 +310,55 @@ public final class SalesDtos {
       Instant effectiveFrom,
       Instant effectiveTo,
       String status,
-      Set<Long> outletIds
-  ) {}
+      Set<Long> outletIds,
+      PromotionBxgyRule bxgyRule,
+      PromotionComboRule comboRule,
+      PromotionSubsidyRule subsidyRule
+  ) {
+    public UpdatePromotionRequest(
+        String name,
+        String promoType,
+        BigDecimal valueAmount,
+        BigDecimal valuePercent,
+        BigDecimal minOrderAmount,
+        BigDecimal maxDiscountAmount,
+        Instant effectiveFrom,
+        Instant effectiveTo,
+        String status,
+        Set<Long> outletIds
+    ) {
+      this(name, promoType, valueAmount, valuePercent, minOrderAmount, maxDiscountAmount,
+          effectiveFrom, effectiveTo, status, outletIds, null, null, null);
+    }
+  }
+
+  public record PromotionBxgyRule(
+      @NotNull Long buyProductId,
+      @NotNull @DecimalMin("0.0001") BigDecimal buyQuantity,
+      @NotNull Long getProductId,
+      @NotNull @DecimalMin("0.0001") BigDecimal getQuantity,
+      @NotNull @DecimalMin("0.00") BigDecimal getDiscountPercent
+  ) {
+  }
+
+  public record PromotionComboRuleItem(
+      @NotNull Long productId,
+      @NotNull @DecimalMin("0.0001") BigDecimal quantity
+  ) {
+  }
+
+  public record PromotionComboRule(
+      @NotNull @DecimalMin("0.00") BigDecimal comboPrice,
+      @NotEmpty List<@Valid PromotionComboRuleItem> items
+  ) {
+  }
+
+  public record PromotionSubsidyRule(
+      Long scopeProductId,
+      @NotBlank String fundingSource,
+      String fundingAccountCode
+  ) {
+  }
 
   public record PromotionView(
       String id,
@@ -305,8 +369,25 @@ public final class SalesDtos {
       BigDecimal valuePercent,
       Instant effectiveFrom,
       Instant effectiveTo,
-      Set<Long> outletIds
+      Set<Long> outletIds,
+      PromotionBxgyRule bxgyRule,
+      PromotionComboRule comboRule,
+      PromotionSubsidyRule subsidyRule
   ) {
+    public PromotionView(
+        String id,
+        String name,
+        String promoType,
+        String status,
+        BigDecimal valueAmount,
+        BigDecimal valuePercent,
+        Instant effectiveFrom,
+        Instant effectiveTo,
+        Set<Long> outletIds
+    ) {
+      this(id, name, promoType, status, valueAmount, valuePercent, effectiveFrom, effectiveTo,
+          outletIds, null, null, null);
+    }
   }
 
   public record OutletHourlyRevenuePoint(
