@@ -32,7 +32,8 @@ class SalesPromotionRepositoryIT {
   private static final long PRODUCT_CAKE = 9502L;
 
   private DataSource dataSource;
-  private SalesRepository repository;
+  private SalesPromotionRepository promotionRepository;
+  private SalesRepository salesRepository;
 
   @BeforeEach
   void setUp() throws Exception {
@@ -40,15 +41,15 @@ class SalesPromotionRepositoryIT {
     TestFixtures.seedBaseline(dataSource);
     resetSalesTables();
     seedProductsAndPublicTable();
-    repository = new SalesRepository(
-        dataSource,
-        new SnowflakeIdGenerator(2L),
-        Clock.fixed(Instant.parse("2026-04-15T08:00:00Z"), ZoneOffset.UTC));
+    SnowflakeIdGenerator idGenerator = new SnowflakeIdGenerator(2L);
+    Clock fixedClock = Clock.fixed(Instant.parse("2026-04-15T08:00:00Z"), ZoneOffset.UTC);
+    promotionRepository = new SalesPromotionRepository(dataSource, idGenerator, fixedClock);
+    salesRepository = new SalesRepository(dataSource, idGenerator, fixedClock);
   }
 
   @Test
   void createPromotionPersistsAndLoadsBxgyRule() {
-    SalesDtos.PromotionView created = repository.createPromotion(new SalesDtos.CreatePromotionRequest(
+    SalesDtos.PromotionView created = promotionRepository.createPromotion(new SalesDtos.CreatePromotionRequest(
         "Buy coffee get cake",
         "buy_x_get_y",
         null,
@@ -67,7 +68,7 @@ class SalesPromotionRepositoryIT {
         null,
         null));
 
-    SalesDtos.PromotionView found = repository.findPromotion(Long.parseLong(created.id())).orElseThrow();
+    SalesDtos.PromotionView found = promotionRepository.findPromotion(Long.parseLong(created.id())).orElseThrow();
 
     assertEquals("buy_x_get_y", found.promoType());
     assertEquals(Set.of(TestFixtures.OUTLET_HCM_1), found.outletIds());
@@ -78,7 +79,7 @@ class SalesPromotionRepositoryIT {
 
   @Test
   void updatePromotionReplacesTypedRuleTablesWhenTypeChanges() {
-    SalesDtos.PromotionView created = repository.createPromotion(new SalesDtos.CreatePromotionRequest(
+    SalesDtos.PromotionView created = promotionRepository.createPromotion(new SalesDtos.CreatePromotionRequest(
         "Old Bxgy",
         "buy_x_get_y",
         null,
@@ -97,7 +98,7 @@ class SalesPromotionRepositoryIT {
         null,
         null));
 
-    SalesDtos.PromotionView updated = repository.updatePromotion(
+    SalesDtos.PromotionView updated = promotionRepository.updatePromotion(
         Long.parseLong(created.id()),
         new SalesDtos.UpdatePromotionRequest(
             "Combo",
@@ -127,7 +128,7 @@ class SalesPromotionRepositoryIT {
 
   @Test
   void createPromotionPersistsSubsidyRule() {
-    SalesDtos.PromotionView created = repository.createPromotion(new SalesDtos.CreatePromotionRequest(
+    SalesDtos.PromotionView created = promotionRepository.createPromotion(new SalesDtos.CreatePromotionRequest(
         "Partner subsidy",
         "subsidy",
         new BigDecimal("5000.00"),
@@ -141,7 +142,7 @@ class SalesPromotionRepositoryIT {
         null,
         new SalesDtos.PromotionSubsidyRule(PRODUCT_COFFEE, "partner", "MKT-2026")));
 
-    SalesDtos.PromotionView found = repository.findPromotion(Long.parseLong(created.id())).orElseThrow();
+    SalesDtos.PromotionView found = promotionRepository.findPromotion(Long.parseLong(created.id())).orElseThrow();
 
     assertEquals("subsidy", found.promoType());
     assertNotNull(found.subsidyRule());
@@ -151,7 +152,7 @@ class SalesPromotionRepositoryIT {
 
   @Test
   void publicOrderDiscountPersistsSaleItemPromotionLink() throws Exception {
-    SalesDtos.PromotionView promotion = repository.createPromotion(new SalesDtos.CreatePromotionRequest(
+    SalesDtos.PromotionView promotion = promotionRepository.createPromotion(new SalesDtos.CreatePromotionRequest(
         "Coffee discount",
         "fixed_amount",
         new BigDecimal("5000.00"),
@@ -162,9 +163,9 @@ class SalesPromotionRepositoryIT {
         null,
         Set.of(TestFixtures.OUTLET_HCM_1)));
     SalesRepository.PublicOrderingTableRecord table =
-        repository.findPublicOrderingTable("pub-table-1").orElseThrow();
+        salesRepository.findPublicOrderingTable("pub-table-1").orElseThrow();
 
-    SalesRepository.CreatedPublicOrder order = repository.submitPublicOrder(
+    SalesRepository.CreatedPublicOrder order = salesRepository.submitPublicOrder(
         table,
         new PublicPosDtos.CreatePublicOrderRequest(
             List.of(new PublicPosDtos.PublicOrderLineRequest(

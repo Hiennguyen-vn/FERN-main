@@ -47,6 +47,11 @@ class SalesServiceTest {
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
 
+  private static RequestUserContext deviceContext(long deviceId, long outletId) {
+    return new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), true, false, null, deviceId, outletId);
+  }
+
   @AfterEach
   void clearContext() {
     RequestUserContextHolder.clear();
@@ -73,9 +78,7 @@ class SalesServiceTest {
 
   @Test
   void submitSaleCreatesOrderWithoutPublishingLifecycleEvents() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
-    , null, null));
+    RequestUserContextHolder.set(deviceContext(55L, 7L));
     SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
         7L,
         300L,
@@ -126,7 +129,6 @@ class SalesServiceTest {
         Instant.parse("2026-03-27T00:00:00Z")
     );
     when(salesRepository.submitSale(request)).thenReturn(sale);
-    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(7L))).thenReturn(true);
 
     SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
     SalesDtos.SaleView result = service.submitSale(request);
@@ -139,10 +141,7 @@ class SalesServiceTest {
 
   @Test
   void submitSaleWithIdempotencyKeyDelegatesToGuardAndReturnsReplayedResult() throws Exception {
-    RequestUserContextHolder.set(new RequestUserContext(
-        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
-    , null, null));
-    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(7L))).thenReturn(true);
+    RequestUserContextHolder.set(deviceContext(55L, 7L));
 
     SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
         7L, 300L, "USD", "dine_in", "n",
@@ -168,7 +167,7 @@ class SalesServiceTest {
     String expectedBody = mapper.writeValueAsString(sale);
 
     when(idempotencyGuard.execute(
-        eq("sales-service:create-order:outlet:7:device:nodev"),
+        eq("sales-service:create-order:outlet:7:device:55"),
         eq("550e8400-e29b-41d4-a716-446655440000"),
         any(String.class),
         eq(TtlPolicy.BET),
@@ -182,7 +181,7 @@ class SalesServiceTest {
 
     assertEquals("777", result.id());
     verify(idempotencyGuard).execute(
-        eq("sales-service:create-order:outlet:7:device:nodev"),
+        eq("sales-service:create-order:outlet:7:device:55"),
         eq("550e8400-e29b-41d4-a716-446655440000"),
         any(String.class),
         eq(TtlPolicy.BET),
@@ -192,10 +191,7 @@ class SalesServiceTest {
 
   @Test
   void submitSaleWithInvalidIdempotencyKeyThrowsBadRequest() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
-    , null, null));
-    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(7L))).thenReturn(true);
+    RequestUserContextHolder.set(deviceContext(55L, 7L));
 
     SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
         7L, 300L, "USD", "dine_in", "n",
@@ -216,10 +212,7 @@ class SalesServiceTest {
 
   @Test
   void submitSaleWithBlankIdempotencyKeyFallsBackToDirectRepositoryCall() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
-    , null, null));
-    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(7L))).thenReturn(true);
+    RequestUserContextHolder.set(deviceContext(55L, 7L));
 
     SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
         7L, 300L, "USD", "dine_in", "n",
@@ -247,9 +240,7 @@ class SalesServiceTest {
 
   @Test
   void submitSaleRejectsInlinePaymentCapture() {
-    RequestUserContextHolder.set(new RequestUserContext(
-        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(7L), true, false, null
-    , null, null));
+    RequestUserContextHolder.set(deviceContext(55L, 7L));
     SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
         7L,
         300L,
@@ -274,12 +265,32 @@ class SalesServiceTest {
             null
         )
     );
-    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(7L))).thenReturn(true);
     SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.submitSale(request));
 
     assertEquals(400, exception.getStatusCode());
+    verifyNoInteractions(salesRepository);
+  }
+
+  @Test
+  void submitSaleRejectsUserContextEvenWithSalesWritePermission() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        7L, "admin", "sess-admin", Set.of("admin"), Set.of("sales.order.write"), Set.of(7L),
+        true, false, null, null, null));
+    SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
+        7L, 300L, "USD", "dine_in", "n",
+        List.of(new SalesDtos.SaleLineRequest(
+            11L, new BigDecimal("1.0000"), BigDecimal.ZERO, BigDecimal.ZERO, null, Set.of(),
+            null, null, null
+        )),
+        null
+    );
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.submitSale(request));
+
+    assertEquals(403, exception.getStatusCode());
     verifyNoInteractions(salesRepository);
   }
 

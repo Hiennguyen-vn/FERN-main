@@ -142,7 +142,7 @@ describe('PublicOrderPage', () => {
 
     renderPublicOrder('/order/tbl_hcm1_u7k29q?order=ord_public_123');
 
-    expect(await screen.findByText(/Request received/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Order received by the kitchen/i)).toBeInTheDocument();
     expect(screen.getByText(/Cafe Latte/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Refresh status/i })).toBeInTheDocument();
 
@@ -250,7 +250,7 @@ describe('PublicOrderPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Add to cart/i }));
     fireEvent.click(screen.getByRole('button', { name: /Send order request/i }));
 
-    expect(await screen.findByText(/Request received/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Order received by the kitchen/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Refresh status/i })).toBeInTheDocument();
   });
 });

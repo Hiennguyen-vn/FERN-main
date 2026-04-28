@@ -89,14 +89,18 @@ export default function ShellLayout() {
       };
     },
   });
+  const hierarchyOutletCount = hierarchyQuery.data?.outlets?.length ?? 0;
+  const hierarchyIsError = hierarchyQuery.isError;
+  const hierarchyIsLoading = hierarchyQuery.isLoading;
+  const refetchHierarchy = hierarchyQuery.refetch;
 
   useEffect(() => {
     if (!session) {
       attemptedScopeRecovery.current = false;
       return;
     }
-    if (hierarchyQuery.isLoading || hierarchyQuery.isError) return;
-    if (hierarchyQuery.data?.outlets?.length) return;
+    if (hierarchyIsLoading || hierarchyIsError) return;
+    if (hierarchyOutletCount > 0) return;
     if (attemptedScopeRecovery.current) return;
     if (attemptedScopeRecoverySessions.has(session.user.id)) return;
 
@@ -107,13 +111,13 @@ export default function ShellLayout() {
         console.error('Scope recovery refresh failed:', error);
       })
       .finally(() => {
-        void hierarchyQuery.refetch();
+        void refetchHierarchy();
       });
   }, [
-    hierarchyQuery.data?.outlets?.length,
-    hierarchyQuery.isError,
-    hierarchyQuery.isLoading,
-    hierarchyQuery.refetch,
+    hierarchyIsError,
+    hierarchyIsLoading,
+    hierarchyOutletCount,
+    refetchHierarchy,
     refreshSession,
     session,
   ]);

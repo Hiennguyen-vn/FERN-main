@@ -115,6 +115,11 @@ export function ContractsWorkspace({
     initialSortDir: 'desc',
     initialFilters: { outletId: outletId || undefined, status: undefined },
   });
+  const {
+    filters: contractFilters,
+    patchFilters: patchContractFilters,
+    query: contractListQuery,
+  } = contractsQuery;
 
   const usersById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
 
@@ -131,11 +136,11 @@ export function ContractsWorkspace({
     try {
       const [page, activeCount, expiringCount, terminatedCount] = await Promise.all([
         hrApi.contractsPaged(token, {
-          ...contractsQuery.query,
+          ...contractListQuery,
           outletId: outletId || undefined,
-          status: contractsQuery.filters.status,
-          endDateFrom: contractsQuery.filters.endDateFrom,
-          endDateTo: contractsQuery.filters.endDateTo,
+          status: contractFilters.status,
+          endDateFrom: contractFilters.endDateFrom,
+          endDateTo: contractFilters.endDateTo,
         }),
         hrApi.contractsPaged(token, { outletId: outletId || undefined, status: 'active', limit: 1, offset: 0 }),
         hrApi.contractsPaged(token, {
@@ -165,11 +170,11 @@ export function ContractsWorkspace({
     } finally {
       setContractsLoading(false);
     }
-  }, [contractsQuery.filters.status, contractsQuery.filters.endDateFrom, contractsQuery.filters.endDateTo, contractsQuery.query, outletId, token]);
+  }, [contractFilters.status, contractFilters.endDateFrom, contractFilters.endDateTo, contractListQuery, outletId, token]);
 
   useEffect(() => {
-    contractsQuery.patchFilters({ outletId: outletId || undefined });
-  }, [outletId, contractsQuery.patchFilters]);
+    patchContractFilters({ outletId: outletId || undefined });
+  }, [outletId, patchContractFilters]);
 
   useEffect(() => {
     void loadContracts();

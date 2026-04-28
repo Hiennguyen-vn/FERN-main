@@ -103,8 +103,8 @@ export function PayrollModule({ token, users, outlets, scopeRegionId }: PayrollM
         );
         if (!active) return;
         setPeriods(allPeriods);
-        if (allPeriods.length > 0 && !selectedPeriodId) {
-          setSelectedPeriodId(allPeriods[0].id);
+        if (allPeriods.length > 0) {
+          setSelectedPeriodId((current) => current ?? allPeriods[0].id);
         }
       } catch (err) {
         console.error('Failed to load payroll periods', err);

@@ -18,6 +18,7 @@ import com.fern.common.model.cache.TieredCache;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.fern.services.sales.api.SalesDtos;
+import com.fern.services.sales.infrastructure.SalesPromotionRepository;
 import com.fern.services.sales.infrastructure.SalesRepository;
 import java.time.Clock;
 import java.math.BigDecimal;
@@ -26,6 +27,7 @@ import java.time.LocalDate;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -40,6 +42,7 @@ public class SalesService {
   static final String IDEMPOTENCY_SERVICE = "sales-service:create-order";
 
   private final SalesRepository salesRepository;
+  private final SalesPromotionRepository promotionRepository;
   private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
   private final IdempotencyGuard idempotencyGuard;
@@ -55,9 +58,11 @@ public class SalesService {
       IdempotencyGuard idempotencyGuard,
       ObjectMapper objectMapper,
       RedisClientAdapter redisClientAdapter,
-      PosMetrics posMetrics
+      PosMetrics posMetrics,
+      SalesPromotionRepository promotionRepository
   ) {
     this.salesRepository = salesRepository;
+    this.promotionRepository = promotionRepository;
     this.authorizationPolicyService = authorizationPolicyService;
     this.clock = clock;
     this.idempotencyGuard = idempotencyGuard;
@@ -83,7 +88,7 @@ public class SalesService {
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock
   ) {
-    this(salesRepository, authorizationPolicyService, clock, null, new ObjectMapper(), null, null);
+    this(salesRepository, authorizationPolicyService, clock, null, new ObjectMapper(), null, null, null);
   }
 
   public SalesService(
@@ -93,7 +98,7 @@ public class SalesService {
       IdempotencyGuard idempotencyGuard,
       ObjectMapper objectMapper
   ) {
-    this(salesRepository, authorizationPolicyService, clock, idempotencyGuard, objectMapper, null, null);
+    this(salesRepository, authorizationPolicyService, clock, idempotencyGuard, objectMapper, null, null, null);
   }
 
   public SalesDtos.PosSessionView openPosSession(SalesDtos.OpenPosSessionRequest request) {
@@ -131,7 +136,7 @@ public class SalesService {
 
   public SalesDtos.SaleView submitSale(String idempotencyKey, Long deviceId, SalesDtos.SubmitSaleRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
-    requireSalesWriteForOutlet(context, request.outletId());
+    requireTerminalDeviceForOutlet(context, request.outletId());
     if (request.payment() != null) {
       throw ServiceException.badRequest("Payment is captured with mark-payment-done after order approval");
     }
@@ -139,7 +144,7 @@ public class SalesService {
       return salesRepository.submitSale(request);
     }
     String normalizedKey = normalizeIdempotencyKey(idempotencyKey);
-    String namespace = buildIdempotencyNamespace(deviceId, request.outletId());
+    String namespace = buildIdempotencyNamespace(context.deviceId(), request.outletId());
     String requestBody = serializeForHash(request);
     IdempotencyResult result = idempotencyGuard.execute(
         namespace,
@@ -157,6 +162,15 @@ public class SalesService {
   private static String buildIdempotencyNamespace(Long deviceId, long outletId) {
     String device = deviceId == null ? "nodev" : deviceId.toString();
     return IDEMPOTENCY_SERVICE + ":outlet:" + outletId + ":device:" + device;
+  }
+
+  private static void requireTerminalDeviceForOutlet(RequestUserContext context, long outletId) {
+    if (context == null || !context.isDeviceContext()) {
+      throw ServiceException.forbidden("POS order creation requires device JWT authentication");
+    }
+    if (!java.util.Objects.equals(context.deviceOutletId(), outletId)) {
+      throw ServiceException.forbidden("Device is not registered for outlet " + outletId);
+    }
   }
 
   private static String normalizeIdempotencyKey(String raw) {
@@ -643,7 +657,7 @@ public class SalesService {
       Integer limit,
       Integer offset
   ) {
-    return salesRepository.listPromotions(
+    return listPromotionRecords(
         resolveReadableOutletIds(outletId),
         status,
         effectiveAt,
@@ -656,7 +670,7 @@ public class SalesService {
   }
 
   public SalesDtos.PromotionView getPromotion(long promotionId) {
-    SalesDtos.PromotionView promotion = salesRepository.findPromotion(promotionId)
+    SalesDtos.PromotionView promotion = findPromotionRecord(promotionId)
         .orElseThrow(() -> ServiceException.notFound("Promotion not found: " + promotionId));
     requirePromotionRead(promotion.outletIds());
     return promotion;
@@ -665,23 +679,23 @@ public class SalesService {
   public SalesDtos.PromotionView createPromotion(SalesDtos.CreatePromotionRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
     requirePromotionWrite(context, request.outletIds());
-    return salesRepository.createPromotion(request);
+    return createPromotionRecord(request);
   }
 
   public SalesDtos.PromotionView updatePromotion(long promotionId, SalesDtos.UpdatePromotionRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
-    SalesDtos.PromotionView existing = salesRepository.findPromotion(promotionId)
+    SalesDtos.PromotionView existing = findPromotionRecord(promotionId)
         .orElseThrow(() -> ServiceException.notFound("Promotion not found: " + promotionId));
     requirePromotionWrite(context, existing.outletIds());
     if (request.outletIds() != null) {
       requirePromotionWrite(context, request.outletIds());
     }
-    return salesRepository.updatePromotion(promotionId, request);
+    return updatePromotionRecord(promotionId, request);
   }
 
   public SalesDtos.PromotionView deactivatePromotion(long promotionId) {
     RequestUserContext context = RequestUserContextHolder.get();
-    SalesDtos.PromotionView existing = salesRepository.findPromotion(promotionId)
+    SalesDtos.PromotionView existing = findPromotionRecord(promotionId)
         .orElseThrow(() -> ServiceException.notFound("Promotion not found: " + promotionId));
     requirePromotionWrite(context, existing.outletIds());
     if ("inactive".equalsIgnoreCase(existing.status())) {
@@ -690,7 +704,54 @@ public class SalesService {
     if (!"active".equalsIgnoreCase(existing.status()) && !"draft".equalsIgnoreCase(existing.status())) {
       throw ServiceException.conflict("Only active or draft promotions can be deactivated");
     }
-    return salesRepository.updatePromotionStatus(promotionId, "inactive");
+    return updatePromotionStatusRecord(promotionId, "inactive");
+  }
+
+  private PagedResult<SalesDtos.PromotionView> listPromotionRecords(
+      Set<Long> outletIds,
+      String status,
+      Instant effectiveAt,
+      String q,
+      String sortBy,
+      String sortDir,
+      int limit,
+      int offset
+  ) {
+    if (promotionRepository != null) {
+      return promotionRepository.listPromotions(outletIds, status, effectiveAt, q, sortBy, sortDir, limit, offset);
+    }
+    return salesRepository.listPromotions(outletIds, status, effectiveAt, q, sortBy, sortDir, limit, offset);
+  }
+
+  private Optional<SalesDtos.PromotionView> findPromotionRecord(long promotionId) {
+    if (promotionRepository != null) {
+      return promotionRepository.findPromotion(promotionId);
+    }
+    return salesRepository.findPromotion(promotionId);
+  }
+
+  private SalesDtos.PromotionView createPromotionRecord(SalesDtos.CreatePromotionRequest request) {
+    if (promotionRepository != null) {
+      return promotionRepository.createPromotion(request);
+    }
+    return salesRepository.createPromotion(request);
+  }
+
+  private SalesDtos.PromotionView updatePromotionRecord(
+      long promotionId,
+      SalesDtos.UpdatePromotionRequest request
+  ) {
+    if (promotionRepository != null) {
+      return promotionRepository.updatePromotion(promotionId, request);
+    }
+    return salesRepository.updatePromotion(promotionId, request);
+  }
+
+  private SalesDtos.PromotionView updatePromotionStatusRecord(long promotionId, String status) {
+    if (promotionRepository != null) {
+      return promotionRepository.updatePromotionStatus(promotionId, status);
+    }
+    return salesRepository.updatePromotionStatus(promotionId, status);
   }
 
   private void requireSalesWrite(RequestUserContext context) {

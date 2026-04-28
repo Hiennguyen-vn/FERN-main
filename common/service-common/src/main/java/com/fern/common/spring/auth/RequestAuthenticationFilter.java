@@ -128,11 +128,11 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
       if ("pos-edge-agent".equals(internal.serviceName())) {
         throw ServiceException.forbidden("POS edge mini server must use device JWT authentication");
       }
-      if (isDevicePath(request.getRequestURI()) && !"pos-device".equals(internal.serviceName())) {
+      if (isDevicePath(request) && !"pos-device".equals(internal.serviceName())) {
         throw ServiceException.forbidden("Sync endpoints require device JWT authentication");
       }
       if ("pos-device".equals(internal.serviceName())) {
-        if (!isDevicePath(request.getRequestURI())) {
+        if (!isDevicePath(request) && !isTerminalOrderWrite(request, request.getRequestURI())) {
           throw ServiceException.forbidden("Device token cannot access this endpoint");
         }
         Long deviceId = parseLongHeader(request, "X-Internal-Device-Id");
@@ -174,7 +174,7 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
     String token = authorization.substring("Bearer ".length()).trim();
     JwtClaims claims = jwtTokenService.verify(token);
     if (claims.isDeviceToken()) {
-      if (!isDevicePath(request.getRequestURI())) {
+      if (!isDevicePath(request) && !isTerminalOrderWrite(request, request.getRequestURI())) {
         throw ServiceException.forbidden("Device token cannot access this endpoint");
       }
       deviceTokenRegistry.requireActiveDevice(claims, token);
@@ -183,7 +183,7 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
           true, false, null, claims.deviceId(), claims.deviceOutletId()
       );
     }
-    if (isDevicePath(request.getRequestURI())) {
+    if (isDevicePath(request)) {
       throw ServiceException.forbidden("Sync endpoints require device JWT authentication");
     }
     authSessionService.requireActiveSession(claims.sessionId(), claims.userId());
@@ -221,10 +221,16 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
     return headers;
   }
 
-  private static boolean isDevicePath(String path) {
+  private static boolean isDevicePath(HttpServletRequest request) {
+    String path = request.getRequestURI();
     return path != null
         && (path.startsWith("/api/v1/sync/")
             || path.startsWith("/api/v1/devices/refresh"));
+  }
+
+  private static boolean isTerminalOrderWrite(HttpServletRequest request, String path) {
+    return "POST".equalsIgnoreCase(request.getMethod())
+        && "/api/v1/sales/orders".equals(path);
   }
 
   private static Long parseLongHeader(HttpServletRequest request, String name) {

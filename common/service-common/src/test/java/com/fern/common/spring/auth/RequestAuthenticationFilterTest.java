@@ -167,6 +167,43 @@ class RequestAuthenticationFilterTest {
   }
 
   @Test
+  void userJwtCanCreateTerminalOrderDirectly() throws Exception {
+    JwtTokenService jwtTokenService = new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET);
+    AuthSessionService authSessionService = mock(AuthSessionService.class);
+    RequestAuthenticationFilter filter = new RequestAuthenticationFilter(
+        jwtTokenService,
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        authSessionService,
+        mock(DeviceTokenRegistry.class)
+    );
+
+    String token = jwtTokenService.issueAccessToken(
+        1001L,
+        "cashier",
+        "session-1001",
+        java.util.Set.of("staff"),
+        java.util.Set.of("sales.order.write"),
+        java.util.Set.of(7L),
+        3600
+    );
+
+    HttpServletRequest request = mock(HttpServletRequest.class);
+    when(request.getRequestURI()).thenReturn("/api/v1/sales/orders");
+    when(request.getMethod()).thenReturn("POST");
+    when(request.getHeader(HttpHeaders.AUTHORIZATION)).thenReturn("Bearer " + token);
+    HttpServletResponse response = mock(HttpServletResponse.class);
+    StringWriter responseBody = new StringWriter();
+    when(response.getWriter()).thenReturn(new PrintWriter(responseBody));
+    java.util.concurrent.atomic.AtomicBoolean chainInvoked = new java.util.concurrent.atomic.AtomicBoolean(false);
+    FilterChain chain = (req, res) -> chainInvoked.set(true);
+
+    filter.doFilterInternal(request, response, chain);
+
+    assertTrue(chainInvoked.get());
+    org.mockito.Mockito.verify(authSessionService).requireActiveSession("session-1001", 1001L);
+  }
+
+  @Test
   void posDeviceInternalContextCanReachSyncEndpointWithDeviceScope() throws Exception {
     RuntimeEnvironment.setTestArguments(java.util.List.of(), java.util.List.of("--dev"));
     RequestAuthenticationFilter filter = new RequestAuthenticationFilter(
@@ -178,6 +215,40 @@ class RequestAuthenticationFilterTest {
 
     HttpServletRequest request = mock(HttpServletRequest.class);
     when(request.getRequestURI()).thenReturn("/api/v1/sync/pull/stock");
+    when(request.getHeader(InternalServiceAuth.HEADER_SERVICE_NAME)).thenReturn("pos-device");
+    when(request.getHeader(InternalServiceAuth.HEADER_SERVICE_TOKEN)).thenReturn(INTERNAL_TOKEN);
+    when(request.getHeader("X-Internal-Device-Id")).thenReturn("55");
+    when(request.getHeader("X-Internal-Device-Outlet-Id")).thenReturn("7");
+
+    AtomicReference<RequestUserContext> contextRef = new AtomicReference<>();
+    AtomicReference<String> outletScopeRef = new AtomicReference<>();
+    FilterChain chain = (req, res) -> {
+      contextRef.set(RequestUserContextHolder.get());
+      outletScopeRef.set(OutletScopeContext.gucValue());
+    };
+
+    filter.doFilterInternal(request, mock(HttpServletResponse.class), chain);
+
+    RequestUserContext context = contextRef.get();
+    assertTrue(context.isDeviceContext());
+    assertEquals(55L, context.deviceId());
+    assertEquals(7L, context.deviceOutletId());
+    assertEquals("7", outletScopeRef.get());
+  }
+
+  @Test
+  void posDeviceInternalContextCanCreateTerminalOrderWithDeviceScope() throws Exception {
+    RuntimeEnvironment.setTestArguments(java.util.List.of(), java.util.List.of("--dev"));
+    RequestAuthenticationFilter filter = new RequestAuthenticationFilter(
+        new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        mock(AuthSessionService.class),
+        mock(DeviceTokenRegistry.class)
+    );
+
+    HttpServletRequest request = mock(HttpServletRequest.class);
+    when(request.getRequestURI()).thenReturn("/api/v1/sales/orders");
+    when(request.getMethod()).thenReturn("POST");
     when(request.getHeader(InternalServiceAuth.HEADER_SERVICE_NAME)).thenReturn("pos-device");
     when(request.getHeader(InternalServiceAuth.HEADER_SERVICE_TOKEN)).thenReturn(INTERNAL_TOKEN);
     when(request.getHeader("X-Internal-Device-Id")).thenReturn("55");

@@ -1,6 +1,6 @@
 package com.fern.services.sales.application;
 
-import com.fern.services.sales.infrastructure.SalesRepository;
+import com.fern.services.sales.infrastructure.SalesPromotionRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
@@ -35,11 +35,11 @@ public class PromotionEngine {
 
   private static final Logger log = LoggerFactory.getLogger(PromotionEngine.class);
 
-  private final SalesRepository salesRepository;
+  private final SalesPromotionRepository promotionRepository;
   private final Clock clock;
 
-  public PromotionEngine(SalesRepository salesRepository, Clock clock) {
-    this.salesRepository = salesRepository;
+  public PromotionEngine(SalesPromotionRepository promotionRepository, Clock clock) {
+    this.promotionRepository = promotionRepository;
     this.clock = clock;
   }
 
@@ -55,11 +55,11 @@ public class PromotionEngine {
     }
 
     Instant now = clock.instant();
-    List<SalesRepository.ActivePromotionRow> candidates =
-        salesRepository.findActivePromotionsForOutlet(outletId, now);
+    List<SalesPromotionRepository.ActivePromotionRow> candidates =
+        promotionRepository.findActivePromotionsForOutlet(outletId, now);
 
     Allocation bestAllocation = Allocation.EMPTY;
-    for (SalesRepository.ActivePromotionRow promo : candidates) {
+    for (SalesPromotionRepository.ActivePromotionRow promo : candidates) {
       if (promo.minOrderAmount() != null && subtotal.compareTo(promo.minOrderAmount()) < 0) {
         continue;
       }
@@ -79,7 +79,7 @@ public class PromotionEngine {
   }
 
   private Allocation evaluatePromotion(
-      SalesRepository.ActivePromotionRow promo,
+      SalesPromotionRepository.ActivePromotionRow promo,
       List<CartLine> lines,
       BigDecimal subtotal
   ) {
@@ -93,7 +93,7 @@ public class PromotionEngine {
   }
 
   private Allocation evaluateSimpleDiscount(
-      SalesRepository.ActivePromotionRow promo,
+      SalesPromotionRepository.ActivePromotionRow promo,
       List<CartLine> lines,
       BigDecimal subtotal
   ) {
@@ -107,8 +107,8 @@ public class PromotionEngine {
     return discount.signum() <= 0 ? Allocation.EMPTY : distributePerLine(lines, subtotal, discount, promo.id());
   }
 
-  private Allocation evaluateBxgyDiscount(SalesRepository.ActivePromotionRow promo, List<CartLine> lines) {
-    SalesRepository.BxgyRule rule = salesRepository.findBxgyRule(promo.id()).orElse(null);
+  private Allocation evaluateBxgyDiscount(SalesPromotionRepository.ActivePromotionRow promo, List<CartLine> lines) {
+    SalesPromotionRepository.BxgyRule rule = promotionRepository.findBxgyRule(promo.id()).orElse(null);
     if (rule == null) return Allocation.EMPTY;
     CartLine buyLine = findLine(lines, rule.buyProductId());
     CartLine getLine = findLine(lines, rule.getProductId());
@@ -136,13 +136,13 @@ public class PromotionEngine {
         : new Allocation(promo.id(), discount, List.of(new LineDiscount(rule.getProductId(), discount)));
   }
 
-  private Allocation evaluateComboDiscount(SalesRepository.ActivePromotionRow promo, List<CartLine> lines) {
-    SalesRepository.ComboRule rule = salesRepository.findComboRule(promo.id()).orElse(null);
+  private Allocation evaluateComboDiscount(SalesPromotionRepository.ActivePromotionRow promo, List<CartLine> lines) {
+    SalesPromotionRepository.ComboRule rule = promotionRepository.findComboRule(promo.id()).orElse(null);
     if (rule == null || rule.items().isEmpty()) return Allocation.EMPTY;
     List<CartLine> eligibleLines = new ArrayList<>();
     BigDecimal sets = null;
     BigDecimal regularSetPrice = BigDecimal.ZERO;
-    for (SalesRepository.ComboRuleItem item : rule.items()) {
+    for (SalesPromotionRepository.ComboRuleItem item : rule.items()) {
       CartLine line = findLine(lines, item.productId());
       if (line == null) return Allocation.EMPTY;
       BigDecimal itemSets = floor(line.quantity().divide(item.quantity(), 8, RoundingMode.DOWN));
@@ -153,7 +153,7 @@ public class PromotionEngine {
     BigDecimal discountPerSet = regularSetPrice.subtract(rule.comboPrice());
     if (discountPerSet.signum() <= 0) return Allocation.EMPTY;
     BigDecimal totalDiscount = capDiscount(discountPerSet.multiply(sets), regularSetPrice.multiply(sets), promo.maxDiscountAmount());
-    for (SalesRepository.ComboRuleItem item : rule.items()) {
+    for (SalesPromotionRepository.ComboRuleItem item : rule.items()) {
       CartLine line = findLine(lines, item.productId());
       eligibleLines.add(new CartLine(item.productId(), item.quantity().multiply(sets), line.unitPrice()));
     }
@@ -166,11 +166,11 @@ public class PromotionEngine {
   }
 
   private Allocation evaluateSubsidyDiscount(
-      SalesRepository.ActivePromotionRow promo,
+      SalesPromotionRepository.ActivePromotionRow promo,
       List<CartLine> lines,
       BigDecimal subtotal
   ) {
-    SalesRepository.SubsidyRule rule = salesRepository.findSubsidyRule(promo.id()).orElse(null);
+    SalesPromotionRepository.SubsidyRule rule = promotionRepository.findSubsidyRule(promo.id()).orElse(null);
     if (rule == null || rule.fundingSource() == null || rule.fundingSource().isBlank()) return Allocation.EMPTY;
     List<CartLine> eligibleLines = rule.scopeProductId() == null
         ? lines

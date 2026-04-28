@@ -6,7 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.fern.services.sales.infrastructure.SalesRepository;
+import com.fern.services.sales.infrastructure.SalesPromotionRepository;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
@@ -18,8 +18,8 @@ import org.junit.jupiter.api.Test;
 class PromotionEngineTest {
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-04-15T10:00:00Z"), ZoneOffset.UTC);
-  private final SalesRepository salesRepository = mock(SalesRepository.class);
-  private final PromotionEngine engine = new PromotionEngine(salesRepository, clock);
+  private final SalesPromotionRepository promotionRepository = mock(SalesPromotionRepository.class);
+  private final PromotionEngine engine = new PromotionEngine(promotionRepository, clock);
 
   @Test
   void appliesPercentagePromotionAcrossCart() {
@@ -45,8 +45,8 @@ class PromotionEngineTest {
   @Test
   void appliesBuyXGetYToEligibleGetProduct() {
     active(newPromo(3L, "buy_x_get_y", null, null, null));
-    when(salesRepository.findBxgyRule(3L)).thenReturn(Optional.of(
-        new SalesRepository.BxgyRule(
+    when(promotionRepository.findBxgyRule(3L)).thenReturn(Optional.of(
+        new SalesPromotionRepository.BxgyRule(
             3L,
             100L,
             new BigDecimal("2"),
@@ -65,13 +65,13 @@ class PromotionEngineTest {
   @Test
   void appliesComboPriceWhenRequiredItemsExist() {
     active(newPromo(4L, "combo_price", null, null, null));
-    when(salesRepository.findComboRule(4L)).thenReturn(Optional.of(
-        new SalesRepository.ComboRule(
+    when(promotionRepository.findComboRule(4L)).thenReturn(Optional.of(
+        new SalesPromotionRepository.ComboRule(
             4L,
             new BigDecimal("120000.00"),
             List.of(
-                new SalesRepository.ComboRuleItem(100L, BigDecimal.ONE),
-                new SalesRepository.ComboRuleItem(101L, BigDecimal.ONE)))));
+                new SalesPromotionRepository.ComboRuleItem(100L, BigDecimal.ONE),
+                new SalesPromotionRepository.ComboRuleItem(101L, BigDecimal.ONE)))));
 
     PromotionEngine.Allocation allocation = engine.evaluateForCart(10L, List.of(
         line(100L, "1", "80000.00"),
@@ -84,8 +84,8 @@ class PromotionEngineTest {
   @Test
   void appliesProductScopedSubsidy() {
     active(newPromo(5L, "subsidy", null, "50", null));
-    when(salesRepository.findSubsidyRule(5L)).thenReturn(Optional.of(
-        new SalesRepository.SubsidyRule(5L, 101L, "brand", "MKT-2026")));
+    when(promotionRepository.findSubsidyRule(5L)).thenReturn(Optional.of(
+        new SalesPromotionRepository.SubsidyRule(5L, 101L, "brand", "MKT-2026")));
 
     PromotionEngine.Allocation allocation = engine.evaluateForCart(10L, List.of(
         line(100L, "1", "80000.00"),
@@ -95,18 +95,18 @@ class PromotionEngineTest {
     assertEquals(101L, allocation.lineDiscounts().get(0).productId());
   }
 
-  private void active(SalesRepository.ActivePromotionRow row) {
-    when(salesRepository.findActivePromotionsForOutlet(eq(10L), any())).thenReturn(List.of(row));
+  private void active(SalesPromotionRepository.ActivePromotionRow row) {
+    when(promotionRepository.findActivePromotionsForOutlet(eq(10L), any())).thenReturn(List.of(row));
   }
 
-  private SalesRepository.ActivePromotionRow newPromo(
+  private SalesPromotionRepository.ActivePromotionRow newPromo(
       long id,
       String type,
       String amount,
       String percent,
       String max
   ) {
-    return new SalesRepository.ActivePromotionRow(
+    return new SalesPromotionRepository.ActivePromotionRow(
         id,
         "Promo " + id,
         type,

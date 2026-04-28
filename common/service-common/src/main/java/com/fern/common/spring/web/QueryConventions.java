@@ -6,6 +6,8 @@ import java.util.Set;
 
 public final class QueryConventions {
 
+  private static final int MAX_QUERY_LENGTH = 100;
+
   private QueryConventions() {
   }
 
@@ -54,6 +56,9 @@ public final class QueryConventions {
       return null;
     }
     String trimmed = q.trim();
+    if (trimmed.length() > MAX_QUERY_LENGTH) {
+      throw ServiceException.badRequest("q must be at most " + MAX_QUERY_LENGTH + " characters");
+    }
     return trimmed.isEmpty() ? null : trimmed;
   }
 }

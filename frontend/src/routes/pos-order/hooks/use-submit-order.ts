@@ -73,25 +73,39 @@ export interface SubmitArgs {
 }
 
 function saveSnapshot(snap: PendingSnapshot) {
-  try { localStorage.setItem(PENDING_PREFIX + snap.idempotencyKey, JSON.stringify(snap)); } catch { /* ignore */ }
+  const storage = orderSessionStorage();
+  if (!storage) return;
+  try { storage.setItem(PENDING_PREFIX + snap.idempotencyKey, JSON.stringify(snap)); } catch { /* ignore */ }
 }
 function removeSnapshot(key: string) {
-  try { localStorage.removeItem(PENDING_PREFIX + key); } catch { /* ignore */ }
+  const storage = orderSessionStorage();
+  if (!storage) return;
+  try { storage.removeItem(PENDING_PREFIX + key); } catch { /* ignore */ }
 }
 
 export function listPendingOrders(): PendingSnapshot[] {
   const out: PendingSnapshot[] = [];
-  if (typeof window === 'undefined') return out;
-  for (let i = 0; i < localStorage.length; i += 1) {
-    const key = localStorage.key(i);
+  const storage = orderSessionStorage();
+  if (!storage) return out;
+  for (let i = 0; i < storage.length; i += 1) {
+    const key = storage.key(i);
     if (!key || !key.startsWith(PENDING_PREFIX)) continue;
     try {
-      const raw = localStorage.getItem(key);
+      const raw = storage.getItem(key);
       if (!raw) continue;
       out.push(JSON.parse(raw) as PendingSnapshot);
     } catch { /* ignore */ }
   }
   return out;
+}
+
+function orderSessionStorage(): Storage | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
 }
 
 function toSubmitError(ex: unknown, fallbackMessage: string): SubmitError {

@@ -33,7 +33,7 @@ export function QrQueueView({ outletId, outletName, menu, onRequestPayment }: Pr
   const approveMutation = useApproveQrOrder();
   const cancelMutation = useCancelQrOrder();
 
-  const allOrders = ordersQuery.data ?? [];
+  const allOrders = useMemo(() => ordersQuery.data ?? [], [ordersQuery.data]);
 
   const counts = useMemo(() => {
     const c = { all: allOrders.length, waiting: 0, approved: 0, paid: 0, cancelled: 0 };

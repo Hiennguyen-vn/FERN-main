@@ -17,8 +17,8 @@ describe('finance display helpers', () => {
     ]);
 
     expect(getFinanceOutletDisplay(outletsById, '2002')).toEqual({
-      primary: 'SIM-SMALL-OUT-0002 · Outlet VN-HCM-2',
-      secondary: '2002',
+      primary: 'Outlet VN-HCM-2',
+      secondary: 'SIM-SMALL-OUT-0002',
     });
   });
 

@@ -201,14 +201,16 @@ public class FernSharedConfiguration {
   @ConditionalOnMissingBean
   public ConsumerFactory<String, String> consumerFactory(
       FernServiceProperties properties,
-      @Value("${spring.application.name:unknown-service}") String serviceName
+      @Value("${spring.application.name:unknown-service}") String serviceName,
+      @Value("${dependencies.kafka.maxPollRecords:${dependencies.kafka.max-poll-records:200}}") int maxPollRecords
   ) {
     Map<String, Object> config = Map.of(
         ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, properties.getKafka().getBootstrap(),
         ConsumerConfig.GROUP_ID_CONFIG, properties.getKafka().getConsumerGroupPrefix() + "." + serviceName + ".v1",
         ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,
         ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,
-        ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
+        ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest",
+        ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPollRecords
     );
     return new DefaultKafkaConsumerFactory<>(config);
   }

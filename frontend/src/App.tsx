@@ -1,4 +1,4 @@
-import { Suspense, lazy, type ReactNode } from "react";
+import { Component, Suspense, lazy, type ErrorInfo, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { persistQueryClient } from "@tanstack/query-persist-client-core";
 import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persister";
@@ -48,9 +48,29 @@ const queryClient = new QueryClient({
   },
 });
 
-if (typeof window !== 'undefined') {
+function getPersistentStorage(): Storage | undefined {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    const storage = window.localStorage;
+    if (
+      storage
+      && typeof storage.getItem === 'function'
+      && typeof storage.setItem === 'function'
+      && typeof storage.removeItem === 'function'
+    ) {
+      return storage;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+const persistentStorage = getPersistentStorage();
+
+if (persistentStorage) {
   const persister = createSyncStoragePersister({
-    storage: window.localStorage,
+    storage: persistentStorage,
     key: 'fern-finance-cache',
     throttleTime: 1000,
   });
@@ -70,17 +90,51 @@ if (typeof window !== 'undefined') {
   });
 }
 
-function LazyRoute({ children }: { children: ReactNode }) {
-  return (
-    <Suspense
-      fallback={(
-        <div className="min-h-[50vh] flex items-center justify-center text-sm text-muted-foreground">
-          Loading module...
+interface ModuleErrorBoundaryState {
+  hasError: boolean;
+}
+
+export class ModuleErrorBoundary extends Component<{ children: ReactNode }, ModuleErrorBoundaryState> {
+  state: ModuleErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): ModuleErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('Module render failed', error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-[50vh] flex items-center justify-center p-6">
+          <div className="max-w-md rounded-md border bg-background p-5 text-center shadow-sm">
+            <h2 className="text-sm font-semibold text-foreground">Module unavailable</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This workspace could not render. Refresh the page or switch modules.
+            </p>
+          </div>
         </div>
-      )}
-    >
-      {children}
-    </Suspense>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export function LazyRoute({ children }: { children: ReactNode }) {
+  return (
+    <ModuleErrorBoundary>
+      <Suspense
+        fallback={(
+          <div className="min-h-[50vh] flex items-center justify-center text-sm text-muted-foreground">
+            Loading module...
+          </div>
+        )}
+      >
+        {children}
+      </Suspense>
+    </ModuleErrorBoundary>
   );
 }
 

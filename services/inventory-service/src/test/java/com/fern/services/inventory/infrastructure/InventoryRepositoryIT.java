@@ -29,6 +29,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 class InventoryRepositoryIT {
 
   private static final long ITEM_ID = 9001L;
+  private static final long PRODUCT_ID = 9101L;
+  private static final long SALE_ID = 9201L;
 
   private DataSource dataSource;
   private InventoryRepository repository;
@@ -87,6 +89,15 @@ class InventoryRepositoryIT {
           VALUES (%d, 'ITEM-9001', 'Test Item', 'FOOD', 'EA', 15.0000, 'active')
           ON CONFLICT (id) DO NOTHING
           """, ITEM_ID));
+      st.execute("""
+          INSERT INTO core.product_category (code, name) VALUES ('MENU', 'Menu')
+          ON CONFLICT (code) DO NOTHING
+          """);
+      st.execute(String.format("""
+          INSERT INTO core.product (id, code, name, category_code, status)
+          VALUES (%d, 'PROD-9101', 'Inventory Test Product', 'MENU', 'active')
+          ON CONFLICT (id) DO NOTHING
+          """, PRODUCT_ID));
       st.execute(String.format("""
           INSERT INTO core.stock_balance (location_id, item_id, qty_on_hand, unit_cost)
           VALUES (%d, %d, 12.5000, 3.50)
@@ -127,6 +138,46 @@ class InventoryRepositoryIT {
     assertEquals("waste_out", waste.transaction().txnType());
     assertEquals(0, new BigDecimal("-2.5000").compareTo(waste.transaction().qtyChange()));
     assertQuantity(new BigDecimal("10.0000"));
+  }
+
+  @Test
+  void applySaleApprovedIsIdempotentForReplayedSaleEvent() throws Exception {
+    Instant saleCreatedAt = Instant.parse("2026-04-12T08:00:00Z");
+    seedSaleLine(SALE_ID, saleCreatedAt);
+
+    int inserted = repository.applySaleApproved(
+        SALE_ID,
+        TestFixtures.OUTLET_HCM_1,
+        LocalDate.parse("2026-04-12"),
+        saleCreatedAt,
+        Instant.parse("2026-04-12T08:05:00Z"),
+        TestFixtures.USER_MANAGER_HCM,
+        false,
+        List.of(new InventoryRepository.SaleComponentMovement(
+            PRODUCT_ID,
+            ITEM_ID,
+            new BigDecimal("-2.0000")
+        ))
+    );
+    assertEquals(1, inserted);
+    assertQuantity(new BigDecimal("10.5000"));
+
+    int replayed = repository.applySaleApproved(
+        SALE_ID,
+        TestFixtures.OUTLET_HCM_1,
+        LocalDate.parse("2026-04-12"),
+        saleCreatedAt,
+        Instant.parse("2026-04-12T08:06:00Z"),
+        TestFixtures.USER_MANAGER_HCM,
+        false,
+        List.of(new InventoryRepository.SaleComponentMovement(
+            PRODUCT_ID,
+            ITEM_ID,
+            new BigDecimal("-2.0000")
+        ))
+    );
+    assertEquals(0, replayed);
+    assertQuantity(new BigDecimal("10.5000"));
   }
 
   @Test
@@ -314,12 +365,39 @@ class InventoryRepositoryIT {
             core.waste_record,
             core.goods_receipt_transaction,
             core.sale_item_transaction,
+            core.sale_item,
+            core.sale_record,
             core.inventory_transaction,
             core.stock_count_session,
             core.stock_balance,
+            core.product,
             core.item
           CASCADE
           """);
+    }
+  }
+
+  private void seedSaleLine(long saleId, Instant saleCreatedAt) throws Exception {
+    try (Connection conn = dataSource.getConnection();
+         var st = conn.createStatement()) {
+      st.execute(String.format("""
+          INSERT INTO core.sale_record (
+            id, outlet_id, currency_code, order_type, status, payment_status,
+            subtotal, discount, tax_amount, total_amount, created_at, updated_at
+          ) VALUES (
+            %d, %d, 'USD', 'dine_in', 'order_approved', 'unpaid',
+            20.00, 0.00, 0.00, 20.00, TIMESTAMPTZ '%s', TIMESTAMPTZ '%s'
+          )
+          """, saleId, TestFixtures.OUTLET_HCM_1, saleCreatedAt, saleCreatedAt));
+      st.execute(String.format("""
+          INSERT INTO core.sale_item (
+            sale_id, sale_created_at, outlet_id, product_id, unit_price, qty,
+            discount_amount, tax_amount, line_total, created_at, updated_at
+          ) VALUES (
+            %d, TIMESTAMPTZ '%s', %d, %d, 10.00, 2.0000,
+            0.00, 0.00, 20.00, TIMESTAMPTZ '%s', TIMESTAMPTZ '%s'
+          )
+          """, saleId, saleCreatedAt, TestFixtures.OUTLET_HCM_1, PRODUCT_ID, saleCreatedAt, saleCreatedAt));
     }
   }
 

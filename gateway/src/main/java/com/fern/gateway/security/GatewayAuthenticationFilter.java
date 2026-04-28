@@ -92,7 +92,7 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
       try {
         JwtClaims claims = jwtTokenService.verify(token);
         if (claims.isDeviceToken()) {
-          if (!isDevicePath(path)) {
+          if (!isDevicePath(exchange.getRequest()) && !isTerminalOrderWrite(exchange.getRequest())) {
             exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
             return exchange.getResponse().setComplete();
           }
@@ -104,7 +104,7 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
           });
           return chain.filter(exchange.mutate().request(builder.build()).build());
         }
-        if (isDevicePath(path)) {
+        if (isDevicePath(exchange.getRequest()) || isTerminalOrderWrite(exchange.getRequest())) {
           exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
           return exchange.getResponse().setComplete();
         }
@@ -126,7 +126,7 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
     if (internalServiceAuth.hasInternalHeaders(requestHeaders)) {
       try {
         SpringInternalServiceAuth.AuthenticatedService internal = internalServiceAuth.authenticate(requestHeaders);
-        if (isDevicePath(path)) {
+        if (isDevicePath(exchange.getRequest())) {
           exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
           return exchange.getResponse().setComplete();
         }
@@ -151,9 +151,15 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
     return -100;
   }
 
-  private boolean isDevicePath(String path) {
+  private boolean isDevicePath(ServerHttpRequest request) {
+    String path = request.getURI().getPath();
     return path.startsWith("/api/v1/sync/")
         || path.startsWith("/api/v1/devices/refresh");
+  }
+
+  private boolean isTerminalOrderWrite(ServerHttpRequest request) {
+    return HttpMethod.POST.equals(request.getMethod())
+        && "/api/v1/sales/orders".equals(request.getURI().getPath());
   }
 
   private boolean isPublicPath(String path) {

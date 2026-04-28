@@ -1,0 +1,3 @@
+[submodule "FERN-pos-edge"]
+	path = FERN-pos-edge
+	url = https://github.com/Hiennguyen-vn/FERN-pos-edge.git

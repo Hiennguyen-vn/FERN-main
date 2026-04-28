@@ -53,6 +53,7 @@
     <jetty.version>11.0.25</jetty.version>
     <kafka.clients.version>3.9.1</kafka.clients.version>
     <jacoco.version>0.8.13</jacoco.version>
+    <dependency.check.maven.version>12.1.0</dependency.check.maven.version>
     <testcontainers.version>1.20.4</testcontainers.version>
     <flyway.version>10.20.1</flyway.version>
     <resilience4j.version>2.2.0</resilience4j.version>
@@ -464,6 +465,15 @@
               </configuration>
             </execution>
           </executions>
+        </plugin>
+
+        <plugin>
+          <groupId>org.owasp</groupId>
+          <artifactId>dependency-check-maven</artifactId>
+          <version>${dependency.check.maven.version}</version>
+          <configuration>
+            <failBuildOnCVSS>7</failBuildOnCVSS>
+          </configuration>
         </plugin>
       </plugins>
     </pluginManagement>

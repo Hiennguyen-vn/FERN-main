@@ -12,9 +12,20 @@ export interface DraftOrder {
 
 const STORAGE_KEY = 'pos-order-drafts-v2';
 
-function load(): DraftOrder[] {
+function orderSessionStorage(): Storage | null {
+  if (typeof window === 'undefined') return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function load(): DraftOrder[] {
+  const storage = orderSessionStorage();
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) as DraftOrder[]) : [];
   } catch {
     return [];
@@ -22,8 +33,10 @@ function load(): DraftOrder[] {
 }
 
 function persist(drafts: DraftOrder[]) {
+  const storage = orderSessionStorage();
+  if (!storage) return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(drafts));
+    storage.setItem(STORAGE_KEY, JSON.stringify(drafts));
   } catch { /* ignore */ }
 }
 

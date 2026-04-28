@@ -57,7 +57,8 @@ import {
   type PublicOrderCartLine,
 } from '@/lib/public-order';
 import { cn } from '@/lib/utils';
-import { StatusHero, derivePublicOrderPhase, type PublicOrderPhase } from './public-order/StatusHero';
+import { StatusHero } from './public-order/StatusHero';
+import { derivePublicOrderPhase, type PublicOrderPhase } from './public-order/public-order-phase';
 import '@/styles/brand-tokens.css';
 
 function toNumber(value: unknown) {

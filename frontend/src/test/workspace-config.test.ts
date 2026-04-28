@@ -6,9 +6,10 @@ import {
 import { HR_TAB_ITEMS } from '@/components/hr/hr-workspace-config';
 
 describe('workspace configuration', () => {
-  it('exposes the six finance workspaces from the blueprint', () => {
+  it('exposes the finance workspaces from the blueprint', () => {
     expect(FINANCE_TAB_ITEMS.map((tab) => tab.key)).toEqual([
       'overview',
+      'pl',
       'revenue',
       'labor',
       'expenses',
@@ -17,6 +18,7 @@ describe('workspace configuration', () => {
     ]);
     expect(FINANCE_TAB_ITEMS.map((tab) => tab.label)).toEqual([
       'Overview',
+      'P&L Summary',
       'Revenue',
       'Labor & Payroll',
       'Operating Expenses',
@@ -35,8 +37,8 @@ describe('workspace configuration', () => {
     ]);
   });
 
-  it('keeps HR scoped to attendance, contracts, and payroll prep', () => {
-    expect(HR_TAB_ITEMS.map((tab) => tab.key)).toEqual(['attendance', 'contracts', 'prep']);
-    expect(HR_TAB_ITEMS.map((tab) => tab.label)).toEqual(['Attendance', 'Contracts', 'Payroll Prep']);
+  it('keeps HR scoped to attendance, people, contracts, payroll, and prep', () => {
+    expect(HR_TAB_ITEMS.map((tab) => tab.key)).toEqual(['attendance', 'employees', 'contracts', 'payroll', 'prep']);
+    expect(HR_TAB_ITEMS.map((tab) => tab.label)).toEqual(['Attendance', 'Employees', 'Contracts', 'Payroll', 'Payroll Prep']);
   });
 });

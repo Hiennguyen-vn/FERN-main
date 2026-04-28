@@ -27,6 +27,7 @@ import java.sql.Types;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -35,7 +36,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,26 +48,46 @@ public class SalesRepository extends BaseRepository {
       Set.of("lastOrderAt", "totalSpend", "orderCount", "displayName", "customerRef");
   private static final Set<String> SALE_LIST_SORT_KEYS =
       Set.of("createdAt", "totalAmount", "status", "paymentStatus", "id");
-  private static final Set<String> POS_SESSION_SORT_KEYS =
-      Set.of("openedAt", "businessDate", "status", "managerId", "id");
-  private static final Set<String> PROMOTION_SORT_KEYS =
-      Set.of("effectiveFrom", "name", "status", "createdAt", "id");
+  private static final String DEFAULT_OUTLET_TIMEZONE = "Asia/Ho_Chi_Minh";
 
   private final SnowflakeIdGenerator snowflakeIdGenerator;
   private final Clock clock;
   private final OutboxWriter outboxWriter;
+  private final SalesPromotionRepository promotionRepository;
+  private final SalesPaymentRepository paymentRepository;
+  private final SalesSessionRepository sessionRepository;
 
   @Autowired
   public SalesRepository(
       DataSource dataSource,
       SnowflakeIdGenerator snowflakeIdGenerator,
       Clock clock,
-      OutboxWriter outboxWriter
+      OutboxWriter outboxWriter,
+      SalesPromotionRepository promotionRepository,
+      SalesPaymentRepository paymentRepository,
+      SalesSessionRepository sessionRepository
   ) {
     super(dataSource);
     this.snowflakeIdGenerator = snowflakeIdGenerator;
     this.clock = clock;
     this.outboxWriter = outboxWriter;
+    this.promotionRepository = promotionRepository;
+    this.paymentRepository = paymentRepository;
+    this.sessionRepository = sessionRepository == null
+        ? new SalesSessionRepository(dataSource, snowflakeIdGenerator, clock, paymentRepository)
+        : sessionRepository;
+  }
+
+  public SalesRepository(
+      DataSource dataSource,
+      SnowflakeIdGenerator snowflakeIdGenerator,
+      Clock clock,
+      OutboxWriter outboxWriter
+  ) {
+    this(dataSource, snowflakeIdGenerator, clock, outboxWriter,
+        new SalesPromotionRepository(dataSource, snowflakeIdGenerator, clock),
+        new SalesPaymentRepository(dataSource, clock),
+        null);
   }
 
   // Backward-compatible constructor for tests without outbox
@@ -80,128 +100,16 @@ public class SalesRepository extends BaseRepository {
   }
 
   public SalesDtos.PosSessionView openPosSession(SalesDtos.OpenPosSessionRequest request) {
-    return openPosSession(request, null);
+    return sessionRepository.openPosSession(request);
   }
 
   /** Sync-path overload: caller can pin the session id (Snowflake from edge agent). */
   public SalesDtos.PosSessionView openPosSession(SalesDtos.OpenPosSessionRequest request, Long overrideSessionId) {
-    return executeInTransaction(conn -> {
-      if (overrideSessionId != null) {
-        lockSyncEntity(conn, overrideSessionId);
-        Optional<SalesDtos.PosSessionView> existing = findPosSession(conn, overrideSessionId);
-        if (existing.isPresent()) {
-          return existing.get();
-        }
-      }
-      long sessionId = overrideSessionId != null ? overrideSessionId : snowflakeIdGenerator.generateId();
-      Instant now = clock.instant();
-      Long resolvedDeviceId = resolveRegisteredDeviceId(conn, request.deviceId(), request.outletId());
-      Long resolvedManagerId = request.managerId();
-      if (overrideSessionId != null && resolvedManagerId != null && !appUserExists(conn, resolvedManagerId)) {
-        // Edge terminals authenticate against local users; their ids are not guaranteed to
-        // match central app_user ids. Keep the username audit fields and leave the FK null.
-        resolvedManagerId = null;
-      }
-      try (PreparedStatement ps = conn.prepareStatement(
-          """
-          INSERT INTO core.pos_session (
-            id, session_code, outlet_id, currency_code, manager_id, device_id, register_code,
-            opened_by_username, opened_at, business_date, status, note, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::pos_session_status_enum, ?, ?, ?)
-          """
-      )) {
-        ps.setLong(1, sessionId);
-        ps.setString(2, request.sessionCode().trim());
-        ps.setLong(3, request.outletId());
-        ps.setString(4, request.currencyCode().trim());
-        if (resolvedManagerId == null) {
-          ps.setNull(5, Types.BIGINT);
-        } else {
-          ps.setLong(5, resolvedManagerId);
-        }
-        if (resolvedDeviceId == null) {
-          ps.setNull(6, Types.BIGINT);
-        } else {
-          ps.setLong(6, resolvedDeviceId);
-        }
-        ps.setString(7, trimToNull(request.registerCode()));
-        ps.setString(8, trimToNull(request.openedByUsername()));
-        ps.setTimestamp(9, Timestamp.from(now));
-        ps.setObject(10, request.businessDate());
-        ps.setString(11, "open");
-        ps.setString(12, trimToNull(request.note()));
-        ps.setTimestamp(13, Timestamp.from(now));
-        ps.setTimestamp(14, Timestamp.from(now));
-        ps.executeUpdate();
-      } catch (java.sql.SQLException e) {
-        if ("23505".equals(e.getSQLState())) {
-          throw ServiceException.conflict("Session code already exists");
-        }
-        throw e;
-      }
-      return findPosSession(conn, sessionId)
-          .orElseThrow(() -> new IllegalStateException("Created session not found"));
-    });
-  }
-
-  private boolean appUserExists(Connection conn, long userId) throws SQLException {
-    try (PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM core.app_user WHERE id = ?")) {
-      ps.setLong(1, userId);
-      try (ResultSet rs = ps.executeQuery()) {
-        return rs.next();
-      }
-    }
+    return sessionRepository.openPosSession(request, overrideSessionId);
   }
 
   public SalesDtos.PosSessionView closePosSession(long sessionId, String note) {
-    return executeInTransaction(conn -> {
-      LockedPosSessionRecord locked = lockPosSession(conn, sessionId)
-          .orElseThrow(() -> ServiceException.notFound("POS session not found: " + sessionId));
-      if (!"open".equalsIgnoreCase(locked.status())) {
-        throw ServiceException.conflict("Only open sessions can be closed");
-      }
-      try (PreparedStatement chk = conn.prepareStatement(
-          """
-          SELECT COUNT(*) FROM core.sale_record
-          WHERE pos_session_id = ?
-            AND public_token IS NULL
-            AND status <> 'cancelled'::sale_order_status_enum
-            AND payment_status IN ('unpaid'::payment_status_enum, 'partially_paid'::payment_status_enum)
-          """
-      )) {
-        chk.setLong(1, sessionId);
-        try (ResultSet rs = chk.executeQuery()) {
-          if (rs.next()) {
-            int count = rs.getInt(1);
-            if (count > 0) {
-              throw ServiceException.conflict("SESSION_HAS_UNPAID_ORDERS:" + count);
-            }
-          }
-        }
-      }
-      try (PreparedStatement ps = conn.prepareStatement(
-          """
-          UPDATE core.pos_session
-          SET status = ?::pos_session_status_enum,
-              closed_at = ?,
-              note = COALESCE(?, note),
-              updated_at = ?
-          WHERE id = ?
-          """
-      )) {
-        Timestamp now = Timestamp.from(clock.instant());
-        ps.setString(1, "closed");
-        ps.setTimestamp(2, now);
-        ps.setString(3, trimToNull(note));
-        ps.setTimestamp(4, now);
-        ps.setLong(5, sessionId);
-        if (ps.executeUpdate() == 0) {
-          throw ServiceException.notFound("POS session not found: " + sessionId);
-        }
-      }
-      return findPosSession(conn, sessionId)
-          .orElseThrow(() -> new IllegalStateException("Closed session not found"));
-    });
+    return sessionRepository.closePosSession(sessionId, note);
   }
 
   public SalesDtos.PosSessionReconciliationView reconcilePosSession(
@@ -209,71 +117,7 @@ public class SalesRepository extends BaseRepository {
       SalesDtos.ReconcilePosSessionRequest request,
       Long actorUserId
   ) {
-    return executeInTransaction(conn -> {
-      LockedPosSessionRecord lockedSession = lockPosSession(conn, sessionId)
-          .orElseThrow(() -> ServiceException.notFound("POS session not found: " + sessionId));
-      String sessionStatus = lockedSession.status().toLowerCase(Locale.ROOT);
-      if ("open".equals(sessionStatus)) {
-        throw ServiceException.conflict("Only closed sessions can be reconciled");
-      }
-      if ("cancelled".equals(sessionStatus)) {
-        throw ServiceException.conflict("Cancelled sessions cannot be reconciled");
-      }
-      if (!"closed".equals(sessionStatus) && !"reconciled".equals(sessionStatus)) {
-        throw ServiceException.conflict("Session status does not allow reconciliation: " + lockedSession.status());
-      }
-
-      Instant now = clock.instant();
-      Map<String, BigDecimal> expectedByMethod = loadExpectedPaymentTotalsByMethod(conn, sessionId);
-      Map<String, BigDecimal> actualByMethod = resolveActualPaymentTotals(
-          request == null ? List.of() : request.lines(),
-          expectedByMethod
-      );
-      List<SalesDtos.PosSessionReconciliationLineView> lines = buildReconciliationLines(expectedByMethod, actualByMethod);
-      BigDecimal expectedTotal = lines.stream()
-          .map(SalesDtos.PosSessionReconciliationLineView::expectedAmount)
-          .reduce(BigDecimal.ZERO, BigDecimal::add)
-          .setScale(2, RoundingMode.HALF_UP);
-      BigDecimal actualTotal = lines.stream()
-          .map(SalesDtos.PosSessionReconciliationLineView::actualAmount)
-          .reduce(BigDecimal.ZERO, BigDecimal::add)
-          .setScale(2, RoundingMode.HALF_UP);
-      BigDecimal discrepancyTotal = actualTotal.subtract(expectedTotal).setScale(2, RoundingMode.HALF_UP);
-      String reconciliationNote = mergeReconciliationNote(lockedSession.note(), request == null ? null : request.note());
-
-      upsertPosSessionReconciliation(
-          conn,
-          sessionId,
-          actorUserId,
-          now,
-          expectedTotal,
-          actualTotal,
-          discrepancyTotal,
-          reconciliationNote,
-          lines
-      );
-
-      try (PreparedStatement ps = conn.prepareStatement(
-          """
-          UPDATE core.pos_session
-          SET status = 'reconciled'::pos_session_status_enum,
-              closed_at = COALESCE(closed_at, ?),
-              note = COALESCE(?, note),
-              updated_at = ?
-          WHERE id = ?
-          """
-      )) {
-        Timestamp nowTs = Timestamp.from(now);
-        ps.setTimestamp(1, nowTs);
-        ps.setString(2, reconciliationNote);
-        ps.setTimestamp(3, nowTs);
-        ps.setLong(4, sessionId);
-        ps.executeUpdate();
-      }
-
-      return loadPosSessionReconciliation(conn, sessionId)
-          .orElseThrow(() -> new IllegalStateException("Reconciled session payload not found"));
-    });
+    return sessionRepository.reconcilePosSession(sessionId, request, actorUserId);
   }
 
   public SalesDtos.SaleView submitSale(SalesDtos.SubmitSaleRequest request) {
@@ -293,7 +137,7 @@ public class SalesRepository extends BaseRepository {
       return submitSale(
           conn,
           request,
-          clock.instant().atZone(java.time.ZoneOffset.UTC).toLocalDate(),
+          currentBusinessDate(conn, request.outletId()),
           null,
           overrideSaleId);
     });
@@ -668,7 +512,7 @@ public class SalesRepository extends BaseRepository {
     }
     SalesDtos.PosSessionView session = null;
     if (request.posSessionId() != null) {
-      session = findPosSession(conn, request.posSessionId())
+      session = sessionRepository.findPosSession(conn, request.posSessionId())
           .orElseThrow(
               () ->
                   ServiceException.notFound(
@@ -771,13 +615,13 @@ public class SalesRepository extends BaseRepository {
         LEFT JOIN core.ordering_table t ON t.id = sr.ordering_table_id
         WHERE sr.id = ?
         """,
-        rs -> mapSaleHeader(rs, loadSaleItems(saleId), loadPayment(saleId).orElse(null)),
+        rs -> mapSaleHeader(rs, loadSaleItems(saleId), paymentRepository.loadPayment(saleId).orElse(null)),
         saleId
     );
   }
 
   public Optional<SalesDtos.PosSessionView> findPosSession(long sessionId) {
-    return executeInTransaction(conn -> findPosSession(conn, sessionId));
+    return sessionRepository.findPosSession(sessionId);
   }
 
   public boolean isSaleOversell(long saleId) {
@@ -827,28 +671,7 @@ public class SalesRepository extends BaseRepository {
   }
 
   public Optional<SalesDtos.PosSessionView> findOpenPosSessionForOutlet(long outletId, java.time.LocalDate businessDate) {
-    return executeInTransaction(conn -> {
-      try (PreparedStatement ps = conn.prepareStatement(
-          """
-          SELECT id, session_code, outlet_id, currency_code, manager_id, device_id, register_code, opened_by_username,
-                 opened_at, closed_at, business_date, status, note
-          FROM core.pos_session
-          WHERE outlet_id = ?
-            AND business_date = ?
-            AND status = 'open'::pos_session_status_enum
-          LIMIT 1
-          """
-      )) {
-        ps.setLong(1, outletId);
-        ps.setObject(2, businessDate);
-        try (ResultSet rs = ps.executeQuery()) {
-          if (rs.next()) {
-            return Optional.of(mapPosSession(rs));
-          }
-          return Optional.empty();
-        }
-      }
-    });
+    return sessionRepository.findOpenPosSessionForOutlet(outletId, businessDate);
   }
 
   public SalesDtos.SaleView approveSale(long saleId, Long actorUserId) {
@@ -880,8 +703,8 @@ public class SalesRepository extends BaseRepository {
         RequestUserContext context = RequestUserContextHolder.get();
         Long deviceId = context == null ? null : context.deviceId();
         Optional<Long> sessionLookup = deviceId != null
-            ? findOpenPosSessionIdForOutletAndDeviceTx(conn, lockedSale.outletId(), deviceId)
-            : findOpenPosSessionIdForOutlet(conn, lockedSale.outletId());
+            ? sessionRepository.findOpenPosSessionIdForOutletAndDeviceTx(conn, lockedSale.outletId(), deviceId)
+            : sessionRepository.findOpenPosSessionIdForOutlet(conn, lockedSale.outletId());
         effectiveSessionId = sessionLookup.orElseThrow(() -> ServiceException.conflict(
             "No open POS session for outlet " + lockedSale.outletId()
                 + (deviceId != null ? " device " + deviceId : "")
@@ -915,9 +738,20 @@ public class SalesRepository extends BaseRepository {
         recordOversellShortages(conn, saleId, lockedSale.createdAt(), shortages);
         appendOversellOutbox(conn, saleId, lockedSale.outletId(), lockedSale.currencyCode(), shortages);
       }
+      applySaleUsageInventory(
+          conn,
+          saleId,
+          lockedSale.createdAt(),
+          lockedSale.outletId(),
+          lockedSale.businessDate(),
+          clock.instant(),
+          actorUserId,
+          allowOversell,
+          plan
+      );
       SalesDtos.SaleView approved = findSale(conn, saleId)
           .orElseThrow(() -> new IllegalStateException("Approved sale not found"));
-      appendSaleApprovedOutbox(conn, approved, actorUserId, allowOversell, oversell);
+      appendSaleApprovedOutbox(conn, approved, lockedSale.businessDate(), actorUserId, allowOversell, oversell);
       return approved;
     });
   }
@@ -925,6 +759,7 @@ public class SalesRepository extends BaseRepository {
   private void appendSaleApprovedOutbox(
       Connection conn,
       SalesDtos.SaleView sale,
+      LocalDate businessDate,
       Long actorUserId,
       boolean allowOversell,
       boolean oversell
@@ -934,7 +769,7 @@ public class SalesRepository extends BaseRepository {
     SaleApprovedEvent event = new SaleApprovedEvent(
         saleId,
         sale.outletId(),
-        sale.createdAt().atZone(java.time.ZoneOffset.UTC).toLocalDate(),
+        businessDate,
         sale.createdAt(),
         actorUserId,
         allowOversell,
@@ -1019,47 +854,132 @@ public class SalesRepository extends BaseRepository {
         Long.toString(saleId), event);
   }
 
-  Optional<Long> findOpenPosSessionIdForOutlet(Connection conn, long outletId) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT id FROM core.pos_session
-        WHERE outlet_id = ? AND status = 'open'::pos_session_status_enum
-        ORDER BY opened_at DESC
-        LIMIT 1
-        """
-    )) {
-      ps.setLong(1, outletId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (rs.next()) return Optional.of(rs.getLong(1));
-        return Optional.empty();
+  private void applySaleUsageInventory(
+      Connection conn,
+      long saleId,
+      Instant saleCreatedAt,
+      long outletId,
+      LocalDate businessDate,
+      Instant txnTime,
+      Long actorUserId,
+      boolean allowOversell,
+      InventoryPlan plan
+  ) throws Exception {
+    if (plan.movements().isEmpty()) {
+      return;
+    }
+    if (allowOversell) {
+      try (PreparedStatement ps = conn.prepareStatement("SELECT set_config('fern.allow_oversell', 'true', true)")) {
+        ps.executeQuery();
       }
     }
+    for (SaleUsageMovement movement : plan.movements()) {
+      if (saleItemTransactionExists(conn, saleId, movement.productId(), movement.itemId())) {
+        continue;
+      }
+      long transactionId = snowflakeIdGenerator.generateId();
+      insertInventoryTransaction(
+          conn,
+          transactionId,
+          outletId,
+          movement.itemId(),
+          movement.qtyChange(),
+          businessDate,
+          txnTime,
+          "sale_usage",
+          currentUnitCost(conn, outletId, movement.itemId()),
+          actorUserId,
+          "Sale " + saleId + " product " + movement.productId()
+      );
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.sale_item_transaction (
+            inventory_transaction_id, sale_id, sale_created_at, product_id, item_id, txn_time
+          ) VALUES (?, ?, ?, ?, ?, ?)
+          """
+      )) {
+        ps.setLong(1, transactionId);
+        ps.setLong(2, saleId);
+        ps.setTimestamp(3, Timestamp.from(saleCreatedAt));
+        ps.setLong(4, movement.productId());
+        ps.setLong(5, movement.itemId());
+        ps.setTimestamp(6, Timestamp.from(txnTime));
+        ps.executeUpdate();
+      }
+    }
+  }
+
+  private boolean saleItemTransactionExists(Connection conn, long saleId, long productId, long itemId)
+      throws SQLException {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT 1
+        FROM core.sale_item_transaction
+        WHERE sale_id = ?
+          AND product_id = ?
+          AND item_id = ?
+        """
+    )) {
+      ps.setLong(1, saleId);
+      ps.setLong(2, productId);
+      ps.setLong(3, itemId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
+  }
+
+  private void insertInventoryTransaction(
+      Connection conn,
+      long transactionId,
+      long outletId,
+      long itemId,
+      BigDecimal qtyChange,
+      LocalDate businessDate,
+      Instant txnTime,
+      String txnType,
+      BigDecimal unitCost,
+      Long createdByUserId,
+      String note
+  ) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        INSERT INTO core.inventory_transaction (
+          id, outlet_id, item_id, qty_change, business_date, txn_time, txn_type,
+          unit_cost, created_by_user_id, note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?::inventory_txn_type_enum, ?, ?, ?)
+        """
+    )) {
+      ps.setLong(1, transactionId);
+      ps.setLong(2, outletId);
+      ps.setLong(3, itemId);
+      ps.setBigDecimal(4, qtyChange);
+      ps.setObject(5, businessDate);
+      ps.setTimestamp(6, Timestamp.from(txnTime));
+      ps.setString(7, txnType);
+      ps.setBigDecimal(8, unitCost);
+      if (createdByUserId == null) {
+        ps.setNull(9, Types.BIGINT);
+      } else {
+        ps.setLong(9, createdByUserId);
+      }
+      ps.setString(10, note);
+      ps.executeUpdate();
+    }
+  }
+
+  Optional<Long> findOpenPosSessionIdForOutlet(Connection conn, long outletId) throws Exception {
+    return sessionRepository.findOpenPosSessionIdForOutlet(conn, outletId);
   }
 
   // Scoped lookup for multi-terminal outlets — picks the open session belonging to a specific device.
   // Use when an order originates from a known terminal so revenue is attributed to the right session.
   public Optional<Long> findOpenPosSessionIdForOutletAndDevice(long outletId, long deviceId) {
-    return executeInTransaction(conn -> findOpenPosSessionIdForOutletAndDeviceTx(conn, outletId, deviceId));
+    return sessionRepository.findOpenPosSessionIdForOutletAndDevice(outletId, deviceId);
   }
 
   Optional<Long> findOpenPosSessionIdForOutletAndDeviceTx(Connection conn, long outletId, long deviceId) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT id FROM core.pos_session
-        WHERE outlet_id = ?
-          AND device_id = ?
-          AND status = 'open'::pos_session_status_enum
-        ORDER BY opened_at DESC
-        LIMIT 1
-        """
-    )) {
-      ps.setLong(1, outletId);
-      ps.setLong(2, deviceId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (rs.next()) return Optional.of(rs.getLong(1));
-        return Optional.empty();
-      }
-    }
+    return sessionRepository.findOpenPosSessionIdForOutletAndDeviceTx(conn, outletId, deviceId);
   }
 
   private void lockSyncEntity(Connection conn, long entityId) throws Exception {
@@ -1091,7 +1011,8 @@ public class SalesRepository extends BaseRepository {
         throw ServiceException.conflict("Payment amount must match the approved order total");
       }
       Instant paymentTime = request.paymentTime() == null ? clock.instant() : request.paymentTime();
-      upsertPayment(
+      Long resolvedDeviceId = resolveRegisteredDeviceId(conn, deviceId, lockedSale.outletId());
+      paymentRepository.upsertPayment(
           conn,
           saleId,
           lockedSale.outletId(),
@@ -1100,7 +1021,7 @@ public class SalesRepository extends BaseRepository {
           request,
           amount,
           paymentTime,
-          deviceId,
+          resolvedDeviceId,
           offlineCapturedAt,
           fromOfflineSync
       );
@@ -1118,18 +1039,18 @@ public class SalesRepository extends BaseRepository {
       }
       SalesDtos.SaleView paid = findSale(conn, saleId)
           .orElseThrow(() -> new IllegalStateException("Paid sale not found"));
-      appendSaleCompletedOutbox(conn, paid);
+      appendSaleCompletedOutbox(conn, paid, lockedSale.businessDate());
       return paid;
     });
   }
 
-  private void appendSaleCompletedOutbox(java.sql.Connection conn, SalesDtos.SaleView sale) {
+  private void appendSaleCompletedOutbox(java.sql.Connection conn, SalesDtos.SaleView sale, LocalDate businessDate) {
     if (outboxWriter == null) return;
     long saleId = Long.parseLong(sale.id());
     SaleCompletedEvent saleEvent = new SaleCompletedEvent(
         saleId,
         sale.outletId(),
-        sale.createdAt().atZone(java.time.ZoneOffset.UTC).toLocalDate(),
+        businessDate,
         sale.currencyCode(),
         sale.items().stream()
             .map(i -> new SaleCompletedLineItem(
@@ -1342,92 +1263,26 @@ public class SalesRepository extends BaseRepository {
       int limit,
       int offset
   ) {
-    if (outletIds != null && outletIds.isEmpty()) {
-      return PagedResult.of(List.of(), limit, offset, 0);
-    }
-    return executeInTransaction(conn -> {
-      StringBuilder sql = new StringBuilder(
-          """
-          SELECT ps.id, ps.session_code, ps.outlet_id, ps.currency_code, ps.manager_id,
-                 ps.device_id, ps.register_code, ps.opened_by_username,
-                 ps.opened_at, ps.closed_at, ps.business_date, ps.status, ps.note,
-                 COALESCE(agg.order_count, 0) AS order_count,
-                 COALESCE(agg.total_revenue, 0) AS total_revenue,
-                 COUNT(*) OVER() AS total_count
-          FROM core.pos_session ps
-          LEFT JOIN LATERAL (
-            SELECT COUNT(*) AS order_count,
-                   COALESCE(SUM(CASE WHEN sr.status IN ('payment_done', 'completed') THEN sr.total_amount ELSE 0 END), 0) AS total_revenue
-            FROM core.sale_record sr
-            WHERE sr.pos_session_id = ps.id
-          ) agg ON true
-          WHERE 1 = 1
-          """
-      );
-      List<Object> params = new ArrayList<>();
-      appendOutletScope(sql, params, "ps.outlet_id", outletIds);
-      if (businessDate != null) {
-        sql.append(" AND ps.business_date = ?");
-        params.add(businessDate);
-      }
-      if (startDate != null) {
-        sql.append(" AND ps.opened_at >= ?");
-        params.add(Timestamp.from(startDate.atStartOfDay(java.time.ZoneOffset.UTC).toInstant()));
-      }
-      if (endDate != null) {
-        sql.append(" AND ps.opened_at < ?");
-        params.add(Timestamp.from(endDate.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant()));
-      }
-	      if (status != null && !status.isBlank()) {
-	        sql.append(" AND ps.status = ?::pos_session_status_enum ");
-	        params.add(status.trim());
-	      }
-      if (managerId != null) {
-        sql.append(" AND ps.manager_id = ?");
-        params.add(managerId);
-      }
-      if (q != null && !q.isBlank()) {
-        String pattern = "%" + q + "%";
-        sql.append(
-            """
-             AND (
-               ps.id::text ILIKE ?
-               OR ps.session_code ILIKE ?
-	               OR ps.currency_code ILIKE ?
-	               OR ps.status::text ILIKE ?
-	               OR COALESCE(ps.note, '') ILIKE ?
-	               OR COALESCE(ps.manager_id::text, '') ILIKE ?
-	               OR COALESCE(ps.register_code, '') ILIKE ?
-	               OR COALESCE(ps.opened_by_username, '') ILIKE ?
-	             )
-	            """
-	        );
-	        for (int i = 0; i < 8; i++) {
-	          params.add(pattern);
-	        }
-      }
-      sql.append(" ORDER BY ").append(resolvePosSessionSortClause(sortBy, sortDir)).append(" LIMIT ? OFFSET ?");
-      params.add(limit);
-      params.add(offset);
-      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-        bindParams(ps, params);
-        try (ResultSet rs = ps.executeQuery()) {
-          List<SalesDtos.PosSessionListItemView> rows = new ArrayList<>();
-          long totalCount = 0;
-          while (rs.next()) {
-            totalCount = rs.getLong("total_count");
-            rows.add(mapPosSessionListItem(rs));
-          }
-          return PagedResult.of(rows, limit, offset, totalCount);
-        }
-      }
-    });
+    return sessionRepository.listPosSessions(
+        outletIds,
+        businessDate,
+        startDate,
+        endDate,
+        status,
+        managerId,
+        q,
+        sortBy,
+        sortDir,
+        limit,
+        offset
+    );
   }
 
   public SalesDtos.OutletStatsView getOutletStats(long outletId, LocalDate businessDate) {
     return executeInTransaction(conn -> {
-      Instant start = businessDate.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
-      Instant end = businessDate.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+      ZoneId outletZone = ZoneId.of(findOutletTimezone(conn, outletId));
+      Instant start = businessDate.atStartOfDay(outletZone).toInstant();
+      Instant end = businessDate.plusDays(1).atStartOfDay(outletZone).toInstant();
 
       long ordersToday = 0;
       long completedSales = 0;
@@ -1584,65 +1439,11 @@ public class SalesRepository extends BaseRepository {
       int limit,
       int offset
   ) {
-    return executeInTransaction(conn -> {
-      String normalizedStatus = normalizePromotionStatusFilter(status);
-      StringBuilder sql = new StringBuilder(
-          """
-          SELECT p.id, p.name, p.promo_type, p.status, p.value_amount, p.value_percent, p.effective_from, p.effective_to,
-                 COUNT(*) OVER() AS total_count
-          FROM core.promotion p
-          WHERE 1 = 1
-          """
-      );
-      List<Object> params = new ArrayList<>();
-      appendPromotionScope(sql, params, outletIds);
-      if (normalizedStatus != null) {
-        sql.append(" AND p.status = ?::promo_status_enum");
-        params.add(normalizedStatus);
-      }
-      if (effectiveAt != null) {
-        sql.append(" AND p.effective_from <= ?");
-        params.add(Timestamp.from(effectiveAt));
-        sql.append(" AND (p.effective_to IS NULL OR p.effective_to >= ?)");
-        params.add(Timestamp.from(effectiveAt));
-      }
-      if (q != null && !q.isBlank()) {
-        String pattern = "%" + q + "%";
-        sql.append(
-            """
-             AND (
-               p.id::text ILIKE ?
-               OR p.name ILIKE ?
-               OR p.promo_type::text ILIKE ?
-               OR p.status::text ILIKE ?
-             )
-            """
-        );
-        params.add(pattern);
-        params.add(pattern);
-        params.add(pattern);
-        params.add(pattern);
-      }
-      sql.append(" ORDER BY ").append(resolvePromotionSortClause(sortBy, sortDir)).append(" LIMIT ? OFFSET ?");
-      params.add(limit);
-      params.add(offset);
-      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-        bindParams(ps, params);
-        try (ResultSet rs = ps.executeQuery()) {
-          List<SalesDtos.PromotionView> rows = new ArrayList<>();
-          long totalCount = 0;
-          while (rs.next()) {
-            totalCount = rs.getLong("total_count");
-            rows.add(mapPromotion(rs, conn));
-          }
-          return PagedResult.of(rows, limit, offset, totalCount);
-        }
-      }
-    });
+    return promotionRepository.listPromotions(outletIds, status, effectiveAt, q, sortBy, sortDir, limit, offset);
   }
 
   public Optional<SalesDtos.PromotionView> findPromotion(long promotionId) {
-    return executeInTransaction(conn -> findPromotion(conn, promotionId));
+    return promotionRepository.findPromotion(promotionId);
   }
 
   private String resolveSaleListSortClause(String sortBy, String sortDir) {
@@ -1658,162 +1459,16 @@ public class SalesRepository extends BaseRepository {
     };
   }
 
-  private String resolvePosSessionSortClause(String sortBy, String sortDir) {
-    String key = QueryConventions.normalizeSortBy(sortBy, POS_SESSION_SORT_KEYS, "openedAt");
-    String direction = QueryConventions.normalizeSortDir(sortDir);
-    return switch (key) {
-      case "businessDate" -> "ps.business_date " + direction + ", ps.opened_at DESC, ps.id DESC";
-      case "status" -> "ps.status " + direction + ", ps.opened_at DESC, ps.id DESC";
-      case "managerId" -> "ps.manager_id " + direction + " NULLS LAST, ps.opened_at DESC, ps.id DESC";
-      case "id" -> "ps.id " + direction;
-      case "openedAt" -> "ps.opened_at " + direction + ", ps.id " + direction;
-      default -> throw new IllegalArgumentException("Unsupported pos session sort key");
-    };
-  }
-
-  private String resolvePromotionSortClause(String sortBy, String sortDir) {
-    String key = QueryConventions.normalizeSortBy(sortBy, PROMOTION_SORT_KEYS, "effectiveFrom");
-    String direction = QueryConventions.normalizeSortDir(sortDir);
-    return switch (key) {
-      case "name" -> "p.name " + direction + ", p.id " + direction;
-      case "status" -> "p.status " + direction + ", p.effective_from DESC, p.id DESC";
-      case "createdAt" -> "p.created_at " + direction + ", p.id " + direction;
-      case "id" -> "p.id " + direction;
-      case "effectiveFrom" -> "p.effective_from " + direction + ", p.id " + direction;
-      default -> throw new IllegalArgumentException("Unsupported promotion sort key");
-    };
-  }
-
   public SalesDtos.PromotionView createPromotion(SalesDtos.CreatePromotionRequest request) {
-    return executeInTransaction(conn -> {
-      long promotionId = snowflakeIdGenerator.generateId();
-      Instant now = clock.instant();
-      String normalizedPromoType = normalizePromotionType(request.promoType());
-      String initialStatus = resolvePromotionStatusForCreate(request.effectiveFrom(), now);
-      try (PreparedStatement ps = conn.prepareStatement(
-          """
-          INSERT INTO core.promotion (
-            id, name, promo_type, status, value_amount, value_percent, min_order_amount,
-            max_discount_amount, effective_from, effective_to, created_at, updated_at
-          ) VALUES (?, ?, ?::promo_type_enum, ?::promo_status_enum, ?, ?, ?, ?, ?, ?, ?, ?)
-          """
-      )) {
-        ps.setLong(1, promotionId);
-        ps.setString(2, request.name().trim());
-        ps.setString(3, normalizedPromoType);
-        ps.setString(4, initialStatus);
-        ps.setBigDecimal(5, request.valueAmount());
-        ps.setBigDecimal(6, request.valuePercent());
-        ps.setBigDecimal(7, request.minOrderAmount());
-        ps.setBigDecimal(8, request.maxDiscountAmount());
-        ps.setTimestamp(9, Timestamp.from(request.effectiveFrom()));
-        ps.setTimestamp(10, request.effectiveTo() == null ? null : Timestamp.from(request.effectiveTo()));
-        ps.setTimestamp(11, Timestamp.from(now));
-        ps.setTimestamp(12, Timestamp.from(now));
-        ps.executeUpdate();
-      }
-      if (request.outletIds() != null) {
-        for (Long outletId : request.outletIds()) {
-          try (PreparedStatement ps = conn.prepareStatement(
-              """
-              INSERT INTO core.promotion_scope (promotion_id, outlet_id, created_at)
-              VALUES (?, ?, ?)
-              """
-          )) {
-            ps.setLong(1, promotionId);
-            ps.setLong(2, outletId);
-            ps.setTimestamp(3, Timestamp.from(now));
-            ps.executeUpdate();
-          }
-        }
-      }
-      replacePromotionRules(conn, promotionId, normalizedPromoType,
-          request.bxgyRule(), request.comboRule(), request.subsidyRule(), now);
-      return findPromotion(conn, promotionId)
-          .orElseThrow(() -> new IllegalStateException("Created promotion not found"));
-    });
+    return promotionRepository.createPromotion(request);
   }
 
   public SalesDtos.PromotionView updatePromotionStatus(long promotionId, String status) {
-    return executeInTransaction(conn -> {
-      try (PreparedStatement ps = conn.prepareStatement(
-          """
-          UPDATE core.promotion
-          SET status = ?::promo_status_enum,
-              updated_at = NOW()
-          WHERE id = ?
-          """
-      )) {
-        ps.setString(1, status);
-        ps.setLong(2, promotionId);
-        if (ps.executeUpdate() == 0) {
-          throw ServiceException.notFound("Promotion not found: " + promotionId);
-        }
-      }
-      return findPromotion(conn, promotionId)
-          .orElseThrow(() -> new IllegalStateException("Promotion not found after status update"));
-    });
+    return promotionRepository.updatePromotionStatus(promotionId, status);
   }
 
   public SalesDtos.PromotionView updatePromotion(long promotionId, SalesDtos.UpdatePromotionRequest request) {
-    return executeInTransaction(conn -> {
-      Instant now = clock.instant();
-      StringBuilder sql = new StringBuilder("UPDATE core.promotion SET updated_at = ?");
-      List<Object> params = new ArrayList<>();
-      params.add(Timestamp.from(now));
-      if (request.name() != null) { sql.append(", name = ?"); params.add(request.name().trim()); }
-      if (request.promoType() != null) { sql.append(", promo_type = ?::promo_type_enum"); params.add(normalizePromotionType(request.promoType())); }
-      if (request.valueAmount() != null) { sql.append(", value_amount = ?"); params.add(request.valueAmount()); }
-      if (request.valuePercent() != null) { sql.append(", value_percent = ?"); params.add(request.valuePercent()); }
-      if (request.minOrderAmount() != null) { sql.append(", min_order_amount = ?"); params.add(request.minOrderAmount()); }
-      if (request.maxDiscountAmount() != null) { sql.append(", max_discount_amount = ?"); params.add(request.maxDiscountAmount()); }
-      if (request.effectiveFrom() != null) { sql.append(", effective_from = ?"); params.add(Timestamp.from(request.effectiveFrom())); }
-      if (request.effectiveTo() != null) { sql.append(", effective_to = ?"); params.add(Timestamp.from(request.effectiveTo())); }
-      if (request.status() != null) { sql.append(", status = ?::promo_status_enum"); params.add(request.status().trim()); }
-      sql.append(" WHERE id = ?");
-      params.add(promotionId);
-      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-        for (int i = 0; i < params.size(); i++) {
-          ps.setObject(i + 1, params.get(i));
-        }
-        int updated = ps.executeUpdate();
-        if (updated == 0) {
-          throw ServiceException.notFound("Promotion not found: " + promotionId);
-        }
-      }
-      if (request.outletIds() != null) {
-        try (PreparedStatement ps = conn.prepareStatement(
-            "DELETE FROM core.promotion_scope WHERE promotion_id = ?"
-        )) {
-          ps.setLong(1, promotionId);
-          ps.executeUpdate();
-        }
-        for (Long outletId : request.outletIds()) {
-          try (PreparedStatement ps = conn.prepareStatement(
-              """
-              INSERT INTO core.promotion_scope (promotion_id, outlet_id, created_at)
-              VALUES (?, ?, ?)
-              """
-          )) {
-            ps.setLong(1, promotionId);
-            ps.setLong(2, outletId);
-            ps.setTimestamp(3, Timestamp.from(now));
-            ps.executeUpdate();
-          }
-        }
-      }
-      if (request.bxgyRule() != null || request.comboRule() != null || request.subsidyRule() != null) {
-        String effectiveType = request.promoType() == null
-            ? currentPromotionType(conn, promotionId)
-            : normalizePromotionType(request.promoType());
-        replacePromotionRules(conn, promotionId, effectiveType,
-            request.bxgyRule(), request.comboRule(), request.subsidyRule(), now);
-      } else if (request.promoType() != null) {
-        clearPromotionRules(conn, promotionId);
-      }
-      return findPromotion(conn, promotionId)
-          .orElseThrow(() -> new IllegalStateException("Promotion not found after update"));
-    });
+    return promotionRepository.updatePromotion(promotionId, request);
   }
 
   private void validatePublicOrderItems(
@@ -2243,126 +1898,6 @@ public class SalesRepository extends BaseRepository {
     }
   }
 
-  private void upsertPayment(
-      Connection conn,
-      long saleId,
-      long outletId,
-      Instant saleCreatedAt,
-      Long posSessionId,
-      SalesDtos.MarkPaymentDoneRequest payment,
-      BigDecimal totalAmount,
-      Instant paymentTime,
-      Long deviceId,
-      Instant offlineCapturedAt,
-      boolean fromOfflineSync
-  ) throws Exception {
-    Instant now = clock.instant();
-    Long resolvedDeviceId = resolveRegisteredDeviceId(conn, deviceId, outletId);
-    // targetState already computed above via PaymentStateMachine
-    String currentState = loadPaymentStateTransactional(conn, saleId).orElse(null);
-    String targetState = com.fern.services.sales.application.PaymentStateMachine.transition(
-        currentState,
-        fromOfflineSync ? "RECONCILED" : "COMPLETED"
-    );
-    boolean paymentExists = currentState != null;
-    if (paymentExists) {
-      try (PreparedStatement ps = conn.prepareStatement(
-          """
-          UPDATE core.payment
-          SET pos_session_id = ?,
-              payment_method = ?::payment_method_enum,
-              amount = ?,
-              status = 'success'::payment_txn_status_enum,
-              payment_time = ?,
-              transaction_ref = ?,
-              note = ?,
-              state = ?,
-              offline_captured_at = ?,
-              reconciled_at = ?,
-              device_id = ?,
-              updated_at = ?
-          WHERE sale_id = ? AND sale_created_at = ?
-          """
-      )) {
-        if (posSessionId == null) {
-          ps.setNull(1, java.sql.Types.BIGINT);
-        } else {
-          ps.setLong(1, posSessionId);
-        }
-        ps.setString(2, payment.paymentMethod().trim());
-        ps.setBigDecimal(3, totalAmount);
-        ps.setTimestamp(4, Timestamp.from(paymentTime));
-        ps.setString(5, trimToNull(payment.transactionRef()));
-        ps.setString(6, trimToNull(payment.note()));
-        ps.setString(7, targetState);
-        if (offlineCapturedAt == null) {
-          ps.setNull(8, java.sql.Types.TIMESTAMP_WITH_TIMEZONE);
-        } else {
-          ps.setTimestamp(8, Timestamp.from(offlineCapturedAt));
-        }
-        if (fromOfflineSync) {
-          ps.setTimestamp(9, Timestamp.from(now));
-        } else {
-          ps.setNull(9, java.sql.Types.TIMESTAMP_WITH_TIMEZONE);
-        }
-        if (resolvedDeviceId == null) {
-          ps.setNull(10, java.sql.Types.BIGINT);
-        } else {
-          ps.setLong(10, resolvedDeviceId);
-        }
-        ps.setTimestamp(11, Timestamp.from(now));
-        ps.setLong(12, saleId);
-        ps.setTimestamp(13, Timestamp.from(saleCreatedAt));
-        ps.executeUpdate();
-      }
-      return;
-    }
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        INSERT INTO core.payment (
-          sale_id, sale_created_at, outlet_id, pos_session_id,
-          payment_method, amount, status, payment_time, transaction_ref, note,
-          state, offline_captured_at, reconciled_at, device_id,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?::payment_method_enum, ?, ?::payment_txn_status_enum, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-    )) {
-      ps.setLong(1, saleId);
-      ps.setTimestamp(2, Timestamp.from(saleCreatedAt));
-      ps.setLong(3, outletId);
-      if (posSessionId == null) {
-        ps.setNull(4, java.sql.Types.BIGINT);
-      } else {
-        ps.setLong(4, posSessionId);
-      }
-      ps.setString(5, payment.paymentMethod().trim());
-      ps.setBigDecimal(6, totalAmount);
-      ps.setString(7, "success");
-      ps.setTimestamp(8, Timestamp.from(paymentTime));
-      ps.setString(9, trimToNull(payment.transactionRef()));
-      ps.setString(10, trimToNull(payment.note()));
-      ps.setString(11, targetState);
-      if (offlineCapturedAt == null) {
-        ps.setNull(12, java.sql.Types.TIMESTAMP_WITH_TIMEZONE);
-      } else {
-        ps.setTimestamp(12, Timestamp.from(offlineCapturedAt));
-      }
-      if (fromOfflineSync) {
-        ps.setTimestamp(13, Timestamp.from(now));
-      } else {
-        ps.setNull(13, java.sql.Types.TIMESTAMP_WITH_TIMEZONE);
-      }
-      if (resolvedDeviceId == null) {
-        ps.setNull(14, java.sql.Types.BIGINT);
-      } else {
-        ps.setLong(14, resolvedDeviceId);
-      }
-      ps.setTimestamp(15, Timestamp.from(now));
-      ps.setTimestamp(16, Timestamp.from(now));
-      ps.executeUpdate();
-    }
-  }
-
   private Map<Long, AggregatedSaleLine> loadSaleLinesForInventory(
       Connection conn, long saleId, Instant saleCreatedAt) throws Exception {
     Map<Long, AggregatedSaleLine> aggregated = new LinkedHashMap<>();
@@ -2417,266 +1952,57 @@ public class SalesRepository extends BaseRepository {
     }
   }
 
-  private Optional<LockedPosSessionRecord> lockPosSession(Connection conn, long sessionId) throws Exception {
+  private LocalDate currentBusinessDate(Connection conn, long outletId) throws Exception {
+    return clock.instant().atZone(ZoneId.of(findOutletTimezone(conn, outletId))).toLocalDate();
+  }
+
+  private String findOutletTimezone(Connection conn, long outletId) throws Exception {
     try (PreparedStatement ps = conn.prepareStatement(
         """
-        SELECT id, outlet_id, session_code, business_date, opened_at, closed_at, status, note
-        FROM core.pos_session
-        WHERE id = ?
-        FOR UPDATE
+        SELECT COALESCE(NULLIF(r.timezone_name, ''), ?) AS timezone_name
+        FROM core.outlet o
+        JOIN core.region r ON r.id = o.region_id
+        WHERE o.id = ?
         """
     )) {
-      ps.setLong(1, sessionId);
+      ps.setString(1, DEFAULT_OUTLET_TIMEZONE);
+      ps.setLong(2, outletId);
       try (ResultSet rs = ps.executeQuery()) {
-        if (!rs.next()) {
-          return Optional.empty();
+        if (rs.next()) {
+          String timezone = rs.getString("timezone_name");
+          return timezone == null || timezone.isBlank() ? DEFAULT_OUTLET_TIMEZONE : timezone;
         }
-        Timestamp closedAt = rs.getTimestamp("closed_at");
-        return Optional.of(new LockedPosSessionRecord(
-            rs.getLong("id"),
-            rs.getLong("outlet_id"),
-            rs.getString("session_code"),
-            rs.getObject("business_date", LocalDate.class),
-            rs.getTimestamp("opened_at").toInstant(),
-            closedAt == null ? null : closedAt.toInstant(),
-            rs.getString("status"),
-            rs.getString("note")
-        ));
+        return DEFAULT_OUTLET_TIMEZONE;
       }
     }
-  }
-
-  private Map<String, BigDecimal> loadExpectedPaymentTotalsByMethod(Connection conn, long sessionId) throws Exception {
-    Map<String, BigDecimal> totals = new LinkedHashMap<>();
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT payment_method, COALESCE(SUM(amount), 0) AS total_amount
-        FROM core.payment
-        WHERE pos_session_id = ?
-          AND status = 'success'::payment_txn_status_enum
-        GROUP BY payment_method
-        ORDER BY payment_method
-        """
-    )) {
-      ps.setLong(1, sessionId);
-      try (ResultSet rs = ps.executeQuery()) {
-        while (rs.next()) {
-          totals.put(
-              rs.getString("payment_method"),
-              money(rs.getBigDecimal("total_amount")).setScale(2, RoundingMode.HALF_UP)
-          );
-        }
-      }
-    }
-    return totals;
-  }
-
-  private Map<String, BigDecimal> resolveActualPaymentTotals(
-      List<SalesDtos.ReconcilePosSessionLineRequest> requestLines,
-      Map<String, BigDecimal> expectedByMethod
-  ) {
-    Map<String, BigDecimal> actualByMethod = new LinkedHashMap<>();
-    if (requestLines == null || requestLines.isEmpty()) {
-      actualByMethod.putAll(expectedByMethod);
-      return actualByMethod;
-    }
-    for (SalesDtos.ReconcilePosSessionLineRequest line : requestLines) {
-      String paymentMethod = normalizePaymentMethod(line.paymentMethod());
-      if (actualByMethod.containsKey(paymentMethod)) {
-        throw ServiceException.badRequest("Duplicate payment method in reconciliation payload: " + paymentMethod);
-      }
-      actualByMethod.put(paymentMethod, money(line.actualAmount()).setScale(2, RoundingMode.HALF_UP));
-    }
-    for (Map.Entry<String, BigDecimal> entry : expectedByMethod.entrySet()) {
-      actualByMethod.putIfAbsent(entry.getKey(), entry.getValue().setScale(2, RoundingMode.HALF_UP));
-    }
-    return actualByMethod;
-  }
-
-  private List<SalesDtos.PosSessionReconciliationLineView> buildReconciliationLines(
-      Map<String, BigDecimal> expectedByMethod,
-      Map<String, BigDecimal> actualByMethod
-  ) {
-    Set<String> methods = new TreeSet<>();
-    methods.addAll(expectedByMethod.keySet());
-    methods.addAll(actualByMethod.keySet());
-    List<SalesDtos.PosSessionReconciliationLineView> lines = new ArrayList<>();
-    for (String method : methods) {
-      BigDecimal expectedAmount = money(expectedByMethod.get(method)).setScale(2, RoundingMode.HALF_UP);
-      BigDecimal actualAmount = money(actualByMethod.get(method)).setScale(2, RoundingMode.HALF_UP);
-      BigDecimal discrepancyAmount = actualAmount.subtract(expectedAmount).setScale(2, RoundingMode.HALF_UP);
-      lines.add(new SalesDtos.PosSessionReconciliationLineView(
-          method,
-          expectedAmount,
-          actualAmount,
-          discrepancyAmount
-      ));
-    }
-    return List.copyOf(lines);
-  }
-
-  private void upsertPosSessionReconciliation(
-      Connection conn,
-      long sessionId,
-      Long actorUserId,
-      Instant reconciledAt,
-      BigDecimal expectedTotal,
-      BigDecimal actualTotal,
-      BigDecimal discrepancyTotal,
-      String note,
-      List<SalesDtos.PosSessionReconciliationLineView> lines
-  ) throws Exception {
-    Timestamp now = Timestamp.from(reconciledAt);
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        INSERT INTO core.pos_session_reconciliation (
-          session_id, reconciled_by_user_id, reconciled_at, expected_total, actual_total, discrepancy_total, note, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (session_id)
-        DO UPDATE SET
-          reconciled_by_user_id = EXCLUDED.reconciled_by_user_id,
-          reconciled_at = EXCLUDED.reconciled_at,
-          expected_total = EXCLUDED.expected_total,
-          actual_total = EXCLUDED.actual_total,
-          discrepancy_total = EXCLUDED.discrepancy_total,
-          note = EXCLUDED.note,
-          updated_at = EXCLUDED.updated_at
-        """
-    )) {
-      ps.setLong(1, sessionId);
-      if (actorUserId == null) {
-        ps.setNull(2, java.sql.Types.BIGINT);
-      } else {
-        ps.setLong(2, actorUserId);
-      }
-      ps.setTimestamp(3, now);
-      ps.setBigDecimal(4, expectedTotal);
-      ps.setBigDecimal(5, actualTotal);
-      ps.setBigDecimal(6, discrepancyTotal);
-      ps.setString(7, note);
-      ps.setTimestamp(8, now);
-      ps.setTimestamp(9, now);
-      ps.executeUpdate();
-    }
-
-    try (PreparedStatement ps = conn.prepareStatement(
-        "DELETE FROM core.pos_session_reconciliation_line WHERE session_id = ?"
-    )) {
-      ps.setLong(1, sessionId);
-      ps.executeUpdate();
-    }
-
-    for (SalesDtos.PosSessionReconciliationLineView line : lines) {
-      try (PreparedStatement ps = conn.prepareStatement(
-          """
-          INSERT INTO core.pos_session_reconciliation_line (
-            session_id, payment_method, expected_amount, actual_amount, discrepancy_amount, created_at, updated_at
-          ) VALUES (?, ?::payment_method_enum, ?, ?, ?, ?, ?)
-          """
-      )) {
-        ps.setLong(1, sessionId);
-        ps.setString(2, line.paymentMethod());
-        ps.setBigDecimal(3, line.expectedAmount());
-        ps.setBigDecimal(4, line.actualAmount());
-        ps.setBigDecimal(5, line.discrepancyAmount());
-        ps.setTimestamp(6, now);
-        ps.setTimestamp(7, now);
-        ps.executeUpdate();
-      }
-    }
-  }
-
-  private Optional<SalesDtos.PosSessionReconciliationView> loadPosSessionReconciliation(Connection conn, long sessionId)
-      throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT
-          ps.id,
-          ps.session_code,
-          ps.outlet_id,
-          ps.business_date,
-          ps.status,
-          ps.opened_at,
-          ps.closed_at,
-          ps.note AS session_note,
-          pr.reconciled_at,
-          pr.expected_total,
-          pr.actual_total,
-          pr.discrepancy_total,
-          pr.note AS reconciliation_note
-        FROM core.pos_session ps
-        LEFT JOIN core.pos_session_reconciliation pr ON pr.session_id = ps.id
-        WHERE ps.id = ?
-        """
-    )) {
-      ps.setLong(1, sessionId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (!rs.next()) {
-          return Optional.empty();
-        }
-        Timestamp closedAt = rs.getTimestamp("closed_at");
-        Timestamp reconciledAt = rs.getTimestamp("reconciled_at");
-        String note = rs.getString("reconciliation_note");
-        if (note == null) {
-          note = rs.getString("session_note");
-        }
-        return Optional.of(new SalesDtos.PosSessionReconciliationView(
-            Long.toString(rs.getLong("id")),
-            rs.getString("session_code"),
-            rs.getLong("outlet_id"),
-            rs.getObject("business_date", LocalDate.class),
-            rs.getString("status"),
-            rs.getTimestamp("opened_at").toInstant(),
-            closedAt == null ? null : closedAt.toInstant(),
-            reconciledAt == null ? null : reconciledAt.toInstant(),
-            money(rs.getBigDecimal("expected_total")).setScale(2, RoundingMode.HALF_UP),
-            money(rs.getBigDecimal("actual_total")).setScale(2, RoundingMode.HALF_UP),
-            money(rs.getBigDecimal("discrepancy_total")).setScale(2, RoundingMode.HALF_UP),
-            note,
-            loadPosSessionReconciliationLines(conn, sessionId)
-        ));
-      }
-    }
-  }
-
-  private List<SalesDtos.PosSessionReconciliationLineView> loadPosSessionReconciliationLines(
-      Connection conn,
-      long sessionId
-  ) throws Exception {
-    List<SalesDtos.PosSessionReconciliationLineView> lines = new ArrayList<>();
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT payment_method, expected_amount, actual_amount, discrepancy_amount
-        FROM core.pos_session_reconciliation_line
-        WHERE session_id = ?
-        ORDER BY payment_method
-        """
-    )) {
-      ps.setLong(1, sessionId);
-      try (ResultSet rs = ps.executeQuery()) {
-        while (rs.next()) {
-          lines.add(new SalesDtos.PosSessionReconciliationLineView(
-              rs.getString("payment_method"),
-              money(rs.getBigDecimal("expected_amount")).setScale(2, RoundingMode.HALF_UP),
-              money(rs.getBigDecimal("actual_amount")).setScale(2, RoundingMode.HALF_UP),
-              money(rs.getBigDecimal("discrepancy_amount")).setScale(2, RoundingMode.HALF_UP)
-          ));
-        }
-      }
-    }
-    return List.copyOf(lines);
   }
 
   private Optional<LockedSaleRecord> lockSale(Connection conn, long saleId) throws Exception {
     try (PreparedStatement ps = conn.prepareStatement(
         """
-        SELECT id, outlet_id, pos_session_id, currency_code, status, total_amount, created_at, note
-        FROM core.sale_record
-        WHERE id = ?
-        FOR UPDATE
+        SELECT
+          sr.id,
+          sr.outlet_id,
+          sr.pos_session_id,
+          sr.currency_code,
+          sr.status,
+          sr.total_amount,
+          COALESCE(
+            ps.business_date,
+            (sr.created_at AT TIME ZONE COALESCE(NULLIF(r.timezone_name, ''), ?))::date
+          ) AS business_date,
+          sr.created_at,
+          sr.note
+        FROM core.sale_record sr
+        JOIN core.outlet o ON o.id = sr.outlet_id
+        JOIN core.region r ON r.id = o.region_id
+        LEFT JOIN core.pos_session ps ON ps.id = sr.pos_session_id
+        WHERE sr.id = ?
+        FOR UPDATE OF sr
         """
     )) {
-      ps.setLong(1, saleId);
+      ps.setString(1, DEFAULT_OUTLET_TIMEZONE);
+      ps.setLong(2, saleId);
       try (ResultSet rs = ps.executeQuery()) {
         if (!rs.next()) {
           return Optional.empty();
@@ -2690,7 +2016,7 @@ public class SalesRepository extends BaseRepository {
             rs.getString("currency_code"),
             rs.getString("status"),
             rs.getBigDecimal("total_amount"),
-            saleCreatedAt.atZone(java.time.ZoneOffset.UTC).toLocalDate(),
+            rs.getObject("business_date", LocalDate.class),
             saleCreatedAt,
             rs.getString("note")
         ));
@@ -2719,25 +2045,6 @@ public class SalesRepository extends BaseRepository {
 
   private static boolean isNegativeStockViolation(java.sql.SQLException exception) {
     return "23514".equals(exception.getSQLState());
-  }
-
-  private Optional<SalesDtos.PosSessionView> findPosSession(Connection conn, long sessionId) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT id, session_code, outlet_id, currency_code, manager_id, device_id, register_code, opened_by_username,
-               opened_at, closed_at, business_date, status, note
-        FROM core.pos_session
-        WHERE id = ?
-        """
-    )) {
-      ps.setLong(1, sessionId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (rs.next()) {
-          return Optional.of(mapPosSession(rs));
-        }
-        return Optional.empty();
-      }
-    }
   }
 
   private Optional<SalesDtos.SaleView> findSale(Connection conn, long saleId) throws Exception {
@@ -2771,199 +2078,12 @@ public class SalesRepository extends BaseRepository {
           return Optional.of(mapSaleHeader(
               rs,
               loadSaleItemsTransactional(conn, saleId),
-              loadPaymentTransactional(conn, saleId).orElse(null)
+              paymentRepository.loadPaymentTransactional(conn, saleId).orElse(null)
           ));
         }
         return Optional.empty();
       }
     }
-  }
-
-  private Optional<SalesDtos.PromotionView> findPromotion(Connection conn, long promotionId) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT id, name, promo_type, status, value_amount, value_percent, effective_from, effective_to
-        FROM core.promotion
-        WHERE id = ?
-        """
-    )) {
-      ps.setLong(1, promotionId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (rs.next()) {
-          return Optional.of(mapPromotion(rs, conn));
-        }
-        return Optional.empty();
-      }
-    }
-  }
-
-  private SalesDtos.PromotionView mapPromotion(ResultSet rs, Connection conn) throws Exception {
-    long promotionId = rs.getLong("id");
-    return new SalesDtos.PromotionView(
-        Long.toString(promotionId),
-        rs.getString("name"),
-        rs.getString("promo_type"),
-        rs.getString("status"),
-        rs.getBigDecimal("value_amount"),
-        rs.getBigDecimal("value_percent"),
-        rs.getTimestamp("effective_from").toInstant(),
-        rs.getTimestamp("effective_to") == null ? null : rs.getTimestamp("effective_to").toInstant(),
-        loadPromotionScopes(conn, promotionId),
-        findBxgyRule(conn, promotionId).map(this::toDto).orElse(null),
-        findComboRule(conn, promotionId).map(this::toDto).orElse(null),
-        findSubsidyRule(conn, promotionId).map(this::toDto).orElse(null)
-    );
-  }
-
-  private String currentPromotionType(Connection conn, long promotionId) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        "SELECT promo_type::text FROM core.promotion WHERE id = ?"
-    )) {
-      ps.setLong(1, promotionId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (!rs.next()) {
-          throw ServiceException.notFound("Promotion not found: " + promotionId);
-        }
-        return rs.getString(1);
-      }
-    }
-  }
-
-  private void replacePromotionRules(
-      Connection conn,
-      long promotionId,
-      String promoType,
-      SalesDtos.PromotionBxgyRule bxgyRule,
-      SalesDtos.PromotionComboRule comboRule,
-      SalesDtos.PromotionSubsidyRule subsidyRule,
-      Instant now
-  ) throws Exception {
-    clearPromotionRules(conn, promotionId);
-    switch (promoType) {
-      case "buy_x_get_y" -> {
-        if (bxgyRule != null) insertBxgyRule(conn, promotionId, bxgyRule, now);
-      }
-      case "combo_price" -> {
-        if (comboRule != null) insertComboRule(conn, promotionId, comboRule, now);
-      }
-      case "subsidy" -> {
-        if (subsidyRule != null) insertSubsidyRule(conn, promotionId, subsidyRule, now);
-      }
-      default -> {
-      }
-    }
-  }
-
-  private void clearPromotionRules(Connection conn, long promotionId) throws Exception {
-    for (String table : List.of(
-        "core.promotion_bxgy_rule",
-        "core.promotion_combo_rule",
-        "core.promotion_subsidy_rule")) {
-      try (PreparedStatement ps = conn.prepareStatement("DELETE FROM " + table + " WHERE promotion_id = ?")) {
-        ps.setLong(1, promotionId);
-        ps.executeUpdate();
-      }
-    }
-  }
-
-  private void insertBxgyRule(
-      Connection conn,
-      long promotionId,
-      SalesDtos.PromotionBxgyRule rule,
-      Instant now
-  ) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        INSERT INTO core.promotion_bxgy_rule (
-          promotion_id, buy_product_id, buy_quantity, get_product_id, get_quantity,
-          get_discount_percent, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """
-    )) {
-      ps.setLong(1, promotionId);
-      ps.setLong(2, rule.buyProductId());
-      ps.setBigDecimal(3, rule.buyQuantity());
-      ps.setLong(4, rule.getProductId());
-      ps.setBigDecimal(5, rule.getQuantity());
-      ps.setBigDecimal(6, rule.getDiscountPercent());
-      ps.setTimestamp(7, Timestamp.from(now));
-      ps.setTimestamp(8, Timestamp.from(now));
-      ps.executeUpdate();
-    }
-  }
-
-  private void insertComboRule(
-      Connection conn,
-      long promotionId,
-      SalesDtos.PromotionComboRule rule,
-      Instant now
-  ) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        INSERT INTO core.promotion_combo_rule (promotion_id, combo_price, created_at, updated_at)
-        VALUES (?, ?, ?, ?)
-        """
-    )) {
-      ps.setLong(1, promotionId);
-      ps.setBigDecimal(2, rule.comboPrice());
-      ps.setTimestamp(3, Timestamp.from(now));
-      ps.setTimestamp(4, Timestamp.from(now));
-      ps.executeUpdate();
-    }
-    for (SalesDtos.PromotionComboRuleItem item : rule.items()) {
-      try (PreparedStatement ps = conn.prepareStatement(
-          """
-          INSERT INTO core.promotion_combo_rule_item (
-            promotion_id, product_id, quantity, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?)
-          """
-      )) {
-        ps.setLong(1, promotionId);
-        ps.setLong(2, item.productId());
-        ps.setBigDecimal(3, item.quantity());
-        ps.setTimestamp(4, Timestamp.from(now));
-        ps.setTimestamp(5, Timestamp.from(now));
-        ps.executeUpdate();
-      }
-    }
-  }
-
-  private void insertSubsidyRule(
-      Connection conn,
-      long promotionId,
-      SalesDtos.PromotionSubsidyRule rule,
-      Instant now
-  ) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        INSERT INTO core.promotion_subsidy_rule (
-          promotion_id, scope_product_id, funding_source, funding_account_code, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        """
-    )) {
-      ps.setLong(1, promotionId);
-      if (rule.scopeProductId() == null) ps.setNull(2, Types.BIGINT); else ps.setLong(2, rule.scopeProductId());
-      ps.setString(3, rule.fundingSource());
-      ps.setString(4, rule.fundingAccountCode());
-      ps.setTimestamp(5, Timestamp.from(now));
-      ps.setTimestamp(6, Timestamp.from(now));
-      ps.executeUpdate();
-    }
-  }
-
-  private Set<Long> loadPromotionScopes(Connection conn, long promotionId) throws Exception {
-    Set<Long> outletIds = new LinkedHashSet<>();
-    try (PreparedStatement ps = conn.prepareStatement(
-        "SELECT outlet_id FROM core.promotion_scope WHERE promotion_id = ? ORDER BY outlet_id"
-    )) {
-      ps.setLong(1, promotionId);
-      try (ResultSet rs = ps.executeQuery()) {
-        while (rs.next()) {
-          outletIds.add(rs.getLong("outlet_id"));
-        }
-      }
-    }
-    return Set.copyOf(outletIds);
   }
 
   private List<SalesDtos.SaleLineView> loadSaleItems(long saleId) {
@@ -3071,48 +2191,6 @@ public class SalesRepository extends BaseRepository {
     return List.copyOf(modifiers);
   }
 
-  private Optional<SalesDtos.PaymentView> loadPayment(long saleId) {
-    return queryOne(
-        """
-        SELECT sale_id, payment_method, amount, status, payment_time, transaction_ref, note
-        FROM core.payment
-        WHERE sale_id = ?
-        """,
-        this::mapPayment,
-        saleId
-    );
-  }
-
-  private Optional<String> loadPaymentStateTransactional(Connection conn, long saleId) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        "SELECT state FROM core.payment WHERE sale_id = ? FOR UPDATE"
-    )) {
-      ps.setLong(1, saleId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (rs.next()) return Optional.ofNullable(rs.getString("state"));
-        return Optional.empty();
-      }
-    }
-  }
-
-  private Optional<SalesDtos.PaymentView> loadPaymentTransactional(Connection conn, long saleId) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT sale_id, payment_method, amount, status, payment_time, transaction_ref, note
-        FROM core.payment
-        WHERE sale_id = ?
-        """
-    )) {
-      ps.setLong(1, saleId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (rs.next()) {
-          return Optional.of(mapPayment(rs));
-        }
-        return Optional.empty();
-      }
-    }
-  }
-
   private Set<Long> loadPromotionIds(long saleId, long productId) {
     List<Long> ids = queryList(
         """
@@ -3174,56 +2252,6 @@ public class SalesRepository extends BaseRepository {
       }
     }
     throw ServiceException.notFound("No effective product price for product " + productId + " at outlet " + outletId);
-  }
-
-  private SalesDtos.PosSessionView mapPosSession(ResultSet rs) {
-    try {
-      Timestamp closedAt = rs.getTimestamp("closed_at");
-      Object deviceId = rs.getObject("device_id");
-      return new SalesDtos.PosSessionView(
-          Long.toString(rs.getLong("id")),
-          rs.getString("session_code"),
-          rs.getLong("outlet_id"),
-          rs.getString("currency_code"),
-          rs.getLong("manager_id"),
-          deviceId == null ? null : ((Number) deviceId).longValue(),
-          rs.getString("register_code"),
-          rs.getString("opened_by_username"),
-          rs.getTimestamp("opened_at").toInstant(),
-          closedAt == null ? null : closedAt.toInstant(),
-          rs.getObject("business_date", LocalDate.class),
-          rs.getString("status"),
-          rs.getString("note")
-      );
-    } catch (Exception e) {
-      throw new IllegalStateException("Unable to map POS session", e);
-    }
-  }
-
-  private SalesDtos.PosSessionListItemView mapPosSessionListItem(ResultSet rs) {
-    try {
-      Timestamp closedAt = rs.getTimestamp("closed_at");
-      Object deviceId = rs.getObject("device_id");
-      return new SalesDtos.PosSessionListItemView(
-          Long.toString(rs.getLong("id")),
-          rs.getString("session_code"),
-          rs.getLong("outlet_id"),
-          rs.getString("currency_code"),
-          rs.getLong("manager_id"),
-          deviceId == null ? null : ((Number) deviceId).longValue(),
-          rs.getString("register_code"),
-          rs.getString("opened_by_username"),
-          rs.getTimestamp("opened_at").toInstant(),
-          closedAt == null ? null : closedAt.toInstant(),
-          rs.getObject("business_date", LocalDate.class),
-          rs.getString("status"),
-          rs.getString("note"),
-          rs.getLong("order_count"),
-          rs.getBigDecimal("total_revenue")
-      );
-    } catch (Exception e) {
-      throw new IllegalStateException("Unable to map POS session list item", e);
-    }
   }
 
   private SalesDtos.SaleView mapSaleHeader(
@@ -3308,22 +2336,6 @@ public class SalesRepository extends BaseRepository {
       );
     } catch (Exception e) {
       throw new IllegalStateException("Unable to map sale line", e);
-    }
-  }
-
-  private SalesDtos.PaymentView mapPayment(ResultSet rs) {
-    try {
-      return new SalesDtos.PaymentView(
-          Long.toString(rs.getLong("sale_id")),
-          rs.getString("payment_method"),
-          rs.getBigDecimal("amount"),
-          rs.getString("status"),
-          rs.getTimestamp("payment_time").toInstant(),
-          rs.getString("transaction_ref"),
-          rs.getString("note")
-      );
-    } catch (Exception e) {
-      throw new IllegalStateException("Unable to map payment", e);
     }
   }
 
@@ -3472,41 +2484,6 @@ public class SalesRepository extends BaseRepository {
     return existing + " | " + entry;
   }
 
-  private static String normalizePromotionType(String promoType) {
-    if (promoType == null || promoType.isBlank()) {
-      throw ServiceException.badRequest("promoType is required");
-    }
-    String normalized = promoType.trim().toLowerCase(Locale.ROOT).replace('-', '_');
-    return switch (normalized) {
-      case "percentage", "percent", "discount_percent" -> "percentage";
-      case "fixed_amount", "fixed", "amount", "discount_fixed" -> "fixed_amount";
-      case "buy_x_get_y", "bogo" -> "buy_x_get_y";
-      case "combo_price", "combo" -> "combo_price";
-      case "subsidy" -> "subsidy";
-      default -> throw ServiceException.badRequest("Unsupported promoType: " + promoType);
-    };
-  }
-
-  private static String resolvePromotionStatusForCreate(Instant effectiveFrom, Instant now) {
-    return effectiveFrom != null && effectiveFrom.isAfter(now) ? "draft" : "active";
-  }
-
-  private static String normalizePromotionStatusFilter(String status) {
-    if (status == null || status.isBlank()) {
-      return null;
-    }
-    String normalized = status.trim().toLowerCase(Locale.ROOT).replace('-', '_');
-    return switch (normalized) {
-      case "all" -> null;
-      case "active" -> "active";
-      case "inactive", "paused" -> "inactive";
-      case "draft", "scheduled" -> "draft";
-      case "expired" -> "expired";
-      case "cancelled" -> "cancelled";
-      default -> throw ServiceException.badRequest("Unsupported promotion status filter: " + status);
-    };
-  }
-
   private static BigDecimal money(BigDecimal value) {
     return value == null ? BigDecimal.ZERO : value;
   }
@@ -3527,7 +2504,9 @@ public class SalesRepository extends BaseRepository {
         """
         SELECT id
         FROM core.device_registry
-        WHERE id = ? AND outlet_id = ?
+        WHERE id = ?
+          AND outlet_id = ?
+          AND revoked_at IS NULL
         LIMIT 1
         """
     )) {
@@ -3703,31 +2682,6 @@ public class SalesRepository extends BaseRepository {
     sql.append(")");
   }
 
-  private void appendPromotionScope(
-      StringBuilder sql,
-      List<Object> params,
-      Set<Long> outletIds
-  ) {
-    if (outletIds == null) {
-      return;
-    }
-    if (outletIds.isEmpty()) {
-      sql.append(" AND 1 = 0");
-      return;
-    }
-    sql.append(" AND EXISTS (SELECT 1 FROM core.promotion_scope ps WHERE ps.promotion_id = p.id AND ps.outlet_id IN (");
-    boolean first = true;
-    for (Long outletId : outletIds) {
-      if (!first) {
-        sql.append(", ");
-      }
-      sql.append("?");
-      params.add(outletId);
-      first = false;
-    }
-    sql.append("))");
-  }
-
   private void bindParams(PreparedStatement ps, List<Object> params) throws Exception {
     for (int i = 0; i < params.size(); i++) {
       Object value = params.get(i);
@@ -3796,18 +2750,6 @@ public class SalesRepository extends BaseRepository {
       BigDecimal totalAmount,
       LocalDate businessDate,
       Instant createdAt,
-      String note
-  ) {
-  }
-
-  private record LockedPosSessionRecord(
-      long sessionId,
-      long outletId,
-      String sessionCode,
-      LocalDate businessDate,
-      Instant openedAt,
-      Instant closedAt,
-      String status,
       String note
   ) {
   }
@@ -4177,199 +3119,4 @@ public class SalesRepository extends BaseRepository {
     return value == null ? BigDecimal.ZERO : value;
   }
 
-  public List<ActivePromotionRow> findActivePromotionsForOutlet(long outletId, java.time.Instant now) {
-    return executeInTransaction(conn -> {
-      try (PreparedStatement ps = conn.prepareStatement(
-          """
-          SELECT p.id, p.name, p.promo_type::text AS promo_type,
-                 p.value_amount, p.value_percent,
-                 p.min_order_amount, p.max_discount_amount,
-                 p.effective_from, p.effective_to
-          FROM core.promotion p
-          WHERE p.status = 'active'::promo_status_enum
-            AND p.effective_from <= ?
-            AND (p.effective_to IS NULL OR p.effective_to >= ?)
-            AND (
-              NOT EXISTS (SELECT 1 FROM core.promotion_scope ps WHERE ps.promotion_id = p.id)
-              OR EXISTS (SELECT 1 FROM core.promotion_scope ps WHERE ps.promotion_id = p.id AND ps.outlet_id = ?)
-            )
-          """
-      )) {
-        ps.setObject(1, now);
-        ps.setObject(2, now);
-        ps.setLong(3, outletId);
-        try (ResultSet rs = ps.executeQuery()) {
-          List<ActivePromotionRow> rows = new ArrayList<>();
-          while (rs.next()) {
-            rows.add(new ActivePromotionRow(
-                rs.getLong("id"),
-                rs.getString("name"),
-                rs.getString("promo_type"),
-                rs.getBigDecimal("value_amount"),
-                rs.getBigDecimal("value_percent"),
-                rs.getBigDecimal("min_order_amount"),
-                rs.getBigDecimal("max_discount_amount")
-            ));
-          }
-          return rows;
-        }
-      }
-    });
-  }
-
-  public record ActivePromotionRow(
-      long id,
-      String name,
-      String promoType,
-      BigDecimal valueAmount,
-      BigDecimal valuePercent,
-      BigDecimal minOrderAmount,
-      BigDecimal maxDiscountAmount
-  ) {
-  }
-
-  public java.util.Optional<BxgyRule> findBxgyRule(long promotionId) {
-    return executeInTransaction(conn -> findBxgyRule(conn, promotionId));
-  }
-
-  private java.util.Optional<BxgyRule> findBxgyRule(Connection conn, long promotionId) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT promotion_id, buy_product_id, buy_quantity, get_product_id, get_quantity, get_discount_percent
-        FROM core.promotion_bxgy_rule
-        WHERE promotion_id = ?
-        """
-    )) {
-      ps.setLong(1, promotionId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (!rs.next()) return java.util.Optional.<BxgyRule>empty();
-        return java.util.Optional.of(new BxgyRule(
-            rs.getLong("promotion_id"),
-            rs.getLong("buy_product_id"),
-            rs.getBigDecimal("buy_quantity"),
-            rs.getLong("get_product_id"),
-            rs.getBigDecimal("get_quantity"),
-            rs.getBigDecimal("get_discount_percent")
-        ));
-      }
-    }
-  }
-
-  public java.util.Optional<ComboRule> findComboRule(long promotionId) {
-    return executeInTransaction(conn -> findComboRule(conn, promotionId));
-  }
-
-  private java.util.Optional<ComboRule> findComboRule(Connection conn, long promotionId) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT promotion_id, combo_price
-        FROM core.promotion_combo_rule
-        WHERE promotion_id = ?
-        """
-    )) {
-      ps.setLong(1, promotionId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (!rs.next()) return java.util.Optional.<ComboRule>empty();
-        BigDecimal comboPrice = rs.getBigDecimal("combo_price");
-        List<ComboRuleItem> items = new ArrayList<>();
-        try (PreparedStatement itemPs = conn.prepareStatement(
-            """
-            SELECT product_id, quantity
-            FROM core.promotion_combo_rule_item
-            WHERE promotion_id = ?
-            ORDER BY product_id
-            """
-        )) {
-          itemPs.setLong(1, promotionId);
-          try (ResultSet itemRs = itemPs.executeQuery()) {
-            while (itemRs.next()) {
-              items.add(new ComboRuleItem(itemRs.getLong("product_id"), itemRs.getBigDecimal("quantity")));
-            }
-          }
-        }
-        return java.util.Optional.of(new ComboRule(promotionId, comboPrice, items));
-      }
-    }
-  }
-
-  public java.util.Optional<SubsidyRule> findSubsidyRule(long promotionId) {
-    return executeInTransaction(conn -> findSubsidyRule(conn, promotionId));
-  }
-
-  private java.util.Optional<SubsidyRule> findSubsidyRule(Connection conn, long promotionId) throws Exception {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT promotion_id, scope_product_id, funding_source, funding_account_code
-        FROM core.promotion_subsidy_rule
-        WHERE promotion_id = ?
-        """
-    )) {
-      ps.setLong(1, promotionId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (!rs.next()) return java.util.Optional.<SubsidyRule>empty();
-        Object scopeProductId = rs.getObject("scope_product_id");
-        return java.util.Optional.of(new SubsidyRule(
-            rs.getLong("promotion_id"),
-            scopeProductId == null ? null : ((Number) scopeProductId).longValue(),
-            rs.getString("funding_source"),
-            rs.getString("funding_account_code")
-        ));
-      }
-    }
-  }
-
-  private SalesDtos.PromotionBxgyRule toDto(BxgyRule rule) {
-    return new SalesDtos.PromotionBxgyRule(
-        rule.buyProductId(),
-        rule.buyQuantity(),
-        rule.getProductId(),
-        rule.getQuantity(),
-        rule.getDiscountPercent());
-  }
-
-  private SalesDtos.PromotionComboRule toDto(ComboRule rule) {
-    return new SalesDtos.PromotionComboRule(
-        rule.comboPrice(),
-        rule.items().stream()
-            .map(item -> new SalesDtos.PromotionComboRuleItem(item.productId(), item.quantity()))
-            .toList());
-  }
-
-  private SalesDtos.PromotionSubsidyRule toDto(SubsidyRule rule) {
-    return new SalesDtos.PromotionSubsidyRule(
-        rule.scopeProductId(),
-        rule.fundingSource(),
-        rule.fundingAccountCode());
-  }
-
-  public record BxgyRule(
-      long promotionId,
-      long buyProductId,
-      BigDecimal buyQuantity,
-      long getProductId,
-      BigDecimal getQuantity,
-      BigDecimal getDiscountPercent
-  ) {
-  }
-
-  public record ComboRule(
-      long promotionId,
-      BigDecimal comboPrice,
-      List<ComboRuleItem> items
-  ) {
-  }
-
-  public record ComboRuleItem(
-      long productId,
-      BigDecimal quantity
-  ) {
-  }
-
-  public record SubsidyRule(
-      long promotionId,
-      Long scopeProductId,
-      String fundingSource,
-      String fundingAccountCode
-  ) {
-  }
 }

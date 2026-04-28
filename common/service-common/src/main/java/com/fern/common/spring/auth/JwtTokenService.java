@@ -23,6 +23,7 @@ public class JwtTokenService {
   private static final String DEFAULT_ISSUER = "fern";
   private static final String DEFAULT_AUDIENCE = "fern-services";
   private static final int MIN_SECRET_BYTES = 32;
+  private static final long EXPIRATION_CLOCK_SKEW_SECONDS = 60;
 
   private final byte[] secret;
   private final String issuer;
@@ -96,6 +97,10 @@ public class JwtTokenService {
   public JwtClaims verify(String token) {
     try {
       SignedJWT signedJwt = SignedJWT.parse(token);
+      JWSAlgorithm algorithm = signedJwt.getHeader().getAlgorithm();
+      if (!JWSAlgorithm.HS256.equals(algorithm)) {
+        throw new IllegalArgumentException("Invalid JWT algorithm");
+      }
       JWSVerifier verifier = new MACVerifier(secret);
       if (!signedJwt.verify(verifier)) {
         throw new IllegalArgumentException("Invalid JWT signature");
@@ -133,7 +138,7 @@ public class JwtTokenService {
           issuedAt,
           expiresAt
       );
-      if (claims.isExpired(now)) {
+      if (claims.isExpired(now.minusSeconds(EXPIRATION_CLOCK_SKEW_SECONDS))) {
         throw new IllegalArgumentException("JWT expired");
       }
       return claims;
