@@ -12,10 +12,19 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        include: health,info,prometheus,circuitbreakers,retries
   endpoint:
     health:
       show-details: when_authorized
+  tracing:
+    sampling:
+      probability: ${OTEL_SAMPLE_RATIO:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+  health:
+    circuitbreakers:
+      enabled: true
 
 info:
   service:
@@ -41,3 +50,43 @@ dependencies:
     baseUrl: ${MASTER_NODE_URL:http://localhost:8082}
   hrService:
     baseUrl: ${HR_SERVICE_URL:http://localhost:8084}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      hr-service:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 20
+        minimumNumberOfCalls: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        recordExceptions:
+          - org.springframework.web.client.RestClientException
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+        ignoreExceptions:
+          - org.springframework.web.client.HttpClientErrorException.NotFound
+  retry:
+    instances:
+      hr-service:
+        maxAttempts: 3
+        waitDuration: 500ms
+        exponentialBackoffMultiplier: 2.0
+        retryExceptions:
+          - org.springframework.web.client.ResourceAccessException
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+
+spring.config.import: ${VAULT_CONFIG_IMPORT:optional:vault://}
+spring.cloud.vault:
+  enabled: ${VAULT_ENABLED:false}
+  uri: ${VAULT_ADDR:http://localhost:8200}
+  token: ${VAULT_TOKEN:}
+  fail-fast: false
+  kv:
+    enabled: true
+    backend: kv
+    default-context: fern/shared
+    application-name: fern/services/${spring.application.name}

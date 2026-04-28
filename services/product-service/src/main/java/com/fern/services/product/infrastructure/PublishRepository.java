@@ -1,8 +1,8 @@
 package com.fern.services.product.infrastructure;
 
-import com.dorabets.common.repository.BaseRepository;
+import com.fern.common.repository.BaseRepository;
 import com.fern.services.product.api.PublishDtos;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;

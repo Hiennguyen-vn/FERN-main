@@ -1,8 +1,8 @@
 package com.fern.services.finance.infrastructure;
 
-import com.dorabets.common.repository.BaseRepository;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
+import com.fern.common.repository.BaseRepository;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
 import com.fern.services.finance.api.FinanceDtos;
 import java.math.BigDecimal;
 import java.sql.Connection;

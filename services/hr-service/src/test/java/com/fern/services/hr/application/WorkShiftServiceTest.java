@@ -6,19 +6,19 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.AuthorizationPolicyService;
-import com.dorabets.common.spring.auth.BusinessScopeAssignment;
-import com.dorabets.common.spring.auth.BusinessUserProfile;
-import com.dorabets.common.spring.auth.CanonicalRole;
-import com.dorabets.common.spring.auth.PermissionMatrixService;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
-import com.dorabets.common.spring.auth.ScopeType;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.spring.auth.BusinessScopeAssignment;
+import com.fern.common.spring.auth.BusinessUserProfile;
+import com.fern.common.spring.auth.CanonicalRole;
+import com.fern.common.spring.auth.PermissionMatrixService;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.auth.ScopeType;
 import com.fern.services.hr.api.WorkShiftDto;
 import com.fern.services.hr.infrastructure.ShiftRepository;
 import com.fern.services.hr.infrastructure.WorkShiftRepository;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -160,7 +160,7 @@ class WorkShiftServiceTest {
     )));
     when(authorizationPolicyService.resolveUserProfile(9L))
         .thenReturn(profile(9L, assignment(CanonicalRole.OUTLET_MANAGER, 7L)));
-    when(permissionMatrixService.load(9L)).thenReturn(new com.dorabets.common.spring.auth.PermissionMatrix(9L, java.util.Map.of(), java.util.Map.of()));
+    when(permissionMatrixService.load(9L)).thenReturn(new com.fern.common.spring.auth.PermissionMatrix(9L, java.util.Map.of(), java.util.Map.of()));
     when(authorizationPolicyService.canManageHrSchedule(any(RequestUserContext.class), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq(true)))
         .thenReturn(true);
     when(authorizationPolicyService.canManageHrSchedule(any(RequestUserContext.class), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq(false)))
@@ -259,7 +259,7 @@ class WorkShiftServiceTest {
     )));
     when(authorizationPolicyService.resolveUserProfile(200L))
         .thenReturn(profile(200L));
-    when(permissionMatrixService.load(200L)).thenReturn(new com.dorabets.common.spring.auth.PermissionMatrix(200L, java.util.Map.of(), java.util.Map.of()));
+    when(permissionMatrixService.load(200L)).thenReturn(new com.fern.common.spring.auth.PermissionMatrix(200L, java.util.Map.of(), java.util.Map.of()));
 
     WorkShiftService service = new WorkShiftService(
         workShiftRepository,

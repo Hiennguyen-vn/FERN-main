@@ -16,6 +16,12 @@ management:
   endpoint:
     health:
       show-details: when_authorized
+  tracing:
+    sampling:
+      probability: ${OTEL_SAMPLE_RATIO:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
 
 info:
   service:
@@ -38,3 +44,15 @@ fern:
   control:
     heartbeatLeaseSeconds: ${CONTROL_HEARTBEAT_LEASE_SECONDS:30}
     heartbeatIntervalSeconds: ${CONTROL_HEARTBEAT_INTERVAL_SECONDS:10}
+
+spring.config.import: ${VAULT_CONFIG_IMPORT:optional:vault://}
+spring.cloud.vault:
+  enabled: ${VAULT_ENABLED:false}
+  uri: ${VAULT_ADDR:http://localhost:8200}
+  token: ${VAULT_TOKEN:}
+  fail-fast: false
+  kv:
+    enabled: true
+    backend: kv
+    default-context: fern/shared
+    application-name: fern/services/${spring.application.name}

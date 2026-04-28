@@ -1,20 +1,22 @@
 package com.fern.services.inventory.application;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.AuthorizationPolicyService;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
-import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.events.TypedKafkaEventPublisher;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
 import com.fern.events.inventory.StockLowThresholdEvent;
+import com.fern.events.inventory.OfflineInventoryMovementRecordedEvent;
+import com.fern.events.inventory.StockInSimpleRecordedEvent;
 import com.fern.events.procurement.GoodsReceiptPostedEvent;
 import com.fern.events.sales.SaleApprovedEvent;
 import com.fern.events.sales.SaleCancelledEvent;
 import com.fern.events.sales.SaleCompletedLineItem;
 import com.fern.services.inventory.api.InventoryDtos;
 import com.fern.services.inventory.infrastructure.InventoryRepository;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
@@ -232,6 +234,16 @@ public class InventoryService {
         event.postedAt() == null ? clock.instant() : event.postedAt(),
         inventoryRepository.findGoodsReceiptMovements(event.goodsReceiptId())
     );
+  }
+
+  @Transactional
+  public InventoryRepository.OfflineStockInResult applyOfflineStockIn(StockInSimpleRecordedEvent event) {
+    return inventoryRepository.applyOfflineStockIn(event, clock.instant());
+  }
+
+  @Transactional
+  public InventoryRepository.OfflineInventoryMovementResult applyOfflineWaste(OfflineInventoryMovementRecordedEvent event) {
+    return inventoryRepository.applyOfflineWaste(event, clock.instant());
   }
 
   private void publishLowStockIfNeeded(long outletId, long itemId, String aggregateId) {

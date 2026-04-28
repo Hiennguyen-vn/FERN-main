@@ -1,11 +1,11 @@
 package com.fern.services.report;
 
-import com.dorabets.common.config.RuntimeEnvironment;
+import com.fern.common.config.RuntimeEnvironment;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-@SpringBootApplication(scanBasePackages = {"com.fern.services.report", "com.dorabets.common.spring"})
+@SpringBootApplication(scanBasePackages = {"com.fern.services.report", "com.fern.common.spring"})
 @EnableScheduling
 public class ReportServiceApplication {
 

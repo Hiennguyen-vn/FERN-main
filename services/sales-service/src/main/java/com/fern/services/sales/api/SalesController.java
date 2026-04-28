@@ -1,6 +1,6 @@
 package com.fern.services.sales.api;
 
-import com.dorabets.common.spring.web.PagedResult;
+import com.fern.common.spring.web.PagedResult;
 import com.fern.services.sales.application.SalesService;
 import jakarta.validation.Valid;
 import java.time.Instant;

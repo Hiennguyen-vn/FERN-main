@@ -1,8 +1,8 @@
 package com.fern.services.sales.api;
 
-import com.dorabets.common.spring.auth.AuthorizationPolicyService;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
-import com.dorabets.common.middleware.ServiceException;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.middleware.ServiceException;
 import com.fern.services.sales.application.DeviceService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;

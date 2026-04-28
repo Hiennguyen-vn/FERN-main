@@ -1,11 +1,11 @@
 package com.fern.services.finance.application;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.AuthorizationPolicyService;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
-import com.dorabets.common.spring.auth.SpringInternalServiceAuth;
-import com.dorabets.common.spring.events.TypedKafkaEventPublisher;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.auth.SpringInternalServiceAuth;
+import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.events.finance.InvoiceIssuedEvent;
 import com.fern.events.sales.PaymentCapturedEvent;
 import com.fern.services.finance.api.FinanceDtos;
@@ -13,7 +13,7 @@ import com.fern.services.finance.infrastructure.InvoiceRepository;
 import com.fern.services.finance.infrastructure.InvoiceRepository.InvoiceLineRecord;
 import com.fern.services.finance.infrastructure.InvoiceRepository.InvoiceRecord;
 import com.fern.services.finance.infrastructure.InvoiceRepository.OutletInfo;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
@@ -29,6 +29,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 
 @Service
 public class InvoiceService {
@@ -75,14 +77,7 @@ public class InvoiceService {
       return toView(existing.get(), lines);
     }
 
-    // Fetch sale details from sales-service
-    HttpHeaders internalHeaders = new HttpHeaders();
-    internalServiceAuth.apply(internalHeaders, "finance-service", null);
-    SaleResponse sale = salesRestClient.get()
-        .uri(salesBaseUrl + "/api/v1/sales/orders/{id}", event.saleId())
-        .headers(headers -> headers.addAll(internalHeaders))
-        .retrieve()
-        .body(SaleResponse.class);
+    SaleResponse sale = fetchSale(event.saleId());
     if (sale == null) throw new IllegalStateException("Sale not found: " + event.saleId());
 
     OutletInfo outlet = invoiceRepository.findOutletInfo(sale.outletId())
@@ -227,6 +222,30 @@ public class InvoiceService {
   }
 
   // Internal DTOs for sales-service REST response
+  @CircuitBreaker(name = "sales-service", fallbackMethod = "fetchSaleFallback")
+  @Retry(name = "sales-service")
+  SaleResponse fetchSale(long saleId) {
+    HttpHeaders internalHeaders = new HttpHeaders();
+    internalServiceAuth.apply(internalHeaders, "finance-service", null);
+    return salesRestClient.get()
+        .uri(salesBaseUrl + "/api/v1/sales/orders/{id}", saleId)
+        .headers(headers -> headers.addAll(internalHeaders))
+        .retrieve()
+        .body(SaleResponse.class);
+  }
+
+  @SuppressWarnings("unused")
+  private SaleResponse fetchSaleFallback(long saleId, Throwable ex) {
+    log.warn("sales-service unavailable for fetchSale saleId={}: {}", saleId, ex.toString());
+    throw new SalesServiceUnavailableException("sales-service unavailable", ex);
+  }
+
+  public static class SalesServiceUnavailableException extends RuntimeException {
+    public SalesServiceUnavailableException(String msg, Throwable cause) {
+      super(msg, cause);
+    }
+  }
+
   record SaleResponse(long outletId, java.util.List<SaleLineResponse> items) {}
   record SaleLineResponse(
       long productId, String productCode, String productName,

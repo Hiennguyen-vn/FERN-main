@@ -1,6 +1,6 @@
 package com.fern.services.product.infrastructure;
 
-import com.dorabets.common.middleware.ServiceException;
+import com.fern.common.middleware.ServiceException;
 import com.fern.services.product.api.ProductDtos.PresignedUploadResult;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

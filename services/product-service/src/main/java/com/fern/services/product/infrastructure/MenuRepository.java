@@ -1,8 +1,8 @@
 package com.fern.services.product.infrastructure;
 
-import com.dorabets.common.repository.BaseRepository;
+import com.fern.common.repository.BaseRepository;
 import com.fern.services.product.api.ProductDtos;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.sql.Array;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.Optional;
 import javax.sql.DataSource;
 import org.springframework.stereotype.Repository;
@@ -68,7 +69,39 @@ public class MenuRepository extends BaseRepository {
   }
 
   public Optional<ProductDtos.MenuView> findMenu(long menuId) {
-    return listMenus().stream().filter(m -> m.id() == menuId).findFirst();
+    List<MenuRow> menuRows = queryList(
+        """
+        SELECT m.id, m.code, m.name, m.description, m.status, m.scope_type, m.scope_id
+        FROM core.menu m
+        WHERE m.id = ? AND m.deleted_at IS NULL
+        """,
+        rs -> {
+          try {
+            return new MenuRow(rs.getLong("id"), rs.getString("code"), rs.getString("name"),
+                rs.getString("description"), rs.getString("status"), rs.getString("scope_type"),
+                rs.getObject("scope_id") != null ? rs.getLong("scope_id") : null);
+          } catch (Exception e) { throw new IllegalStateException("map menu", e); }
+        },
+        menuId
+    );
+    if (menuRows.isEmpty()) {
+      return Optional.empty();
+    }
+    MenuRow m = menuRows.get(0);
+    List<Long> ids = List.of(m.id());
+    Map<Long, List<CatRow>> catsByMenu = loadCategories(ids);
+    Map<Long, List<ItemRow>> itemsByCat = loadItems(ids);
+    List<ProductDtos.MenuCategoryView> catViews = catsByMenu.getOrDefault(m.id(), List.of()).stream()
+        .map(c -> new ProductDtos.MenuCategoryView(
+            c.id(), c.code(), c.name(), c.displayOrder(),
+            itemsByCat.getOrDefault(c.id(), List.of()).stream().map(i -> new ProductDtos.MenuItemView(
+                i.id(), i.productId(), i.productCode(), i.productName(), i.productStatus(),
+                i.displayOrder(), i.isActive()
+            )).toList()
+        ))
+        .toList();
+    return Optional.of(new ProductDtos.MenuView(
+        m.id(), m.code(), m.name(), m.description(), m.status(), m.scopeType(), m.scopeId(), catViews));
   }
 
   public ProductDtos.MenuView createMenu(ProductDtos.CreateMenuRequest request) {
@@ -220,50 +253,54 @@ public class MenuRepository extends BaseRepository {
   // ── Helpers ───────────────────────────────────────────
 
   private Map<Long, List<CatRow>> loadCategories(List<Long> menuIds) {
-    Map<Long, List<CatRow>> result = new LinkedHashMap<>();
-    for (Long menuId : menuIds) {
-      queryList(
-          """
-          SELECT mc.id, mc.menu_id, mc.code, mc.name, mc.display_order
-          FROM core.menu_category mc
-          WHERE mc.menu_id = ?
-          ORDER BY mc.display_order, mc.name
-          """,
-          rs -> {
-            try {
-              return new CatRow(rs.getLong("id"), rs.getLong("menu_id"), rs.getString("code"),
-                  rs.getString("name"), rs.getInt("display_order"));
-            } catch (Exception e) { throw new IllegalStateException("map cat", e); }
-          },
-          menuId
-      ).forEach(c -> result.computeIfAbsent(c.menuId(), k -> new ArrayList<>()).add(c));
+    if (menuIds.isEmpty()) {
+      return new LinkedHashMap<>();
     }
+    String placeholders = menuIds.stream().map(id -> "?").collect(Collectors.joining(","));
+    Map<Long, List<CatRow>> result = new LinkedHashMap<>();
+    queryList(
+        """
+        SELECT mc.id, mc.menu_id, mc.code, mc.name, mc.display_order
+        FROM core.menu_category mc
+        WHERE mc.menu_id IN (%s)
+        ORDER BY mc.menu_id, mc.display_order, mc.name
+        """.formatted(placeholders),
+        rs -> {
+          try {
+            return new CatRow(rs.getLong("id"), rs.getLong("menu_id"), rs.getString("code"),
+                rs.getString("name"), rs.getInt("display_order"));
+          } catch (Exception e) { throw new IllegalStateException("map cat", e); }
+        },
+        menuIds.toArray()
+    ).forEach(c -> result.computeIfAbsent(c.menuId(), k -> new ArrayList<>()).add(c));
     return result;
   }
 
   private Map<Long, List<ItemRow>> loadItems(List<Long> menuIds) {
-    Map<Long, List<ItemRow>> result = new LinkedHashMap<>();
-    for (Long menuId : menuIds) {
-      queryList(
-          """
-          SELECT mi.id, mi.menu_category_id, mi.product_id, p.code AS product_code, p.name AS product_name,
-                 p.status AS product_status, mi.display_order, mi.is_active
-          FROM core.menu_item mi
-          JOIN core.menu_category mc ON mc.id = mi.menu_category_id
-          JOIN core.product p ON p.id = mi.product_id
-          WHERE mc.menu_id = ?
-          ORDER BY mi.display_order, p.name
-          """,
-          rs -> {
-            try {
-              return new ItemRow(rs.getLong("id"), rs.getLong("menu_category_id"),
-                  rs.getLong("product_id"), rs.getString("product_code"), rs.getString("product_name"),
-                  rs.getString("product_status"), rs.getInt("display_order"), rs.getBoolean("is_active"));
-            } catch (Exception e) { throw new IllegalStateException("map item row", e); }
-          },
-          menuId
-      ).forEach(i -> result.computeIfAbsent(i.categoryId(), k -> new ArrayList<>()).add(i));
+    if (menuIds.isEmpty()) {
+      return new LinkedHashMap<>();
     }
+    String placeholders = menuIds.stream().map(id -> "?").collect(Collectors.joining(","));
+    Map<Long, List<ItemRow>> result = new LinkedHashMap<>();
+    queryList(
+        """
+        SELECT mi.id, mi.menu_category_id, mi.product_id, p.code AS product_code, p.name AS product_name,
+               p.status AS product_status, mi.display_order, mi.is_active
+        FROM core.menu_item mi
+        JOIN core.menu_category mc ON mc.id = mi.menu_category_id
+        JOIN core.product p ON p.id = mi.product_id
+        WHERE mc.menu_id IN (%s)
+        ORDER BY mi.display_order, p.name
+        """.formatted(placeholders),
+        rs -> {
+          try {
+            return new ItemRow(rs.getLong("id"), rs.getLong("menu_category_id"),
+                rs.getLong("product_id"), rs.getString("product_code"), rs.getString("product_name"),
+                rs.getString("product_status"), rs.getInt("display_order"), rs.getBoolean("is_active"));
+          } catch (Exception e) { throw new IllegalStateException("map item row", e); }
+        },
+        menuIds.toArray()
+    ).forEach(i -> result.computeIfAbsent(i.categoryId(), k -> new ArrayList<>()).add(i));
     return result;
   }
 

@@ -6,11 +6,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.dorabets.common.spring.auth.AuthorizationPolicyService;
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
-import com.dorabets.common.spring.web.PagedResult;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.web.PagedResult;
 import com.fern.services.audit.infrastructure.AuditRepository;
 import java.time.Instant;
 import java.util.Set;

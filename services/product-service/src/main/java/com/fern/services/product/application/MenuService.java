@@ -1,7 +1,7 @@
 package com.fern.services.product.application;
 
-import com.dorabets.common.spring.auth.AuthorizationPolicyService;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.services.product.api.ProductDtos;
 import com.fern.services.product.infrastructure.MenuRepository;
 import java.util.List;
@@ -74,7 +74,7 @@ public class MenuService {
 
   private void requireCatalogMutation() {
     if (!authorizationPolicyService.canMutateCatalog(RequestUserContextHolder.get())) {
-      throw com.dorabets.common.middleware.ServiceException.forbidden("Catalog mutation access required");
+      throw com.fern.common.middleware.ServiceException.forbidden("Catalog mutation access required");
     }
   }
 }

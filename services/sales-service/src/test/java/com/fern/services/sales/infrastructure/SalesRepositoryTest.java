@@ -3,7 +3,7 @@ package com.fern.services.sales.infrastructure;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import com.dorabets.common.middleware.ServiceException;
+import com.fern.common.middleware.ServiceException;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 

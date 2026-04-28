@@ -1,7 +1,7 @@
 package com.fern.gateway.ws;
 
-import com.dorabets.common.spring.auth.DeviceTokenRegistry;
-import com.dorabets.common.spring.auth.JwtTokenService;
+import com.fern.common.spring.auth.DeviceTokenRegistry;
+import com.fern.common.spring.auth.JwtTokenService;
 import java.util.Map;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

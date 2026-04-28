@@ -1,20 +1,20 @@
 package com.fern.services.sales.application;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.AuthorizationPolicyService;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
-import com.dorabets.common.spring.cache.JacksonCacheSerializer;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
-import com.dorabets.idempotency.IdempotencyGuard;
-import com.dorabets.idempotency.model.IdempotencyResult;
-import com.dorabets.idempotency.model.TtlPolicy;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.cache.JacksonCacheSerializer;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
+import com.fern.common.idempotency.IdempotencyGuard;
+import com.fern.common.idempotency.model.IdempotencyResult;
+import com.fern.common.idempotency.model.TtlPolicy;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.natsu.common.model.cache.RedisClientAdapter;
-import com.natsu.common.model.cache.TieredCache;
+import com.fern.common.model.cache.RedisClientAdapter;
+import com.fern.common.model.cache.TieredCache;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.fern.services.sales.api.SalesDtos;
@@ -463,7 +463,7 @@ public class SalesService {
         return existing;
       }
       if ("cancelled".equalsIgnoreCase(s)) {
-        throw com.dorabets.common.middleware.ServiceException.conflict(
+        throw com.fern.common.middleware.ServiceException.conflict(
             "Sale was cancelled before payment sync arrived: " + saleId);
       }
     }
@@ -533,7 +533,7 @@ public class SalesService {
     }
     try {
       return salesRepository.closePosSession(sessionId, null);
-    } catch (com.dorabets.common.middleware.ServiceException ex) {
+    } catch (com.fern.common.middleware.ServiceException ex) {
       // SESSION_HAS_UNPAID_ORDERS or other conflict — accept silently for sync
       return salesRepository.findPosSession(sessionId).orElse(session);
     }
@@ -552,7 +552,7 @@ public class SalesService {
     }
     long skewSeconds = Math.abs(java.time.Duration.between(serverReceived, clientTime).getSeconds());
     if (skewSeconds > 86_400) { // > 24h
-      throw com.dorabets.common.middleware.ServiceException.badRequest(
+      throw com.fern.common.middleware.ServiceException.badRequest(
           "Clock skew too large: client_occurred_at differs from server time by more than 24 hours");
     }
     // Clamp future timestamps: max = serverReceived + 5 min

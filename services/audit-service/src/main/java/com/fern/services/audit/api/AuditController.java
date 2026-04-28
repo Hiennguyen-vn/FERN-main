@@ -1,6 +1,6 @@
 package com.fern.services.audit.api;
 
-import com.dorabets.common.spring.web.PagedResult;
+import com.fern.common.spring.web.PagedResult;
 import com.fern.services.audit.application.AuditService;
 import java.time.Instant;
 import java.util.List;

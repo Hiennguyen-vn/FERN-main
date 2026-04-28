@@ -8,14 +8,14 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.services.masternode.api.ControlPlaneDtos;
 import com.fern.services.masternode.application.ControlPlaneRegistryService;
 import com.fern.services.masternode.infrastructure.ControlPlanePersistenceRepository;
 import com.fern.services.masternode.infrastructure.ControlPlaneRedisStore;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;

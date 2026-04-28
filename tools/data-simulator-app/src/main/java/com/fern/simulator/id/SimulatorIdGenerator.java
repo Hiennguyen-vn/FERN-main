@@ -1,6 +1,6 @@
 package com.fern.simulator.id;
 
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 
 /**
  * Simulator-specific ID generator wrapping {@link SnowflakeIdGenerator}.

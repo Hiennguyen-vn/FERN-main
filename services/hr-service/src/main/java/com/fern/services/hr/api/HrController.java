@@ -1,6 +1,6 @@
 package com.fern.services.hr.api;
 
-import com.dorabets.common.spring.web.PagedResult;
+import com.fern.common.spring.web.PagedResult;
 import com.fern.services.hr.application.EmployeeContractService;
 import com.fern.services.hr.application.HrEmployeeService;
 import com.fern.services.hr.application.ShiftService;

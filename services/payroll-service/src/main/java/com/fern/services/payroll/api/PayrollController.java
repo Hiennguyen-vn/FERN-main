@@ -1,6 +1,6 @@
 package com.fern.services.payroll.api;
 
-import com.dorabets.common.spring.web.PagedResult;
+import com.fern.common.spring.web.PagedResult;
 import com.fern.services.payroll.application.PayrollService;
 import jakarta.validation.Valid;
 import java.time.LocalDate;

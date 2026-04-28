@@ -2,10 +2,11 @@ package com.fern.services.sales.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.dorabets.common.middleware.ServiceException;
+import com.fern.common.middleware.ServiceException;
 import com.fern.services.sales.api.PublicPosDtos;
 import com.fern.services.sales.api.SalesDtos;
 import com.fern.services.sales.infrastructure.SalesRepository;
@@ -34,7 +35,7 @@ class PublicPosServiceTest {
     when(salesRepository.findPublicOrderingTable("tbl_hcm1_u7k29q"))
         .thenReturn(Optional.of(activeTable()));
 
-    PublicPosService service = new PublicPosService(salesRepository, clock);
+    PublicPosService service = new PublicPosService(salesRepository, clock, mock(PromotionEngine.class), false);
     PublicPosDtos.PublicTableView table = service.getTable("tbl_hcm1_u7k29q");
 
     assertEquals("VN-HCM-001", table.outletCode());
@@ -58,7 +59,7 @@ class PublicPosServiceTest {
             "Asia/Ho_Chi_Minh"
         )));
 
-    PublicPosService service = new PublicPosService(salesRepository, clock);
+    PublicPosService service = new PublicPosService(salesRepository, clock, mock(PromotionEngine.class), false);
 
     ServiceException exception =
         assertThrows(
@@ -123,7 +124,7 @@ class PublicPosServiceTest {
                     null,
                     Instant.parse("2026-03-31T08:35:00Z"))));
 
-    PublicPosService service = new PublicPosService(salesRepository, clock);
+    PublicPosService service = new PublicPosService(salesRepository, clock, mock(PromotionEngine.class), false);
     PublicPosDtos.PublicOrderReceiptView receipt =
         service.createOrder(
             "tbl_hcm1_u7k29q",
@@ -164,7 +165,7 @@ class PublicPosServiceTest {
             "Insufficient stock for one or more items",
             List.of(java.util.Map.of("itemCode", "BEAN-001"))));
 
-    PublicPosService service = new PublicPosService(salesRepository, clock);
+    PublicPosService service = new PublicPosService(salesRepository, clock, mock(PromotionEngine.class), false);
 
     ServiceException exception = assertThrows(
         ServiceException.class,

@@ -1,9 +1,9 @@
 package com.fern.services.report.infrastructure;
 
-import com.dorabets.common.repository.BaseRepository;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
-import com.dorabets.common.middleware.ServiceException;
+import com.fern.common.repository.BaseRepository;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
+import com.fern.common.middleware.ServiceException;
 import com.fern.services.report.api.ReportDtos;
 import java.sql.Date;
 import java.sql.PreparedStatement;
@@ -381,5 +381,162 @@ public class ReportRepository extends BaseRepository {
     for (int i = 0; i < params.size(); i++) {
       ps.setObject(i + 1, params.get(i));
     }
+  }
+
+  public List<ReportDtos.DailyPnl> dailyPnl(long outletId, java.time.LocalDate startDate, java.time.LocalDate endDate) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          WITH s AS (
+            SELECT outlet_id, DATE(created_at) AS business_date,
+                   COALESCE(SUM(total_amount), 0) AS sales_total
+            FROM core.sale_record
+            WHERE outlet_id = ?
+              AND status IN ('completed'::sale_order_status_enum, 'payment_done'::sale_order_status_enum)
+              AND created_at >= ? AND created_at < (?::date + INTERVAL '1 day')
+            GROUP BY outlet_id, DATE(created_at)
+          ), e AS (
+            SELECT outlet_id, business_date, COALESCE(SUM(amount), 0) AS expense_total
+            FROM core.expense_record
+            WHERE outlet_id = ? AND business_date BETWEEN ? AND ?
+            GROUP BY outlet_id, business_date
+          )
+          SELECT COALESCE(s.outlet_id, e.outlet_id) AS outlet_id,
+                 COALESCE(s.business_date, e.business_date) AS business_date,
+                 COALESCE(s.sales_total, 0) AS sales_total,
+                 COALESCE(e.expense_total, 0) AS expense_total,
+                 COALESCE(s.sales_total, 0) - COALESCE(e.expense_total, 0) AS gross_profit
+          FROM s FULL OUTER JOIN e ON s.outlet_id = e.outlet_id AND s.business_date = e.business_date
+          ORDER BY business_date
+          """
+      )) {
+        ps.setLong(1, outletId);
+        ps.setObject(2, startDate);
+        ps.setObject(3, endDate);
+        ps.setLong(4, outletId);
+        ps.setObject(5, startDate);
+        ps.setObject(6, endDate);
+        try (ResultSet rs = ps.executeQuery()) {
+          List<ReportDtos.DailyPnl> rows = new ArrayList<>();
+          while (rs.next()) {
+            rows.add(new ReportDtos.DailyPnl(
+                rs.getLong("outlet_id"),
+                rs.getDate("business_date").toLocalDate(),
+                rs.getBigDecimal("sales_total"),
+                rs.getBigDecimal("expense_total"),
+                rs.getBigDecimal("gross_profit")
+            ));
+          }
+          return rows;
+        }
+      }
+    });
+  }
+
+  public List<ReportDtos.TopSku> topSkus(long outletId, java.time.LocalDate startDate, java.time.LocalDate endDate, int limit) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          SELECT sr.outlet_id, si.product_id, p.code AS product_code, p.name AS product_name,
+                 SUM(si.qty) AS total_quantity, SUM(si.line_total) AS total_revenue
+          FROM core.sale_item si
+          JOIN core.sale_record sr ON sr.id = si.sale_id
+          JOIN core.product p ON p.id = si.product_id
+          WHERE sr.outlet_id = ?
+            AND sr.status IN ('completed'::sale_order_status_enum, 'payment_done'::sale_order_status_enum)
+            AND sr.created_at >= ? AND sr.created_at < (?::date + INTERVAL '1 day')
+          GROUP BY sr.outlet_id, si.product_id, p.code, p.name
+          ORDER BY total_revenue DESC
+          LIMIT ?
+          """
+      )) {
+        ps.setLong(1, outletId);
+        ps.setObject(2, startDate);
+        ps.setObject(3, endDate);
+        ps.setInt(4, limit);
+        try (ResultSet rs = ps.executeQuery()) {
+          List<ReportDtos.TopSku> rows = new ArrayList<>();
+          while (rs.next()) {
+            rows.add(new ReportDtos.TopSku(
+                rs.getLong("outlet_id"), rs.getLong("product_id"),
+                rs.getString("product_code"), rs.getString("product_name"),
+                rs.getBigDecimal("total_quantity"), rs.getBigDecimal("total_revenue")));
+          }
+          return rows;
+        }
+      }
+    });
+  }
+
+  public List<ReportDtos.StaffKpi> staffKpi(long outletId, java.time.LocalDate startDate, java.time.LocalDate endDate) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          SELECT sr.outlet_id, ps.manager_id AS actor_user_id, u.username,
+                 COUNT(*) AS sale_count, COALESCE(SUM(sr.total_amount), 0) AS total_revenue
+          FROM core.sale_record sr
+          LEFT JOIN core.pos_session ps ON ps.id = sr.pos_session_id
+          LEFT JOIN core.app_user u ON u.id = ps.manager_id
+          WHERE sr.outlet_id = ?
+            AND sr.status IN ('completed'::sale_order_status_enum, 'payment_done'::sale_order_status_enum)
+            AND sr.created_at >= ? AND sr.created_at < (?::date + INTERVAL '1 day')
+          GROUP BY sr.outlet_id, ps.manager_id, u.username
+          ORDER BY total_revenue DESC
+          """
+      )) {
+        ps.setLong(1, outletId);
+        ps.setObject(2, startDate);
+        ps.setObject(3, endDate);
+        try (ResultSet rs = ps.executeQuery()) {
+          List<ReportDtos.StaffKpi> rows = new ArrayList<>();
+          while (rs.next()) {
+            long actor = rs.getLong("actor_user_id");
+            rows.add(new ReportDtos.StaffKpi(
+                rs.getLong("outlet_id"),
+                rs.wasNull() ? null : actor,
+                rs.getString("username"),
+                rs.getLong("sale_count"),
+                rs.getBigDecimal("total_revenue")));
+          }
+          return rows;
+        }
+      }
+    });
+  }
+
+  public List<ReportDtos.CrossOutletCompare> crossOutletCompare(long regionId, java.time.LocalDate startDate, java.time.LocalDate endDate) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          SELECT o.region_id, sr.outlet_id, o.code AS outlet_code, o.name AS outlet_name,
+                 COALESCE(SUM(sr.total_amount), 0) AS sales_total,
+                 COUNT(*) AS sale_count,
+                 CASE WHEN COUNT(*) = 0 THEN 0
+                      ELSE COALESCE(SUM(sr.total_amount), 0) / COUNT(*) END AS avg_ticket
+          FROM core.sale_record sr
+          JOIN core.outlet o ON o.id = sr.outlet_id
+          WHERE o.region_id = ?
+            AND sr.status IN ('completed'::sale_order_status_enum, 'payment_done'::sale_order_status_enum)
+            AND sr.created_at >= ? AND sr.created_at < (?::date + INTERVAL '1 day')
+          GROUP BY o.region_id, sr.outlet_id, o.code, o.name
+          ORDER BY sales_total DESC
+          """
+      )) {
+        ps.setLong(1, regionId);
+        ps.setObject(2, startDate);
+        ps.setObject(3, endDate);
+        try (ResultSet rs = ps.executeQuery()) {
+          List<ReportDtos.CrossOutletCompare> rows = new ArrayList<>();
+          while (rs.next()) {
+            rows.add(new ReportDtos.CrossOutletCompare(
+                rs.getLong("region_id"), rs.getLong("outlet_id"),
+                rs.getString("outlet_code"), rs.getString("outlet_name"),
+                rs.getBigDecimal("sales_total"), rs.getLong("sale_count"),
+                rs.getBigDecimal("avg_ticket")));
+          }
+          return rows;
+        }
+      }
+    });
   }
 }

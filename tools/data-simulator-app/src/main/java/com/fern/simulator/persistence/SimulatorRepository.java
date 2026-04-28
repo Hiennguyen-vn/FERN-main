@@ -1,7 +1,7 @@
 package com.fern.simulator.persistence;
 
 import com.fern.simulator.model.*;
-import com.natsu.common.utils.security.PasswordUtil;
+import com.fern.common.utils.security.PasswordUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

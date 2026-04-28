@@ -1,6 +1,6 @@
 package com.fern.services.hr.infrastructure;
 
-import com.dorabets.common.repository.BaseRepository;
+import com.fern.common.repository.BaseRepository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;

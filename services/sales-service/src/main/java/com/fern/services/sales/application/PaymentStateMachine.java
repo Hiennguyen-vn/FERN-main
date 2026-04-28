@@ -1,6 +1,6 @@
 package com.fern.services.sales.application;
 
-import com.dorabets.common.middleware.ServiceException;
+import com.fern.common.middleware.ServiceException;
 import java.util.Map;
 import java.util.Set;
 

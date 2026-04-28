@@ -1,13 +1,13 @@
 package com.fern.gateway.security;
 
-import com.dorabets.common.auth.AuthTokenExtractor;
-import com.dorabets.common.auth.InternalServiceAuth;
-import com.dorabets.common.spring.auth.AuthSessionService;
-import com.dorabets.common.spring.auth.DeviceTokenRegistry;
-import com.dorabets.common.spring.auth.JwtClaims;
-import com.dorabets.common.spring.auth.JwtTokenService;
-import com.dorabets.common.spring.auth.SpringInternalServiceAuth;
-import com.dorabets.common.spring.web.CorrelationIdFilter;
+import com.fern.common.auth.AuthTokenExtractor;
+import com.fern.common.auth.InternalServiceAuth;
+import com.fern.common.spring.auth.AuthSessionService;
+import com.fern.common.spring.auth.DeviceTokenRegistry;
+import com.fern.common.spring.auth.JwtClaims;
+import com.fern.common.spring.auth.JwtTokenService;
+import com.fern.common.spring.auth.SpringInternalServiceAuth;
+import com.fern.common.spring.web.CorrelationIdFilter;
 import java.util.Set;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;

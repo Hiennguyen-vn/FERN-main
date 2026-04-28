@@ -1,7 +1,7 @@
 package com.fern.services.product.api;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.web.PagedResult;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.web.PagedResult;
 import com.fern.services.product.application.ProductService;
 import com.fern.services.product.infrastructure.ProductImageStorage;
 import com.fern.services.product.infrastructure.VariantRepository;

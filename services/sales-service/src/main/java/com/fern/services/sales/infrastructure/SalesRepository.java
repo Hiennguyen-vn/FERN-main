@@ -1,19 +1,21 @@
 package com.fern.services.sales.infrastructure;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.outbox.OutboxWriter;
-import com.dorabets.common.repository.BaseRepository;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.outbox.OutboxWriter;
+import com.fern.common.repository.BaseRepository;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.events.sales.PaymentCapturedEvent;
 import com.fern.events.sales.SaleApprovedEvent;
 import com.fern.events.sales.SaleCancelledEvent;
 import com.fern.events.sales.SaleCompletedEvent;
 import com.fern.events.sales.SaleCompletedLineItem;
-import com.dorabets.common.spring.web.PagedResult;
-import com.dorabets.common.spring.web.QueryConventions;
+import com.fern.common.spring.web.PagedResult;
+import com.fern.common.spring.web.QueryConventions;
 import com.fern.services.sales.api.CrmDtos;
 import com.fern.services.sales.api.PublicPosDtos;
 import com.fern.services.sales.api.SalesDtos;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.Connection;
@@ -557,20 +559,33 @@ public class SalesRepository extends BaseRepository {
       PublicPosDtos.CreatePublicOrderRequest request,
       LocalDate businessDate
   ) {
+    return submitPublicOrder(table, request, businessDate, java.util.Map.of());
+  }
+
+  public CreatedPublicOrder submitPublicOrder(
+      PublicOrderingTableRecord table,
+      PublicPosDtos.CreatePublicOrderRequest request,
+      LocalDate businessDate,
+      java.util.Map<Long, BigDecimal> discountByProductId
+  ) {
     return executeInTransaction(conn -> {
       validatePublicOrderItems(conn, table.outletId(), businessDate, request.items());
       List<SalesDtos.SaleLineRequest> lines = request.items().stream()
-          .map(item -> new SalesDtos.SaleLineRequest(
-              parsePublicProductId(item.productId()),
-              item.quantity(),
-              BigDecimal.ZERO,
-              BigDecimal.ZERO,
-              trimToNull(item.note()),
-              Set.of(),
-              null,
-              null,
-              null
-          ))
+          .map(item -> {
+            long productId = parsePublicProductId(item.productId());
+            BigDecimal discount = discountByProductId.getOrDefault(productId, BigDecimal.ZERO);
+            return new SalesDtos.SaleLineRequest(
+                productId,
+                item.quantity(),
+                discount,
+                BigDecimal.ZERO,
+                trimToNull(item.note()),
+                Set.of(),
+                null,
+                null,
+                null
+            );
+          })
           .toList();
       String orderToken = "ord_" + UUID.randomUUID().toString().replace("-", "");
       SalesDtos.SaleView sale = submitSale(conn, new SalesDtos.SubmitSaleRequest(
@@ -847,11 +862,17 @@ public class SalesRepository extends BaseRepository {
       Long effectiveSessionId = lockedSale.posSessionId();
       if (effectiveSessionId == null) {
         // Public/QR orders are created without a session. Link to the outlet's current open session at approval time
-        // so session revenue aggregates include them.
-        effectiveSessionId = findOpenPosSessionIdForOutlet(conn, lockedSale.outletId())
-            .orElseThrow(() -> ServiceException.conflict(
-                "No open POS session for outlet " + lockedSale.outletId()
-                    + " — open a session before approving customer orders"));
+        // so session revenue aggregates include them. Multi-terminal: scope by deviceId when caller is a terminal
+        // so the order attributes to the right session.
+        RequestUserContext context = RequestUserContextHolder.get();
+        Long deviceId = context == null ? null : context.deviceId();
+        Optional<Long> sessionLookup = deviceId != null
+            ? findOpenPosSessionIdForOutletAndDeviceTx(conn, lockedSale.outletId(), deviceId)
+            : findOpenPosSessionIdForOutlet(conn, lockedSale.outletId());
+        effectiveSessionId = sessionLookup.orElseThrow(() -> ServiceException.conflict(
+            "No open POS session for outlet " + lockedSale.outletId()
+                + (deviceId != null ? " device " + deviceId : "")
+                + " — open a session before approving customer orders"));
       }
       Map<Long, AggregatedSaleLine> aggregatedLines = loadSaleLinesForInventory(conn, saleId, lockedSale.createdAt());
       InventoryPlan plan = buildInventoryPlan(conn, lockedSale.outletId(), aggregatedLines, true);
@@ -995,6 +1016,32 @@ public class SalesRepository extends BaseRepository {
         """
     )) {
       ps.setLong(1, outletId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) return Optional.of(rs.getLong(1));
+        return Optional.empty();
+      }
+    }
+  }
+
+  // Scoped lookup for multi-terminal outlets — picks the open session belonging to a specific device.
+  // Use when an order originates from a known terminal so revenue is attributed to the right session.
+  public Optional<Long> findOpenPosSessionIdForOutletAndDevice(long outletId, long deviceId) {
+    return executeInTransaction(conn -> findOpenPosSessionIdForOutletAndDeviceTx(conn, outletId, deviceId));
+  }
+
+  Optional<Long> findOpenPosSessionIdForOutletAndDeviceTx(Connection conn, long outletId, long deviceId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT id FROM core.pos_session
+        WHERE outlet_id = ?
+          AND device_id = ?
+          AND status = 'open'::pos_session_status_enum
+        ORDER BY opened_at DESC
+        LIMIT 1
+        """
+    )) {
+      ps.setLong(1, outletId);
+      ps.setLong(2, deviceId);
       try (ResultSet rs = ps.executeQuery()) {
         if (rs.next()) return Optional.of(rs.getLong(1));
         return Optional.empty();
@@ -3973,5 +4020,56 @@ public class SalesRepository extends BaseRepository {
 
   private static BigDecimal nullSafe(BigDecimal value) {
     return value == null ? BigDecimal.ZERO : value;
+  }
+
+  public List<ActivePromotionRow> findActivePromotionsForOutlet(long outletId, java.time.Instant now) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          SELECT p.id, p.name, p.promo_type::text AS promo_type,
+                 p.value_amount, p.value_percent,
+                 p.min_order_amount, p.max_discount_amount,
+                 p.effective_from, p.effective_to
+          FROM core.promotion p
+          WHERE p.status = 'active'::promo_status_enum
+            AND p.effective_from <= ?
+            AND (p.effective_to IS NULL OR p.effective_to >= ?)
+            AND (
+              NOT EXISTS (SELECT 1 FROM core.promotion_scope ps WHERE ps.promotion_id = p.id)
+              OR EXISTS (SELECT 1 FROM core.promotion_scope ps WHERE ps.promotion_id = p.id AND ps.outlet_id = ?)
+            )
+          """
+      )) {
+        ps.setObject(1, now);
+        ps.setObject(2, now);
+        ps.setLong(3, outletId);
+        try (ResultSet rs = ps.executeQuery()) {
+          List<ActivePromotionRow> rows = new ArrayList<>();
+          while (rs.next()) {
+            rows.add(new ActivePromotionRow(
+                rs.getLong("id"),
+                rs.getString("name"),
+                rs.getString("promo_type"),
+                rs.getBigDecimal("value_amount"),
+                rs.getBigDecimal("value_percent"),
+                rs.getBigDecimal("min_order_amount"),
+                rs.getBigDecimal("max_discount_amount")
+            ));
+          }
+          return rows;
+        }
+      }
+    });
+  }
+
+  public record ActivePromotionRow(
+      long id,
+      String name,
+      String promoType,
+      BigDecimal valueAmount,
+      BigDecimal valuePercent,
+      BigDecimal minOrderAmount,
+      BigDecimal maxDiscountAmount
+  ) {
   }
 }

@@ -1,6 +1,6 @@
 package com.fern.services.payroll.application;
 
-import com.dorabets.common.middleware.ServiceException;
+import com.fern.common.middleware.ServiceException;
 import com.fern.services.payroll.api.PayrollDtos;
 import com.fern.services.payroll.infrastructure.PayrollRepository;
 import java.math.BigDecimal;
@@ -43,7 +43,7 @@ public class SalaryCalculator {
    * @param timesheet         the payroll timesheet record with aggregated work data
    * @param requestCurrencyCode the currency requested by the caller (must match contract currency)
    * @return a {@link PayrollDtos.CalculateSalaryResult} with netSalary and itemised breakdown
-   * @throws com.dorabets.common.spring.error.ServiceException if currencies mismatch
+   * @throws com.fern.common.spring.error.ServiceException if currencies mismatch
    */
   public PayrollDtos.CalculateSalaryResult calculate(
       PayrollDtos.EmployeeContractSummary contract,

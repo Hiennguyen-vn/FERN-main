@@ -1,8 +1,8 @@
 package com.fern.gateway.ws;
 
-import com.dorabets.common.spring.auth.DeviceTokenRegistry;
-import com.dorabets.common.spring.auth.JwtClaims;
-import com.dorabets.common.spring.auth.JwtTokenService;
+import com.fern.common.spring.auth.DeviceTokenRegistry;
+import com.fern.common.spring.auth.JwtClaims;
+import com.fern.common.spring.auth.JwtTokenService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.reactive.socket.WebSocketHandler;

@@ -1,14 +1,14 @@
 package com.fern.services.auth.spring.application;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.JwtTokenService;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.JwtTokenService;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.services.auth.spring.api.AuthDtos;
 import com.fern.services.auth.spring.infrastructure.DeviceRepository;
 import com.fern.services.auth.spring.infrastructure.DeviceRepository.DeviceRecord;
 import com.fern.services.auth.spring.infrastructure.DeviceRepository.PairTokenRecord;
-import com.natsu.common.utils.security.TokenUtil;
+import com.fern.common.utils.security.TokenUtil;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;

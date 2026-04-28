@@ -5,19 +5,19 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.spring.auth.AuthorizationPolicyService;
-import com.dorabets.common.spring.auth.BusinessScopeAssignment;
-import com.dorabets.common.spring.auth.BusinessUserProfile;
-import com.dorabets.common.spring.auth.CanonicalRole;
-import com.dorabets.common.spring.auth.PermissionMatrixService;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
-import com.dorabets.common.spring.auth.ScopeType;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.spring.auth.BusinessScopeAssignment;
+import com.fern.common.spring.auth.BusinessUserProfile;
+import com.fern.common.spring.auth.CanonicalRole;
+import com.fern.common.spring.auth.PermissionMatrixService;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.auth.ScopeType;
 import com.fern.services.hr.api.ShiftDto;
 import com.fern.services.hr.infrastructure.ShiftRepository;
 import com.fern.services.hr.infrastructure.ShiftRoleRequirementRepository;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.util.List;
@@ -154,9 +154,9 @@ class ShiftServiceTest {
     , null, null));
     when(authorizationPolicyService.resolveUserProfile(9L))
         .thenReturn(profile(9L, assignment(CanonicalRole.OUTLET_MANAGER, 10L)));
-    when(permissionMatrixService.load(9L)).thenReturn(new com.dorabets.common.spring.auth.PermissionMatrix(9L, java.util.Map.of(), java.util.Map.of()));
+    when(permissionMatrixService.load(9L)).thenReturn(new com.fern.common.spring.auth.PermissionMatrix(9L, java.util.Map.of(), java.util.Map.of()));
     when(shiftRepository.findByOutletId(null, Set.of(10L), null, null, null, 20, 0))
-        .thenReturn(com.dorabets.common.spring.web.PagedResult.of(List.of(), 20, 0, 0));
+        .thenReturn(com.fern.common.spring.web.PagedResult.of(List.of(), 20, 0, 0));
     when(roleRequirementRepository.findByShiftIds(List.of())).thenReturn(List.of());
 
     ShiftService service = new ShiftService(

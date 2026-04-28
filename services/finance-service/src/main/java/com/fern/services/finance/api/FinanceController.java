@@ -1,6 +1,6 @@
 package com.fern.services.finance.api;
 
-import com.dorabets.common.spring.web.PagedResult;
+import com.fern.common.spring.web.PagedResult;
 import com.fern.services.finance.application.FinanceService;
 import jakarta.validation.Valid;
 import java.time.LocalDate;

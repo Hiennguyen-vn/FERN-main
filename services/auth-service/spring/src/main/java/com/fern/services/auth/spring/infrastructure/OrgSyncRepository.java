@@ -1,7 +1,7 @@
 package com.fern.services.auth.spring.infrastructure;
 
-import com.dorabets.common.repository.BaseRepository;
-import com.dorabets.common.spring.auth.CanonicalRole;
+import com.fern.common.repository.BaseRepository;
+import com.fern.common.spring.auth.CanonicalRole;
 import java.sql.Array;
 import java.sql.Connection;
 import java.sql.PreparedStatement;

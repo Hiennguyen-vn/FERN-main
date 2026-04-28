@@ -1,6 +1,6 @@
 package com.fern.services.procurement.api;
 
-import com.dorabets.common.spring.web.PagedResult;
+import com.fern.common.spring.web.PagedResult;
 import com.fern.services.procurement.application.SupplierPaymentService;
 import jakarta.validation.Valid;
 import java.time.Instant;

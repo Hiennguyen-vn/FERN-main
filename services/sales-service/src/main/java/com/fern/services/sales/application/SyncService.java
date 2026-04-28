@@ -1,17 +1,17 @@
 package com.fern.services.sales.application;
 
-import com.dorabets.common.middleware.ServiceException;
-import com.dorabets.common.outbox.OutboxWriter;
-import com.dorabets.common.repository.BaseRepository;
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.outbox.OutboxWriter;
+import com.fern.common.repository.BaseRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.dorabets.common.spring.auth.RequestUserContext;
-import com.dorabets.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.services.sales.api.SyncDtos;
 import com.fern.services.sales.api.SyncDtos.CatalogRow;
 import com.fern.services.sales.api.SyncDtos.RecipeComponentRow;
 import com.fern.services.sales.api.SyncDtos.RecipeRow;
 import com.fern.services.sales.api.SyncDtos.StockRow;
-import com.natsu.common.utils.services.id.SnowflakeIdGenerator;
+import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import javax.sql.DataSource;
 import java.math.BigDecimal;
 import java.security.MessageDigest;
@@ -29,6 +29,8 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class SyncService extends BaseRepository {
+
+    static final String PAYMENT_BEFORE_APPROVAL_REJECTION = "Only approved orders can be marked as payment done";
 
     private final SalesService salesService;
     private final PosMetrics posMetrics;
@@ -514,13 +516,15 @@ public class SyncService extends BaseRepository {
         return new SyncDtos.PushResponse(accepted, rejected);
     }
 
-    private static boolean isRetryableSyncFailure(String reason) {
+    static boolean isRetryableSyncFailure(String reason) {
         if (reason == null || reason.isBlank()) return false;
-        return reason.startsWith("Transaction failed")
-            || reason.startsWith("Query failed:")
-            || reason.startsWith("Execute failed:")
-            || reason.contains("Connection")
-            || reason.contains("timeout");
+        String normalized = reason.trim();
+        return PAYMENT_BEFORE_APPROVAL_REJECTION.equals(normalized)
+            || normalized.startsWith("Transaction failed")
+            || normalized.startsWith("Query failed:")
+            || normalized.startsWith("Execute failed:")
+            || normalized.contains("Connection")
+            || normalized.contains("timeout");
     }
 
     private record ProcessedEventLookup(String resultStatus, String rejectedReason) {}
@@ -756,8 +760,109 @@ public class SyncService extends BaseRepository {
             case "pos.inventory.adjusted" -> {
                 throw ServiceException.conflict("Offline inventory adjustment must be synced through inventory-service");
             }
+            case "pos.inventory.stock-in.recorded" -> {
+                Map<String, Object> p = (Map<String, Object>) event.payload();
+                appendStockInRecorded(p);
+            }
+            case "pos.inventory.waste.recorded" -> {
+                Map<String, Object> p = (Map<String, Object>) event.payload();
+                appendWasteRecorded(p);
+            }
             default -> throw ServiceException.badRequest("Unknown event type: " + event.type());
         }
+    }
+
+    private void appendStockInRecorded(Map<String, Object> payload) {
+        String sourceEventId = requireText(payloadValue(payload, "event_id", "eventId", "source_event_id", "sourceEventId"), "event_id");
+        String type = requireText(payload.get("type"), "type");
+        if (!"STOCK_IN_SIMPLE".equals(type)) {
+            throw ServiceException.badRequest("Unsupported inventory movement type: " + type);
+        }
+        long outletId = toLong(payloadValue(payload, "outlet_id", "outletId"));
+        long itemId = toLong(payloadValue(payload, "item_id", "itemId"));
+        BigDecimal quantity = toBigDecimal(payload.get("quantity"));
+        if (quantity.compareTo(BigDecimal.ZERO) <= 0) {
+            throw ServiceException.badRequest("stock-in quantity must be positive");
+        }
+        requireText(payload.get("reason"), "reason");
+        requireText(payload.get("note"), "note");
+        requireText(payloadValue(payload, "actor_user_id", "actorUserId"), "actor_user_id");
+        requireText(payloadValue(payload, "pos_session_id", "posSessionId"), "pos_session_id");
+        requireText(payloadValue(payload, "terminal_id", "terminalId", "register_code", "registerCode"), "terminal_id");
+        requireText(payloadValue(payload, "created_at_device", "createdAtDevice"), "created_at_device");
+
+        RequestUserContext ctx = RequestUserContextHolder.get();
+        Long payloadDeviceId = optionalLong(payloadValue(payload, "device_id", "deviceId"));
+        if (payloadDeviceId == null) {
+            throw ServiceException.badRequest("device_id is required");
+        }
+        if (ctx.isDeviceContext()) {
+            if (ctx.deviceOutletId() != outletId) {
+                throw ServiceException.forbidden("Device cannot push stock-in for another outlet");
+            }
+            if (payloadDeviceId != null && !payloadDeviceId.equals(ctx.deviceId())) {
+                throw ServiceException.forbidden("Device JWT does not match stock-in payload device_id");
+            }
+        }
+
+        executeInTransaction(conn -> {
+            outboxWriter.append(
+                conn,
+                "inventory.stock-in.recorded",
+                toLong(sourceEventId),
+                "fern.inventory.stock-in-recorded",
+                sourceEventId,
+                payload
+            );
+            return null;
+        });
+        posMetrics.recordSyncPushEvent("pos.inventory.stock-in.recorded", "queued_inventory_outbox");
+    }
+
+    private void appendWasteRecorded(Map<String, Object> payload) {
+        String sourceEventId = requireText(payloadValue(payload, "event_id", "eventId", "source_event_id", "sourceEventId"), "event_id");
+        String type = requireText(payloadValue(payload, "movement_type", "movementType", "type"), "movement_type");
+        if (!"WASTE".equals(type)) {
+            throw ServiceException.badRequest("Unsupported inventory movement type: " + type);
+        }
+        long outletId = toLong(payloadValue(payload, "outlet_id", "outletId"));
+        long itemId = toLong(payloadValue(payload, "item_id", "itemId"));
+        BigDecimal quantity = toBigDecimal(payload.get("quantity"));
+        if (quantity.compareTo(BigDecimal.ZERO) <= 0) {
+            throw ServiceException.badRequest("waste quantity must be positive");
+        }
+        requireText(payload.get("reason"), "reason");
+        requireText(payloadValue(payload, "actor_user_id", "actorUserId"), "actor_user_id");
+        requireText(payloadValue(payload, "pos_session_id", "posSessionId"), "pos_session_id");
+        requireText(payloadValue(payload, "terminal_id", "terminalId", "register_code", "registerCode"), "terminal_id");
+        requireText(payloadValue(payload, "created_at_device", "createdAtDevice"), "created_at_device");
+
+        RequestUserContext ctx = RequestUserContextHolder.get();
+        Long payloadDeviceId = optionalLong(payloadValue(payload, "device_id", "deviceId"));
+        if (payloadDeviceId == null) {
+            throw ServiceException.badRequest("device_id is required");
+        }
+        if (ctx.isDeviceContext()) {
+            if (ctx.deviceOutletId() != outletId) {
+                throw ServiceException.forbidden("Device cannot push waste for another outlet");
+            }
+            if (payloadDeviceId != null && !payloadDeviceId.equals(ctx.deviceId())) {
+                throw ServiceException.forbidden("Device JWT does not match waste payload device_id");
+            }
+        }
+
+        executeInTransaction(conn -> {
+            outboxWriter.append(
+                conn,
+                "inventory.waste.recorded",
+                toLong(sourceEventId),
+                "fern.inventory.waste-recorded",
+                sourceEventId,
+                payload
+            );
+            return null;
+        });
+        posMetrics.recordSyncPushEvent("pos.inventory.waste.recorded", "queued_inventory_outbox");
     }
 
     private void appendPosAuditRecorded(SyncDtos.PushEvent event, Map<String, Object> payload) {
@@ -780,6 +885,21 @@ public class SyncService extends BaseRepository {
         return Long.parseLong(String.valueOf(v));
     }
 
+    private static Long optionalLong(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.longValue();
+        String raw = String.valueOf(v);
+        if (raw == null || raw.isBlank() || "null".equalsIgnoreCase(raw)) return null;
+        return Long.parseLong(raw);
+    }
+
+    private static String requireText(Object value, String fieldName) {
+        if (value == null || String.valueOf(value).isBlank()) {
+            throw ServiceException.badRequest(fieldName + " is required");
+        }
+        return String.valueOf(value);
+    }
+
     private static BigDecimal toBigDecimal(Object v) {
         return SalesService.toBigDecimal(v);
     }
@@ -788,7 +908,15 @@ public class SyncService extends BaseRepository {
         return SalesService.toStr(v, defaultValue);
     }
 
-    private static Object payloadValue(Map<String, Object> payload, String snakeCase, String camelCase) {
-        return SalesService.payloadValue(payload, snakeCase, camelCase);
+    private static Object payloadValue(Map<String, Object> payload, String firstKey, String... otherKeys) {
+        if (payload.containsKey(firstKey)) {
+            return payload.get(firstKey);
+        }
+        for (String key : otherKeys) {
+            if (payload.containsKey(key)) {
+                return payload.get(key);
+            }
+        }
+        return null;
     }
 }
