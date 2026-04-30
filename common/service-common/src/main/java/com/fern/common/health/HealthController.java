@@ -1,7 +1,8 @@
 package com.fern.common.health;
 
 import io.javalin.Javalin;
-import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.util.Pool;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -12,9 +13,9 @@ public class HealthController {
 
     private final String serviceName;
     private final DataSource dataSource;
-    private final JedisPool redisPool;
+    private final Pool<Jedis> redisPool;
 
-    public HealthController(String serviceName, DataSource dataSource, JedisPool redisPool) {
+    public HealthController(String serviceName, DataSource dataSource, Pool<Jedis> redisPool) {
         this.serviceName = serviceName;
         this.dataSource = dataSource;
         this.redisPool = redisPool;

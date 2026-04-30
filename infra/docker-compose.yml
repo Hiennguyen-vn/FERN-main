@@ -1,3 +1,19 @@
+x-kafka-common-env: &kafka-common-env
+  KAFKA_HEAP_OPTS: "-Xms256M -Xmx384M"
+  KAFKA_PROCESS_ROLES: broker,controller
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093,2@kafka-2:29093,3@kafka-3:29093
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+  KAFKA_NUM_PARTITIONS: 12
+  CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+
 services:
   postgres:
     build:
@@ -64,8 +80,61 @@ services:
       timeout: 5s
       retries: 5
 
+  pgbouncer-1:
+    image: edoburu/pgbouncer:v1.23.1-p3
+    hostname: pgbouncer-1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U ${POSTGRES_APP_USER:-fern_app} >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgbouncer-2:
+    image: edoburu/pgbouncer:v1.23.1-p3
+    hostname: pgbouncer-2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U ${POSTGRES_APP_USER:-fern_app} >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgbouncer-lb:
+    image: haproxy:2.9-alpine
+    hostname: pgbouncer-lb
+    restart: unless-stopped
+    depends_on:
+      pgbouncer-1:
+        condition: service_healthy
+      pgbouncer-2:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PGBOUNCER_PORT:-6432}:6432"
+      - "127.0.0.1:${PGBOUNCER_STATS_PORT:-8404}:8404"
+    volumes:
+      - ./pgbouncer-lb/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8404/stats >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
   redis:
     image: redis:7-alpine
+    hostname: redis
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
@@ -78,32 +147,139 @@ services:
       timeout: 5s
       retries: 5
 
+  redis-replica-1:
+    image: redis:7-alpine
+    hostname: redis-replica-1
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - redis-replica-1-data:/data
+      - ./redis/redis-replica.conf:/usr/local/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-replica-2:
+    image: redis:7-alpine
+    hostname: redis-replica-2
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - redis-replica-2-data:/data
+      - ./redis/redis-replica.conf:/usr/local/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-sentinel-1:
+    image: redis:7-alpine
+    hostname: redis-sentinel-1
+    command: ["redis-sentinel", "/usr/local/etc/redis/sentinel.conf"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./redis/sentinel.conf:/usr/local/etc/redis/sentinel.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-sentinel-2:
+    image: redis:7-alpine
+    hostname: redis-sentinel-2
+    command: ["redis-sentinel", "/usr/local/etc/redis/sentinel.conf"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./redis/sentinel.conf:/usr/local/etc/redis/sentinel.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-sentinel-3:
+    image: redis:7-alpine
+    hostname: redis-sentinel-3
+    command: ["redis-sentinel", "/usr/local/etc/redis/sentinel.conf"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./redis/sentinel.conf:/usr/local/etc/redis/sentinel.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   kafka:
     image: confluentinc/cp-kafka:7.8.0
+    hostname: kafka
+    mem_limit: 700m
     environment:
+      <<: *kafka-common-env
       KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://kafka:29093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-9092}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_NUM_PARTITIONS: 12
-      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
     ports:
       - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
     volumes:
       - kafka-data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "/usr/bin/kafka-topics --bootstrap-server kafka:29092 --list >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "/usr/bin/kafka-broker-api-versions --bootstrap-server kafka:29092 >/dev/null 2>&1"]
       interval: 15s
       timeout: 10s
-      retries: 8
+      retries: 10
+
+  kafka-2:
+    image: confluentinc/cp-kafka:7.8.0
+    hostname: kafka-2
+    mem_limit: 700m
+    environment:
+      <<: *kafka-common-env
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: PLAINTEXT://kafka-2:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://kafka-2:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT_2:-9094}
+    ports:
+      - "127.0.0.1:${KAFKA_PORT_2:-9094}:9092"
+    volumes:
+      - kafka-2-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/bin/kafka-broker-api-versions --bootstrap-server kafka-2:29092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  kafka-3:
+    image: confluentinc/cp-kafka:7.8.0
+    hostname: kafka-3
+    mem_limit: 700m
+    environment:
+      <<: *kafka-common-env
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENERS: PLAINTEXT://kafka-3:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://kafka-3:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT_3:-9095}
+    ports:
+      - "127.0.0.1:${KAFKA_PORT_3:-9095}:9092"
+    volumes:
+      - kafka-3-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/bin/kafka-broker-api-versions --bootstrap-server kafka-3:29092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
 
   master-node:
     build:
@@ -112,8 +288,10 @@ services:
       args:
         MODULE_PATH: services/master-node
     restart: unless-stopped
+    mem_limit: 384m
     environment: &service-env
-      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-fern}
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss256k"
+      DB_URL: ${DB_URL:-jdbc:postgresql://postgres:5432/${POSTGRES_DB:-fern}}
       DB_REPLICA_URL: jdbc:postgresql://postgres-replica:5432/${POSTGRES_DB:-fern}
       POSTGRES_USER: ${POSTGRES_USER:-fern}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fern}
@@ -121,8 +299,10 @@ services:
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-fern_app}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      KAFKA_BOOTSTRAP: kafka:29092
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP:-kafka:29092}
+      DEPENDENCIES_REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-fern-master}
+      DEPENDENCIES_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+      KAFKA_BOOTSTRAP: kafka:29092,kafka-2:29092,kafka-3:29092
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP:-kafka:29092,kafka-2:29092,kafka-3:29092}
       MASTER_NODE_URL: http://master-node:8082
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
@@ -151,14 +331,16 @@ services:
       context: ..
       dockerfile: infra/docker/Dockerfile.gateway
     restart: unless-stopped
-    environment:
-      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-fern}
+    environment: &gateway-env
+      DB_URL: ${DB_URL:-jdbc:postgresql://postgres:5432/${POSTGRES_DB:-fern}}
       DB_REPLICA_URL: jdbc:postgresql://postgres-replica:5432/${POSTGRES_DB:-fern}
       POSTGRES_USER: ${POSTGRES_USER:-fern}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fern}
       POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-core}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-fern-master}
+      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
       MASTER_NODE_URL: http://master-node:8082
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set}
       AUTH_SERVICE_URL: http://auth-service:8081
@@ -172,7 +354,7 @@ services:
       FINANCE_SERVICE_URL: http://finance-service:8090
       AUDIT_SERVICE_URL: http://audit-service:8091
       REPORT_SERVICE_URL: http://report-service:8092
-      KAFKA_BOOTSTRAP: kafka:29092
+      KAFKA_BOOTSTRAP: kafka:29092,kafka-2:29092,kafka-3:29092
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       SYNC_WS_OUTLET_IDS: ${SYNC_WS_OUTLET_IDS:-1,2,3,4,5}
       AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-dorabets_session}
@@ -184,10 +366,43 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health/live >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  gateway-2:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.gateway
+    restart: unless-stopped
+    environment: *gateway-env
+    depends_on:
+      master-node:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health/live >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  gateway-lb:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+      gateway-2:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
+    volumes:
+      - ./gateway-lb/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/lb/health >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -199,6 +414,7 @@ services:
       args:
         MODULE_PATH: services/auth-service/spring
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       <<: *service-env
       SERVER_PORT: 8081
@@ -220,6 +436,7 @@ services:
       args:
         MODULE_PATH: services/org-service
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       <<: *service-env
       SERVER_PORT: 8083
@@ -241,6 +458,7 @@ services:
       args:
         MODULE_PATH: services/hr-service
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       <<: *service-env
       SERVER_PORT: 8084
@@ -262,6 +480,7 @@ services:
       args:
         MODULE_PATH: services/product-service
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       <<: *service-env
       SERVER_PORT: 8085
@@ -291,6 +510,7 @@ services:
       args:
         MODULE_PATH: services/procurement-service
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       <<: *service-env
       SERVER_PORT: 8086
@@ -312,6 +532,7 @@ services:
       args:
         MODULE_PATH: services/sales-service
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       <<: *service-env
       SERVER_PORT: 8087
@@ -333,6 +554,7 @@ services:
       args:
         MODULE_PATH: services/inventory-service
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       <<: *service-env
       SERVER_PORT: 8088
@@ -354,6 +576,7 @@ services:
       args:
         MODULE_PATH: services/payroll-service
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       <<: *service-env
       SERVER_PORT: 8089
@@ -375,6 +598,7 @@ services:
       args:
         MODULE_PATH: services/finance-service
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       <<: *service-env
       SERVER_PORT: 8090
@@ -404,6 +628,7 @@ services:
       args:
         MODULE_PATH: services/audit-service
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       <<: *service-env
       SERVER_PORT: 8091
@@ -425,6 +650,7 @@ services:
       args:
         MODULE_PATH: services/report-service
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       <<: *service-env
       SERVER_PORT: 8092
@@ -475,6 +701,7 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.1
+    profiles: ["analytics"]
     ports:
       - "127.0.0.1:${CLICKHOUSE_HTTP_PORT:-8123}:8123"
       - "127.0.0.1:${CLICKHOUSE_NATIVE_PORT:-9100}:9000"
@@ -494,22 +721,23 @@ services:
 
   kafka-connect:
     image: confluentinc/cp-kafka-connect:7.6.0
+    profiles: ["cdc"]
     depends_on:
       kafka:
         condition: service_healthy
       postgres:
         condition: service_healthy
     environment:
-      CONNECT_BOOTSTRAP_SERVERS: kafka:29092
+      CONNECT_BOOTSTRAP_SERVERS: kafka:29092,kafka-2:29092,kafka-3:29092
       CONNECT_REST_PORT: 8083
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
       CONNECT_GROUP_ID: fern-connect-group
       CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
       CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
       CONNECT_STATUS_STORAGE_TOPIC: _connect-status
-      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 3
       CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
@@ -530,29 +758,33 @@ services:
         /bin/sh /register-connectors.sh || true
         wait
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8083/connectors >/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 10
 
   opensearch:
     image: opensearchproject/opensearch:2.12.0
+    profiles: ["search"]
+    mem_limit: 1g
     environment:
       discovery.type: single-node
-      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      OPENSEARCH_JAVA_OPTS: "-Xms384m -Xmx384m"
       DISABLE_SECURITY_PLUGIN: "true"
+      bootstrap.memory_lock: "false"
     ports:
       - "127.0.0.1:${OPENSEARCH_PORT:-9200}:9200"
     volumes:
       - opensearch-data:/usr/share/opensearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9200/_cluster/health >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
 
   opensearch-dashboards:
     image: opensearchproject/opensearch-dashboards:2.12.0
+    profiles: ["search"]
     depends_on:
       opensearch:
         condition: service_healthy
@@ -573,6 +805,7 @@ services:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts:/etc/prometheus/alerts:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready >/dev/null || exit 1"]
       interval: 15s
@@ -597,7 +830,8 @@ services:
       retries: 5
 
   jaeger:
-    image: jaegertracing/all-in-one:1.62
+    image: jaegertracing/all-in-one:1.63.0
+    profiles: ["tracing"]
     ports:
       - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
       - "127.0.0.1:${JAEGER_OTLP_GRPC_PORT:-4317}:4317"
@@ -607,6 +841,98 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ >/dev/null || exit 1"]
       interval: 15s
+      timeout: 5s
+      retries: 5
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-fern}:${POSTGRES_PASSWORD:-fern}@postgres:5432/${POSTGRES_DB:-fern}?sslmode=disable"
+      PG_EXPORTER_AUTO_DISCOVER_DATABASES: "false"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9187/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  postgres-replica-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    restart: unless-stopped
+    depends_on:
+      postgres-replica:
+        condition: service_healthy
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-fern}:${POSTGRES_PASSWORD:-fern}@postgres-replica:5432/${POSTGRES_DB:-fern}?sslmode=disable"
+      PG_EXPORTER_AUTO_DISCOVER_DATABASES: "false"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9187/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.66.0-alpine
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9121/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  redis-replica-1-exporter:
+    image: oliver006/redis_exporter:v1.66.0-alpine
+    restart: unless-stopped
+    depends_on:
+      redis-replica-1:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: "redis://redis-replica-1:6379"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9121/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  redis-replica-2-exporter:
+    image: oliver006/redis_exporter:v1.66.0-alpine
+    restart: unless-stopped
+    depends_on:
+      redis-replica-2:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: "redis://redis-replica-2:6379"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9121/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.8.0
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+    command:
+      - "--kafka.server=kafka:29092"
+      - "--kafka.server=kafka-2:29092"
+      - "--kafka.server=kafka-3:29092"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9308/metrics >/dev/null || exit 1"]
+      interval: 30s
       timeout: 5s
       retries: 5
 
@@ -664,7 +990,11 @@ volumes:
   postgres-primary-data:
   postgres-replica-data:
   redis-data:
+  redis-replica-1-data:
+  redis-replica-2-data:
   kafka-data:
+  kafka-2-data:
+  kafka-3-data:
   minio-data:
   clickhouse-data:
   opensearch-data:

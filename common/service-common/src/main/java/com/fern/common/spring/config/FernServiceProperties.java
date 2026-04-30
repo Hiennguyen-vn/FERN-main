@@ -90,6 +90,8 @@ public class FernServiceProperties {
     private int port = 6379;
     private int timeoutMillis = 2_000;
     private String password = "";
+    private String sentinelMaster = "";
+    private String sentinelNodes = "";
 
     public String getHost() {
       return host;
@@ -121,6 +123,22 @@ public class FernServiceProperties {
 
     public void setPassword(String password) {
       this.password = password;
+    }
+
+    public String getSentinelMaster() {
+      return sentinelMaster;
+    }
+
+    public void setSentinelMaster(String sentinelMaster) {
+      this.sentinelMaster = sentinelMaster;
+    }
+
+    public String getSentinelNodes() {
+      return sentinelNodes;
+    }
+
+    public void setSentinelNodes(String sentinelNodes) {
+      this.sentinelNodes = sentinelNodes;
     }
   }
 

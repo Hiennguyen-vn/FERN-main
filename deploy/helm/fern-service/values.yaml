@@ -1,0 +1,54 @@
+# Default values for any FERN service. Override per-service via Helm values file.
+serviceName: example-service
+image:
+  repository: fern/example-service
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+ports:
+  http: 8080
+  metrics: 8080
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 384Mi
+  limits:
+    cpu: 1000m
+    memory: 768Mi
+
+probes:
+  readiness:
+    path: /actuator/health/readiness
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    failureThreshold: 6
+  liveness:
+    path: /actuator/health/liveness
+    initialDelaySeconds: 60
+    periodSeconds: 20
+    failureThreshold: 5
+
+# Anti-affinity: best-effort spread across nodes; required spread across AZ.
+affinity:
+  preferDifferentNode: true
+  requireDifferentZone: true
+
+env: {}
+envFrom: []
+
+# Graceful shutdown for in-flight request drain.
+terminationGracePeriodSeconds: 45
+preStopSleepSeconds: 10
+
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  type: ClusterIP

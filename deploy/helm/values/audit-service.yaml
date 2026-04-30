@@ -1,0 +1,21 @@
+serviceName: audit-service
+image:
+  repository: fern/audit-service
+  tag: 0.1.0
+ports:
+  http: 8091
+replicaCount: 2
+resources:
+  requests:
+    cpu: 200m
+    memory: 384Mi
+  limits:
+    cpu: 1000m
+    memory: 768Mi
+env:
+  SERVER_PORT: "8091"
+envFrom:
+  - configMapRef:
+      name: fern-shared-config
+  - secretRef:
+      name: fern-shared-secrets

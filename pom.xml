@@ -57,6 +57,7 @@
     <testcontainers.version>1.20.4</testcontainers.version>
     <flyway.version>10.20.1</flyway.version>
     <resilience4j.version>2.2.0</resilience4j.version>
+    <shedlock.version>5.16.0</shedlock.version>
     <opentelemetry.version>1.43.0</opentelemetry.version>
     <spring.cloud.vault.version>4.2.0</spring.cloud.vault.version>
     <argLine></argLine>
@@ -116,6 +117,18 @@
         <groupId>io.github.resilience4j</groupId>
         <artifactId>resilience4j-micrometer</artifactId>
         <version>${resilience4j.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-spring</artifactId>
+        <version>${shedlock.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-jdbc-template</artifactId>
+        <version>${shedlock.version}</version>
       </dependency>
 
       <dependency>

@@ -2,6 +2,7 @@ package com.fern.services.sales.application;
 
 import com.fern.common.repository.BaseRepository;
 import javax.sql.DataSource;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,6 +33,7 @@ public class IdempotencyCacheCleanupJob extends BaseRepository {
         fixedDelayString = "${fern.cache.idempotency-cleanup-ms:3600000}",
         initialDelayString = "${fern.cache.idempotency-cleanup-initial-delay-ms:60000}"
     )
+    @SchedulerLock(name = "idempotency-cache-cleanup", lockAtMostFor = "PT15M", lockAtLeastFor = "PT30S")
     public void cleanupExpired() {
         try {
             int deleted = 0;

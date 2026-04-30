@@ -2,6 +2,7 @@ package com.fern.services.sales.application;
 
 import com.fern.common.repository.BaseRepository;
 import javax.sql.DataSource;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -18,6 +19,7 @@ public class PartmanMaintenanceJob extends BaseRepository {
 
     // 3AM daily — runs partman maintenance: creates future partitions, drops expired ones.
     @Scheduled(cron = "0 0 3 * * *")
+    @SchedulerLock(name = "partman-maintenance", lockAtMostFor = "PT30M", lockAtLeastFor = "PT1M")
     public void runMaintenance() {
         try {
             executeInTransaction(conn -> {

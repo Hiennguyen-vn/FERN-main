@@ -1,5 +1,6 @@
 package com.fern.services.masternode.application;
 
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -16,6 +17,7 @@ public class ControlPlaneSweepScheduler {
       initialDelayString = "#{${fern.control.heartbeatIntervalSeconds:${dependencies.masterNode.heartbeatIntervalSeconds:10}} * 1000}",
       fixedDelayString = "#{${fern.control.heartbeatIntervalSeconds:${dependencies.masterNode.heartbeatIntervalSeconds:10}} * 1000}"
   )
+  @SchedulerLock(name = "control-plane-prune-expired", lockAtMostFor = "PT1M", lockAtLeastFor = "PT5S")
   public void pruneExpiredInstances() {
     registryService.pruneExpiredInstances();
   }

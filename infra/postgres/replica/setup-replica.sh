@@ -81,6 +81,8 @@ fi
 
 upsert_auto_conf "primary_slot_name" "'${POSTGRES_REPLICATION_SLOT}'"
 upsert_auto_conf "hot_standby" "on"
+# Register as named sync standby so primary's synchronous_standby_names matches.
+upsert_auto_conf "primary_conninfo" "'host=postgres port=5432 user=${POSTGRES_REPLICATION_USER} password=${POSTGRES_REPLICATION_PASSWORD} application_name=sync_replica'"
 upsert_auto_conf "shared_preload_libraries" "'pg_stat_statements'"
 upsert_auto_conf "compute_query_id" "auto"
 upsert_auto_conf "track_io_timing" "on"

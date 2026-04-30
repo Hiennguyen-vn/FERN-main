@@ -8,16 +8,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.util.Pool;
 import redis.clients.jedis.params.SetParams;
 import redis.clients.jedis.params.ScanParams;
 import redis.clients.jedis.resps.ScanResult;
 
 public class JedisRedisClientAdapter implements RedisClientAdapter {
 
-  private final JedisPool jedisPool;
+  private final Pool<Jedis> jedisPool;
 
-  public JedisRedisClientAdapter(JedisPool jedisPool) {
+  public JedisRedisClientAdapter(Pool<Jedis> jedisPool) {
     this.jedisPool = jedisPool;
   }
 

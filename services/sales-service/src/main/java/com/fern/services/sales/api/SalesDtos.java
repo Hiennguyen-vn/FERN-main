@@ -267,7 +267,28 @@ public final class SalesDtos {
   ) {
   }
 
-  public record CancelSaleRequest(String reason) {
+  public record CancelSaleRequest(
+      String reason,
+      String reasonCode,
+      String managerPin,
+      Long managerUserId,
+      String voidNote
+  ) {
+    // Backwards-compat ctor: free-text only.
+    public CancelSaleRequest(String reason) {
+      this(reason, null, null, null, null);
+    }
+  }
+
+  public record VoidReasonView(
+      String code,
+      String label,
+      String description,
+      boolean requiresManagerApproval,
+      boolean reversesInventory,
+      String category,
+      int sortOrder
+  ) {
   }
 
   public record CreatePromotionRequest(

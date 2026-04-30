@@ -1,0 +1,8 @@
+apiVersion: v2
+name: fern-service
+description: Generic chart for any FERN backend Spring Boot microservice with HA defaults.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: FERN platform team

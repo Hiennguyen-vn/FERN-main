@@ -1,6 +1,7 @@
 package com.fern.services.inventory.application;
 
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -123,6 +124,7 @@ public class StockReservationService {
 
   /** Periodic compaction: settle reservations that are clearly stale (expired or older than 24h with sale advanced). */
   @Scheduled(fixedDelayString = "${fern.inventory.reservation-sweep-ms:60000}")
+  @SchedulerLock(name = "stock-reservation-sweep", lockAtMostFor = "PT5M", lockAtLeastFor = "PT10S")
   @Transactional
   public int sweepExpired() {
     String sql = """

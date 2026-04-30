@@ -4,8 +4,9 @@ import com.fern.common.idempotency.model.IdempotencyResult;
 import com.fern.common.idempotency.model.TtlPolicy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.Jedis;
 import redis.clients.jedis.params.SetParams;
+import redis.clients.jedis.util.Pool;
 
 import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
@@ -24,11 +25,11 @@ import java.util.function.Supplier;
  */
 public class IdempotencyGuard {
 
-    private final JedisPool redisPool;
+    private final Pool<Jedis> redisPool;
     private final DataSource dataSource;
     private final ObjectMapper mapper;
 
-    public IdempotencyGuard(JedisPool redisPool, DataSource dataSource) {
+    public IdempotencyGuard(Pool<Jedis> redisPool, DataSource dataSource) {
         this.redisPool = redisPool;
         this.dataSource = dataSource;
         this.mapper = new ObjectMapper();

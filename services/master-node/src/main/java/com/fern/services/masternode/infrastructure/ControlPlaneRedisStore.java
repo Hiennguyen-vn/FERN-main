@@ -4,7 +4,7 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import org.springframework.stereotype.Component;
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.util.Pool;
 
 @Component
 public class ControlPlaneRedisStore {
@@ -12,9 +12,9 @@ public class ControlPlaneRedisStore {
   private static final String INSTANCE_KEY_PREFIX = "fern:control:instance:";
   private static final String SERVICE_SET_PREFIX = "fern:control:service:";
 
-  private final JedisPool jedisPool;
+  private final Pool<Jedis> jedisPool;
 
-  public ControlPlaneRedisStore(JedisPool jedisPool) {
+  public ControlPlaneRedisStore(Pool<Jedis> jedisPool) {
     this.jedisPool = jedisPool;
   }
 

@@ -1,0 +1,174 @@
+groups:
+  - name: ha-postgres
+    rules:
+      - alert: PostgresReplicationLagWarn
+        expr: pg_replication_lag_seconds > 10
+        for: 2m
+        labels:
+          severity: warning
+          component: postgres
+        annotations:
+          summary: "Postgres replica lag > 10s"
+          description: "Replica {{ $labels.instance }} lagging {{ $value }}s behind primary."
+
+      - alert: PostgresReplicationLagPage
+        expr: pg_replication_lag_seconds > 60
+        for: 1m
+        labels:
+          severity: page
+          component: postgres
+        annotations:
+          summary: "Postgres replica lag > 60s — page"
+          description: "Replica {{ $labels.instance }} lagging {{ $value }}s. Risk to RPO."
+
+      - alert: PostgresReplicaDown
+        expr: pg_up{job="postgres-replica"} == 0
+        for: 1m
+        labels:
+          severity: page
+          component: postgres
+        annotations:
+          summary: "Postgres replica down"
+          description: "Replica scrape failing for 1m. Sync standby may have failed."
+
+  - name: ha-kafka
+    rules:
+      - alert: KafkaUnderReplicatedPartitions
+        expr: kafka_server_replicamanager_underreplicatedpartitions > 0
+        for: 5m
+        labels:
+          severity: page
+          component: kafka
+        annotations:
+          summary: "Kafka under-replicated partitions > 0 for 5m"
+          description: "{{ $labels.instance }} has {{ $value }} under-replicated partitions."
+
+      - alert: KafkaOfflinePartitions
+        expr: kafka_controller_kafkacontroller_offlinepartitionscount > 0
+        for: 1m
+        labels:
+          severity: page
+          component: kafka
+        annotations:
+          summary: "Kafka offline partitions detected"
+
+      - alert: KafkaBrokerDown
+        expr: kafka_brokers < 3
+        for: 2m
+        labels:
+          severity: page
+          component: kafka
+        annotations:
+          summary: "Kafka cluster has only {{ $value }} brokers (expected 3)"
+
+  - name: ha-redis
+    rules:
+      - alert: RedisSentinelQuorumLost
+        expr: redis_sentinel_masters_sentinels < 2
+        for: 1m
+        labels:
+          severity: page
+          component: redis
+        annotations:
+          summary: "Redis sentinel quorum lost"
+          description: "Fewer than 2 sentinels reporting. Master cannot be elected."
+
+      - alert: RedisMasterDown
+        expr: redis_up{role="master"} == 0
+        for: 30s
+        labels:
+          severity: page
+          component: redis
+        annotations:
+          summary: "Redis master unreachable"
+
+      - alert: RedisReplicationBroken
+        expr: max(redis_connected_slaves) < 2
+        for: 5m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis cluster has < 2 connected replicas (master sees {{ $value }})"
+
+  - name: ha-gateway
+    rules:
+      - alert: GatewayLbAllUpstreamsDown
+        expr: nginx_upstream_server_up == 0
+        for: 1m
+        labels:
+          severity: page
+          component: gateway
+        annotations:
+          summary: "Gateway LB upstream {{ $labels.upstream }} server {{ $labels.server }} down"
+
+      - alert: GatewayReplicaDown
+        expr: up{job=~"gateway.*"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: gateway
+        annotations:
+          summary: "Gateway replica {{ $labels.instance }} down"
+
+  - name: ha-outbox
+    rules:
+      - alert: OutboxRelayBacklogGrowing
+        expr: increase(fern_outbox_pending_count[10m]) > 1000 and fern_outbox_pending_count > 5000
+        for: 5m
+        labels:
+          severity: page
+          component: outbox
+        annotations:
+          summary: "Outbox backlog growing — Kafka publish stuck?"
+          description: "Pending events {{ $value }}; relay may be blocked."
+
+      - alert: OutboxDlqBacklog
+        expr: fern_outbox_dlq_count > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: outbox
+        annotations:
+          summary: "Outbox DLQ has {{ $value }} unresolved events"
+
+  - name: ha-shedlock
+    rules:
+      - alert: ShedLockHeldTooLong
+        expr: time() - shedlock_locked_at_seconds > 1800
+        for: 5m
+        labels:
+          severity: warning
+          component: shedlock
+        annotations:
+          summary: "ShedLock {{ $labels.name }} held > 30min — stuck job?"
+
+  - name: ha-slo-burn
+    rules:
+      - alert: PosSalesFastBurn
+        expr: |
+          (
+            sum(rate(http_server_requests_seconds_count{service="sales-service",status=~"5.."}[1h]))
+            /
+            sum(rate(http_server_requests_seconds_count{service="sales-service"}[1h]))
+          ) > 14.4 * (1 - 0.9995)
+        for: 2m
+        labels:
+          severity: page
+          slo: pos-sales-availability
+        annotations:
+          summary: "POS sales SLO burn rate > 14.4× (1h window)"
+
+      - alert: FinanceLedgerFastBurn
+        expr: |
+          (
+            sum(rate(http_server_requests_seconds_count{service="finance-service",status=~"5.."}[1h]))
+            /
+            sum(rate(http_server_requests_seconds_count{service="finance-service"}[1h]))
+          ) > 14.4 * (1 - 0.999)
+        for: 2m
+        labels:
+          severity: page
+          slo: finance-ledger-availability
+        annotations:
+          summary: "Finance ledger SLO burn rate > 14.4× (1h window)"

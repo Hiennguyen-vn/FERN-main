@@ -21,13 +21,46 @@ scrape_configs:
       - targets: ['auth-service:8081']
     metrics_path: '/actuator/prometheus'
 
+  - job_name: 'gateway'
+    static_configs:
+      - targets: ['gateway:8080', 'gateway-2:8080']
+    metrics_path: '/actuator/prometheus'
+
   - job_name: 'postgres'
     static_configs:
       - targets: ['postgres-exporter:9187']
 
-  - job_name: 'kafka'
+  - job_name: 'postgres-replica'
+    static_configs:
+      - targets: ['postgres-replica-exporter:9187']
+
+  - job_name: 'kafka-1'
     static_configs:
       - targets: ['kafka:9308']
+
+  - job_name: 'kafka-2'
+    static_configs:
+      - targets: ['kafka-2:9308']
+
+  - job_name: 'kafka-3'
+    static_configs:
+      - targets: ['kafka-3:9308']
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  - job_name: 'redis-sentinel'
+    static_configs:
+      - targets:
+          - 'redis-sentinel-1:9355'
+          - 'redis-sentinel-2:9355'
+          - 'redis-sentinel-3:9355'
+
+  - job_name: 'haproxy'
+    static_configs:
+      - targets: ['pgbouncer-lb:8404']
+    metrics_path: '/stats;csv'
 
   - job_name: 'prometheus'
     static_configs:

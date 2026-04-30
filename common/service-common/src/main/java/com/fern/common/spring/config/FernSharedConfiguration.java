@@ -47,8 +47,13 @@ import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.web.client.RestClient;
+import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
+import redis.clients.jedis.JedisSentinelPool;
+import redis.clients.jedis.util.Pool;
+import java.util.HashSet;
+import java.util.Set;
 
 @Configuration
 @EnableKafka
@@ -104,27 +109,48 @@ public class FernSharedConfiguration {
 
   @Bean
   @ConditionalOnMissingBean
-  public JedisPool jedisPool(FernServiceProperties properties) {
+  public Pool<Jedis> jedisPool(FernServiceProperties properties) {
     JedisPoolConfig config = new JedisPoolConfig();
     config.setMaxTotal(32);
     config.setMaxIdle(16);
     config.setMinIdle(2);
     FernServiceProperties.Redis redis = properties.getRedis();
-    if (redis.getPassword() != null && !redis.getPassword().isBlank()) {
-      return new JedisPool(config, redis.getHost(), redis.getPort(), redis.getTimeoutMillis(), redis.getPassword());
+    String password = (redis.getPassword() != null && !redis.getPassword().isBlank())
+        ? redis.getPassword()
+        : null;
+    String sentinelMaster = redis.getSentinelMaster();
+    String sentinelNodes = redis.getSentinelNodes();
+    if (sentinelMaster != null && !sentinelMaster.isBlank()
+        && sentinelNodes != null && !sentinelNodes.isBlank()) {
+      Set<String> nodes = new HashSet<>();
+      for (String node : sentinelNodes.split(",")) {
+        String trimmed = node.trim();
+        if (!trimmed.isEmpty()) {
+          nodes.add(trimmed);
+        }
+      }
+      if (password != null) {
+        return new JedisSentinelPool(sentinelMaster, nodes, config,
+            redis.getTimeoutMillis(), password);
+      }
+      return new JedisSentinelPool(sentinelMaster, nodes, config,
+          redis.getTimeoutMillis());
+    }
+    if (password != null) {
+      return new JedisPool(config, redis.getHost(), redis.getPort(), redis.getTimeoutMillis(), password);
     }
     return new JedisPool(config, redis.getHost(), redis.getPort(), redis.getTimeoutMillis());
   }
 
   @Bean
   @ConditionalOnMissingBean
-  public RedisClientAdapter redisClientAdapter(JedisPool jedisPool) {
+  public RedisClientAdapter redisClientAdapter(Pool<Jedis> jedisPool) {
     return new JedisRedisClientAdapter(jedisPool);
   }
 
   @Bean
   @ConditionalOnMissingBean
-  public IdempotencyGuard idempotencyGuard(JedisPool jedisPool, DataSource dataSource) {
+  public IdempotencyGuard idempotencyGuard(Pool<Jedis> jedisPool, DataSource dataSource) {
     return new IdempotencyGuard(jedisPool, dataSource);
   }
 

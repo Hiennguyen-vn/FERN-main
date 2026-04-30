@@ -1,0 +1,22 @@
+serviceName: finance-service
+image:
+  repository: fern/finance-service
+  tag: 0.1.0
+ports:
+  http: 8090
+replicaCount: 2
+resources:
+  requests:
+    cpu: 300m
+    memory: 512Mi
+  limits:
+    cpu: 1500m
+    memory: 1Gi
+env:
+  SERVER_PORT: "8090"
+  SPRING_PROFILES_ACTIVE: "prod"
+envFrom:
+  - configMapRef:
+      name: fern-shared-config
+  - secretRef:
+      name: fern-shared-secrets

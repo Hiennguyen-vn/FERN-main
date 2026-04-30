@@ -1,0 +1,25 @@
+serviceName: gateway
+image:
+  repository: fern/gateway
+  tag: 0.1.0
+ports:
+  http: 8080
+replicaCount: 3
+podDisruptionBudget:
+  minAvailable: 2
+resources:
+  requests:
+    cpu: 300m
+    memory: 384Mi
+  limits:
+    cpu: 1500m
+    memory: 768Mi
+service:
+  type: ClusterIP
+env:
+  PORT: "8080"
+envFrom:
+  - configMapRef:
+      name: fern-shared-config
+  - secretRef:
+      name: fern-shared-secrets
