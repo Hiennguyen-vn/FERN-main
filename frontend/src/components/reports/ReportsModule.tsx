@@ -8,8 +8,8 @@ const RevenueDashboard = lazy(() => import('@/components/reports/RevenueDashboar
 const InventoryHealth = lazy(() => import('@/components/reports/InventoryHealth').then((module) => ({ default: module.InventoryHealth })));
 
 const REPORT_TABS: Array<{ key: ReportTab; label: string; icon: typeof DollarSign }> = [
-  { key: 'revenue', label: 'Revenue Dashboard', icon: DollarSign },
-  { key: 'inventory', label: 'Inventory Health', icon: BarChart3 },
+  { key: 'revenue', label: 'Regional Scorecard', icon: DollarSign },
+  { key: 'inventory', label: 'Inventory Exceptions', icon: BarChart3 },
 ];
 
 function ReportsFallback() {

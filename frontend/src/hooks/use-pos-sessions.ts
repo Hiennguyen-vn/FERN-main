@@ -6,6 +6,8 @@ import { useAuth } from '@/auth/use-auth';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
 import { normalizeNumericId } from '@/constants/pos';
 
+const POS_SESSION_PAGE_SIZE = 100;
+
 export interface DBPosSession {
   id: string;
   outlet_id: string;
@@ -56,6 +58,8 @@ export function usePOSSessions() {
   const { token, scope } = useShellRuntime();
   const { session: authSession } = useAuth();
   const [sessions, setSessions] = useState<DBPosSession[]>([]);
+  const [totalSessions, setTotalSessions] = useState(0);
+  const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const fetchSessions = useCallback(async () => {
@@ -68,30 +72,36 @@ export function usePOSSessions() {
     setLoading(true);
     try {
       const scopedOutletId = normalizeNumericId(scope.outletId);
-      const [outlets, page] = await Promise.all([
+      const [outlets, sessionsPage] = await Promise.all([
         orgApi.outlets(token),
         salesApi.posSessions(token, {
           outletId: scopedOutletId || undefined,
-          limit: 100,
-          offset: 0,
+          limit: POS_SESSION_PAGE_SIZE,
+          offset: page * POS_SESSION_PAGE_SIZE,
         }),
       ]);
 
       const outletNameById = new Map(outlets.map((outlet) => [outlet.id, outlet.name]));
-      const mapped = (page.items || []).map((session) => mapPosSession(session, outletNameById));
+      const mapped = (sessionsPage.items || []).map((session) => mapPosSession(session, outletNameById));
       setSessions(mapped);
+      setTotalSessions(Number(sessionsPage.total ?? mapped.length));
     } catch (error) {
       console.error('Error fetching POS sessions:', error);
       toast.error('Unable to load POS sessions');
       setSessions([]);
+      setTotalSessions(0);
     } finally {
       setLoading(false);
     }
-  }, [scope.outletId, token]);
+  }, [page, scope.outletId, token]);
 
   useEffect(() => {
     void fetchSessions();
   }, [fetchSessions]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [scope.outletId, token]);
 
   const createSession = async (outletId: string, _openingFloat: number, notes?: string) => {
     if (!token) {
@@ -192,6 +202,10 @@ export function usePOSSessions() {
 
   return {
     sessions,
+    totalSessions,
+    page,
+    pageSize: POS_SESSION_PAGE_SIZE,
+    setPage,
     loading,
     fetchSessions,
     createSession,

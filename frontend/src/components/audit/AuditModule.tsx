@@ -30,6 +30,102 @@ function formatDateTime(value?: string | null) {
   return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
 }
 
+function shortId(value?: string | null) {
+  const s = String(value ?? '').trim();
+  if (!s || s === '—') return '—';
+  return s.length > 10 ? `…${s.slice(-8)}` : s;
+}
+
+function readDataField(data: unknown, keys: string[]): string | null {
+  if (!data || typeof data !== 'object') return null;
+  const record = data as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (value === null || value === undefined) continue;
+    const normalized = String(value).trim();
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function moduleFromEntity(entityName?: string | null): string | null {
+  const entity = String(entityName ?? '').toLowerCase();
+  if (['purchase_order', 'goods_receipt', 'supplier_invoice', 'payment'].includes(entity)) return 'procurement';
+  if (['stock_balance', 'stock_count_session', 'waste'].includes(entity)) return 'inventory';
+  if (['sale_record', 'pos_session'].includes(entity)) return 'sales';
+  if (['expense_record', 'fiscal_period'].includes(entity)) return 'finance';
+  if (['payroll', 'payroll_run'].includes(entity)) return 'payroll';
+  if (['contract', 'attendance'].includes(entity)) return 'hr';
+  if (['shift', 'work_shift'].includes(entity)) return 'workforce';
+  if (['app_user', 'role', 'user_role'].includes(entity)) return 'auth';
+  if (['outlet', 'region', 'exchange_rate'].includes(entity)) return 'org';
+  return null;
+}
+
+function getLogModule(log: AuditLogView): string | null {
+  const explicit = String(log.module ?? '').trim();
+  if (explicit) return explicit;
+  const reasonPrefix = String(log.reason ?? '').split('.')[0]?.trim();
+  if (reasonPrefix && reasonPrefix !== String(log.reason ?? '').trim()) return reasonPrefix;
+  return moduleFromEntity(log.entityName);
+}
+
+function getLogActor(log: AuditLogView): string | null {
+  const explicit = String(log.actorUserId ?? '').trim();
+  if (explicit) return explicit;
+  return readDataField(log.newData, ['actorUserId', 'approvedByUserId', 'createdByUserId', 'userId', 'managerId'])
+    ?? readDataField(log.oldData, ['actorUserId', 'approvedByUserId', 'createdByUserId', 'userId', 'managerId']);
+}
+
+function getLogCorrelation(log: AuditLogView): string {
+  const explicit = String(log.correlationId ?? '').trim();
+  if (explicit) return explicit;
+  const fromData = readDataField(log.newData, ['correlationId', 'traceId', 'requestId', 'eventId', 'sourceEventId'])
+    ?? readDataField(log.oldData, ['correlationId', 'traceId', 'requestId', 'eventId', 'sourceEventId']);
+  return fromData || `audit:${log.id}`;
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  insert: 'Create',
+  update: 'Update',
+  delete: 'Delete',
+  approve: 'Approve',
+  reject: 'Reject',
+  cancel: 'Cancel',
+  close: 'Close',
+  reopen: 'Reopen',
+  post: 'Post',
+  reverse: 'Reverse',
+  mark_paid: 'Mark Paid',
+  payroll_approve: 'Payroll Approve',
+  payroll_mark_paid: 'Payroll Mark Paid',
+  stock_count_post: 'Stock Count Post',
+  period_close: 'Period Close',
+  manager_override: 'Manager Override',
+  update_stock_balance: 'Update Stock Balance',
+  insert_outlet: 'Create Outlet',
+  update_event: 'Update Event',
+};
+
+function formatActionLabel(action?: string | null) {
+  const raw = String(action ?? '').trim();
+  if (!raw) return '—';
+  return ACTION_LABELS[raw.toLowerCase()] ?? raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const DOMAIN_MODULES = [
+  { value: '', label: 'All modules' },
+  { value: 'procurement', label: 'Procurement' },
+  { value: 'inventory', label: 'Inventory' },
+  { value: 'sales', label: 'Sales' },
+  { value: 'finance', label: 'Finance' },
+  { value: 'payroll', label: 'Payroll' },
+  { value: 'hr', label: 'HR' },
+  { value: 'workforce', label: 'Workforce' },
+  { value: 'auth', label: 'Auth' },
+  { value: 'audit', label: 'Audit' },
+];
+
 export function AuditModule() {
   const { token } = useShellRuntime();
   const [activeTab, setActiveTab] = useState<AuditTab>('events');
@@ -202,6 +298,33 @@ export function AuditModule() {
                   </div>
                   <select
                     className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                    value={String(logsQuery.filters.module || '')}
+                    onChange={(e) => logsQuery.setFilter('module', e.target.value || undefined)}
+                  >
+                    {DOMAIN_MODULES.map((m) => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                    value={String(logsQuery.filters.entityName || '')}
+                    onChange={(e) => logsQuery.setFilter('entityName', e.target.value || undefined)}
+                  >
+                    <option value="">All entities</option>
+                    <option value="purchase_order">Purchase Order</option>
+                    <option value="goods_receipt">Goods Receipt</option>
+                    <option value="invoice">Invoice</option>
+                    <option value="payment">Payment</option>
+                    <option value="stock_balance">Stock Balance</option>
+                    <option value="stock_count_session">Stock Count</option>
+                    <option value="waste">Waste</option>
+                    <option value="payroll_run">Payroll Run</option>
+                    <option value="contract">Contract</option>
+                    <option value="shift">Shift</option>
+                    <option value="outlet">Outlet</option>
+                  </select>
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
                     value={`${logsQuery.sortBy || 'createdAt'}:${logsQuery.sortDir}`}
                     onChange={(event) => {
                       const [field, direction] = event.target.value.split(':');
@@ -242,15 +365,30 @@ export function AuditModule() {
                       <ListTableSkeleton columns={5} rows={7} />
                     ) : logs.length === 0 ? (
                       <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">No audit logs found</td></tr>
-                    ) : logs.map((log) => (
-                      <tr key={String(log.id)} className="border-b last:border-0 hover:bg-muted/20 cursor-pointer" onClick={() => void openDetail(String(log.id))}>
-                        <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDateTime(log.createdAt)}</td>
-                        <td className="px-4 py-2.5 text-xs">{String(log.action || '—')}</td>
-                        <td className="px-4 py-2.5 text-xs">{String(log.entityName || '—')} · {String(log.entityId || '—')}</td>
-                        <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(log.actorUserId || '—')}</td>
-                        <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground">{String(log.correlationId || '—')}</td>
-                      </tr>
-                    ))}
+                    ) : logs.map((log) => {
+                      const moduleLabel = getLogModule(log);
+                      const actor = getLogActor(log);
+                      const correlation = getLogCorrelation(log);
+                      return (
+                        <tr key={String(log.id)} className="border-b last:border-0 hover:bg-muted/20 cursor-pointer" onClick={() => void openDetail(String(log.id))}>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDateTime(log.createdAt)}</td>
+                          <td className="px-4 py-2.5 text-xs">
+                            <div className="flex items-center gap-1.5">
+                              {moduleLabel ? (
+                                <span className="rounded border border-border bg-muted/60 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">{moduleLabel}</span>
+                              ) : null}
+                              <span>{formatActionLabel(log.action)}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs">
+                            <span>{String(log.entityName || '—').replace(/_/g, ' ')}</span>
+                            <span className="ml-1 font-mono text-muted-foreground" title={String(log.entityId || '')}>{shortId(log.entityId)}</span>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono" title={actor || ''}>{actor ? shortId(actor) : 'system'}</td>
+                          <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground" title={correlation}>{shortId(correlation)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -122,6 +122,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP: kafka:29092
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP:-kafka:29092}
       MASTER_NODE_URL: http://master-node:8082
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
@@ -377,6 +378,14 @@ services:
     environment:
       <<: *service-env
       SERVER_PORT: 8090
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_BUCKET_FINANCE_DOCUMENTS: ${S3_BUCKET_FINANCE_DOCUMENTS:-}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_DOWNLOAD_ENDPOINT: ${S3_DOWNLOAD_ENDPOINT:-}
+      S3_PATH_STYLE: ${S3_PATH_STYLE:-false}
     depends_on:
       master-node:
         condition: service_healthy

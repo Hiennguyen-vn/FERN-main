@@ -62,6 +62,28 @@ function NumberCell({ value }: { value: unknown }) {
   return <span className="font-mono">{Number.isFinite(n) ? n.toFixed(2) : '0.00'}</span>;
 }
 
+function StockQtyCell({ value, lowThreshold = 0 }: { value: unknown; lowThreshold?: number }) {
+  const n = Number(value ?? 0);
+  const negative = Number.isFinite(n) && n < 0;
+  const low = !negative && Number.isFinite(n) && n <= lowThreshold;
+  return (
+    <span className="inline-flex items-center justify-end gap-1.5">
+      <span className={cn('font-mono', negative && 'text-rose-700 font-semibold', low && 'text-amber-700')}>
+        {Number.isFinite(n) ? n.toFixed(2) : '0.00'}
+      </span>
+      {negative ? (
+        <span className="rounded-full border border-rose-300 bg-rose-50 px-1.5 py-0.5 text-[9px] font-medium text-rose-700">
+          NEG
+        </span>
+      ) : low ? (
+        <span className="rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[9px] font-medium text-amber-700">
+          LOW
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function formatQuantity(value: unknown) {
   const numeric = Number(value ?? 0);
   return Number.isFinite(numeric) ? numeric.toFixed(2) : '0.00';
@@ -610,7 +632,7 @@ export function InventoryModule() {
                   ) : balances.map((row) => (
                     <tr key={`${row.outletId}-${row.itemId}`} className="border-b last:border-0">
                       <td className="px-4 py-2.5 text-sm">{resolveItemName(row.itemId, row.itemName)}</td>
-                      <td className="px-4 py-2.5 text-right text-sm"><NumberCell value={row.qtyOnHand} /></td>
+                      <td className="px-4 py-2.5 text-right text-sm"><StockQtyCell value={row.qtyOnHand} lowThreshold={5} /></td>
                       <td className="px-4 py-2.5 text-right text-sm"><NumberCell value={row.unitCost} /></td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground">{row.lastCountDate ? String(row.lastCountDate) : '—'}</td>
                     </tr>

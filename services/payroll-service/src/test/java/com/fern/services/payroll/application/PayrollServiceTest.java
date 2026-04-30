@@ -521,6 +521,7 @@ class PayrollServiceTest {
         55L,
         1002L,
         "Existing payroll",
+        "open",
         LocalDate.parse("2026-04-01"),
         LocalDate.parse("2026-04-30"),
         LocalDate.parse("2026-05-05"),

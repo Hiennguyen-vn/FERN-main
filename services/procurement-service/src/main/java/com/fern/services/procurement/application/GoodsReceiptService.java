@@ -16,6 +16,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -104,6 +105,8 @@ public class GoodsReceiptService {
             "Purchase order not found for goods receipt: " + existingReceipt.poId()));
     requireProcurementWrite(purchaseOrder.outletId());
     ProcurementDtos.GoodsReceiptView receipt = procurementRepository.postGoodsReceipt(receiptId);
+    RequestUserContext context = RequestUserContextHolder.get();
+    String correlationId = currentCorrelationId();
     GoodsReceiptPostedEvent event = new GoodsReceiptPostedEvent(
         receipt.id(),
         receipt.poId(),
@@ -121,15 +124,29 @@ public class GoodsReceiptService {
             ))
             .toList(),
         receipt.totalPrice(),
-        clock.instant()
+        clock.instant(),
+        context.userId(),
+        context.username(),
+        sortedRoles(context),
+        correlationId
     );
     eventPublisher.publish(
         "fern.procurement.goods-receipt-posted",
         Long.toString(receipt.id()),
         "procurement.goods-receipt-posted",
-        event
+        event,
+        correlationId
     );
     return event;
+  }
+
+  private static List<String> sortedRoles(RequestUserContext context) {
+    return context.roles().stream().sorted().toList();
+  }
+
+  private static String currentCorrelationId() {
+    String correlationId = MDC.get("correlationId");
+    return correlationId == null || correlationId.isBlank() ? null : correlationId;
   }
 
   private void requireProcurementWrite(long outletId) {

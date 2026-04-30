@@ -149,8 +149,14 @@ public class SyncDtos {
       long stockVersion,
       long recipeVersion,
       long menuVersion,
-      String serverTime
-  ) {}
+      String serverTime,
+      String signature,
+      String keyId
+  ) {
+    public ManifestResponse(long c, long p, long s, long r, long m, String t) {
+      this(c, p, s, r, m, t, null, null);
+    }
+  }
 
   public record TaxRuleRow(
       long id,

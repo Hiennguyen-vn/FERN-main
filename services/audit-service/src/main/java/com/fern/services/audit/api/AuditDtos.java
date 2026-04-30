@@ -19,7 +19,9 @@ public final class AuditDtos {
       JsonNode newData,
       String ipAddress,
       String userAgent,
-      Instant createdAt
+      Instant createdAt,
+      String module,
+      String correlationId
   ) {
   }
 

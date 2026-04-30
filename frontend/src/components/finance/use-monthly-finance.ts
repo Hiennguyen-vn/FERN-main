@@ -31,11 +31,20 @@ export function useMonthlyFinance({ token, scopeOutletId }: Params) {
     queryFn: () => payrollApi.monthlyPayroll(token, { outletId: scopeOutletId || undefined }),
   });
 
+  // Granular loading/error states: avoid rendering "0 / no data" while any source still loading or errored.
   const loading = revenueQuery.isLoading || expenseQuery.isLoading || payrollQuery.isLoading;
-  const error = [revenueQuery.error, expenseQuery.error, payrollQuery.error]
-    .filter(Boolean)
-    .map((e) => getErrorMessage(e, 'Unable to load monthly finance data'))
-    .join(' · ');
+  const fetching = revenueQuery.isFetching || expenseQuery.isFetching || payrollQuery.isFetching;
+  const errors = {
+    revenue: revenueQuery.error ? getErrorMessage(revenueQuery.error, 'Revenue unavailable') : null,
+    expense: expenseQuery.error ? getErrorMessage(expenseQuery.error, 'Expenses unavailable') : null,
+    payroll: payrollQuery.error ? getErrorMessage(payrollQuery.error, 'Payroll unavailable') : null,
+  };
+  const error = [errors.revenue, errors.expense, errors.payroll].filter(Boolean).join(' · ');
+  const hasError = Boolean(error);
+  const allResolved =
+    revenueQuery.isSuccess && expenseQuery.isSuccess && payrollQuery.isSuccess;
+  const partial = !loading && !allResolved; // some source failed or not yet resolved
+  const ready = allResolved && !hasError;
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['sales', 'monthlyRevenue', outletKey] });
@@ -48,7 +57,12 @@ export function useMonthlyFinance({ token, scopeOutletId }: Params) {
     expenseRows: expenseQuery.data ?? [],
     payrollRows: payrollQuery.data ?? [],
     loading,
+    fetching,
     error,
+    errors,
+    hasError,
+    partial,
+    ready,
     refresh,
   };
 }

@@ -128,6 +128,21 @@ class SalesRepositoryOrderLifecycleIT {
   }
 
   @Test
+  void deviceCannotOpenSecondSessionUntilCurrentShiftCloses() throws Exception {
+    seedDevices();
+    SalesDtos.PosSessionView first = openSessionForDevice(8001L, "REGISTER-A", "shift-a");
+
+    ServiceException conflict = org.junit.jupiter.api.Assertions.assertThrows(
+        ServiceException.class,
+        () -> openSessionForDevice(8001L, "REGISTER-B", "shift-b"));
+    assertEquals(409, conflict.getStatusCode());
+
+    repository.closePosSession(Long.parseLong(first.id()), "closed before next shift");
+    SalesDtos.PosSessionView next = openSessionForDevice(8001L, "REGISTER-B", "shift-b");
+    assertEquals("REGISTER-B", next.registerCode());
+  }
+
+  @Test
   void submitSaleUsesOutletTimezoneForPricingAtUtcBoundary() throws Exception {
     seedMayPrice();
     repository = new SalesRepository(

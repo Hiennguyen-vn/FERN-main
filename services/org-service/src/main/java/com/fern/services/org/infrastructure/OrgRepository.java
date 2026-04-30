@@ -384,17 +384,21 @@ public class OrgRepository extends BaseRepository {
           ps.executeUpdate();
         }
       } else {
+        boolean marksClosed = "closed".equalsIgnoreCase(targetStatus);
         try (PreparedStatement ps = conn.prepareStatement(
             """
             UPDATE core.outlet
             SET status = ?::location_status_enum,
+                closed_at = CASE WHEN ? THEN COALESCE(closed_at, ?::date) ELSE closed_at END,
                 updated_at = ?
             WHERE id = ?
             """
         )) {
           ps.setString(1, normalizeStatus(targetStatus));
-          ps.setTimestamp(2, Timestamp.from(now));
-          ps.setLong(3, outletId);
+          ps.setBoolean(2, marksClosed);
+          ps.setObject(3, marksClosed ? LocalDate.now(clock) : null);
+          ps.setTimestamp(4, Timestamp.from(now));
+          ps.setLong(5, outletId);
           ps.executeUpdate();
         }
       }

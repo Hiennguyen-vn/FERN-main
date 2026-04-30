@@ -15,6 +15,7 @@ import com.fern.events.sales.PaymentCapturedEvent;
 import com.fern.services.finance.infrastructure.FinanceRepository;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Clock;
+import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -176,7 +177,16 @@ public class FinanceEventConsumer {
                   null,
                   "Auto-created from supplier invoice " + event.supplierInvoiceId()
               );
-              publishExpenseCreated(record, receiptId);
+              publishExpenseCreated(
+                  record,
+                  receiptId,
+                  event.outletId() == null ? candidate.outletId() : event.outletId(),
+                  event.actorUserId(),
+                  event.actorUsername(),
+                  event.actorRoles(),
+                  event.correlationId(),
+                  envelope.eventId()
+              );
             }
             if (financeService != null) financeService.evictMonthlyExpenseCache();
             return IdempotencyResult.created(
@@ -219,7 +229,16 @@ public class FinanceEventConsumer {
                 null,
                 "Auto-created from approved payroll " + event.payrollId()
             );
-            publishExpenseCreated(record, event.payrollId());
+            publishExpenseCreated(
+                record,
+                event.payrollId(),
+                event.outletId(),
+                null,
+                null,
+                List.of(),
+                null,
+                envelope.eventId()
+            );
             if (financeService != null) financeService.evictMonthlyExpenseCache();
             return IdempotencyResult.created(
                 toJson(Map.of("payrollId", event.payrollId(), "expenseId", record.id())),
@@ -232,7 +251,16 @@ public class FinanceEventConsumer {
     }
   }
 
-  private void publishExpenseCreated(FinanceRepository.ExpenseRecord record, long sourceId) {
+  private void publishExpenseCreated(
+      FinanceRepository.ExpenseRecord record,
+      long sourceId,
+      Long outletId,
+      Long actorUserId,
+      String actorUsername,
+      List<String> actorRoles,
+      String correlationId,
+      String sourceEventId
+  ) {
     eventPublisher.publish(
         "fern.finance.expense-record-created",
         Long.toString(record.id()),
@@ -242,8 +270,16 @@ public class FinanceEventConsumer {
             sourceId,
             record.amount(),
             record.currencyCode(),
-            clock.instant()
-        )
+            clock.instant(),
+            record.id(),
+            outletId == null ? record.outletId() : outletId,
+            actorUserId,
+            actorUsername,
+            actorRoles == null ? List.of() : actorRoles,
+            correlationId,
+            sourceEventId
+        ),
+        correlationId
     );
   }
 

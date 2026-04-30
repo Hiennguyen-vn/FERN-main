@@ -240,7 +240,9 @@ function Step2ReviewTimesheets({
         <div>
           <p className="text-sm font-semibold">Review imported timesheets</p>
           <p className="text-[11px] text-muted-foreground">
-            {summary.timesheetCount} of {summary.rosterCount} employees have timesheets
+            {summary.rosterCount > 0
+              ? `${summary.timesheetCount} of ${summary.rosterCount} employees have timesheets`
+              : `${summary.timesheetCount} timesheet${summary.timesheetCount === 1 ? '' : 's'} imported (roster not loaded)`}
             {missingCount > 0 ? ` · ${missingCount} missing` : ''}
           </p>
         </div>
@@ -437,7 +439,9 @@ function Step2ReviewTimesheets({
       {/* Bottom action bar */}
       <div className="border-t px-6 py-3 flex items-center justify-between bg-background">
         <p className="text-[11px] text-muted-foreground">
-          {summary.timesheetCount} of {summary.rosterCount} employees have timesheets
+          {summary.rosterCount > 0
+              ? `${summary.timesheetCount} of ${summary.rosterCount} employees have timesheets`
+              : `${summary.timesheetCount} timesheet${summary.timesheetCount === 1 ? '' : 's'} imported (roster not loaded)`}
           {missingCount > 0 ? (
             <span className="ml-1.5 inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
               {missingCount} missing
@@ -1025,9 +1029,11 @@ export function PayrollPrepWorkspace({
                       <div>
                         <h3 className="text-sm font-semibold">Import attendance data</h3>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {timesheets.length > 0
-                            ? `${timesheets.length} of ${payrollRoster.length} employees have timesheets`
-                            : `${payrollRoster.length} employees in this period`}
+                          {timesheets.length === 0
+                            ? `${payrollRoster.length} employees in this period`
+                            : payrollRoster.length > 0
+                              ? `${timesheets.length} of ${payrollRoster.length} employees have timesheets`
+                              : `${timesheets.length} timesheet${timesheets.length === 1 ? '' : 's'} imported (roster not loaded)`}
                         </p>
                       </div>
                       <div className="flex gap-2">

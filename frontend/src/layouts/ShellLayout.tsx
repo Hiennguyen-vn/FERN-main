@@ -1,5 +1,5 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
-import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Outlet, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AppSidebar } from '@/components/shell/AppSidebar';
 import { TopBar } from '@/components/shell/TopBar';
@@ -29,13 +29,51 @@ const NotificationPanel = lazy(() => import('@/components/shell/NotificationPane
 
 const attemptedScopeRecoverySessions = new Set<string>();
 
+const SCOPE_STORAGE_KEY = 'fern.scope.v1';
+
+function encodeScopeParam(scope: ShellScope): string | null {
+  if (scope.level === 'outlet' && scope.outletId) return `outlet:${scope.outletId}`;
+  if (scope.level === 'region' && scope.regionId) return `region:${scope.regionId}`;
+  if (scope.level === 'system') return 'system';
+  return null;
+}
+
+function decodeScopeParam(
+  raw: string | null | undefined,
+  scopeTree: ScopeOption[],
+): ShellScope | null {
+  if (!raw) return null;
+  if (raw === 'system') return { level: 'system' };
+  const [kind, id] = raw.split(':');
+  if (!id) return null;
+  const system = scopeTree[0];
+  if (!system?.children) return null;
+  for (const region of system.children) {
+    if (kind === 'region' && region.id === id) {
+      return { level: 'region', regionId: region.id, regionName: region.name };
+    }
+    for (const outlet of region.children ?? []) {
+      if (kind === 'outlet' && outlet.id === id) {
+        return {
+          level: 'outlet',
+          regionId: region.id,
+          regionName: region.name,
+          outletId: outlet.id,
+          outletName: outlet.name,
+        };
+      }
+    }
+  }
+  return null;
+}
+
 const ROUTE_META: Record<string, { title: string; breadcrumbs: string[] }> = {
   '/dashboard': { title: 'Outlet Control Center', breadcrumbs: ['Home', 'Dashboard'] },
   '/pos': { title: 'Point of Sale', breadcrumbs: ['POS'] },
   '/inventory': { title: 'Inventory', breadcrumbs: ['Operations', 'Inventory'] },
   '/procurement': { title: 'Procurement', breadcrumbs: ['Operations', 'Procurement'] },
   '/catalog': { title: 'Catalog', breadcrumbs: ['Operations', 'Catalog'] },
-  '/reports': { title: 'Reports', breadcrumbs: ['Insights', 'Reports'] },
+  '/reports': { title: 'Regional Ops', breadcrumbs: ['Organization', 'Regional Ops'] },
   '/audit': { title: 'Audit Trail', breadcrumbs: ['Insights', 'Audit'] },
   '/iam': { title: 'Access Management', breadcrumbs: ['Administration', 'IAM'] },
   '/finance': { title: 'Finance', breadcrumbs: ['Finance & People', 'Finance'] },
@@ -51,9 +89,11 @@ const ROUTE_META: Record<string, { title: string; breadcrumbs: string[] }> = {
 export default function ShellLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { session, logout, refreshSession } = useAuth();
   const [scopeLevel, setScopeLevel] = useState<ScopeLevel>('outlet');
   const [customScope, setCustomScope] = useState<ShellScope | null>(null);
+  const scopeHydratedRef = useRef(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -139,10 +179,32 @@ export default function ShellLayout() {
     return [{ id: 'system', name: 'All Regions', level: 'system', children: [] }];
   }, [hierarchyQuery.data, session?.scopeAssignments]);
 
+  // Hydrate scope from URL ?scope=... (preferred) or localStorage on first tree resolve.
+  useEffect(() => {
+    if (scopeHydratedRef.current) return;
+    if (!scopeTree[0]?.children?.length) return;
+    const fromUrl = decodeScopeParam(searchParams.get('scope'), scopeTree);
+    let hydrated: ShellScope | null = fromUrl;
+    if (!hydrated) {
+      try {
+        const stored = window.localStorage.getItem(SCOPE_STORAGE_KEY);
+        hydrated = decodeScopeParam(stored, scopeTree);
+      } catch {
+        hydrated = null;
+      }
+    }
+    if (hydrated) {
+      setCustomScope(hydrated);
+      setScopeLevel(hydrated.level);
+    }
+    scopeHydratedRef.current = true;
+  }, [scopeTree, searchParams]);
+
   // Auto-select: find first leaf region (one that directly contains outlets)
   // and auto-select the appropriate scope level.
   useEffect(() => {
     if (customScope) return;
+    if (!scopeHydratedRef.current) return;
 
     // Walk tree to find leaf regions (regions with outlet children)
     const leafRegions: ScopeOption[] = [];
@@ -189,6 +251,25 @@ export default function ShellLayout() {
 
   const currentScope = customScope || defaultScope(scopeLevel, scopeTree);
 
+  // Keep the in-memory scope aligned when a route is opened with a different
+  // ?scope=... value after initial hydration, for example direct links or tests.
+  useEffect(() => {
+    if (!scopeHydratedRef.current) return;
+    if (!scopeTree[0]?.children?.length) return;
+    const fromUrl = decodeScopeParam(searchParams.get('scope'), scopeTree);
+    if (!fromUrl) return;
+    const currentEncoded = encodeScopeParam(currentScope);
+    const nextEncoded = encodeScopeParam(fromUrl);
+    if (!nextEncoded || nextEncoded === currentEncoded) return;
+    setCustomScope(fromUrl);
+    setScopeLevel(fromUrl.level);
+    try {
+      window.localStorage.setItem(SCOPE_STORAGE_KEY, nextEncoded);
+    } catch {
+      /* ignore */
+    }
+  }, [currentScope, scopeTree, searchParams]);
+
   const shellUser = useMemo(() => buildShellUser(session), [session]);
 
   const basePath = '/' + location.pathname.split('/')[1];
@@ -203,10 +284,49 @@ export default function ShellLayout() {
     navigate(defaultPath, { replace: true });
   }, [accessibleFamilies, activeFamily, defaultPath, navigate]);
 
-  const handleScopeChange = (newScope: ShellScope) => {
+  const handleScopeChange = useCallback((newScope: ShellScope) => {
     setCustomScope(newScope);
     setScopeLevel(newScope.level);
-  };
+    const encoded = encodeScopeParam(newScope);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (encoded) next.set('scope', encoded);
+        else next.delete('scope');
+        return next;
+      },
+      { replace: true },
+    );
+    try {
+      if (encoded) window.localStorage.setItem(SCOPE_STORAGE_KEY, encoded);
+    } catch {
+      /* ignore */
+    }
+  }, [setSearchParams]);
+
+  // Keep URL ?scope= in sync when scope changes via auto-select / hydration.
+  useEffect(() => {
+    if (!scopeHydratedRef.current) return;
+    const encoded = encodeScopeParam(currentScope);
+    if (!encoded) return;
+    const decodedFromUrl = decodeScopeParam(searchParams.get('scope'), scopeTree);
+    const decodedEncoded = decodedFromUrl ? encodeScopeParam(decodedFromUrl) : null;
+    if (decodedEncoded && decodedEncoded !== encoded) return;
+    if (searchParams.get('scope') === encoded) return;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('scope', encoded);
+        return next;
+      },
+      { replace: true },
+    );
+    try {
+      window.localStorage.setItem(SCOPE_STORAGE_KEY, encoded);
+    } catch {
+      /* ignore */
+    }
+  }, [currentScope, searchParams, setSearchParams]);
 
   const handleNavigate = (family: ModuleFamily) => {
     const path = FAMILY_TO_PATH[family];

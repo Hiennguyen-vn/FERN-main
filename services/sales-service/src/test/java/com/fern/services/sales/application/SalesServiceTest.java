@@ -1116,6 +1116,66 @@ class SalesServiceTest {
   }
 
   @Test
+  void capturePaymentFromSyncRejectsDuplicateWithDifferentAmount() {
+    SalesDtos.SaleView paid = syncSaleView(902L, "payment_done", "paid");
+    when(salesRepository.findSale(902L)).thenReturn(Optional.of(paid));
+
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+    java.util.Map<String, Object> payload = java.util.Map.of(
+        "sale_id", 902L,
+        "amount", new BigDecimal("36000.00"),
+        "payment_method", "cash"
+    );
+
+    assertThrows(ServiceException.class, () -> service.capturePaymentFromSync(payload));
+    verify(salesRepository, org.mockito.Mockito.never()).markPaymentDone(eq(902L), any());
+  }
+
+  @Test
+  void submitSaleFromSyncReturnsExistingDuplicateWhenPayloadMatches() {
+    SalesDtos.SaleView existing = syncSaleView(930L, "order_created", "unpaid");
+    when(salesRepository.findSale(930L)).thenReturn(Optional.of(existing));
+
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+    SalesDtos.SaleView result = service.submitSaleFromSync(java.util.Map.of(
+        "sale_id", 930L,
+        "outlet_id", 7L,
+        "pos_session_id", 300L,
+        "currency_code", "VND",
+        "order_type", "dine_in",
+        "items", List.of(java.util.Map.of(
+            "product_id", 11L,
+            "quantity", "1.0000",
+            "discount_amount", "0",
+            "tax_amount", "0"))));
+
+    assertEquals("930", result.id());
+    verify(salesRepository, org.mockito.Mockito.never()).submitSale(any(SalesDtos.SubmitSaleRequest.class), eq(930L));
+  }
+
+  @Test
+  void submitSaleFromSyncRejectsDuplicateSaleIdWithDifferentPayload() {
+    SalesDtos.SaleView existing = syncSaleView(931L, "order_created", "unpaid");
+    when(salesRepository.findSale(931L)).thenReturn(Optional.of(existing));
+
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+    java.util.Map<String, Object> payload = java.util.Map.of(
+        "sale_id", 931L,
+        "outlet_id", 7L,
+        "pos_session_id", 300L,
+        "currency_code", "VND",
+        "order_type", "dine_in",
+        "items", List.of(java.util.Map.of(
+            "product_id", 11L,
+            "quantity", "2.0000",
+            "discount_amount", "0",
+            "tax_amount", "0")));
+
+    assertThrows(ServiceException.class, () -> service.submitSaleFromSync(payload));
+    verify(salesRepository, org.mockito.Mockito.never()).submitSale(any(SalesDtos.SubmitSaleRequest.class), eq(931L));
+  }
+
+  @Test
   void capturePaymentFromSyncRejectsCancelledSale() {
     SalesDtos.SaleView cancelled = syncSaleView(903L, "cancelled", "unpaid");
     when(salesRepository.findSale(903L)).thenReturn(Optional.of(cancelled));
@@ -1199,6 +1259,16 @@ class SalesServiceTest {
   }
 
   private SalesDtos.SaleView syncSaleView(long saleId, String status, String paymentStatus) {
+    SalesDtos.PaymentView payment = "paid".equals(paymentStatus)
+        ? new SalesDtos.PaymentView(
+            Long.toString(saleId),
+            "cash",
+            new BigDecimal("35000.00"),
+            "paid",
+            Instant.parse("2026-03-27T10:00:00Z"),
+            null,
+            null)
+        : null;
     return new SalesDtos.SaleView(
         Long.toString(saleId),
         7L,
@@ -1218,7 +1288,7 @@ class SalesServiceTest {
             BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("35000.00"), Set.of(), null,
             null, null, null
         )),
-        null,
+        payment,
         Instant.parse("2026-03-27T10:00:00Z")
     );
   }

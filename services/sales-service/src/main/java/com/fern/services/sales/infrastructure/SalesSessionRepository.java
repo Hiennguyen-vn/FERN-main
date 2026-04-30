@@ -76,6 +76,12 @@ public class SalesSessionRepository extends BaseRepository {
     long sessionId = overrideSessionId != null ? overrideSessionId : snowflakeIdGenerator.generateId();
     Instant now = clock.instant();
     Long resolvedDeviceId = resolveRegisteredDeviceId(conn, request.deviceId(), request.outletId());
+    if (resolvedDeviceId != null) {
+      Optional<Long> openForDevice = findOpenPosSessionIdForOutletAndDeviceTx(conn, request.outletId(), resolvedDeviceId);
+      if (openForDevice.isPresent() && !openForDevice.get().equals(overrideSessionId)) {
+        throw ServiceException.conflict("Device already has an open POS session");
+      }
+    }
     Long resolvedManagerId = request.managerId();
     if (overrideSessionId != null && resolvedManagerId != null && !appUserExists(conn, resolvedManagerId)) {
       resolvedManagerId = null;
@@ -113,6 +119,9 @@ public class SalesSessionRepository extends BaseRepository {
       ps.executeUpdate();
     } catch (SQLException e) {
       if ("23505".equals(e.getSQLState())) {
+        if (String.valueOf(e.getMessage()).contains("uq_pos_session_open_per_device")) {
+          throw ServiceException.conflict("Device already has an open POS session");
+        }
         throw ServiceException.conflict("Session code already exists");
       }
       throw e;
@@ -360,20 +369,13 @@ public class SalesSessionRepository extends BaseRepository {
     return executeInTransaction(conn -> {
       StringBuilder sql = new StringBuilder(
           """
-          SELECT ps.id, ps.session_code, ps.outlet_id, ps.currency_code, ps.manager_id,
-                 ps.device_id, ps.register_code, ps.opened_by_username,
-                 ps.opened_at, ps.closed_at, ps.business_date, ps.status, ps.note,
-                 COALESCE(agg.order_count, 0) AS order_count,
-                 COALESCE(agg.total_revenue, 0) AS total_revenue,
-                 COUNT(*) OVER() AS total_count
-          FROM core.pos_session ps
-          LEFT JOIN LATERAL (
-            SELECT COUNT(*) AS order_count,
-                   COALESCE(SUM(CASE WHEN sr.status IN ('payment_done', 'completed') THEN sr.total_amount ELSE 0 END), 0) AS total_revenue
-            FROM core.sale_record sr
-            WHERE sr.pos_session_id = ps.id
-          ) agg ON true
-          WHERE 1 = 1
+          WITH page AS (
+            SELECT ps.id, ps.session_code, ps.outlet_id, ps.currency_code, ps.manager_id,
+                   ps.device_id, ps.register_code, ps.opened_by_username,
+                   ps.opened_at, ps.closed_at, ps.business_date, ps.status, ps.note,
+                   COUNT(*) OVER() AS total_count
+            FROM core.pos_session ps
+            WHERE 1 = 1
           """
       );
       List<Object> params = new ArrayList<>();
@@ -418,9 +420,30 @@ public class SalesSessionRepository extends BaseRepository {
           params.add(pattern);
         }
       }
-      sql.append(" ORDER BY ").append(resolvePosSessionSortClause(sortBy, sortDir)).append(" LIMIT ? OFFSET ?");
+
+      String sortClause = resolvePosSessionSortClause(sortBy, sortDir);
+      sql.append(" ORDER BY ").append(sortClause).append(" LIMIT ? OFFSET ?");
       params.add(limit);
       params.add(offset);
+      sql.append(
+          """
+          )
+          SELECT ps.id, ps.session_code, ps.outlet_id, ps.currency_code, ps.manager_id,
+                 ps.device_id, ps.register_code, ps.opened_by_username,
+                 ps.opened_at, ps.closed_at, ps.business_date, ps.status, ps.note,
+                 COALESCE(agg.order_count, 0) AS order_count,
+                 COALESCE(agg.total_revenue, 0) AS total_revenue,
+                 ps.total_count
+          FROM page ps
+          LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS order_count,
+                   COALESCE(SUM(CASE WHEN sr.status IN ('payment_done', 'completed') THEN sr.total_amount ELSE 0 END), 0) AS total_revenue
+            FROM core.sale_record sr
+            WHERE sr.pos_session_id = ps.id
+          ) agg ON true
+          """
+      );
+      sql.append(" ORDER BY ").append(sortClause);
       try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
         bindParams(ps, params);
         try (ResultSet rs = ps.executeQuery()) {

@@ -233,8 +233,7 @@ export function FinanceRevenueWorkspace({
           </select>
           <button
             onClick={() => void refresh()}
-            disabled={loading}
-            className="flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent disabled:opacity-60"
+            className="flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
             Refresh

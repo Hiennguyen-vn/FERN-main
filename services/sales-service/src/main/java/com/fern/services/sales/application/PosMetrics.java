@@ -257,6 +257,12 @@ public class PosMetrics {
         timer.record(action);
     }
 
+    public void recordPriceDriftDetected(long outletId, int linesFlagged) {
+        if (linesFlagged <= 0) return;
+        registry.counter("sale_legacy_price_total", "outlet_id", String.valueOf(outletId))
+            .increment(linesFlagged);
+    }
+
     public void recordPaymentStateTransition(String fromState, String toState) {
         registry.counter("payment_state_transitions_total",
             "from_state", fromState, "to_state", toState).increment();

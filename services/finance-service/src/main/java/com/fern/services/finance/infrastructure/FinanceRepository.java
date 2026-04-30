@@ -63,8 +63,268 @@ public class FinanceRepository extends BaseRepository {
   ) {
   }
 
+  public record ExpenseDocumentRecord(
+      long id,
+      long expenseRecordId,
+      String documentType,
+      String fileName,
+      String contentType,
+      String objectKey,
+      String storageUrl,
+      Long createdByUserId,
+      Instant createdAt
+  ) {
+  }
+
   public Optional<ExpenseRecord> findExpense(long expenseId) {
     return queryOne(baseExpenseSql() + " WHERE er.id = ?", this::mapExpense, expenseId);
+  }
+
+  public Optional<ExpenseDocumentRecord> findExpenseDocument(long documentId) {
+    return queryOne(
+        """
+        SELECT id, expense_record_id, document_type, file_name, content_type,
+               object_key, storage_url, created_by_user_id, created_at
+        FROM core.expense_document
+        WHERE id = ?
+        """,
+        this::mapExpenseDocument,
+        documentId
+    );
+  }
+
+  public List<ExpenseDocumentRecord> listExpenseDocuments(long expenseId) {
+    return queryList(
+        """
+        SELECT id, expense_record_id, document_type, file_name, content_type,
+               object_key, storage_url, created_by_user_id, created_at
+        FROM core.expense_document
+        WHERE expense_record_id = ?
+        ORDER BY created_at DESC, id DESC
+        """,
+        this::mapExpenseDocument,
+        expenseId
+    );
+  }
+
+  public Optional<FinanceDtos.SupplierInvoiceExpenseDetailView> findSupplierInvoiceExpenseDetail(long expenseId) {
+    return listSupplierInvoiceExpenseDetails(expenseId).stream().findFirst();
+  }
+
+  public Optional<FinanceDtos.InventoryReceiptExpenseDetailView> findInventoryReceiptExpenseDetail(long expenseId) {
+    return executeInTransaction(conn -> {
+      FinanceDtos.InventoryReceiptExpenseDetailView header;
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          SELECT gr.id AS goods_receipt_id,
+                 gr.po_id,
+                 po.status::text AS purchase_order_status,
+                 po.supplier_id,
+                 sp.supplier_code,
+                 sp.name AS supplier_name,
+                 gr.currency_code,
+                 gr.status::text AS receipt_status,
+                 gr.receipt_time,
+                 gr.business_date AS receipt_business_date,
+                 gr.total_price AS receipt_total,
+                 gr.supplier_lot_number
+          FROM core.expense_inventory_purchase eip
+          JOIN core.goods_receipt gr ON gr.id = eip.goods_receipt_id
+          JOIN core.purchase_order po ON po.id = gr.po_id
+          LEFT JOIN core.supplier_procurement sp ON sp.id = po.supplier_id
+          WHERE eip.expense_record_id = ?
+          """
+      )) {
+        ps.setLong(1, expenseId);
+        try (ResultSet rs = ps.executeQuery()) {
+          if (!rs.next()) {
+            return Optional.empty();
+          }
+          header = new FinanceDtos.InventoryReceiptExpenseDetailView(
+              rs.getLong("goods_receipt_id"),
+              rs.getLong("po_id"),
+              rs.getString("purchase_order_status"),
+              rs.getObject("supplier_id", Long.class),
+              rs.getString("supplier_code"),
+              rs.getString("supplier_name"),
+              rs.getString("currency_code"),
+              rs.getString("receipt_status"),
+              toInstant(rs.getTimestamp("receipt_time")),
+              toLocalDate(rs.getDate("receipt_business_date")),
+              rs.getBigDecimal("receipt_total"),
+              rs.getString("supplier_lot_number"),
+              List.of()
+          );
+        }
+      }
+      return Optional.of(new FinanceDtos.InventoryReceiptExpenseDetailView(
+          header.goodsReceiptId(),
+          header.purchaseOrderId(),
+          header.purchaseOrderStatus(),
+          header.supplierId(),
+          header.supplierCode(),
+          header.supplierName(),
+          header.currencyCode(),
+          header.receiptStatus(),
+          header.receiptTime(),
+          header.receiptBusinessDate(),
+          header.receiptTotal(),
+          header.supplierLotNumber(),
+          loadInventoryReceiptExpenseLines(conn, header.goodsReceiptId())
+      ));
+    });
+  }
+
+  public List<FinanceDtos.SupplierInvoiceExpenseDetailView> listSupplierInvoiceExpenseDetails(long expenseId) {
+    return executeInTransaction(conn -> {
+      List<FinanceDtos.SupplierInvoiceExpenseDetailView> headers = new ArrayList<>();
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          SELECT si.id AS invoice_id,
+                 si.invoice_number,
+                 si.supplier_id,
+                 sp.supplier_code,
+                 sp.name AS supplier_name,
+                 si.currency_code,
+                 si.invoice_date,
+                 si.due_date,
+                 si.subtotal,
+                 si.tax_amount,
+                 si.total_amount,
+                 si.status::text AS invoice_status,
+                 si.note AS invoice_note,
+                 si.created_by_user_id,
+                 si.approved_by_user_id,
+                 si.approved_at,
+                 si.created_at AS invoice_created_at,
+                 si.updated_at AS invoice_updated_at,
+                 gr.id AS goods_receipt_id,
+                 gr.po_id,
+                 po.status::text AS purchase_order_status,
+                 gr.status::text AS receipt_status,
+                 gr.receipt_time,
+                 gr.business_date AS receipt_business_date,
+                 gr.total_price AS receipt_total,
+                 gr.supplier_lot_number
+          FROM core.expense_inventory_purchase eip
+          JOIN core.goods_receipt gr ON gr.id = eip.goods_receipt_id
+          JOIN core.purchase_order po ON po.id = gr.po_id
+          LEFT JOIN core.supplier_invoice_receipt sir ON sir.receipt_id = gr.id
+          LEFT JOIN core.supplier_invoice si ON si.id = sir.invoice_id
+          LEFT JOIN core.supplier_procurement sp ON sp.id = si.supplier_id
+          WHERE eip.expense_record_id = ?
+            AND si.id IS NOT NULL
+          ORDER BY si.invoice_date DESC NULLS LAST, si.id DESC NULLS LAST
+          """
+      )) {
+        ps.setLong(1, expenseId);
+        try (ResultSet rs = ps.executeQuery()) {
+          while (rs.next()) {
+            long invoiceId = rs.getLong("invoice_id");
+            headers.add(new FinanceDtos.SupplierInvoiceExpenseDetailView(
+                invoiceId,
+                rs.getString("invoice_number"),
+                rs.getObject("supplier_id", Long.class),
+                rs.getString("supplier_code"),
+                rs.getString("supplier_name"),
+                rs.getString("currency_code"),
+                toLocalDate(rs.getDate("invoice_date")),
+                toLocalDate(rs.getDate("due_date")),
+                rs.getBigDecimal("subtotal"),
+                rs.getBigDecimal("tax_amount"),
+                rs.getBigDecimal("total_amount"),
+                rs.getString("invoice_status"),
+                rs.getString("invoice_note"),
+                rs.getObject("created_by_user_id", Long.class),
+                rs.getObject("approved_by_user_id", Long.class),
+                toInstant(rs.getTimestamp("approved_at")),
+                toInstant(rs.getTimestamp("invoice_created_at")),
+                toInstant(rs.getTimestamp("invoice_updated_at")),
+                rs.getLong("goods_receipt_id"),
+                rs.getLong("po_id"),
+                rs.getString("purchase_order_status"),
+                rs.getString("receipt_status"),
+                toInstant(rs.getTimestamp("receipt_time")),
+                toLocalDate(rs.getDate("receipt_business_date")),
+                rs.getBigDecimal("receipt_total"),
+                rs.getString("supplier_lot_number"),
+                List.of()
+            ));
+          }
+        }
+      }
+      List<FinanceDtos.SupplierInvoiceExpenseDetailView> details = new ArrayList<>();
+      for (FinanceDtos.SupplierInvoiceExpenseDetailView header : headers) {
+        details.add(new FinanceDtos.SupplierInvoiceExpenseDetailView(
+            header.invoiceId(),
+            header.invoiceNumber(),
+            header.supplierId(),
+            header.supplierCode(),
+            header.supplierName(),
+            header.currencyCode(),
+            header.invoiceDate(),
+            header.dueDate(),
+            header.subtotal(),
+            header.taxAmount(),
+            header.totalAmount(),
+            header.status(),
+            header.note(),
+            header.createdByUserId(),
+            header.approvedByUserId(),
+            header.approvedAt(),
+            header.createdAt(),
+            header.updatedAt(),
+            header.goodsReceiptId(),
+            header.purchaseOrderId(),
+            header.purchaseOrderStatus(),
+            header.receiptStatus(),
+            header.receiptTime(),
+            header.receiptBusinessDate(),
+            header.receiptTotal(),
+            header.supplierLotNumber(),
+            loadSupplierInvoiceExpenseLines(conn, header.invoiceId())
+        ));
+      }
+      return details;
+    });
+  }
+
+  public ExpenseDocumentRecord createExpenseDocument(
+      long documentId,
+      long expenseId,
+      String documentType,
+      String fileName,
+      String contentType,
+      String objectKey,
+      String storageUrl,
+      Long createdByUserId
+  ) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.expense_document (
+            id, expense_record_id, document_type, file_name, content_type,
+            object_key, storage_url, created_by_user_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          """
+      )) {
+        ps.setLong(1, documentId);
+        ps.setLong(2, expenseId);
+        ps.setString(3, documentType);
+        ps.setString(4, fileName);
+        ps.setString(5, contentType);
+        ps.setString(6, objectKey);
+        ps.setString(7, storageUrl);
+        if (createdByUserId == null) {
+          ps.setNull(8, java.sql.Types.BIGINT);
+        } else {
+          ps.setLong(8, createdByUserId);
+        }
+        ps.executeUpdate();
+      }
+      return findExpenseDocumentTransactional(conn, documentId)
+          .orElseThrow(() -> new IllegalStateException("Expense document not found after create: " + documentId));
+    });
   }
 
   public PagedResult<ExpenseRecord> listExpenses(
@@ -90,38 +350,7 @@ public class FinanceRepository extends BaseRepository {
       );
       sql.append(baseExpenseSql()).append(" WHERE 1 = 1");
       List<Object> params = new ArrayList<>();
-      appendOutletFilter(sql, params, "er.outlet_id", outletIds);
-      if (startDate != null) {
-        sql.append(" AND er.business_date >= ?");
-        params.add(Date.valueOf(startDate));
-      }
-      if (endDate != null) {
-        sql.append(" AND er.business_date <= ?");
-        params.add(Date.valueOf(endDate));
-      }
-      if (sourceType != null && !sourceType.isBlank()) {
-        sql.append(" AND er.source_type = ?::expense_source_type_enum");
-        params.add(sourceType.trim());
-      }
-      if (q != null && !q.isBlank()) {
-        String pattern = "%" + q + "%";
-        sql.append(
-            """
-             AND (
-               er.id::text ILIKE ?
-               OR er.currency_code ILIKE ?
-               OR er.source_type::text ILIKE ?
-               OR COALESCE(eo.description, eot.description, '') ILIKE ?
-               OR COALESCE(er.note, '') ILIKE ?
-             )
-            """
-        );
-        params.add(pattern);
-        params.add(pattern);
-        params.add(pattern);
-        params.add(pattern);
-        params.add(pattern);
-      }
+      appendExpenseFilters(sql, params, outletIds, startDate, endDate, sourceType, q);
       sql.append(") expense_rows ORDER BY ")
           .append(resolveExpenseSortClause(sortBy, sortDir))
           .append(" LIMIT ? OFFSET ?");
@@ -137,6 +366,53 @@ public class FinanceRepository extends BaseRepository {
             rows.add(mapExpense(rs));
           }
           return PagedResult.of(rows, limit, offset, totalCount);
+        }
+      }
+    });
+  }
+
+  public List<FinanceDtos.ExpenseSummaryRow> expenseSummary(
+      Set<Long> outletIds,
+      LocalDate startDate,
+      LocalDate endDate,
+      String sourceType,
+      String q
+  ) {
+    if (outletIds != null && outletIds.isEmpty()) {
+      return List.of();
+    }
+    return executeInTransaction(conn -> {
+      StringBuilder sql = new StringBuilder(
+          """
+          SELECT
+            er.source_type::text AS source_type,
+            COUNT(*) AS record_count,
+            COALESCE(SUM(er.amount), 0) AS amount,
+            MIN(er.currency_code) AS currency_code
+          FROM core.expense_record er
+          LEFT JOIN core.expense_operating eo ON eo.expense_record_id = er.id
+          LEFT JOIN core.expense_other eot ON eot.expense_record_id = er.id
+          WHERE 1 = 1
+          """
+      );
+      List<Object> params = new ArrayList<>();
+      appendExpenseFilters(sql, params, outletIds, startDate, endDate, sourceType, q);
+      sql.append(" GROUP BY er.source_type ORDER BY er.source_type");
+
+      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+        bindParams(ps, params);
+        try (ResultSet rs = ps.executeQuery()) {
+          List<FinanceDtos.ExpenseSummaryRow> rows = new ArrayList<>();
+          while (rs.next()) {
+            BigDecimal amount = rs.getBigDecimal("amount");
+            rows.add(new FinanceDtos.ExpenseSummaryRow(
+                rs.getString("source_type"),
+                rs.getLong("record_count"),
+                amount == null ? BigDecimal.ZERO : amount,
+                rs.getString("currency_code")
+            ));
+          }
+          return rows;
         }
       }
     });
@@ -229,6 +505,74 @@ public class FinanceRepository extends BaseRepository {
       params.add(outletId);
     }
     sql.append(")");
+  }
+
+  private void appendExpenseFilters(
+      StringBuilder sql,
+      List<Object> params,
+      Set<Long> outletIds,
+      LocalDate startDate,
+      LocalDate endDate,
+      String sourceType,
+      String q
+  ) {
+    appendOutletFilter(sql, params, "er.outlet_id", outletIds);
+    if (startDate != null) {
+      sql.append(" AND er.business_date >= ?");
+      params.add(Date.valueOf(startDate));
+    }
+    if (endDate != null) {
+      sql.append(" AND er.business_date <= ?");
+      params.add(Date.valueOf(endDate));
+    }
+    if (sourceType != null && !sourceType.isBlank()) {
+      sql.append(" AND er.source_type = ?::expense_source_type_enum");
+      params.add(sourceType.trim());
+    }
+    if (q != null && !q.isBlank()) {
+      String pattern = "%" + q + "%";
+      sql.append(
+          """
+           AND (
+             er.id::text ILIKE ?
+             OR er.currency_code ILIKE ?
+             OR er.source_type::text ILIKE ?
+             OR COALESCE(eo.description, eot.description, '') ILIKE ?
+             OR COALESCE(er.note, '') ILIKE ?
+           )
+          """
+      );
+      params.add(pattern);
+      params.add(pattern);
+      params.add(pattern);
+      params.add(pattern);
+      params.add(pattern);
+    }
+  }
+
+  public boolean isBusinessDateInClosedPeriod(long outletId, LocalDate businessDate) {
+    return queryOne(
+        """
+        SELECT EXISTS (
+          SELECT 1
+          FROM core.outlet o
+          JOIN core.payroll_period pp
+            ON pp.region_id = o.region_id
+          WHERE o.id = ?
+            AND ? BETWEEN pp.start_date AND pp.end_date
+            AND pp.status = 'closed'
+        ) AS closed
+        """,
+        rs -> {
+          try {
+            return rs.getBoolean("closed");
+          } catch (SQLException e) {
+            throw new IllegalStateException("Unable to check closed finance period", e);
+          }
+        },
+        outletId,
+        Date.valueOf(businessDate)
+    ).orElse(false);
   }
 
   public ExpenseRecord createOperatingExpense(
@@ -408,6 +752,138 @@ public class FinanceRepository extends BaseRepository {
     }
   }
 
+  private Optional<ExpenseDocumentRecord> findExpenseDocumentTransactional(Connection conn, long documentId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT id, expense_record_id, document_type, file_name, content_type,
+               object_key, storage_url, created_by_user_id, created_at
+        FROM core.expense_document
+        WHERE id = ?
+        """
+    )) {
+      ps.setLong(1, documentId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) {
+          return Optional.of(mapExpenseDocument(rs));
+        }
+        return Optional.empty();
+      }
+    }
+  }
+
+  private List<FinanceDtos.SupplierInvoiceExpenseLineView> loadSupplierInvoiceExpenseLines(
+      Connection conn,
+      long invoiceId
+  ) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT sii.line_number,
+               sii.line_type::text AS line_type,
+               sii.goods_receipt_item_id,
+               gri.item_id,
+               item.code AS item_code,
+               item.name AS item_name,
+               gri.uom_code,
+               sii.qty_invoiced,
+               sii.unit_price,
+               sii.tax_percent,
+               sii.tax_amount,
+               sii.line_total,
+               gri.qty_received,
+               gri.unit_cost AS receipt_unit_cost,
+               gri.line_total AS receipt_line_total,
+               sii.description,
+               sii.note
+        FROM core.supplier_invoice_item sii
+        LEFT JOIN core.goods_receipt_item gri ON gri.id = sii.goods_receipt_item_id
+        LEFT JOIN core.item item ON item.id = gri.item_id
+        WHERE sii.invoice_id = ?
+        ORDER BY sii.line_number
+        """
+    )) {
+      ps.setLong(1, invoiceId);
+      try (ResultSet rs = ps.executeQuery()) {
+        List<FinanceDtos.SupplierInvoiceExpenseLineView> lines = new ArrayList<>();
+        while (rs.next()) {
+          lines.add(new FinanceDtos.SupplierInvoiceExpenseLineView(
+              rs.getInt("line_number"),
+              rs.getString("line_type"),
+              rs.getObject("goods_receipt_item_id", Long.class),
+              rs.getObject("item_id", Long.class),
+              rs.getString("item_code"),
+              rs.getString("item_name"),
+              rs.getString("uom_code"),
+              rs.getBigDecimal("qty_invoiced"),
+              rs.getBigDecimal("unit_price"),
+              rs.getBigDecimal("tax_percent"),
+              rs.getBigDecimal("tax_amount"),
+              rs.getBigDecimal("line_total"),
+              rs.getBigDecimal("qty_received"),
+              rs.getBigDecimal("receipt_unit_cost"),
+              rs.getBigDecimal("receipt_line_total"),
+              rs.getString("description"),
+              rs.getString("note")
+          ));
+        }
+        return lines;
+      }
+    }
+  }
+
+  private List<FinanceDtos.InventoryReceiptExpenseLineView> loadInventoryReceiptExpenseLines(
+      Connection conn,
+      long goodsReceiptId
+  ) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT gri.id AS goods_receipt_item_id,
+               gri.item_id,
+               item.code AS item_code,
+               item.name AS item_name,
+               gri.uom_code,
+               gri.qty_received,
+               gri.unit_cost,
+               gri.line_total,
+               gri.manufacture_date,
+               gri.expiry_date,
+               gri.note
+        FROM core.goods_receipt_item gri
+        LEFT JOIN core.item item ON item.id = gri.item_id
+        WHERE gri.receipt_id = ?
+        ORDER BY gri.id
+        """
+    )) {
+      ps.setLong(1, goodsReceiptId);
+      try (ResultSet rs = ps.executeQuery()) {
+        List<FinanceDtos.InventoryReceiptExpenseLineView> lines = new ArrayList<>();
+        while (rs.next()) {
+          lines.add(new FinanceDtos.InventoryReceiptExpenseLineView(
+              rs.getLong("goods_receipt_item_id"),
+              rs.getObject("item_id", Long.class),
+              rs.getString("item_code"),
+              rs.getString("item_name"),
+              rs.getString("uom_code"),
+              rs.getBigDecimal("qty_received"),
+              rs.getBigDecimal("unit_cost"),
+              rs.getBigDecimal("line_total"),
+              toLocalDate(rs.getDate("manufacture_date")),
+              toLocalDate(rs.getDate("expiry_date")),
+              rs.getString("note")
+          ));
+        }
+        return lines;
+      }
+    }
+  }
+
+  private static LocalDate toLocalDate(Date value) {
+    return value == null ? null : value.toLocalDate();
+  }
+
+  private static Instant toInstant(Timestamp value) {
+    return value == null ? null : value.toInstant();
+  }
+
   private void insertExpenseRecord(
       Connection conn,
       long expenseId,
@@ -480,6 +956,25 @@ public class FinanceRepository extends BaseRepository {
       );
     } catch (SQLException e) {
       throw new IllegalStateException("Unable to map expense row", e);
+    }
+  }
+
+  private ExpenseDocumentRecord mapExpenseDocument(ResultSet rs) {
+    try {
+      Timestamp createdAt = rs.getTimestamp("created_at");
+      return new ExpenseDocumentRecord(
+          rs.getLong("id"),
+          rs.getLong("expense_record_id"),
+          rs.getString("document_type"),
+          rs.getString("file_name"),
+          rs.getString("content_type"),
+          rs.getString("object_key"),
+          rs.getString("storage_url"),
+          rs.getObject("created_by_user_id", Long.class),
+          createdAt == null ? null : createdAt.toInstant()
+      );
+    } catch (SQLException e) {
+      throw new IllegalStateException("Unable to map expense document row", e);
     }
   }
 

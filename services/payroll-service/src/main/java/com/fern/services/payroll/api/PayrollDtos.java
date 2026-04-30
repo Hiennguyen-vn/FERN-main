@@ -16,6 +16,7 @@ public final class PayrollDtos {
       String id,
       long regionId,
       String name,
+      String status,
       LocalDate startDate,
       LocalDate endDate,
       LocalDate payDate,

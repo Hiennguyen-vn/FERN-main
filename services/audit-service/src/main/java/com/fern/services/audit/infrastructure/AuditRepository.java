@@ -75,7 +75,18 @@ public class AuditRepository extends BaseRepository {
     return queryOne(
         """
         SELECT id, actor_user_id, action, entity_name, entity_id, reason, old_data, new_data,
-               ip_address, user_agent, created_at
+               ip_address, user_agent, created_at,
+               COALESCE(
+                 NULLIF(new_data ->> 'sourceService', ''),
+                 NULLIF(old_data ->> 'sourceService', ''),
+                 NULLIF(split_part(reason, '.', 1), '')
+               ) AS module,
+               COALESCE(
+                 NULLIF(new_data ->> 'correlationId', ''),
+                 NULLIF(old_data ->> 'correlationId', ''),
+                 NULLIF(new_data ->> 'sourceEventId', ''),
+                 NULLIF(old_data ->> 'sourceEventId', '')
+               ) AS correlation_id
         FROM core.audit_log
         WHERE id = ?
         """,
@@ -101,7 +112,19 @@ public class AuditRepository extends BaseRepository {
       StringBuilder sql = new StringBuilder(
           """
           SELECT id, actor_user_id, action, entity_name, entity_id, reason, old_data, new_data,
-                 ip_address, user_agent, created_at, COUNT(*) OVER() AS total_count
+                 ip_address, user_agent, created_at,
+                 COALESCE(
+                   NULLIF(new_data ->> 'sourceService', ''),
+                   NULLIF(old_data ->> 'sourceService', ''),
+                   NULLIF(split_part(reason, '.', 1), '')
+                 ) AS module,
+                 COALESCE(
+                   NULLIF(new_data ->> 'correlationId', ''),
+                   NULLIF(old_data ->> 'correlationId', ''),
+                   NULLIF(new_data ->> 'sourceEventId', ''),
+                   NULLIF(old_data ->> 'sourceEventId', '')
+                 ) AS correlation_id,
+                 COUNT(*) OVER() AS total_count
           FROM core.audit_log
           WHERE 1 = 1
           """
@@ -130,9 +153,15 @@ public class AuditRepository extends BaseRepository {
                OR COALESCE(reason, '') ILIKE ?
                OR COALESCE(ip_address::text, '') ILIKE ?
                OR COALESCE(user_agent, '') ILIKE ?
+               OR COALESCE(new_data ->> 'correlationId', old_data ->> 'correlationId', '') ILIKE ?
+               OR COALESCE(new_data ->> 'sourceEventId', old_data ->> 'sourceEventId', '') ILIKE ?
+               OR COALESCE(new_data ->> 'sourceService', old_data ->> 'sourceService', '') ILIKE ?
              )
             """
         );
+        params.add(pattern);
+        params.add(pattern);
+        params.add(pattern);
         params.add(pattern);
         params.add(pattern);
         params.add(pattern);
@@ -410,7 +439,9 @@ public class AuditRepository extends BaseRepository {
           parseJson(rs.getString("new_data")),
           rs.getString("ip_address"),
           rs.getString("user_agent"),
-          rs.getTimestamp("created_at").toInstant()
+          rs.getTimestamp("created_at").toInstant(),
+          rs.getString("module"),
+          rs.getString("correlation_id")
       );
     } catch (SQLException e) {
       throw new IllegalStateException("Failed to map audit log row", e);

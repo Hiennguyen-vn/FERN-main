@@ -107,6 +107,19 @@ export function ContractsWorkspace({
   const [renewContract, setRenewContract] = useState<ContractView | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+
+  // userId → number of active contracts on current page — flags overlap risk
+  const overlapUserIds = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of contracts) {
+      const s = String(c.status || '').toLowerCase();
+      if (s === 'active' || s === 'draft') {
+        const uid = String(c.userId ?? '');
+        if (uid) counts.set(uid, (counts.get(uid) ?? 0) + 1);
+      }
+    }
+    return new Set([...counts.entries()].filter(([, n]) => n > 1).map(([uid]) => uid));
+  }, [contracts]);
   const [bulkTerminateConfirm, setBulkTerminateConfirm] = useState(false);
 
   const contractsQuery = useListQueryState<{ outletId?: string; status?: string; endDateFrom?: string; endDateTo?: string }>({
@@ -511,8 +524,13 @@ export function ContractsWorkspace({
                           </div>
                         </td>
                         <td className="px-4 py-2.5">
-                          <div className="flex flex-col">
-                            <span className="text-xs font-medium">{userDisplay.primary}</span>
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-medium">{userDisplay.primary}</span>
+                              {overlapUserIds.has(String(contract.userId ?? '')) ? (
+                                <span className="rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[9px] font-medium text-amber-700">overlap</span>
+                              ) : null}
+                            </div>
                             {userDisplay.secondary ? <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span> : null}
                           </div>
                         </td>

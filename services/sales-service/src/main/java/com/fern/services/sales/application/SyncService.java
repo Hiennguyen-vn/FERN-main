@@ -37,6 +37,7 @@ public class SyncService extends BaseRepository {
     private final SnowflakeIdGenerator snowflake;
     private final ObjectMapper objectMapper;
     private final OutboxWriter outboxWriter;
+    private final ManifestSigner manifestSigner;
 
     public SyncService(
         DataSource dataSource,
@@ -44,7 +45,8 @@ public class SyncService extends BaseRepository {
         PosMetrics posMetrics,
         SnowflakeIdGenerator snowflake,
         ObjectMapper objectMapper,
-        OutboxWriter outboxWriter
+        OutboxWriter outboxWriter,
+        ManifestSigner manifestSigner
     ) {
         super(dataSource);
         this.salesService = salesService;
@@ -52,6 +54,7 @@ public class SyncService extends BaseRepository {
         this.snowflake = snowflake;
         this.objectMapper = objectMapper;
         this.outboxWriter = outboxWriter;
+        this.manifestSigner = manifestSigner;
     }
 
     // ── Catalog pull ──────────────────────────────────────────────────────────
@@ -225,7 +228,7 @@ public class SyncService extends BaseRepository {
               ORDER BY tr.effective_from DESC, tr.updated_at DESC
               LIMIT 1
             ) tr ON TRUE
-            ORDER BY COALESCE(pc.display_order, 0), p.name, p.id
+            ORDER BY pc.name, p.name, p.id
             """;
         String variantSql = """
             SELECT pv.id, pv.product_id, pv.code, pv.name, pv.price_modifier_type,
@@ -416,34 +419,52 @@ public class SyncService extends BaseRepository {
     public SyncDtos.ManifestResponse manifest() {
         // Catalog version = max updated_at epoch ms across products
         // Price version   = max updated_at epoch ms across product_prices
-        // Stock version   = max txn_time epoch ms across inventory_transactions
+        // Stock version   = latest txn_time epoch ms across inventory_transactions
         // NOTE: Each version is computed independently to avoid cross-product scans.
         String sql = """
+            WITH versions AS (
+              SELECT
+                COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.product), 0) AS catalog_version,
+                COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.product_price), 0) AS price_version,
+                COALESCE((
+                  SELECT (EXTRACT(EPOCH FROM txn_time) * 1000)::bigint
+                  FROM core.inventory_transaction
+                  ORDER BY txn_time DESC
+                  LIMIT 1
+                ), 0) AS stock_version,
+                COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.recipe), 0) AS recipe_version,
+                COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.product_variant), 0) AS product_variant_version,
+                COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.modifier_group), 0) AS modifier_group_version,
+                COALESCE((SELECT MAX(EXTRACT(EPOCH FROM created_at) * 1000)::bigint FROM core.modifier_option), 0) AS modifier_option_version
+            )
             SELECT
-              COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.product), 0)               AS catalog_version,
-              COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.product_price), 0)         AS price_version,
-              COALESCE((SELECT MAX(EXTRACT(EPOCH FROM txn_time) * 1000)::bigint   FROM core.inventory_transaction), 0) AS stock_version,
-              COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.recipe), 0)               AS recipe_version,
+              catalog_version,
+              price_version,
+              stock_version,
+              recipe_version,
               GREATEST(
-                COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.product), 0),
-                COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.product_price), 0),
-                COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.product_variant), 0),
-                COALESCE((SELECT MAX(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint FROM core.modifier_group), 0),
-                COALESCE((SELECT MAX(EXTRACT(EPOCH FROM created_at) * 1000)::bigint FROM core.modifier_option), 0)
+                catalog_version,
+                price_version,
+                product_variant_version,
+                modifier_group_version,
+                modifier_option_version
               ) AS menu_version
+            FROM versions
             """;
         return executeInTransaction(conn -> {
             try (PreparedStatement ps = conn.prepareStatement(sql);
                  ResultSet rs = ps.executeQuery()) {
                 rs.next();
-                return new SyncDtos.ManifestResponse(
-                    rs.getLong("catalog_version"),
-                    rs.getLong("price_version"),
-                    rs.getLong("stock_version"),
-                    rs.getLong("recipe_version"),
-                    rs.getLong("menu_version"),
-                    Instant.now().toString()
-                );
+                long c = rs.getLong("catalog_version");
+                long p = rs.getLong("price_version");
+                long s = rs.getLong("stock_version");
+                long r = rs.getLong("recipe_version");
+                long m = rs.getLong("menu_version");
+                String t = Instant.now().toString();
+                String canonical = ManifestSigner.canonicalize(c, p, s, r, m, t);
+                String sig = manifestSigner.isEnabled() ? manifestSigner.sign(canonical) : null;
+                String kid = manifestSigner.isEnabled() ? manifestSigner.keyId() : null;
+                return new SyncDtos.ManifestResponse(c, p, s, r, m, t, sig, kid);
             }
         });
     }
@@ -523,6 +544,10 @@ public class SyncService extends BaseRepository {
             || normalized.startsWith("Transaction failed")
             || normalized.startsWith("Query failed:")
             || normalized.startsWith("Execute failed:")
+            || normalized.startsWith("One or more items do not have enough stock")
+            || normalized.startsWith("Sale not found:")
+            || normalized.startsWith("POS session not found:")
+            || normalized.startsWith("Session code already exists")
             || normalized.contains("Connection")
             || normalized.contains("timeout");
     }

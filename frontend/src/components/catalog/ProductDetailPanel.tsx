@@ -13,6 +13,7 @@ import { getErrorMessage } from '@/api/decoders';
 import { EmptyState } from '@/components/shell/PermissionStates';
 import { StatusBadge } from '@/components/catalog/StatusBadge';
 import { ScopePill } from '@/components/catalog/shared';
+import { getProductImageUploadErrorMessage, validateProductImageFile } from '@/components/catalog/product-image-upload';
 
 type DetailTab = 'identity' | 'recipe' | 'pricing' | 'availability';
 
@@ -176,13 +177,9 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
 
   const handleQuickUpload = async (file: File) => {
     if (!canManageCatalog) return;
-    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowed.includes(file.type)) {
-      toast.error('Unsupported format. Use JPG/PNG/WEBP.');
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('File exceeds 5MB.');
+    const validationError = validateProductImageFile(file);
+    if (validationError) {
+      toast.error(validationError);
       return;
     }
     setUploadingImage(true);
@@ -192,7 +189,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
       toast.success('Image updated');
       onProductUpdated();
     } catch (e) {
-      toast.error(getErrorMessage(e, 'Upload failed'));
+      toast.error(getProductImageUploadErrorMessage(e));
     } finally {
       setUploadingImage(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -201,13 +198,9 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
 
   const handleImageFileSelected = async (file: File) => {
     if (!canManageCatalog) return;
-    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowed.includes(file.type)) {
-      toast.error('Unsupported format. Use JPG/PNG/WEBP.');
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('File exceeds 5MB.');
+    const validationError = validateProductImageFile(file);
+    if (validationError) {
+      toast.error(validationError);
       return;
     }
     setUploadingImage(true);
@@ -216,7 +209,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
       setEditForm((f) => ({ ...f, imageUrl: finalUrl }));
       toast.success('Image uploaded. Click Save to apply.');
     } catch (e) {
-      toast.error(getErrorMessage(e, 'Upload failed'));
+      toast.error(getProductImageUploadErrorMessage(e));
     } finally {
       setUploadingImage(false);
       if (fileInputRef.current) fileInputRef.current.value = '';

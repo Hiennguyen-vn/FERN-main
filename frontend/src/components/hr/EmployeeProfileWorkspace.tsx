@@ -253,6 +253,7 @@ export function EmployeeProfileWorkspace({
   scopeOutletId,
 }: EmployeeProfileWorkspaceProps) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [contractFilter, setContractFilter] = useState<'all' | 'active' | 'none'>('all');
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   // Data for selected employee
@@ -268,15 +269,21 @@ export function EmployeeProfileWorkspace({
   const hrEmployeesById = useMemo(() => new Map(hrEmployees.map((e) => [e.id, e])), [hrEmployees]);
 
   const filteredEmployees = useMemo(() => {
-    if (!searchTerm.trim()) return hrEmployees;
-    const lower = searchTerm.toLowerCase();
-    return hrEmployees.filter((e) =>
-      (e.fullName || '').toLowerCase().includes(lower) ||
-      (e.username || '').toLowerCase().includes(lower) ||
-      (e.employeeCode || '').toLowerCase().includes(lower) ||
-      (e.email || '').toLowerCase().includes(lower),
-    );
-  }, [hrEmployees, searchTerm]);
+    const lower = searchTerm.trim().toLowerCase();
+    return hrEmployees.filter((e) => {
+      if (lower) {
+        const match =
+          (e.fullName || '').toLowerCase().includes(lower) ||
+          (e.username || '').toLowerCase().includes(lower) ||
+          (e.employeeCode || '').toLowerCase().includes(lower) ||
+          (e.email || '').toLowerCase().includes(lower);
+        if (!match) return false;
+      }
+      if (contractFilter === 'active') return Boolean(e.activeContract);
+      if (contractFilter === 'none') return !e.activeContract;
+      return true;
+    });
+  }, [hrEmployees, searchTerm, contractFilter]);
 
   const loadEmployeeData = useCallback(async (userId: string) => {
     if (!token) return;
@@ -372,7 +379,18 @@ export function EmployeeProfileWorkspace({
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          <p className="text-[10px] text-muted-foreground mt-1.5">{filteredEmployees.length} employees</p>
+          <div className="flex items-center justify-between mt-1.5">
+            <p className="text-[10px] text-muted-foreground">{filteredEmployees.length} employees</p>
+            <select
+              className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
+              value={contractFilter}
+              onChange={(e) => setContractFilter(e.target.value as 'all' | 'active' | 'none')}
+            >
+              <option value="all">All</option>
+              <option value="active">Active contract</option>
+              <option value="none">No contract</option>
+            </select>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           {usersError ? (

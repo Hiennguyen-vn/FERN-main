@@ -331,6 +331,8 @@ export const procurementApi = {
     apiRequest('/api/v1/procurement/payments', { method: 'POST', token, body: payload }),
   approvePurchaseOrder: async (token: string, purchaseOrderId: string): Promise<unknown> =>
     apiRequest(`/api/v1/procurement/purchase-orders/${purchaseOrderId}/approve`, { method: 'POST', token }),
+  cancelPurchaseOrder: async (token: string, purchaseOrderId: string): Promise<unknown> =>
+    apiRequest(`/api/v1/procurement/purchase-orders/${purchaseOrderId}/cancel`, { method: 'POST', token }),
   approveGoodsReceipt: async (token: string, receiptId: string): Promise<unknown> =>
     apiRequest(`/api/v1/procurement/goods-receipts/${receiptId}/approve`, { method: 'POST', token }),
   postGoodsReceipt: async (token: string, receiptId: string): Promise<unknown> =>

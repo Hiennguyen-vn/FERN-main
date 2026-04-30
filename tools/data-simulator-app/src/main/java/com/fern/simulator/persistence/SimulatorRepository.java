@@ -1106,11 +1106,12 @@ public final class SimulatorRepository {
 
     public static void insertAuditLog(Connection conn, long id, Long actorUserId,
                                        String action, String entityName,
-                                       String entityId, String reason) throws SQLException {
+                                       String entityId, String reason,
+                                       java.time.OffsetDateTime createdAt) throws SQLException {
         String sql = """
-            INSERT INTO core.audit_log (id, actor_user_id, action, entity_name, entity_id, reason)
-            VALUES (?, ?, ?::core.audit_action_enum, ?, ?, ?)
-            ON CONFLICT (id) DO NOTHING
+            INSERT INTO core.audit_log (id, actor_user_id, action, entity_name, entity_id, reason, created_at)
+            VALUES (?, ?, ?::core.audit_action_enum, ?, ?, ?, ?)
+            ON CONFLICT (id, created_at) DO NOTHING
             """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, id);
@@ -1119,6 +1120,7 @@ public final class SimulatorRepository {
             ps.setString(4, entityName);
             ps.setString(5, entityId);
             ps.setString(6, reason);
+            ps.setObject(7, createdAt);
             ps.executeUpdate();
         }
     }

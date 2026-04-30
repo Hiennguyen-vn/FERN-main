@@ -526,12 +526,14 @@ public class SalesRepository extends BaseRepository {
     Instant now = clock.instant();
     Map<Long, AggregatedSaleLine> aggregatedLines =
         aggregateLines(conn, request, pricingDate);
-    validateStockAvailability(
-        conn,
-        request.outletId(),
-        aggregatedLines,
-        false,
-        "One or more items do not have enough stock to create this order");
+    if (overrideSaleId == null) {
+      validateStockAvailability(
+          conn,
+          request.outletId(),
+          aggregatedLines,
+          false,
+          "One or more items do not have enough stock to create this order");
+    }
 
     BigDecimal subtotal = BigDecimal.ZERO;
     BigDecimal totalDiscount = BigDecimal.ZERO;
@@ -624,6 +626,42 @@ public class SalesRepository extends BaseRepository {
     return sessionRepository.findPosSession(sessionId);
   }
 
+  public void linkCustomerToSale(long saleId, Long customerId) {
+    execute(
+        "UPDATE core.sale_record SET customer_id = ?, updated_at = NOW() WHERE id = ?",
+        customerId, saleId
+    );
+  }
+
+  public Optional<Long> findCustomerIdForSale(long saleId) {
+    return queryOne(
+        "SELECT customer_id FROM core.sale_record WHERE id = ?",
+        rs -> {
+          try { long v = rs.getLong(1); return rs.wasNull() ? null : v; }
+          catch (java.sql.SQLException e) { throw new IllegalStateException("read customer_id", e); }
+        },
+        saleId
+    );
+  }
+
+  public java.math.BigDecimal findSaleTotal(long saleId) {
+    return queryOne(
+        "SELECT total_amount FROM core.sale_record WHERE id = ?",
+        rs -> {
+          try { return rs.getBigDecimal(1); }
+          catch (java.sql.SQLException e) { throw new IllegalStateException("read total_amount", e); }
+        },
+        saleId
+    ).orElse(java.math.BigDecimal.ZERO);
+  }
+
+  public void recordPointsEarned(long saleId, int points) {
+    execute(
+        "UPDATE core.sale_record SET points_earned = ?, updated_at = NOW() WHERE id = ?",
+        points, saleId
+    );
+  }
+
   public boolean isSaleOversell(long saleId) {
     return queryOne(
         "SELECT oversell_flag FROM core.sale_record WHERE id = ?",
@@ -667,6 +705,141 @@ public class SalesRepository extends BaseRepository {
         ps.executeUpdate();
       }
       return null;
+    });
+  }
+
+  /**
+   * Compares each sale_item.unit_price with the currently effective product_price for the outlet
+   * at sync time. Where they differ, marks legacy_price=true and stores the current price.
+   * Returns the number of lines flagged.
+   */
+  public int markPriceDrift(long saleId) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          UPDATE core.sale_item si
+          SET legacy_price = TRUE,
+              current_price_at_sync = pp.price_value,
+              updated_at = NOW()
+          FROM (
+            SELECT si2.product_id,
+                   (SELECT pp2.price_value
+                      FROM core.product_price pp2
+                     WHERE pp2.product_id = si2.product_id
+                       AND pp2.outlet_id = si2.outlet_id
+                       AND pp2.effective_from <= CURRENT_DATE
+                       AND (pp2.effective_to IS NULL OR pp2.effective_to >= CURRENT_DATE)
+                     ORDER BY pp2.effective_from DESC, pp2.updated_at DESC
+                     LIMIT 1) AS price_value
+              FROM core.sale_item si2
+             WHERE si2.sale_id = ?
+          ) pp
+          WHERE si.sale_id = ?
+            AND si.product_id = pp.product_id
+            AND pp.price_value IS NOT NULL
+            AND si.unit_price <> pp.price_value
+            AND si.legacy_price = FALSE
+          """
+      )) {
+        ps.setLong(1, saleId);
+        ps.setLong(2, saleId);
+        return ps.executeUpdate();
+      }
+    });
+  }
+
+  public java.util.List<Map<String, Object>> reportPriceDrift(
+      java.util.List<Long> outletIds, Instant from, Instant to, int limit) {
+    if (outletIds == null || outletIds.isEmpty()) return java.util.List.of();
+    StringBuilder placeholders = new StringBuilder();
+    for (int i = 0; i < outletIds.size(); i++) {
+      if (i > 0) placeholders.append(',');
+      placeholders.append('?');
+    }
+    String sql = """
+        SELECT si.sale_id, si.product_id, si.outlet_id,
+               si.unit_price, si.current_price_at_sync, si.price_drift_amount,
+               si.qty, si.created_at
+          FROM core.sale_item si
+         WHERE si.legacy_price = TRUE
+           AND si.outlet_id IN (%s)
+           AND si.created_at >= ?
+           AND si.created_at <  ?
+         ORDER BY si.created_at DESC
+         LIMIT ?
+        """.formatted(placeholders.toString());
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        int idx = 1;
+        for (Long oid : outletIds) ps.setLong(idx++, oid);
+        ps.setTimestamp(idx++, Timestamp.from(from));
+        ps.setTimestamp(idx++, Timestamp.from(to));
+        ps.setInt(idx, limit);
+        try (ResultSet rs = ps.executeQuery()) {
+          java.util.List<Map<String, Object>> out = new ArrayList<>();
+          while (rs.next()) {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("saleId", rs.getLong("sale_id"));
+            row.put("productId", rs.getLong("product_id"));
+            row.put("outletId", rs.getLong("outlet_id"));
+            row.put("unitPrice", rs.getBigDecimal("unit_price"));
+            row.put("currentPriceAtSync", rs.getBigDecimal("current_price_at_sync"));
+            row.put("priceDriftAmount", rs.getBigDecimal("price_drift_amount"));
+            row.put("qty", rs.getBigDecimal("qty"));
+            row.put("createdAt", rs.getTimestamp("created_at").toInstant().toString());
+            out.add(row);
+          }
+          return out;
+        }
+      }
+    });
+  }
+
+  public java.util.List<Map<String, Object>> listDltPending(int limit) {
+    String sql = """
+        SELECT id, aggregate_type, aggregate_id, topic, status, dlq_status,
+               attempt_count, last_error, created_at
+          FROM core.outbox_event
+         WHERE status = 'FAILED' AND dlq_status = 'PENDING'
+         ORDER BY created_at DESC
+         LIMIT ?
+        """;
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        ps.setInt(1, limit);
+        try (ResultSet rs = ps.executeQuery()) {
+          java.util.List<Map<String, Object>> out = new ArrayList<>();
+          while (rs.next()) {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("id", rs.getLong("id"));
+            row.put("aggregateType", rs.getString("aggregate_type"));
+            row.put("aggregateId", rs.getLong("aggregate_id"));
+            row.put("topic", rs.getString("topic"));
+            row.put("status", rs.getString("status"));
+            row.put("dlqStatus", rs.getString("dlq_status"));
+            row.put("attempts", rs.getInt("attempt_count"));
+            row.put("lastError", rs.getString("last_error"));
+            row.put("createdAt", rs.getTimestamp("created_at").toInstant().toString());
+            out.add(row);
+          }
+          return out;
+        }
+      }
+    });
+  }
+
+  public int requeueDlt(long eventId) {
+    String sql = """
+        UPDATE core.outbox_event
+           SET status = 'PENDING', dlq_status = 'NOT_QUEUED',
+               attempt_count = 0, last_error = NULL, retry_after = NOW()
+         WHERE id = ? AND status = 'FAILED'
+        """;
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        ps.setLong(1, eventId);
+        return ps.executeUpdate();
+      }
     });
   }
 

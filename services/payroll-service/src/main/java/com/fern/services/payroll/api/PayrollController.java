@@ -37,6 +37,16 @@ public class PayrollController {
     return payrollService.getPeriod(periodId);
   }
 
+  @PostMapping("/periods/{periodId}/close")
+  public PayrollDtos.PayrollPeriodView closePeriod(@PathVariable long periodId) {
+    return payrollService.closePeriod(periodId);
+  }
+
+  @PostMapping("/periods/{periodId}/reopen")
+  public PayrollDtos.PayrollPeriodView reopenPeriod(@PathVariable long periodId) {
+    return payrollService.reopenPeriod(periodId);
+  }
+
   @GetMapping("/periods")
   public PagedResult<PayrollDtos.PayrollPeriodView> listPeriods(
       @RequestParam(required = false) Long regionId,

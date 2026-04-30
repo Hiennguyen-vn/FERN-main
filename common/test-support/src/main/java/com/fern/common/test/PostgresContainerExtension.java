@@ -131,7 +131,7 @@ public class PostgresContainerExtension implements BeforeAllCallback, AfterAllCa
     var flywayConfig = Flyway.configure()
         .dataSource(dataSource)
         .locations("filesystem:" + migrations.toAbsolutePath())
-        .schemas("core")
+        .schemas("core", "crm")
         .defaultSchema("core")
         .cleanDisabled(false);
     if (!target.isBlank()) {

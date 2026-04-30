@@ -50,6 +50,10 @@ public class SalesService {
   private final TieredCache<List<SalesDtos.MonthlyRevenueRow>> monthlyRevenueCache;
   private final PosMetrics posMetrics;
 
+  // Optional — wired only in production-context. Tests/legacy ctors leave it null.
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private LoyaltyService loyaltyService;
+
   @Autowired
   public SalesService(
       SalesRepository salesRepository,
@@ -310,12 +314,22 @@ public class SalesService {
     return salesRepository.updateOrderingTable(tableToken, request);
   }
 
+  public void attachCustomer(long saleId, Long customerId) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    SalesDtos.SaleView existing = salesRepository.findSale(saleId)
+        .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
+    requireSalesWriteForOutlet(context, existing.outletId());
+    salesRepository.linkCustomerToSale(saleId, customerId);
+  }
+
   public SalesDtos.SaleView approveSale(long saleId) {
     RequestUserContext context = RequestUserContextHolder.get();
     SalesDtos.SaleView existing = salesRepository.findSale(saleId)
         .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
     requireSalesWriteForOutlet(context, existing.outletId());
-    return salesRepository.approveSale(saleId, context.userId());
+    SalesDtos.SaleView approved = salesRepository.approveSale(saleId, context.userId());
+    try { autoEarnLoyalty(saleId); } catch (RuntimeException ignored) {}
+    return approved;
   }
 
   public SalesDtos.SaleView confirmSale(long saleId) {
@@ -369,6 +383,7 @@ public class SalesService {
     Object posSessionValue = payloadValue(payload, "pos_session_id", "posSessionId");
     Long posSessionId = posSessionValue != null ? toLong(posSessionValue) : null;
     String currencyCode = toStr(payloadValue(payload, "currency_code", "currencyCode"), "VND");
+    String orderType = normalizeSyncOrderType(toStr(payloadValue(payload, "order_type", "orderType"), "dine_in"));
     String note = toStr(payload.get("note"), null);
     Object saleIdValue = payloadValue(payload, "sale_id", "saleId");
     Long overrideSaleId = saleIdValue != null ? toLong(saleIdValue) : null;
@@ -408,9 +423,100 @@ public class SalesService {
     }).toList();
 
     SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
-        outletId, posSessionId, currencyCode, "dine_in", note, lines, null
+        outletId, posSessionId, currencyCode, orderType, note, lines, null
     );
+    if (overrideSaleId != null) {
+      SalesDtos.SaleView existing = salesRepository.findSale(overrideSaleId).orElse(null);
+      if (existing != null) {
+        validateExistingSaleMatchesSyncPayload(existing, request, overrideSaleId);
+        return existing;
+      }
+    }
     return salesRepository.submitSale(request, overrideSaleId);
+  }
+
+  private static void validateExistingSaleMatchesSyncPayload(
+      SalesDtos.SaleView existing,
+      SalesDtos.SubmitSaleRequest incoming,
+      long saleId
+  ) {
+    if (existing.outletId() != incoming.outletId()) {
+      throwDuplicateSaleConflict(saleId, "outlet_id");
+    }
+    if (!java.util.Objects.equals(existing.posSessionId(), incoming.posSessionId() == null ? null : String.valueOf(incoming.posSessionId()))) {
+      throwDuplicateSaleConflict(saleId, "pos_session_id");
+    }
+    if (!java.util.Objects.equals(normalizeSyncOrderType(existing.orderType()), normalizeSyncOrderType(incoming.orderType()))) {
+      throwDuplicateSaleConflict(saleId, "order_type");
+    }
+    if (!java.util.Objects.equals(existing.note(), incoming.note())) {
+      throwDuplicateSaleConflict(saleId, "note");
+    }
+    List<SalesDtos.SaleLineView> existingItems = existing.items() == null ? List.of() : existing.items();
+    List<SalesDtos.SaleLineRequest> incomingItems = incoming.items() == null ? List.of() : incoming.items();
+    if (existingItems.size() != incomingItems.size()) {
+      throwDuplicateSaleConflict(saleId, "items");
+    }
+    for (int i = 0; i < incomingItems.size(); i++) {
+      SalesDtos.SaleLineView oldLine = existingItems.get(i);
+      SalesDtos.SaleLineRequest newLine = incomingItems.get(i);
+      if (oldLine.productId() != newLine.productId()) {
+        throwDuplicateSaleConflict(saleId, "items.product_id");
+      }
+      if (compareDecimal(oldLine.quantity(), newLine.quantity()) != 0) {
+        throwDuplicateSaleConflict(saleId, "items.quantity");
+      }
+      if (compareDecimal(oldLine.discountAmount(), defaultZero(newLine.discountAmount())) != 0) {
+        throwDuplicateSaleConflict(saleId, "items.discount_amount");
+      }
+      if (compareDecimal(oldLine.taxAmount(), defaultZero(newLine.taxAmount())) != 0) {
+        throwDuplicateSaleConflict(saleId, "items.tax_amount");
+      }
+      if (!java.util.Objects.equals(oldLine.note(), newLine.note())) {
+        throwDuplicateSaleConflict(saleId, "items.note");
+      }
+      if (!java.util.Objects.equals(oldLine.variantId(), newLine.variantId())) {
+        throwDuplicateSaleConflict(saleId, "items.variant_id");
+      }
+      if (!java.util.Objects.equals(oldLine.variantName(), newLine.variantName())) {
+        throwDuplicateSaleConflict(saleId, "items.variant_name");
+      }
+      if (!existingModifierIds(oldLine).equals(newLine.modifierOptionIds() == null ? Set.of() : newLine.modifierOptionIds())) {
+        throwDuplicateSaleConflict(saleId, "items.modifier_option_ids");
+      }
+    }
+  }
+
+  private static Set<Long> existingModifierIds(SalesDtos.SaleLineView line) {
+    if (line.modifiers() == null || line.modifiers().isEmpty()) {
+      return Set.of();
+    }
+    return line.modifiers().stream()
+        .map(SalesDtos.SaleLineModifierView::modifierOptionId)
+        .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+  }
+
+  private static BigDecimal defaultZero(BigDecimal value) {
+    return value == null ? BigDecimal.ZERO : value;
+  }
+
+  private static int compareDecimal(BigDecimal left, BigDecimal right) {
+    return defaultZero(left).compareTo(defaultZero(right));
+  }
+
+  private static void throwDuplicateSaleConflict(long saleId, String field) {
+    throw ServiceException.conflict("Duplicate sale id with different payload: " + saleId + " field=" + field);
+  }
+
+  private static String normalizeSyncOrderType(String orderType) {
+    if (orderType == null || orderType.isBlank() || "pos".equalsIgnoreCase(orderType)) {
+      return "dine_in";
+    }
+    String normalized = orderType.trim().toLowerCase(java.util.Locale.ROOT).replace('-', '_');
+    return switch (normalized) {
+      case "take_away", "takeout", "take_out" -> "takeaway";
+      default -> normalized;
+    };
   }
 
   public SalesDtos.SaleView approveSaleFromSync(java.util.Map<String, Object> payload) {
@@ -433,6 +539,23 @@ public class SalesService {
     // Sync path = customer already paid offline. Allow oversell so central books match the
     // physical sale; oversell_flag + sale_oversell_line capture the discrepancy for review.
     SalesDtos.SaleView approved = salesRepository.approveSale(saleId, actorUserId, true);
+
+    // Detect legacy/stale prices submitted from offline edge: flag drift, retain unit_price as paid.
+    try {
+      int flagged = salesRepository.markPriceDrift(saleId);
+      if (flagged > 0 && posMetrics != null) {
+        posMetrics.recordPriceDriftDetected(approved.outletId(), flagged);
+      }
+    } catch (RuntimeException ignored) {
+      // Drift detection is best-effort; do not fail sync on its account.
+    }
+
+    // Loyalty auto-earn: if sale linked to a customer, credit floor(total/10000) points.
+    try {
+      autoEarnLoyalty(saleId);
+    } catch (RuntimeException ignored) {
+      // Loyalty earn is best-effort; do not fail sync.
+    }
 
     // Persist manager override audit if edge attached one (manager unlocked the oversell at POS).
     @SuppressWarnings("unchecked")
@@ -474,6 +597,7 @@ public class SalesService {
     if (existing != null) {
       String s = existing.status();
       if ("payment_done".equalsIgnoreCase(s) || "completed".equalsIgnoreCase(s)) {
+        validateExistingPaymentMatchesSyncPayload(existing, amount, paymentMethod, saleId);
         return existing;
       }
       if ("cancelled".equalsIgnoreCase(s)) {
@@ -488,6 +612,33 @@ public class SalesService {
     SalesDtos.SaleView paid = salesRepository.markPaymentDone(saleId, request, deviceId, paymentTime, true);
     evictMonthlyRevenueCache();
     return paid;
+  }
+
+  private static void validateExistingPaymentMatchesSyncPayload(
+      SalesDtos.SaleView existing,
+      BigDecimal amount,
+      String paymentMethod,
+      long saleId
+  ) {
+    SalesDtos.PaymentView payment = existing.payment();
+    if (payment == null) {
+      throw ServiceException.conflict("Duplicate payment without existing payment detail: " + saleId);
+    }
+    if (compareDecimal(payment.amount(), amount) != 0) {
+      throw ServiceException.conflict("Duplicate payment with different amount: " + saleId);
+    }
+    if (!java.util.Objects.equals(
+        normalizePaymentMethodForCompare(payment.paymentMethod()),
+        normalizePaymentMethodForCompare(paymentMethod))) {
+      throw ServiceException.conflict("Duplicate payment with different method: " + saleId);
+    }
+  }
+
+  private static String normalizePaymentMethodForCompare(String paymentMethod) {
+    if (paymentMethod == null) {
+      return "";
+    }
+    return paymentMethod.trim().toLowerCase(java.util.Locale.ROOT).replace('-', '_').replace(' ', '_');
   }
 
   public void refundSaleFromSync(long saleId, java.math.BigDecimal amount, String reason) {
@@ -857,4 +1008,19 @@ public class SalesService {
 
   // Events now appended to outbox inside SalesRepository.markPaymentDone transaction.
   // OutboxRelay publishes to Kafka asynchronously — no direct publish here.
+
+  /**
+   * Auto-credits loyalty points for an approved sale linked to a customer.
+   * No-op when loyaltyService isn't wired (tests/legacy contexts) or when sale has no customer.
+   */
+  void autoEarnLoyalty(long saleId) {
+    if (loyaltyService == null) return;
+    Long customerId = salesRepository.findCustomerIdForSale(saleId).orElse(null);
+    if (customerId == null) return;
+    java.math.BigDecimal total = salesRepository.findSaleTotal(saleId);
+    int points = LoyaltyService.pointsFor(total);
+    if (points == 0) return;
+    loyaltyService.earn(customerId, saleId, total);
+    salesRepository.recordPointsEarned(saleId, points);
+  }
 }

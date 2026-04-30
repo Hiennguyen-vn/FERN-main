@@ -12,7 +12,12 @@ COPY tools tools
 ARG MODULE_PATH
 
 RUN mvn -pl ${MODULE_PATH} -am -DskipTests package && \
-    rm -f /workspace/${MODULE_PATH}/target/*.jar.original
+    rm -f /workspace/${MODULE_PATH}/target/*.jar.original && \
+    jar_file="$(find /workspace/${MODULE_PATH}/target -maxdepth 1 -name '*-exec.jar' -print -quit)" && \
+    if [ -z "$jar_file" ]; then \
+      jar_file="$(find /workspace/${MODULE_PATH}/target -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' -print -quit)"; \
+    fi && \
+    cp "$jar_file" /workspace/app.jar
 
 FROM eclipse-temurin:21-jre
 
@@ -20,6 +25,6 @@ WORKDIR /app
 
 ARG MODULE_PATH
 
-COPY --from=build /workspace/${MODULE_PATH}/target/*.jar /app/app.jar
+COPY --from=build /workspace/app.jar /app/app.jar
 
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

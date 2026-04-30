@@ -73,10 +73,12 @@ export function ItemOptionsDialog({ item, modifierGroups, open, onOpenChange, on
     });
   };
 
-  const canConfirm = modifierGroups.every((g) => {
-    const min = g.minSelections ?? 0;
-    return (selections[g.id]?.length ?? 0) >= min;
-  });
+  const canConfirm =
+    item.isAvailable !== false &&
+    modifierGroups.every((g) => {
+      const min = g.minSelections ?? 0;
+      return (selections[g.id]?.length ?? 0) >= min;
+    });
 
   const handleConfirm = () => {
     onConfirm({

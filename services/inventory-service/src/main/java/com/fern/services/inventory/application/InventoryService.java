@@ -36,19 +36,22 @@ public class InventoryService {
   private final TypedKafkaEventPublisher eventPublisher;
   private final SnowflakeIdGenerator idGenerator;
   private final Clock clock;
+  private final StockReservationService reservationService;
 
   public InventoryService(
       InventoryRepository inventoryRepository,
       AuthorizationPolicyService authorizationPolicyService,
       TypedKafkaEventPublisher eventPublisher,
       SnowflakeIdGenerator idGenerator,
-      Clock clock
+      Clock clock,
+      StockReservationService reservationService
   ) {
     this.inventoryRepository = inventoryRepository;
     this.authorizationPolicyService = authorizationPolicyService;
     this.eventPublisher = eventPublisher;
     this.idGenerator = idGenerator;
     this.clock = clock;
+    this.reservationService = reservationService;
   }
 
   public InventoryDtos.StockBalanceView getStockBalance(long outletId, long itemId) {
@@ -178,18 +181,71 @@ public class InventoryService {
 
   @Transactional
   public int applySaleApproved(SaleApprovedEvent event) {
+    java.util.Map<Long, java.util.List<Long>> modByProduct =
+        inventoryRepository.findSaleModifierOptions(event.saleId());
+    java.util.Set<Long> allModOptionIds = new java.util.HashSet<>();
+    modByProduct.values().forEach(allModOptionIds::addAll);
+    java.util.Map<Long, java.util.List<InventoryRepository.ModifierRecipeEffect>> effectsByOption =
+        inventoryRepository.findModifierRecipeEffects(allModOptionIds);
+
     List<InventoryRepository.SaleComponentMovement> movements = new ArrayList<>();
     for (SaleCompletedLineItem saleItem : event.lineItems()) {
       inventoryRepository.findLatestActiveRecipe(saleItem.productId()).ifPresent(recipe -> {
+        // Build base per-line consumption keyed by ingredient itemId.
+        java.util.LinkedHashMap<Long, BigDecimal> perItem = new java.util.LinkedHashMap<>();
         for (InventoryRepository.RecipeComponent component : recipe.components()) {
-          BigDecimal deduction = saleItem.quantity()
+          BigDecimal qty = saleItem.quantity()
               .multiply(component.qty())
-              .divide(recipe.yieldQty(), 4, RoundingMode.HALF_UP)
-              .negate();
+              .divide(recipe.yieldQty(), 4, RoundingMode.HALF_UP);
+          perItem.merge(component.itemId(), qty, BigDecimal::add);
+        }
+        // Apply modifier effects in deterministic order: MULTIPLY → SCALE_ITEM → SUBSTITUTE → ADD.
+        java.util.List<Long> modIds = modByProduct.getOrDefault(saleItem.productId(), java.util.List.of());
+        java.util.List<InventoryRepository.ModifierRecipeEffect> effects = new java.util.ArrayList<>();
+        for (Long modId : modIds) effects.addAll(effectsByOption.getOrDefault(modId, java.util.List.of()));
+        java.util.Comparator<InventoryRepository.ModifierRecipeEffect> order =
+            java.util.Comparator.comparingInt(e -> switch (e.effectType()) {
+              case "MULTIPLY" -> 0;
+              case "SCALE_ITEM" -> 1;
+              case "SUBSTITUTE" -> 2;
+              case "ADD" -> 3;
+              default -> 99;
+            });
+        effects.sort(order);
+        for (InventoryRepository.ModifierRecipeEffect eff : effects) {
+          switch (eff.effectType()) {
+            case "MULTIPLY" -> {
+              for (var entry : perItem.entrySet()) {
+                entry.setValue(entry.getValue().multiply(eff.multiplier())
+                    .setScale(4, RoundingMode.HALF_UP));
+              }
+            }
+            case "SCALE_ITEM" -> {
+              if (perItem.containsKey(eff.ingredientId())) {
+                perItem.compute(eff.ingredientId(),
+                    (k, v) -> v.multiply(eff.multiplier()).setScale(4, RoundingMode.HALF_UP));
+              }
+            }
+            case "SUBSTITUTE" -> {
+              BigDecimal qty = perItem.remove(eff.ingredientId());
+              if (qty != null) {
+                perItem.merge(eff.substituteIngredientId(), qty, BigDecimal::add);
+              }
+            }
+            case "ADD" -> {
+              BigDecimal add = saleItem.quantity().multiply(eff.qtyDelta())
+                  .setScale(4, RoundingMode.HALF_UP);
+              perItem.merge(eff.ingredientId(), add, BigDecimal::add);
+            }
+            default -> { /* ignore unknown */ }
+          }
+        }
+        for (var entry : perItem.entrySet()) {
+          if (entry.getValue().signum() == 0) continue;
           movements.add(new InventoryRepository.SaleComponentMovement(
               saleItem.productId(),
-              component.itemId(),
-              deduction
+              entry.getKey(),
+              entry.getValue().negate()
           ));
         }
       });
@@ -204,6 +260,8 @@ public class InventoryService {
         event.allowOversell() || event.oversell(),
         movements
     );
+    // Mark advisory reservations as settled now that hard deduction is committed.
+    try { reservationService.settleForSale(event.saleId()); } catch (RuntimeException ignored) {}
     for (InventoryRepository.SaleComponentMovement movement : movements) {
       publishLowStockIfNeeded(event.outletId(), movement.itemId(), "sale:" + event.saleId());
     }

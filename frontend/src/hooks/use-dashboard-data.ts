@@ -41,14 +41,6 @@ export interface LowStockAlert {
   critical: boolean;
 }
 
-export interface OutletRevenueSummary {
-  outletId: string;
-  outletName: string;
-  revenue: number;
-  orders: number;
-  avgOrderValue: number;
-}
-
 type ApiRecord = Record<string, unknown>;
 
 function toNumber(value: unknown) {
@@ -185,8 +177,8 @@ export function useDashboardData() {
         const reorderLevel = item.minStockLevel == null ? null : toNumber(item.minStockLevel);
         if (reorderLevel == null) return;
         if (qty <= reorderLevel) {
-          const critical = qty === 0 || qty <= reorderLevel * 0.3;
-          if (qty === 0) outOfStockCount += 1;
+          const critical = qty <= 0 || qty <= reorderLevel * 0.3;
+          if (qty <= 0) outOfStockCount += 1;
           lowStockCount += 1;
           alerts.push({
             itemName: String(item.name ?? `Item ${balance.itemId}`),
@@ -246,69 +238,6 @@ export function useDashboardData() {
   return { kpis, recentOrders, lowStock, loading, error, refresh: fetchData };
 }
 
-export function useRevenueReportData() {
-  const { token, scope } = useShellRuntime();
-  const [outletRevenue, setOutletRevenue] = useState<OutletRevenueSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetch = async () => {
-      if (!token) {
-        setError(null);
-        setLoading(false);
-        return;
-      }
-      setLoading(true);
-      setError(null);
-      try {
-        const scopedOutletId = normalizeNumericOutletId(scope.outletId);
-        const [outlets, ordersPage] = await Promise.all([
-          orgApi.outlets(token),
-          salesApi.orders(token, { outletId: scopedOutletId || undefined, limit: 100, offset: 0 }),
-        ]);
-
-        const visibleOutlets = scopedOutletId
-          ? outlets.filter((outlet) => outlet.id === scopedOutletId)
-          : outlets;
-
-        const outletNameById = new Map(visibleOutlets.map((outlet) => [outlet.id, outlet.name]));
-        const revenueByOutlet = new Map<string, { revenue: number; orders: number }>();
-
-        (ordersPage.items || []).forEach((order) => {
-          if (!isCompletedStatus(String(order.status ?? ''))) return;
-          const outletId = String(order.outletId ?? '');
-          if (!outletId) return;
-          const aggregate = revenueByOutlet.get(outletId) ?? { revenue: 0, orders: 0 };
-          aggregate.revenue += toNumber(order.totalAmount);
-          aggregate.orders += 1;
-          revenueByOutlet.set(outletId, aggregate);
-        });
-
-        const outletRevenueRows = Array.from(revenueByOutlet.entries())
-          .map(([outletId, aggregate]) => ({
-            outletId,
-            outletName: outletNameById.get(outletId) || `Outlet ${outletId}`,
-            revenue: aggregate.revenue,
-            orders: aggregate.orders,
-            avgOrderValue: aggregate.orders > 0 ? aggregate.revenue / aggregate.orders : 0,
-          }))
-          .sort((a, b) => b.revenue - a.revenue);
-
-        setOutletRevenue(outletRevenueRows);
-      } catch (error) {
-        console.error('Report fetch error:', error);
-        setError('Report data is currently unavailable from backend.');
-      } finally {
-        setLoading(false);
-      }
-    };
-    void fetch();
-  }, [scope.outletId, token]);
-
-  return { outletRevenue, loading, error };
-}
-
 export function useInventoryHealthData() {
   const { token, scope } = useShellRuntime();
   const [lowStockItems, setLowStockItems] = useState<LowStockAlert[]>([]);
@@ -326,8 +255,9 @@ export function useInventoryHealthData() {
       setError(null);
       try {
         const scopedOutletId = normalizeNumericOutletId(scope.outletId);
+        const scopedRegionId = normalizeNumericOutletId(scope.regionId);
         const [outlets, items] = await Promise.all([
-          orgApi.outlets(token),
+          orgApi.outlets(token, scopedRegionId || undefined),
           productApi.items(token),
         ]);
 
@@ -362,7 +292,7 @@ export function useInventoryHealthData() {
               quantity,
               reorderLevel,
               outletName: outlet.name,
-              critical: quantity === 0,
+              critical: quantity <= 0,
             });
           });
         });
@@ -376,7 +306,7 @@ export function useInventoryHealthData() {
       }
     };
     void fetch();
-  }, [scope.outletId, token]);
+  }, [scope.outletId, scope.regionId, token]);
 
   return { lowStockItems, loading, error };
 }

@@ -1,0 +1,14 @@
+services:
+  pgbouncer:
+    image: edoburu/pgbouncer:1.23.1
+    container_name: fern-pgbouncer
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6432:6432"
+    volumes:
+      - ./pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      - postgres
+    networks:
+      - default

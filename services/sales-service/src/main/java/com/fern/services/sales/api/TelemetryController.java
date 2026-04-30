@@ -34,4 +34,29 @@ public class TelemetryController {
         }
         return ResponseEntity.noContent().build();
     }
+
+    @PostMapping("/storage-warning")
+    public ResponseEntity<Void> storageWarning(@RequestBody java.util.Map<String, Object> body) {
+        Object outletId = body.getOrDefault("outletId", "unknown");
+        Object deviceId = body.getOrDefault("deviceId", "unknown");
+        Object ratio    = body.getOrDefault("storageRatio", 0);
+        log.warn("client-storage-warning outlet={} device={} ratio={}", outletId, deviceId, ratio);
+        double r = 0;
+        try { r = Double.parseDouble(ratio.toString()); } catch (Exception ignored) {}
+        meterRegistry.gauge("dexie_storage_usage_ratio",
+            java.util.List.of(io.micrometer.core.instrument.Tag.of("outlet_id", outletId.toString())),
+            r);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/clock-skew")
+    public ResponseEntity<Void> clockSkew(@RequestBody java.util.Map<String, Object> body) {
+        Object outletId = body.getOrDefault("outletId", "unknown");
+        Object skewSec  = body.getOrDefault("skewSeconds", 0);
+        double s = 0;
+        try { s = Double.parseDouble(skewSec.toString()); } catch (Exception ignored) {}
+        meterRegistry.summary("client_clock_skew_seconds", "outlet_id", outletId.toString())
+            .record(Math.abs(s));
+        return ResponseEntity.noContent().build();
+    }
 }

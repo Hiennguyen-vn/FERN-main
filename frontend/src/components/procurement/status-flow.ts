@@ -45,6 +45,16 @@ export function canApprovePurchaseOrder(status: string | null | undefined) {
   return isAnyOf(status, ['draft', 'submitted']);
 }
 
+// PO can be cancelled only before goods start flowing.
+export function canCancelPurchaseOrder(status: string | null | undefined) {
+  return isAnyOf(status, ['draft', 'submitted', 'approved', 'ordered']);
+}
+
+// PO becomes immutable once goods received or it's terminal.
+export function isPurchaseOrderImmutable(status: string | null | undefined) {
+  return isAnyOf(status, ['partially_received', 'completed', 'closed', 'cancelled']);
+}
+
 export function canCreateGoodsReceiptFromPurchaseOrder(status: string | null | undefined) {
   return isAnyOf(status, ['approved', 'ordered', 'partially_received']);
 }

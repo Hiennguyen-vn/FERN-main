@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   LayoutDashboard,
   Lock,
@@ -48,10 +49,14 @@ const TAB_ICONS: Record<FinanceTab, React.ElementType> = {
 export function FinanceModule() {
   const { token, scope } = useShellRuntime();
   const { session } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const regionId = normalizeNumeric(scope.regionId);
   const outletId = normalizeNumeric(scope.outletId);
 
-  const [activeTab, setActiveTab] = useState<FinanceTab>('overview');
+  const initialTab = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState<FinanceTab>(
+    FINANCE_TAB_ITEMS.some((tab) => tab.key === initialTab) ? initialTab as FinanceTab : 'overview',
+  );
   const [regions, setRegions] = useState<ScopeRegion[]>([]);
   const [outlets, setOutlets] = useState<ScopeOutlet[]>([]);
 
@@ -94,17 +99,29 @@ export function FinanceModule() {
   }, [token]);
 
   useEffect(() => {
-    if (!visibleTabs.has(activeTab)) {
-      setActiveTab('overview');
+    const tabParam = searchParams.get('tab');
+    const nextTab = FINANCE_TAB_ITEMS.some((tab) => tab.key === tabParam) ? tabParam as FinanceTab : null;
+    if (nextTab && visibleTabs.has(nextTab) && nextTab !== activeTab) {
+      setActiveTab(nextTab);
+      return;
     }
-  }, [visibleTabs, activeTab]);
+    if (!visibleTabs.has(activeTab)) {
+      setActiveTab(visibleTabs.has('overview') ? 'overview' : Array.from(visibleTabs)[0] || 'overview');
+    }
+  }, [visibleTabs, activeTab, searchParams]);
 
   if (!token) {
     return <ServiceUnavailablePage state="service_unavailable" moduleName="Finance" />;
   }
 
   const navigateTo = (tab: FinanceTab) => {
-    if (visibleTabs.has(tab)) setActiveTab(tab);
+    if (!visibleTabs.has(tab)) return;
+    setActiveTab(tab);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', tab);
+      return next;
+    }, { replace: true });
   };
 
   const sharedWorkspaceProps = {
@@ -153,7 +170,7 @@ export function FinanceModule() {
           return (
             <button
               key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => navigateTo(tab.key)}
               className={cn(
                 'flex items-center gap-1.5 border-b-2 px-4 py-3 text-xs font-medium transition-colors',
                 activeTab === tab.key

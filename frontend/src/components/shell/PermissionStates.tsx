@@ -129,6 +129,40 @@ export function ServiceUnavailablePage({
   );
 }
 
+/** Inline gate: render children only if scope matches required level. */
+export function ScopeRequiredGate({
+  scope,
+  required,
+  message,
+  children,
+}: {
+  scope: { level: 'system' | 'region' | 'outlet'; outletId?: string; regionId?: string };
+  required: 'outlet' | 'region';
+  message?: string;
+  children: React.ReactNode;
+}) {
+  const ok =
+    required === 'outlet'
+      ? scope.level === 'outlet' && Boolean(scope.outletId)
+      : (scope.level === 'outlet' || scope.level === 'region') && Boolean(scope.regionId);
+  if (ok) return <>{children}</>;
+  const fallback =
+    required === 'outlet'
+      ? 'Select a single outlet from the scope bar to use this action.'
+      : 'Select a region (or outlet) from the scope bar to use this action.';
+  return (
+    <div className="permission-banner permission-banner-blocked">
+      <Globe className="h-4 w-4 flex-shrink-0" />
+      <div>
+        <p className="font-medium text-sm">
+          {required === 'outlet' ? 'Outlet selection required' : 'Region selection required'}
+        </p>
+        <p className="text-xs mt-0.5 opacity-80">{message || fallback}</p>
+      </div>
+    </div>
+  );
+}
+
 /** Empty state — no data (distinct from no permission) */
 export function EmptyState({ title, description }: { title: string; description: string }) {
   return (

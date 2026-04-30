@@ -510,6 +510,11 @@ export function OrgModule() {
       toast.error('Code and name are required');
       return;
     }
+    if ((outletForm.status || 'draft') !== (selectedOutlet.status || 'draft')) {
+      toast.error('Use lifecycle actions to change outlet status');
+      setOutletForm((current) => ({ ...current, status: selectedOutlet.status || 'draft' }));
+      return;
+    }
     setOutletFormSubmitting(true);
     try {
       await orgApi.updateOutlet(token, selectedOutlet.id, {
@@ -532,6 +537,10 @@ export function OrgModule() {
 
   const submitStatusChange = async () => {
     if (!token || !selectedOutlet || !pendingStatus) return;
+    if (['inactive', 'closed', 'archived'].includes(pendingStatus) && !statusReason.trim()) {
+      toast.error('Reason is required for this status change');
+      return;
+    }
     setStatusSubmitting(true);
     try {
       const outlet = await orgApi.updateOutletStatus(token, selectedOutlet.id, {
@@ -1065,7 +1074,7 @@ export function OrgModule() {
                       <h3 className="text-sm font-semibold">Outlet master data</h3>
                       <p className="text-xs text-muted-foreground mt-1">Region parent is fixed in phase 1. Move outlet is intentionally out of scope.</p>
                     </div>
-                    <OrgOutletForm form={outletForm} setForm={setOutletForm} regions={regions} disableRegion />
+                    <OrgOutletForm form={outletForm} setForm={setOutletForm} regions={regions} disableRegion showStatus={false} />
                     <div className="flex justify-end">
                       <Button size="sm" className="h-8 text-xs" onClick={() => void submitUpdateOutlet()} disabled={!canMutate || outletFormSubmitting || selectedOutlet.status === 'archived'}>
                         {outletFormSubmitting ? 'Saving...' : 'Save outlet'}
@@ -1395,11 +1404,13 @@ function OrgOutletForm({
   setForm,
   regions,
   disableRegion = false,
+  showStatus = true,
 }: {
   form: OutletFormState;
   setForm: Dispatch<SetStateAction<OutletFormState>>;
   regions: ScopeRegion[];
   disableRegion?: boolean;
+  showStatus?: boolean;
 }) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -1425,19 +1436,21 @@ function OrgOutletForm({
           ))}
         </select>
       </div>
-      <div>
-        <Label className="text-xs">Status</Label>
-        <select
-          value={form.status}
-          onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}
-          className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="draft">Draft</option>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-          <option value="closed">Closed</option>
-        </select>
-      </div>
+      {showStatus ? (
+        <div>
+          <Label className="text-xs">Status</Label>
+          <select
+            value={form.status}
+            onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}
+            className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="draft">Draft</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="closed">Closed</option>
+          </select>
+        </div>
+      ) : null}
       <div className="md:col-span-2">
         <Label className="text-xs">Address</Label>
         <Input value={form.address} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} className="mt-1" />
@@ -1477,6 +1490,7 @@ function StatusActionButton({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       className={cn(

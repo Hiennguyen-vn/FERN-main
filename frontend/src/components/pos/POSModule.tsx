@@ -107,6 +107,10 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
 
   const {
     sessions: dbSessions,
+    totalSessions,
+    page: sessionsPage,
+    pageSize: sessionsPageSize,
+    setPage: setSessionsPage,
     loading,
     createSession,
     updateSession,
@@ -288,7 +292,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       setOrdersMap(detailMap);
     } catch (error) {
       console.error('Failed to load sale orders:', error);
-      toast.error('Unable to load sale orders');
+      toast.error(getErrorMessage(error, 'Unable to load sale orders'));
       setOrders([]);
       setOrdersMap({});
     } finally {
@@ -310,7 +314,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       mergeOrdersIntoState(mapped);
     } catch (error) {
       console.error('Failed to load session orders:', error);
-      toast.error('Unable to load orders for this session');
+      toast.error(getErrorMessage(error, 'Unable to load orders for this session'));
     } finally {
       setOrdersLoading(false);
     }
@@ -675,6 +679,10 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     return (
       <POSSessionList
         sessions={sessions}
+        totalSessions={totalSessions}
+        page={sessionsPage}
+        pageSize={sessionsPageSize}
+        onPageChange={setSessionsPage}
         onOpenSession={() => setView({ screen: 'open-session' })}
         onViewSession={(session) => setView({ screen: 'session-detail', sessionId: session.id })}
         onCloseSession={(session) => setView({ screen: 'close-session', sessionId: session.id })}

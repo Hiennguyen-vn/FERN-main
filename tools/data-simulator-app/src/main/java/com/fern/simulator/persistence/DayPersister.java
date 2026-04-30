@@ -52,6 +52,7 @@ public class DayPersister {
             // Bypass stock balance trigger for simulator writes
             try (var stmt = conn.createStatement()) {
                 stmt.execute("SET LOCAL fern.simulator_cleanup = 'on'");
+                stmt.execute("SET LOCAL fern.allow_oversell = 'true'");
             }
 
             // 1. Regions (newly activated)
@@ -240,7 +241,7 @@ public class DayPersister {
                     batchWriter.insertInventoryTransaction(txnId, gr.outletId(),
                             entry.getKey(), entry.getValue(), gr.businessDate(), gr.receiptTime(),
                             "purchase_in", unitCost, gr.createdByUserId(), gr.note());
-                    batchWriter.insertGoodsReceiptTransaction(txnId, griId);
+                    batchWriter.insertGoodsReceiptTransaction(txnId, gr.receiptTime(), griId);
                     totalRowsWritten += 2;
 
                     int orderedQty = gr.orderedQuantities().getOrDefault(entry.getKey(), entry.getValue());
@@ -276,16 +277,22 @@ public class DayPersister {
             }
 
             // 13. Sales (persisted as batched events)
+            java.util.Map<Long, java.time.OffsetDateTime> saleCreatedAtById = new java.util.HashMap<>();
+            java.util.Map<Long, Long> saleOutletById = new java.util.HashMap<>();
             for (var sale : ctx.getDirtySales()) {
+                java.time.OffsetDateTime saleCreatedAt = sale.paymentTime();
+                saleCreatedAtById.put(sale.saleId(), saleCreatedAt);
+                saleOutletById.put(sale.saleId(), sale.outletId());
                 batchWriter.insertSaleRecord(sale.saleId(), sale.outletId(),
                         sale.posSessionId(), sale.currencyCode(), sale.orderType(),
                         sale.status(), sale.paymentStatus(),
                         sale.subtotal(), sale.discount(), sale.taxAmount(), sale.totalAmount(),
-                        sale.orderingTableId());
+                        sale.orderingTableId(), saleCreatedAt);
                 totalRowsWritten++;
 
                 for (var item : sale.items()) {
-                    batchWriter.insertSaleItem(sale.saleId(), item.productId(),
+                    batchWriter.insertSaleItem(sale.saleId(), saleCreatedAt, sale.outletId(),
+                            item.productId(),
                             item.unitPrice(), item.qty(), item.discountAmount(),
                             item.taxAmount(), item.lineTotal());
                     totalRowsWritten++;
@@ -297,7 +304,8 @@ public class DayPersister {
                         case "unpaid" -> "cancelled";
                         default -> "success";
                     };
-                    batchWriter.insertPayment(sale.saleId(), sale.posSessionId(),
+                    batchWriter.insertPayment(sale.saleId(), saleCreatedAt, sale.outletId(),
+                            sale.posSessionId(),
                             sale.paymentMethod(), sale.paymentAmount(), paymentTxnStatus, sale.paymentTime(),
                             sale.transactionRef(), null);
                     totalRowsWritten++;
@@ -308,8 +316,8 @@ public class DayPersister {
                     batchWriter.insertInventoryTransaction(txn.txnId(), sale.outletId(),
                             txn.itemId(), -txn.qtyUsed(), day, sale.paymentTime(),
                             "sale_usage", null);
-                    batchWriter.insertSaleItemTransaction(txn.txnId(),
-                            sale.saleId(), txn.productId(), txn.itemId());
+                    batchWriter.insertSaleItemTransaction(txn.txnId(), sale.paymentTime(),
+                            sale.saleId(), saleCreatedAt, txn.productId(), txn.itemId());
                     totalRowsWritten += 2;
                 }
             }
@@ -353,11 +361,12 @@ public class DayPersister {
 
             // 15. Waste records
             for (var waste : ctx.getDirtyWasteRecords()) {
+                java.time.OffsetDateTime wasteTxnTime = ctx.getClock().timestampAt(18, 0, ctx.getTimezoneForRegion(waste.regionCode()));
                 batchWriter.insertInventoryTransaction(waste.txnId(), waste.outletId(),
                         waste.itemId(), -waste.qty(), day,
-                        ctx.getClock().timestampAt(18, 0, ctx.getTimezoneForRegion(waste.regionCode())),
+                        wasteTxnTime,
                         "waste_out", null, waste.approvedByUserId(), waste.reason());
-                batchWriter.insertWasteRecord(waste.txnId(), waste.reason(), waste.approvedByUserId());
+                batchWriter.insertWasteRecord(waste.txnId(), wasteTxnTime, waste.reason(), waste.approvedByUserId());
                 totalRowsWritten += 2;
             }
 
@@ -482,7 +491,9 @@ public class DayPersister {
 
             // 29. Sale Item Promotions
             for (var sip : ctx.getDirtySaleItemPromotions()) {
-                batchWriter.insertSaleItemPromotion(sip.saleId(), sip.productId(), sip.promotionId());
+                java.time.OffsetDateTime sipSaleCreatedAt = saleCreatedAtById.get(sip.saleId());
+                if (sipSaleCreatedAt == null) continue;
+                batchWriter.insertSaleItemPromotion(sip.saleId(), sipSaleCreatedAt, sip.productId(), sip.promotionId());
                 totalRowsWritten++;
             }
 
@@ -530,9 +541,11 @@ public class DayPersister {
             recordSection("workforceMs", workforceStartedAt);
 
             // 31. Audit Logs
+            java.time.OffsetDateTime auditCreatedAt = ctx.getClock().timestampAt(12, 0,
+                    ctx.getTimezoneForRegion(ctx.getConfig().startingRegion()));
             for (var audit : ctx.getDirtyAuditLogs()) {
                 SimulatorRepository.insertAuditLog(conn, audit.id(), audit.actorUserId(),
-                        audit.action(), audit.entityName(), audit.entityId(), audit.reason());
+                        audit.action(), audit.entityName(), audit.entityId(), audit.reason(), auditCreatedAt);
                 totalRowsWritten++;
             }
 
@@ -567,7 +580,7 @@ public class DayPersister {
                             input.itemId(), -input.qty(), mfg.businessDate(), mfgTxnTime,
                             "manufacture_out", input.unitCost());
                     totalRowsWritten++;
-                    batchWriter.insertManufacturingTransaction(input.txnId(), mfg.batchId());
+                    batchWriter.insertManufacturingTransaction(input.txnId(), mfgTxnTime, mfg.batchId());
                     totalRowsWritten++;
                 }
                 // Persist output transaction (produce finished good → manufacture_in)
@@ -576,7 +589,7 @@ public class DayPersister {
                         output.itemId(), output.qty(), mfg.businessDate(), mfgTxnTime,
                         "manufacture_in", output.unitCost());
                 totalRowsWritten++;
-                batchWriter.insertManufacturingTransaction(output.txnId(), mfg.batchId());
+                batchWriter.insertManufacturingTransaction(output.txnId(), mfgTxnTime, mfg.batchId());
                 totalRowsWritten++;
             }
             recordSection("manufacturingMs", manufacturingStartedAt);

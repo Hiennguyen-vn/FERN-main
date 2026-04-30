@@ -22,6 +22,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
@@ -78,6 +79,16 @@ public class ServiceExceptionHandler {
   @ExceptionHandler(HttpMessageNotReadableException.class)
   public ResponseEntity<Map<String, Object>> handleMalformedJson(HttpMessageNotReadableException exception) {
     return response(HttpStatus.BAD_REQUEST, "invalid_json", "Malformed JSON request body", null);
+  }
+
+  @ExceptionHandler(MaxUploadSizeExceededException.class)
+  public ResponseEntity<Map<String, Object>> handleMaxUploadSize(MaxUploadSizeExceededException exception) {
+    return response(
+        HttpStatus.PAYLOAD_TOO_LARGE,
+        "payload_too_large",
+        "Uploaded file exceeds the maximum permitted size",
+        null
+    );
   }
 
   @ExceptionHandler(IdempotencyConflictException.class)

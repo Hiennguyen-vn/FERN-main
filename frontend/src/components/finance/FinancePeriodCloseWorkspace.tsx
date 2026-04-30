@@ -6,11 +6,13 @@ import {
   RefreshCw,
   XCircle,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   financeApi,
   payrollApi,
   type ExpenseView,
+  type FinanceExpensesQuery,
   type PayrollPeriodView,
   type PayrollPeriodsQuery,
   type PayrollRunView,
@@ -62,6 +64,7 @@ interface OutletCloseRow {
   uncategorizedCount: number;
   varianceStatus: FinanceVarianceStatus;
   varianceNeedsReview: boolean;
+  varianceReviewed: boolean;
   varianceDetail: string;
   ready: boolean;
 }
@@ -161,6 +164,8 @@ export function FinancePeriodCloseWorkspace({
   const [error, setError] = useState('');
   const [periods, setPeriods] = useState<PayrollPeriodView[]>([]);
   const [selectedPeriodId, setSelectedPeriodId] = useState('');
+  const [reviewedVarianceKeys, setReviewedVarianceKeys] = useState<Set<string>>(() => new Set());
+  const [closing, setClosing] = useState(false);
   const [timesheets, setTimesheets] = useState<PayrollTimesheetView[]>([]);
   const [runs, setRuns] = useState<PayrollRunView[]>([]);
   const [expenses, setExpenses] = useState<ExpenseView[]>([]);
@@ -211,6 +216,14 @@ export function FinancePeriodCloseWorkspace({
     () => getPeriodKey(selectedPeriod?.startDate || selectedPeriod?.payDate),
     [selectedPeriod?.payDate, selectedPeriod?.startDate],
   );
+  const markVarianceReviewed = useCallback((outletId: string) => {
+    if (!selectedPeriodId) return;
+    setReviewedVarianceKeys((current) => {
+      const next = new Set(current);
+      next.add(`${selectedPeriodId}:${outletId}`);
+      return next;
+    });
+  }, [selectedPeriodId]);
 
   const loadPeriods = useCallback(async () => {
     if (!token) return;
@@ -235,7 +248,7 @@ export function FinancePeriodCloseWorkspace({
   }, [scopedRegionId, token]);
 
   const loadPeriodData = useCallback(async () => {
-    if (!token || !selectedPeriodId) {
+    if (!token || !selectedPeriodId || !selectedPeriod) {
       setTimesheets([]);
       setRuns([]);
       setExpenses([]);
@@ -244,7 +257,7 @@ export function FinancePeriodCloseWorkspace({
 
     setLoading(true);
     try {
-      const [timesheetItems, runItems, expensePage] = await Promise.all([
+      const [timesheetItems, runItems, expenseItems] = await Promise.all([
         collectPagedItems<PayrollTimesheetView, PayrollTimesheetsQuery>(
           (query) => payrollApi.timesheets(token, query),
           {
@@ -265,23 +278,29 @@ export function FinancePeriodCloseWorkspace({
           },
           500,
         ),
-        financeApi.expenses(token, {
-          outletId: scopeOutletId || undefined,
-          limit: 500,
-          sortBy: 'businessDate',
-          sortDir: 'desc',
-        }),
+        collectPagedItems<ExpenseView, FinanceExpensesQuery>(
+          (query) => financeApi.expenses(token, query),
+          {
+            outletId: scopeOutletId || undefined,
+            startDate: selectedPeriod?.startDate || undefined,
+            endDate: selectedPeriod?.endDate || undefined,
+            sortBy: 'businessDate',
+            sortDir: 'desc',
+          },
+          500,
+          200,
+        ),
       ]);
 
       setTimesheets(timesheetItems);
       setRuns(runItems);
-      setExpenses(expensePage.items || []);
+      setExpenses(expenseItems);
     } catch (err: unknown) {
       setError(getErrorMessage(err, 'Unable to load period data'));
     } finally {
       setLoading(false);
     }
-  }, [scopeOutletId, selectedPeriodId, token]);
+  }, [scopeOutletId, selectedPeriod, selectedPeriod?.endDate, selectedPeriod?.startDate, selectedPeriodId, token]);
 
   useEffect(() => {
     void loadPeriods();
@@ -332,12 +351,17 @@ export function FinancePeriodCloseWorkspace({
     return scopedVisibleOutlets.map((outlet) => {
       const outletTimesheets = timesheets.filter((timesheet) => String(timesheet.outletId) === outlet.id);
       const outletRuns = runs.filter((run) => String(run.outletId) === outlet.id);
-      const approvedRuns = outletRuns.filter((run) => String(run.status || '').toLowerCase() === 'approved');
-      // Runs submitted by HR but not yet approved by Finance
+      // 'paid' is terminal state beyond 'approved' — count both as cleared.
+      const approvedOrPaidRuns = outletRuns.filter((run) => {
+        const s = String(run.status || '').toLowerCase();
+        return s === 'approved' || s === 'paid';
+      });
+      // Runs submitted by HR but not yet approved/paid by Finance
       const pendingRuns = outletRuns.filter((run) => {
         const s = String(run.status || '').toLowerCase();
-        return s !== 'approved' && s !== 'rejected';
+        return s !== 'approved' && s !== 'paid' && s !== 'rejected';
       }).length;
+      const approvedRuns = approvedOrPaidRuns;
       // Timesheets where HR hasn't generated a run yet (waiting on HR, not Finance)
       const waitingOnHr = outletTimesheets.filter(
         (timesheet) => !outletRuns.some((run) => String(run.payrollTimesheetId) === timesheet.id),
@@ -366,6 +390,9 @@ export function FinancePeriodCloseWorkspace({
         laborPct,
         otherOpExPct,
       });
+      const varianceReviewed = variance.needsReview
+        ? reviewedVarianceKeys.has(`${selectedPeriodId}:${outlet.id}`)
+        : false;
 
       return {
         outletId: outlet.id,
@@ -379,18 +406,19 @@ export function FinancePeriodCloseWorkspace({
         uncategorizedCount,
         varianceStatus: variance.status,
         varianceNeedsReview: variance.needsReview,
+        varianceReviewed,
         varianceDetail: variance.detail,
-        ready: payrollApproved && uncategorizedCount === 0 && !variance.needsReview,
+        ready: payrollApproved && uncategorizedCount === 0 && (!variance.needsReview || varianceReviewed),
       };
     });
-  }, [periodExpenses, revenueByOutlet, runs, scopedVisibleOutlets, timesheets]);
+  }, [periodExpenses, revenueByOutlet, reviewedVarianceKeys, runs, scopedVisibleOutlets, selectedPeriodId, timesheets]);
 
   const readyCount = outletRows.filter((row) => row.ready).length;
   const totalOutlets = outletRows.length;
   const readyPct = totalOutlets > 0 ? Math.round((readyCount / totalOutlets) * 100) : 0;
   const payrollBlockedCount = outletRows.filter((row) => !row.payrollApproved).length;
   const expenseBlockedCount = outletRows.filter((row) => row.hasUncategorizedExpenses).length;
-  const varianceBlockedCount = outletRows.filter((row) => row.varianceNeedsReview).length;
+  const varianceBlockedCount = outletRows.filter((row) => row.varianceNeedsReview && !row.varianceReviewed).length;
   const blockers = useMemo(
     () => outletRows.filter((row) => !row.ready),
     [outletRows],
@@ -399,6 +427,35 @@ export function FinancePeriodCloseWorkspace({
   const periodLabel = selectedPeriod
     ? String(selectedPeriod.name || formatMonthYear(selectedPeriod.startDate))
     : 'current period';
+  const periodClosed = String(selectedPeriod?.status || '').toLowerCase() === 'closed';
+  const visibleReadyPct = periodClosed ? 100 : readyPct;
+  const visiblePayrollBlockedCount = periodClosed ? 0 : payrollBlockedCount;
+  const visibleExpenseBlockedCount = periodClosed ? 0 : expenseBlockedCount;
+  const visibleVarianceBlockedCount = periodClosed ? 0 : varianceBlockedCount;
+  const visibleBlockers = periodClosed ? [] : blockers;
+  const periodReady = readyCount === totalOutlets && totalOutlets > 0;
+  const closeDisabledReason = periodClosed
+    ? 'This period is closed. New finance entries inside the period are locked.'
+    : periodReady
+      ? 'All outlet checks are clear. Closing will lock this period for new expense entries.'
+      : `${Math.max(totalOutlets - readyCount, 0)} outlet(s) still have open blockers.`;
+
+  const closePeriod = useCallback(async () => {
+    if (!token || !selectedPeriodId || !periodReady || periodClosed) return;
+    setClosing(true);
+    setError('');
+    try {
+      const updated = await payrollApi.closePeriod(token, selectedPeriodId);
+      setPeriods((current) => current.map((period) => (period.id === updated.id ? updated : period)));
+      toast.success('Period closed. Finance entries in this window are now locked.');
+    } catch (err: unknown) {
+      const message = getErrorMessage(err, 'Unable to close period');
+      setError(message);
+      toast.error(message);
+    } finally {
+      setClosing(false);
+    }
+  }, [periodClosed, periodReady, selectedPeriodId, token]);
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -438,6 +495,7 @@ export function FinancePeriodCloseWorkspace({
             <div className="max-h-[480px] overflow-y-auto">
               {periods.map((period) => {
                 const state = inferPeriodWindowState(period);
+                const closed = String(period.status || '').toLowerCase() === 'closed';
                 const regionName = regionsById.get(String(period.regionId || ''))?.name || '';
                 const selected = period.id === selectedPeriodId;
                 return (
@@ -463,10 +521,10 @@ export function FinancePeriodCloseWorkspace({
                       <span
                         className={cn(
                           'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
-                          periodWindowBadgeClass(state),
+                          closed ? 'border-slate-200 bg-slate-100 text-slate-700' : periodWindowBadgeClass(state),
                         )}
                       >
-                        {periodWindowLabel(state)}
+                        {closed ? 'Closed' : periodWindowLabel(state)}
                       </span>
                     </div>
                   </button>
@@ -485,54 +543,104 @@ export function FinancePeriodCloseWorkspace({
                   <span
                     className={cn(
                       'inline-flex rounded-full border px-2.5 py-1 text-[11px] font-medium',
-                      readyCount === totalOutlets && totalOutlets > 0
+                      periodClosed
+                        ? 'border-slate-200 bg-slate-100 text-slate-700'
+                        : readyCount === totalOutlets && totalOutlets > 0
                         ? 'border-green-200 bg-green-50 text-green-700'
                         : 'border-amber-200 bg-amber-50 text-amber-700',
                     )}
                   >
-                    {readyCount}/{totalOutlets} outlets ready
+                    {periodClosed ? 'Closed' : `${readyCount}/${totalOutlets} outlets ready`}
                   </span>
                 </div>
                 <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-muted">
                   <div
                     className={cn(
                       'h-2.5 rounded-full transition-all',
-                      readyPct === 100 ? 'bg-green-500' : readyPct >= 50 ? 'bg-amber-500' : 'bg-red-500',
+                      periodClosed
+                        ? 'bg-slate-500'
+                        : visibleReadyPct === 100
+                        ? 'bg-green-500'
+                        : visibleReadyPct >= 50
+                        ? 'bg-amber-500'
+                        : 'bg-red-500',
                     )}
-                    style={{ width: `${readyPct}%` }}
+                    style={{ width: `${visibleReadyPct}%` }}
                   />
                 </div>
-                <p className="mt-1.5 text-xs text-muted-foreground">{readyPct}% ready to close</p>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  {periodClosed ? 'Closed period' : `${visibleReadyPct}% ready to close`}
+                </p>
                 <div className="mt-5 grid gap-3 md:grid-cols-3">
                   <CloseSignalRail
                     label="Payroll blockers"
-                    value={String(payrollBlockedCount)}
-                    detail={payrollBlockedCount === 1 ? '1 outlet awaiting payroll approval' : `${payrollBlockedCount} outlets awaiting payroll approval`}
-                    tone={payrollBlockedCount > 0 ? 'warning' : 'default'}
+                    value={String(visiblePayrollBlockedCount)}
+                    detail={periodClosed
+                      ? 'Locked with the closed period'
+                      : visiblePayrollBlockedCount === 1
+                      ? '1 outlet awaiting payroll approval'
+                      : `${visiblePayrollBlockedCount} outlets awaiting payroll approval`}
+                    tone={visiblePayrollBlockedCount > 0 ? 'warning' : 'default'}
                   />
                   <CloseSignalRail
                     label="Expense blockers"
-                    value={String(expenseBlockedCount)}
-                    detail="Rows need description or subtype"
-                    tone={expenseBlockedCount > 0 ? 'warning' : 'default'}
+                    value={String(visibleExpenseBlockedCount)}
+                    detail={periodClosed ? 'Locked with the closed period' : 'Rows need description or subtype'}
+                    tone={visibleExpenseBlockedCount > 0 ? 'warning' : 'default'}
                   />
                   <CloseSignalRail
                     label="Variance review"
-                    value={String(varianceBlockedCount)}
-                    detail={activePeriodKey ? `Outlets above target — ${formatPeriodLabel(activePeriodKey)}` : 'Needs a payroll period date'}
-                    tone={varianceBlockedCount > 0 ? 'warning' : 'default'}
+                    value={String(visibleVarianceBlockedCount)}
+                    detail={periodClosed
+                      ? 'Locked with the closed period'
+                      : activePeriodKey
+                      ? `Outlets above target — ${formatPeriodLabel(activePeriodKey)}`
+                      : 'Needs a payroll period date'}
+                    tone={visibleVarianceBlockedCount > 0 ? 'warning' : 'default'}
                   />
                 </div>
 
-                {readyCount === totalOutlets && totalOutlets > 0 ? (
-                  <div className="mt-4 rounded-lg border border-green-200 bg-green-50/70 px-4 py-3 text-sm text-green-800">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                      <span className="font-medium">All outlets ready.</span>
+                {periodReady || periodClosed ? (
+                  <div className={cn(
+                    'mt-4 rounded-lg border px-4 py-3 text-sm',
+                    periodClosed
+                      ? 'border-slate-200 bg-slate-50 text-slate-800'
+                      : 'border-green-200 bg-green-50/70 text-green-800',
+                  )}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className={cn('h-4 w-4', periodClosed ? 'text-slate-600' : 'text-green-600')} />
+                        <span className="font-medium">{periodClosed ? 'Period closed.' : 'All outlets ready.'}</span>
+                      </div>
+                      <button
+                        className="h-8 rounded-md bg-green-700 px-4 text-xs font-medium text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
+                        title={closeDisabledReason}
+                        disabled={periodClosed || closing}
+                        onClick={() => void closePeriod()}
+                      >
+                        {periodClosed ? 'Closed' : closing ? 'Closing…' : 'Close Period'}
+                      </button>
                     </div>
-                    <p className="mt-1 text-xs">
-                      All outlets are ready for period close.
+                    <p className={cn('mt-1 text-xs', periodClosed ? 'text-slate-600' : 'text-green-700/70')}>
+                      {closeDisabledReason}
                     </p>
+                  </div>
+                ) : (totalOutlets > 0 && !loading) ? (
+                  <div className="mt-4 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs">
+                        {readyCount < totalOutlets
+                          ? `${totalOutlets - readyCount} outlet(s) still have open blockers.`
+                          : 'Select a period to check readiness.'}
+                      </span>
+                      <button
+                        className="h-8 rounded-md border px-4 text-xs font-medium opacity-50 cursor-not-allowed"
+                        disabled
+                        title={closeDisabledReason}
+                      >
+                        Close Period
+                      </button>
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -621,11 +729,17 @@ export function FinancePeriodCloseWorkspace({
                             <td className="px-4 py-3">
                               <VarianceStatusBadge
                                 status={row.varianceStatus}
-                                needsReview={row.varianceNeedsReview}
+                                needsReview={periodClosed ? false : row.varianceNeedsReview}
+                                reviewed={periodClosed ? true : row.varianceReviewed}
                               />
                             </td>
                             <td className="px-4 py-3">
-                              {row.ready ? (
+                              {periodClosed ? (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                                  <CheckCircle2 className="h-3 w-3" />
+                                  Closed
+                                </span>
+                              ) : row.ready ? (
                                 <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-[11px] font-medium text-green-700">
                                   <CheckCircle2 className="h-3 w-3" />
                                   Ready
@@ -645,11 +759,11 @@ export function FinancePeriodCloseWorkspace({
                 </div>
               </div>
 
-              {blockers.length > 0 ? (
+              {visibleBlockers.length > 0 ? (
                 <div className="surface-elevated px-5 py-4">
                   <h3 className="mb-3 text-sm font-semibold">Blockers to resolve</h3>
                   <div className="space-y-3">
-                    {blockers.map((row) => (
+                    {visibleBlockers.map((row) => (
                       <div key={row.outletId} className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3">
                         <p className="text-sm font-medium text-amber-900">
                           {row.outletCode} · {row.outletName}
@@ -687,7 +801,7 @@ export function FinancePeriodCloseWorkspace({
                               </button>
                             </li>
                           ) : null}
-                          {row.varianceNeedsReview ? (
+                          {row.varianceNeedsReview && !row.varianceReviewed ? (
                             <li className="flex items-center gap-1.5">
                               <AlertTriangle className="h-3 w-3" />
                               {row.varianceDetail}
@@ -696,6 +810,13 @@ export function FinancePeriodCloseWorkspace({
                                 className="ml-1 underline hover:no-underline"
                               >
                                 → Review variance
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => markVarianceReviewed(row.outletId)}
+                                className="ml-1 rounded border border-amber-300 bg-background px-2 py-0.5 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                              >
+                                Mark reviewed
                               </button>
                             </li>
                           ) : null}
@@ -746,10 +867,20 @@ function CloseSignalRail({
 function VarianceStatusBadge({
   status,
   needsReview,
+  reviewed,
 }: {
   status: FinanceVarianceStatus;
   needsReview: boolean;
+  reviewed?: boolean;
 }) {
+  if (reviewed) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-[11px] font-medium text-green-700">
+        <CheckCircle2 className="h-3 w-3" />
+        Reviewed
+      </span>
+    );
+  }
   if (status === 'risk') {
     return (
       <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-700">

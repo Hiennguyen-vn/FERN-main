@@ -96,13 +96,14 @@ public final class SimulatorBatchWriter implements AutoCloseable {
         });
     }
 
-    public void insertGoodsReceiptTransaction(long txnId, long goodsReceiptItemId) throws SQLException {
+    public void insertGoodsReceiptTransaction(long txnId, OffsetDateTime txnTime, long goodsReceiptItemId) throws SQLException {
         batch("goods_receipt_transaction", """
-            INSERT INTO core.goods_receipt_transaction (inventory_transaction_id, goods_receipt_item_id)
-            VALUES (?, ?)
+            INSERT INTO core.goods_receipt_transaction (inventory_transaction_id, txn_time, goods_receipt_item_id)
+            VALUES (?, ?, ?)
             """, ps -> {
             ps.setLong(1, txnId);
-            ps.setLong(2, goodsReceiptItemId);
+            ps.setObject(2, txnTime);
+            ps.setLong(3, goodsReceiptItemId);
         });
     }
 
@@ -130,11 +131,13 @@ public final class SimulatorBatchWriter implements AutoCloseable {
     public void insertSaleRecord(long id, long outletId, Long posSessionId, String currencyCode,
                                  String orderType, String status, String paymentStatus,
                                  long subtotal, long discount, long taxAmount,
-                                 long totalAmount, Long orderingTableId) throws SQLException {
+                                 long totalAmount, Long orderingTableId,
+                                 OffsetDateTime createdAt) throws SQLException {
         batch("sale_record", """
             INSERT INTO core.sale_record (id, outlet_id, pos_session_id, currency_code,
-                order_type, status, payment_status, subtotal, discount, tax_amount, total_amount, ordering_table_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                order_type, status, payment_status, subtotal, discount, tax_amount, total_amount,
+                ordering_table_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> {
             ps.setLong(1, id);
             ps.setLong(2, outletId);
@@ -150,57 +153,70 @@ public final class SimulatorBatchWriter implements AutoCloseable {
             ps.setBigDecimal(11, java.math.BigDecimal.valueOf(totalAmount));
             if (orderingTableId != null) ps.setLong(12, orderingTableId);
             else ps.setNull(12, Types.BIGINT);
+            ps.setObject(13, createdAt);
+            ps.setObject(14, createdAt);
         });
     }
 
-    public void insertSaleItem(long saleId, long productId, long unitPrice, int qty,
+    public void insertSaleItem(long saleId, OffsetDateTime saleCreatedAt, long outletId,
+                               long productId, long unitPrice, int qty,
                                long discountAmount, long taxAmount, long lineTotal) throws SQLException {
         batch("sale_item", """
-            INSERT INTO core.sale_item (sale_id, product_id, unit_price, qty,
+            INSERT INTO core.sale_item (sale_id, sale_created_at, outlet_id, product_id, unit_price, qty,
                 discount_amount, tax_amount, line_total)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (sale_id, product_id) DO NOTHING
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (sale_id, sale_created_at, product_id) DO NOTHING
             """, ps -> {
             ps.setLong(1, saleId);
-            ps.setLong(2, productId);
-            ps.setBigDecimal(3, java.math.BigDecimal.valueOf(unitPrice));
-            ps.setBigDecimal(4, java.math.BigDecimal.valueOf(qty));
-            ps.setBigDecimal(5, java.math.BigDecimal.valueOf(discountAmount));
-            ps.setBigDecimal(6, java.math.BigDecimal.valueOf(taxAmount));
-            ps.setBigDecimal(7, java.math.BigDecimal.valueOf(lineTotal));
+            ps.setObject(2, saleCreatedAt);
+            ps.setLong(3, outletId);
+            ps.setLong(4, productId);
+            ps.setBigDecimal(5, java.math.BigDecimal.valueOf(unitPrice));
+            ps.setBigDecimal(6, java.math.BigDecimal.valueOf(qty));
+            ps.setBigDecimal(7, java.math.BigDecimal.valueOf(discountAmount));
+            ps.setBigDecimal(8, java.math.BigDecimal.valueOf(taxAmount));
+            ps.setBigDecimal(9, java.math.BigDecimal.valueOf(lineTotal));
         });
     }
 
-    public void insertPayment(long saleId, Long posSessionId, String paymentMethod,
+    public void insertPayment(long saleId, OffsetDateTime saleCreatedAt, long outletId,
+                              Long posSessionId, String paymentMethod,
                               long amount, String status, OffsetDateTime paymentTime,
                               String transactionRef, String note) throws SQLException {
         batch("payment", """
-            INSERT INTO core.payment (sale_id, pos_session_id, payment_method,
+            INSERT INTO core.payment (sale_id, sale_created_at, outlet_id, pos_session_id, payment_method,
                 amount, status, payment_time, transaction_ref, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (sale_id, sale_created_at) DO NOTHING
             """, ps -> {
             ps.setLong(1, saleId);
-            if (posSessionId != null) ps.setLong(2, posSessionId);
-            else ps.setNull(2, Types.BIGINT);
-            ps.setObject(3, paymentMethod, Types.OTHER);
-            ps.setBigDecimal(4, java.math.BigDecimal.valueOf(amount));
-            ps.setObject(5, status, Types.OTHER);
-            ps.setObject(6, paymentTime);
-            ps.setString(7, transactionRef);
-            ps.setString(8, note);
+            ps.setObject(2, saleCreatedAt);
+            ps.setLong(3, outletId);
+            if (posSessionId != null) ps.setLong(4, posSessionId);
+            else ps.setNull(4, Types.BIGINT);
+            ps.setObject(5, paymentMethod, Types.OTHER);
+            ps.setBigDecimal(6, java.math.BigDecimal.valueOf(amount));
+            ps.setObject(7, status, Types.OTHER);
+            ps.setObject(8, paymentTime);
+            ps.setString(9, transactionRef);
+            ps.setString(10, note);
         });
     }
 
-    public void insertSaleItemTransaction(long txnId, long saleId, long productId, long itemId) throws SQLException {
+    public void insertSaleItemTransaction(long txnId, OffsetDateTime txnTime, long saleId,
+                                          OffsetDateTime saleCreatedAt, long productId, long itemId) throws SQLException {
         batch("sale_item_transaction", """
-            INSERT INTO core.sale_item_transaction (inventory_transaction_id, sale_id, product_id, item_id)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO core.sale_item_transaction (inventory_transaction_id, txn_time,
+                sale_id, sale_created_at, product_id, item_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT DO NOTHING
             """, ps -> {
             ps.setLong(1, txnId);
-            ps.setLong(2, saleId);
-            ps.setLong(3, productId);
-            ps.setLong(4, itemId);
+            ps.setObject(2, txnTime);
+            ps.setLong(3, saleId);
+            ps.setObject(4, saleCreatedAt);
+            ps.setLong(5, productId);
+            ps.setLong(6, itemId);
         });
     }
 
@@ -245,15 +261,16 @@ public final class SimulatorBatchWriter implements AutoCloseable {
         });
     }
 
-    public void insertWasteRecord(long txnId, String reason, Long approvedByUserId) throws SQLException {
+    public void insertWasteRecord(long txnId, OffsetDateTime txnTime, String reason, Long approvedByUserId) throws SQLException {
         batch("waste_record", """
-            INSERT INTO core.waste_record (inventory_transaction_id, reason, approved_by_user_id)
-            VALUES (?, ?, ?)
+            INSERT INTO core.waste_record (inventory_transaction_id, txn_time, reason, approved_by_user_id)
+            VALUES (?, ?, ?, ?)
             """, ps -> {
             ps.setLong(1, txnId);
-            ps.setString(2, reason);
-            if (approvedByUserId != null) ps.setLong(3, approvedByUserId);
-            else ps.setNull(3, Types.BIGINT);
+            ps.setObject(2, txnTime);
+            ps.setString(3, reason);
+            if (approvedByUserId != null) ps.setLong(4, approvedByUserId);
+            else ps.setNull(4, Types.BIGINT);
         });
     }
 
@@ -415,15 +432,17 @@ public final class SimulatorBatchWriter implements AutoCloseable {
         });
     }
 
-    public void insertSaleItemPromotion(long saleId, long productId, long promotionId) throws SQLException {
+    public void insertSaleItemPromotion(long saleId, OffsetDateTime saleCreatedAt,
+                                        long productId, long promotionId) throws SQLException {
         batch("sale_item_promotion", """
-            INSERT INTO core.sale_item_promotion (sale_id, product_id, promotion_id)
-            VALUES (?, ?, ?)
+            INSERT INTO core.sale_item_promotion (sale_id, sale_created_at, product_id, promotion_id)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT DO NOTHING
             """, ps -> {
             ps.setLong(1, saleId);
-            ps.setLong(2, productId);
-            ps.setLong(3, promotionId);
+            ps.setObject(2, saleCreatedAt);
+            ps.setLong(3, productId);
+            ps.setLong(4, promotionId);
         });
     }
 
@@ -476,14 +495,16 @@ public final class SimulatorBatchWriter implements AutoCloseable {
         });
     }
 
-    public void insertManufacturingTransaction(long inventoryTransactionId, long manufacturingBatchId) throws SQLException {
+    public void insertManufacturingTransaction(long inventoryTransactionId, OffsetDateTime txnTime,
+                                                long manufacturingBatchId) throws SQLException {
         batch("manufacturing_transaction", """
-            INSERT INTO core.manufacturing_transaction (inventory_transaction_id, manufacturing_batch_id)
-            VALUES (?, ?)
+            INSERT INTO core.manufacturing_transaction (inventory_transaction_id, txn_time, manufacturing_batch_id)
+            VALUES (?, ?, ?)
             ON CONFLICT DO NOTHING
             """, ps -> {
             ps.setLong(1, inventoryTransactionId);
-            ps.setLong(2, manufacturingBatchId);
+            ps.setObject(2, txnTime);
+            ps.setLong(3, manufacturingBatchId);
         });
     }
 

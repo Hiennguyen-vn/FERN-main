@@ -391,6 +391,40 @@ public class ProcurementRepository extends BaseRepository {
     });
   }
 
+  public ProcurementDtos.PurchaseOrderView cancelPurchaseOrder(long purchaseOrderId) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement guard = conn.prepareStatement(
+          "SELECT 1 FROM core.goods_receipt WHERE po_id = ? LIMIT 1"
+      )) {
+        guard.setLong(1, purchaseOrderId);
+        try (var rs = guard.executeQuery()) {
+          if (rs.next()) {
+            throw ServiceException.conflict(
+                "Cannot cancel purchase order with goods receipts: " + purchaseOrderId);
+          }
+        }
+      }
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          UPDATE core.purchase_order
+          SET status = 'cancelled',
+              updated_at = NOW()
+          WHERE id = ?
+            AND status IN ('draft','submitted','approved','ordered')
+          """
+      )) {
+        ps.setLong(1, purchaseOrderId);
+        int updated = ps.executeUpdate();
+        if (updated == 0) {
+          throw ServiceException.conflict(
+              "Purchase order cannot be cancelled in its current status: " + purchaseOrderId);
+        }
+      }
+      return findPurchaseOrderTransactional(conn, purchaseOrderId)
+          .orElseThrow(() -> new IllegalStateException("Purchase order not found after cancel"));
+    });
+  }
+
   public ProcurementDtos.PurchaseOrderView approvePurchaseOrder(long purchaseOrderId, Long approvedByUserId) {
     return executeInTransaction(conn -> {
       try (PreparedStatement ps = conn.prepareStatement(

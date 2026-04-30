@@ -52,6 +52,17 @@ public class SalesController {
     return salesService.reconcilePosSession(sessionId, request);
   }
 
+  @PostMapping("/orders/{saleId}/customer")
+  public java.util.Map<String, Object> attachCustomer(
+      @PathVariable long saleId,
+      @RequestBody java.util.Map<String, Object> body
+  ) {
+    Long customerId = body.get("customerId") == null ? null
+        : ((Number) body.get("customerId")).longValue();
+    salesService.attachCustomer(saleId, customerId);
+    return java.util.Map.of("saleId", saleId, "customerId", customerId);
+  }
+
   @PostMapping("/orders")
   @ResponseStatus(HttpStatus.CREATED)
   public SalesDtos.SaleView submitSale(

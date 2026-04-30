@@ -12,15 +12,35 @@ export interface RoleResolution {
   canSell: boolean;
 }
 
+function emptyResolution(): RoleResolution {
+  return { roles: new Set(), isManager: false, isStaffOnly: false, canSell: false };
+}
+
 export function resolveRolesForOutlet(session: AuthSession | null | undefined, outletId: string | null | undefined): RoleResolution {
-  if (!session || !outletId) {
-    return { roles: new Set(), isManager: false, isStaffOnly: false, canSell: false };
+  if (!session) {
+    return emptyResolution();
   }
   const rolesByOutlet = session.rolesByOutlet ?? {};
+  const globalRoles = resolveCanonicalRoles(rolesByOutlet);
+  const hasGlobalMonitorRole =
+    globalRoles.has('superadmin') ||
+    globalRoles.has('admin') ||
+    globalRoles.has('region_manager');
+
+  if (!outletId) {
+    return hasGlobalMonitorRole
+      ? {
+          roles: globalRoles,
+          isManager: true,
+          isStaffOnly: false,
+          canSell: globalRoles.has('superadmin'),
+        }
+      : emptyResolution();
+  }
+
   const raw = rolesByOutlet[String(outletId)] ?? [];
   const canonical = resolveCanonicalRoles({ [outletId]: raw });
   const isSuperadmin = canonical.has('superadmin');
-  const globalRoles = resolveCanonicalRoles(rolesByOutlet);
   const superadminAny = isSuperadmin || globalRoles.has('superadmin');
   const isManager = superadminAny || Array.from(canonical).some((r) => MANAGER_TIER.has(r));
   const canSell = superadminAny || Array.from(canonical).some((r) => SELLER_ROLES.has(r));

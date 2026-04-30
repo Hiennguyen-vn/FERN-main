@@ -19,7 +19,7 @@ import {
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
-import { EmptyState, ServiceUnavailablePage } from '@/components/shell/PermissionStates';
+import { EmptyState, ScopeRequiredGate, ServiceUnavailablePage } from '@/components/shell/PermissionStates';
 import { useListQueryState } from '@/hooks/use-list-query-state';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
@@ -45,6 +45,7 @@ import {
 import {
   canApproveGoodsReceipt,
   canApprovePurchaseOrder,
+  canCancelPurchaseOrder,
   canApproveSupplierInvoice,
   canCancelSupplierPayment,
   canPostGoodsReceipt,
@@ -1076,17 +1077,19 @@ export function ProcurementModule() {
 
         {activeTab === 'purchase-orders' && (
           <div className="space-y-4">
-            <PurchaseOrderCreatePanel
-              token={token}
-              outletId={outletId}
-              scopeCurrencyCode={scopeCurrencyCode}
-              suppliers={supplierDirectory}
-              items={itemDirectory}
-              onCreated={async () => {
-                await reloadLookups();
-                await loadPurchaseOrders();
-              }}
-            />
+            <ScopeRequiredGate scope={scope} required="outlet" message="Select one outlet to create a Purchase Order.">
+              <PurchaseOrderCreatePanel
+                token={token}
+                outletId={outletId}
+                scopeCurrencyCode={scopeCurrencyCode}
+                suppliers={supplierDirectory}
+                items={itemDirectory}
+                onCreated={async () => {
+                  await reloadLookups();
+                  await loadPurchaseOrders();
+                }}
+              />
+            </ScopeRequiredGate>
 
             <div className="surface-elevated p-4 space-y-3">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -1176,6 +1179,15 @@ export function ProcurementModule() {
                                 disabled={!canApprovePurchaseOrder(status)}
                                 onClick={() => void runAction(`po:${id}`, () => procurementApi.approvePurchaseOrder(token, id), 'Purchase order approved')}
                               />
+                              <TinyAction
+                                label="Cancel"
+                                busy={actionKey === `po-cancel:${id}`}
+                                disabled={!canCancelPurchaseOrder(status)}
+                                onClick={() => {
+                                  if (!window.confirm('Cancel this purchase order? It cannot be undone.')) return;
+                                  void runAction(`po-cancel:${id}`, () => procurementApi.cancelPurchaseOrder(token, id), 'Purchase order cancelled');
+                                }}
+                              />
                             </div>
                           </td>
                         </tr>
@@ -1199,18 +1211,20 @@ export function ProcurementModule() {
 
         {activeTab === 'goods-receipts' && (
           <div className="space-y-4">
-            <GoodsReceiptCreatePanel
-              token={token}
-              outletId={outletId}
-              scopeCurrencyCode={scopeCurrencyCode}
-              suppliers={supplierDirectory}
-              items={itemDirectory}
-              purchaseOrders={purchaseOrderDirectory}
-              onCreated={async () => {
-                await reloadLookups();
-                await loadGoodsReceipts();
-              }}
-            />
+            <ScopeRequiredGate scope={scope} required="outlet" message="Select one outlet to record a Goods Receipt.">
+              <GoodsReceiptCreatePanel
+                token={token}
+                outletId={outletId}
+                scopeCurrencyCode={scopeCurrencyCode}
+                suppliers={supplierDirectory}
+                items={itemDirectory}
+                purchaseOrders={purchaseOrderDirectory}
+                onCreated={async () => {
+                  await reloadLookups();
+                  await loadGoodsReceipts();
+                }}
+              />
+            </ScopeRequiredGate>
 
             <div className="surface-elevated p-4 space-y-3">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -1324,17 +1338,19 @@ export function ProcurementModule() {
 
         {activeTab === 'invoices' && (
           <div className="space-y-4">
-            <InvoiceCreatePanel
-              token={token}
-              outletId={outletId}
-              suppliers={supplierDirectory}
-              items={itemDirectory}
-              goodsReceipts={goodsReceiptDirectory}
-              onCreated={async () => {
-                await reloadLookups();
-                await loadInvoices();
-              }}
-            />
+            <ScopeRequiredGate scope={scope} required="outlet" message="Select one outlet to create an Invoice.">
+              <InvoiceCreatePanel
+                token={token}
+                outletId={outletId}
+                suppliers={supplierDirectory}
+                items={itemDirectory}
+                goodsReceipts={goodsReceiptDirectory}
+                onCreated={async () => {
+                  await reloadLookups();
+                  await loadInvoices();
+                }}
+              />
+            </ScopeRequiredGate>
 
             <div className="surface-elevated p-4 space-y-3">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -1447,16 +1463,18 @@ export function ProcurementModule() {
 
         {activeTab === 'payments' && (
           <div className="space-y-4">
-            <PaymentCreatePanel
-              token={token}
-              outletId={outletId}
-              suppliers={supplierDirectory}
-              invoices={invoiceDirectory}
-              onCreated={async () => {
-                await reloadLookups();
-                await loadPayments();
-              }}
-            />
+            <ScopeRequiredGate scope={scope} required="outlet" message="Select one outlet to create a Payment.">
+              <PaymentCreatePanel
+                token={token}
+                outletId={outletId}
+                suppliers={supplierDirectory}
+                invoices={invoiceDirectory}
+                onCreated={async () => {
+                  await reloadLookups();
+                  await loadPayments();
+                }}
+              />
+            </ScopeRequiredGate>
 
             <div className="surface-elevated p-4 space-y-3">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">

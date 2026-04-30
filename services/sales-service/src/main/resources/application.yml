@@ -79,3 +79,18 @@ spring.cloud.vault:
     backend: kv
     default-context: fern/shared
     application-name: fern/services/${spring.application.name}
+
+# ── FERN custom settings ──────────────────────────────────────────────
+fern:
+  cache:
+    idempotency-cleanup-enabled: ${FERN_CACHE_IDEMPOTENCY_CLEANUP_ENABLED:true}
+    idempotency-cleanup-ms: ${FERN_CACHE_IDEMPOTENCY_CLEANUP_MS:3600000}
+    idempotency-cleanup-initial-delay-ms: ${FERN_CACHE_IDEMPOTENCY_CLEANUP_INITIAL_DELAY_MS:60000}
+    idempotency-cleanup-batch-size: ${FERN_CACHE_IDEMPOTENCY_CLEANUP_BATCH_SIZE:5000}
+    idempotency-cleanup-max-batches: ${FERN_CACHE_IDEMPOTENCY_CLEANUP_MAX_BATCHES:10}
+  sync:
+    manifest-private-key-pkcs8-b64: ${FERN_SYNC_MANIFEST_PRIVATE_KEY_PKCS8_B64:}
+    manifest-key-id: ${FERN_SYNC_MANIFEST_KEY_ID:dev-key}
+  loyalty:
+    mock-otp: ${FERN_LOYALTY_MOCK_OTP:true}
+    mock-otp-code: ${FERN_LOYALTY_MOCK_OTP_CODE:123456}

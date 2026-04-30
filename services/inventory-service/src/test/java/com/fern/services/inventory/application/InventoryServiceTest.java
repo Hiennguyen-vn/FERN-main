@@ -66,7 +66,8 @@ class InventoryServiceTest {
 
   @BeforeEach
   void setUp() {
-    service = new InventoryService(inventoryRepository, authorizationPolicyService, eventPublisher, idGenerator, clock);
+    service = new InventoryService(inventoryRepository, authorizationPolicyService, eventPublisher, idGenerator, clock,
+        org.mockito.Mockito.mock(StockReservationService.class));
     RequestUserContextHolder.set(new RequestUserContext(
         USER_ID, "alice", "sess", Set.of("admin"), Set.of(), Set.of(OUTLET_ID), true, false, null, null, null));
   }

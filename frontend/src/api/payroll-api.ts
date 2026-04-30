@@ -255,6 +255,20 @@ export const payrollApi = {
         },
       }),
     ),
+  closePeriod: async (token: string, periodId: string): Promise<PayrollPeriodView> =>
+    decodePayrollPeriod(
+      await apiRequest(`/api/v1/payroll/periods/${periodId}/close`, {
+        method: 'POST',
+        token,
+      }),
+    ),
+  reopenPeriod: async (token: string, periodId: string): Promise<PayrollPeriodView> =>
+    decodePayrollPeriod(
+      await apiRequest(`/api/v1/payroll/periods/${periodId}/reopen`, {
+        method: 'POST',
+        token,
+      }),
+    ),
   timesheets: async (token: string, query: PayrollTimesheetsQuery): Promise<PagedResponse<PayrollTimesheetView>> =>
     decodePaged(await apiRequest('/api/v1/payroll/timesheets', { token, query }), decodePayrollTimesheet),
   createTimesheet: async (token: string, payload: CreatePayrollTimesheetPayload): Promise<PayrollTimesheetView> =>

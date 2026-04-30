@@ -263,6 +263,25 @@ class OrgServiceTest {
   }
 
   @Test
+  void updateOutletStatusClosesOutletWithReason() {
+    RequestUserContextHolder.set(adminContext());
+    when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);
+    when(orgRepository.findManagedOutletById(2000L)).thenReturn(Optional.of(outletView(2000L, 10L, "VN-HCM-001", "Saigon Central Outlet", "active")));
+    OrgDtos.OutletView closedOutlet = outletView(2000L, 10L, "VN-HCM-001", "Saigon Central Outlet", "closed");
+    when(orgRepository.updateOutletStatus(2000L, "closed")).thenReturn(closedOutlet);
+
+    OrgService service = service();
+    OrgDtos.OutletView result = service.updateOutletStatus(
+        2000L,
+        new OrgDtos.UpdateOutletStatusRequest("closed", "Store closed for renovation")
+    );
+
+    verify(orgRepository).updateOutletStatus(2000L, "closed");
+    verify(orgHierarchyCacheService).evict();
+    assertEquals("closed", result.status());
+  }
+
+  @Test
   void updateOutletStatusPublishesUpdateEvent() {
     RequestUserContextHolder.set(adminContext());
     when(authorizationPolicyService.canMutateOrg(any())).thenReturn(true);

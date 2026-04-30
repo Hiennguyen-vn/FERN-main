@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   Search, Plus, Eye, CheckCircle2,
   AlertTriangle, RotateCcw, Users, BarChart3, Utensils,
-  Edit2, Trash2,
+  Edit2, Trash2, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +18,10 @@ const STATUS_CONFIG: Record<POSSessionStatus, { label: string; className: string
 
 interface Props {
   sessions: POSSession[];
+  totalSessions?: number;
+  page?: number;
+  pageSize?: number;
+  onPageChange?: (page: number) => void;
   onOpenSession: () => void;
   onViewSession: (session: POSSession) => void;
   onCloseSession: (session: POSSession) => void;
@@ -30,7 +34,8 @@ interface Props {
 }
 
 export function POSSessionList({
-  sessions, onOpenSession, onViewSession, onCloseSession, onReconcile,
+  sessions, totalSessions, page = 0, pageSize = sessions.length || 100, onPageChange,
+  onOpenSession, onViewSession, onCloseSession, onReconcile,
   onEditSession, onDeleteSession, onCustomers, onOutletStats, onTables,
 }: Props) {
   const [statusFilter, setStatusFilter] = useState<POSSessionStatus | 'all'>('all');
@@ -44,8 +49,15 @@ export function POSSessionList({
   });
 
   const hasOpenSession = sessions.some(s => s.status === 'open');
+  const effectiveTotal = Math.max(totalSessions ?? sessions.length, sessions.length);
+  const totalPages = Math.max(1, Math.ceil(effectiveTotal / pageSize));
+  const currentPage = Math.min(page, totalPages - 1);
+  const pageStart = effectiveTotal === 0 ? 0 : currentPage * pageSize + 1;
+  const pageEnd = Math.min(effectiveTotal, currentPage * pageSize + sessions.length);
+  const canPageBackward = !!onPageChange && currentPage > 0;
+  const canPageForward = !!onPageChange && currentPage < totalPages - 1;
   const counts = {
-    all: sessions.length,
+    all: effectiveTotal,
     open: sessions.filter(s => s.status === 'open').length,
     closed: sessions.filter(s => s.status === 'closed').length,
     reconciled: sessions.filter(s => s.status === 'reconciled').length,
@@ -58,7 +70,7 @@ export function POSSessionList({
         <div>
           <h2 className="text-lg font-semibold text-foreground">POS Sessions</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {sessions.length} session{sessions.length !== 1 ? 's' : ''} · Manage point-of-sale sessions
+            {effectiveTotal} session{effectiveTotal !== 1 ? 's' : ''} · Showing {pageStart}-{pageEnd} · Manage point-of-sale sessions
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -87,9 +99,9 @@ export function POSSessionList({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: 'Total Sessions', value: counts.all, accent: 'default' },
-          { label: 'Open', value: counts.open, accent: 'success' },
-          { label: 'Closed', value: counts.closed, accent: 'warning' },
-          { label: 'Reconciled', value: counts.reconciled, accent: 'default' },
+          { label: 'Open This Page', value: counts.open, accent: 'success' },
+          { label: 'Closed This Page', value: counts.closed, accent: 'warning' },
+          { label: 'Reconciled This Page', value: counts.reconciled, accent: 'default' },
         ].map(k => (
           <div key={k.label} className="surface-elevated p-3">
             <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{k.label}</p>
@@ -139,6 +151,33 @@ export function POSSessionList({
 
       {/* Table */}
       <div className="surface-elevated">
+        {onPageChange && (
+          <div className="flex items-center justify-between border-b px-4 py-2.5">
+            <p className="text-xs text-muted-foreground">
+              Page {currentPage + 1} of {totalPages}
+            </p>
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 text-xs"
+                disabled={!canPageBackward}
+                onClick={() => onPageChange(Math.max(0, currentPage - 1))}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" /> Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 text-xs"
+                disabled={!canPageForward}
+                onClick={() => onPageChange(Math.min(totalPages - 1, currentPage + 1))}
+              >
+                Next <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>

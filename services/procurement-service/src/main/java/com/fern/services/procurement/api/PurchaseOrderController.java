@@ -68,4 +68,9 @@ public class PurchaseOrderController {
   public ProcurementDtos.PurchaseOrderView approvePurchaseOrder(@PathVariable long purchaseOrderId) {
     return purchaseOrderService.approvePurchaseOrder(purchaseOrderId);
   }
+
+  @PostMapping("/{purchaseOrderId}/cancel")
+  public ProcurementDtos.PurchaseOrderView cancelPurchaseOrder(@PathVariable long purchaseOrderId) {
+    return purchaseOrderService.cancelPurchaseOrder(purchaseOrderId);
+  }
 }

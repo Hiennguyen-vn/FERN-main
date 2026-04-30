@@ -12,6 +12,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.finance.ExpenseRecordCreatedEvent;
 import com.fern.services.finance.api.FinanceDtos;
+import com.fern.services.finance.infrastructure.ExpenseDocumentStorage;
 import com.fern.services.finance.infrastructure.FinanceRepository;
 import com.fern.common.model.cache.RedisClientAdapter;
 import com.fern.common.model.cache.TieredCache;
@@ -22,7 +23,9 @@ import java.time.LocalDate;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -34,6 +37,8 @@ public class FinanceService {
   private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
   private final TieredCache<List<FinanceDtos.MonthlyExpenseRow>> monthlyExpenseCache;
+  private final ExpenseDocumentStorage expenseDocumentStorage;
+  private final ExpenseReceiptPdfRenderer expenseReceiptPdfRenderer;
 
   @Autowired
   public FinanceService(
@@ -43,13 +48,41 @@ public class FinanceService {
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock,
       ObjectMapper objectMapper,
-      RedisClientAdapter redisClientAdapter
+      RedisClientAdapter redisClientAdapter,
+      ObjectProvider<ExpenseDocumentStorage> expenseDocumentStorageProvider,
+      ExpenseReceiptPdfRenderer expenseReceiptPdfRenderer
+  ) {
+    this(
+        financeRepository,
+        idGenerator,
+        eventPublisher,
+        authorizationPolicyService,
+        clock,
+        objectMapper,
+        redisClientAdapter,
+        expenseDocumentStorageProvider == null ? null : expenseDocumentStorageProvider.getIfAvailable(),
+        expenseReceiptPdfRenderer
+    );
+  }
+
+  private FinanceService(
+      FinanceRepository financeRepository,
+      SnowflakeIdGenerator idGenerator,
+      TypedKafkaEventPublisher eventPublisher,
+      AuthorizationPolicyService authorizationPolicyService,
+      Clock clock,
+      ObjectMapper objectMapper,
+      RedisClientAdapter redisClientAdapter,
+      ExpenseDocumentStorage expenseDocumentStorage,
+      ExpenseReceiptPdfRenderer expenseReceiptPdfRenderer
   ) {
     this.financeRepository = financeRepository;
     this.idGenerator = idGenerator;
     this.eventPublisher = eventPublisher;
     this.authorizationPolicyService = authorizationPolicyService;
     this.clock = clock;
+    this.expenseDocumentStorage = expenseDocumentStorage;
+    this.expenseReceiptPdfRenderer = expenseReceiptPdfRenderer == null ? new ExpenseReceiptPdfRenderer() : expenseReceiptPdfRenderer;
     this.monthlyExpenseCache = redisClientAdapter == null
         ? null
         : TieredCache.<List<FinanceDtos.MonthlyExpenseRow>>builder("fern-finance-monthly-expenses")
@@ -71,11 +104,44 @@ public class FinanceService {
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock
   ) {
-    this(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock, new ObjectMapper(), null);
+    this(
+        financeRepository,
+        idGenerator,
+        eventPublisher,
+        authorizationPolicyService,
+        clock,
+        new ObjectMapper(),
+        null,
+        (ExpenseDocumentStorage) null,
+        new ExpenseReceiptPdfRenderer()
+    );
+  }
+
+  FinanceService(
+      FinanceRepository financeRepository,
+      SnowflakeIdGenerator idGenerator,
+      TypedKafkaEventPublisher eventPublisher,
+      AuthorizationPolicyService authorizationPolicyService,
+      Clock clock,
+      ExpenseDocumentStorage expenseDocumentStorage,
+      ExpenseReceiptPdfRenderer expenseReceiptPdfRenderer
+  ) {
+    this(
+        financeRepository,
+        idGenerator,
+        eventPublisher,
+        authorizationPolicyService,
+        clock,
+        new ObjectMapper(),
+        null,
+        expenseDocumentStorage,
+        expenseReceiptPdfRenderer
+    );
   }
 
   public FinanceDtos.ExpenseView createOperatingExpense(FinanceDtos.CreateOperatingExpenseRequest request) {
     requireFinanceWrite(request.outletId());
+    requireOpenFinancePeriod(request.outletId(), request.businessDate());
     long expenseId = idGenerator.generateId();
     FinanceRepository.ExpenseRecord record = financeRepository.createOperatingExpense(
         expenseId,
@@ -94,6 +160,7 @@ public class FinanceService {
 
   public FinanceDtos.ExpenseView createOtherExpense(FinanceDtos.CreateOtherExpenseRequest request) {
     requireFinanceWrite(request.outletId());
+    requireOpenFinancePeriod(request.outletId(), request.businessDate());
     long expenseId = idGenerator.generateId();
     FinanceRepository.ExpenseRecord record = financeRepository.createOtherExpense(
         expenseId,
@@ -111,11 +178,48 @@ public class FinanceService {
   }
 
   public FinanceDtos.ExpenseView getExpense(long expenseId) {
-    requireFinanceRead();
-    FinanceRepository.ExpenseRecord record = financeRepository.findExpense(expenseId)
-        .orElseThrow(() -> ServiceException.notFound("Expense not found: " + expenseId));
-    requireFinanceRead(record.outletId());
-    return toDto(record);
+    return toDto(loadAuthorizedExpense(expenseId));
+  }
+
+  public FinanceDtos.ExpenseDetailView getExpenseDetail(long expenseId) {
+    FinanceRepository.ExpenseRecord record = loadAuthorizedExpense(expenseId);
+    List<FinanceDtos.SupplierInvoiceExpenseDetailView> supplierInvoices =
+        financeRepository.listSupplierInvoiceExpenseDetails(expenseId);
+    return new FinanceDtos.ExpenseDetailView(
+        toDto(record),
+        financeRepository.listExpenseDocuments(expenseId).stream().map(this::toDocumentDto).toList(),
+        supplierInvoices.stream().findFirst().orElse(null),
+        supplierInvoices,
+        financeRepository.findInventoryReceiptExpenseDetail(expenseId).orElse(null)
+    );
+  }
+
+  public FinanceDtos.ExpenseDocumentView exportExpensePdf(long expenseId) {
+    FinanceRepository.ExpenseRecord record = loadAuthorizedExpense(expenseId);
+    if (expenseDocumentStorage == null) {
+      throw ServiceException.conflict("EXPENSE_DOCUMENT_STORAGE_NOT_CONFIGURED");
+    }
+    long documentId = idGenerator.generateId();
+    String fileName = "expense-" + record.id() + ".pdf";
+    String objectKey = "finance/expenses/" + record.outletId() + "/" + record.id() + "/" + documentId + ".pdf";
+    byte[] pdf = expenseReceiptPdfRenderer.render(record, documentId, clock.instant());
+    ExpenseDocumentStorage.StoredObject stored = expenseDocumentStorage.upload(
+        objectKey,
+        fileName,
+        "application/pdf",
+        pdf
+    );
+    FinanceRepository.ExpenseDocumentRecord document = financeRepository.createExpenseDocument(
+        documentId,
+        record.id(),
+        "expense_receipt_pdf",
+        fileName,
+        "application/pdf",
+        stored.objectKey(),
+        stored.url(),
+        RequestUserContextHolder.get().userId()
+    );
+    return toDocumentDto(document);
   }
 
   public PagedResult<FinanceDtos.ExpenseView> listExpenses(
@@ -144,6 +248,24 @@ public class FinanceService {
         ).map(this::toDto);
   }
 
+  public List<FinanceDtos.ExpenseSummaryRow> expenseSummary(
+      Long outletId,
+      LocalDate startDate,
+      LocalDate endDate,
+      String sourceType,
+      String q
+  ) {
+    requireFinanceRead();
+    Set<Long> scopedOutletIds = resolveReadableOutletIds(outletId);
+    return financeRepository.expenseSummary(
+        scopedOutletIds,
+        startDate,
+        endDate,
+        sourceType,
+        QueryConventions.normalizeQuery(q)
+    );
+  }
+
   public List<FinanceDtos.MonthlyExpenseRow> monthlyExpenses(
       Long outletId,
       LocalDate startDate,
@@ -169,7 +291,17 @@ public class FinanceService {
     if (monthlyExpenseCache != null) monthlyExpenseCache.clearLocal();
   }
 
+  private FinanceRepository.ExpenseRecord loadAuthorizedExpense(long expenseId) {
+    requireFinanceRead();
+    FinanceRepository.ExpenseRecord record = financeRepository.findExpense(expenseId)
+        .orElseThrow(() -> ServiceException.notFound("Expense not found: " + expenseId));
+    requireFinanceRead(record.outletId());
+    return record;
+  }
+
   private void publishExpenseCreated(FinanceRepository.ExpenseRecord record, long sourceId) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    String correlationId = currentCorrelationId();
     eventPublisher.publish(
         "fern.finance.expense-record-created",
         Long.toString(record.id()),
@@ -179,9 +311,26 @@ public class FinanceService {
             sourceId,
             record.amount(),
             record.currencyCode(),
-            clock.instant()
-        )
+            clock.instant(),
+            record.id(),
+            record.outletId(),
+            context.userId(),
+            context.username(),
+            sortedRoles(context),
+            correlationId,
+            null
+        ),
+        correlationId
     );
+  }
+
+  private static List<String> sortedRoles(RequestUserContext context) {
+    return context.roles().stream().sorted().toList();
+  }
+
+  private static String currentCorrelationId() {
+    String correlationId = MDC.get("correlationId");
+    return correlationId == null || correlationId.isBlank() ? null : correlationId;
   }
 
   private void requireFinanceWrite(long outletId) {
@@ -242,6 +391,12 @@ public class FinanceService {
     return trimmed.isEmpty() ? null : trimmed;
   }
 
+  private void requireOpenFinancePeriod(long outletId, LocalDate businessDate) {
+    if (financeRepository.isBusinessDateInClosedPeriod(outletId, businessDate)) {
+      throw ServiceException.conflict("FISCAL_PERIOD_CLOSED");
+    }
+  }
+
   private FinanceDtos.ExpenseView toDto(FinanceRepository.ExpenseRecord record) {
     return new FinanceDtos.ExpenseView(
         record.id(),
@@ -252,9 +407,32 @@ public class FinanceService {
         record.sourceType(),
         record.subtype(),
         record.description(),
+        record.note(),
         record.createdByUserId(),
         record.createdAt(),
         record.updatedAt()
+    );
+  }
+
+  private FinanceDtos.ExpenseDocumentView toDocumentDto(FinanceRepository.ExpenseDocumentRecord record) {
+    String url = record.storageUrl();
+    if (expenseDocumentStorage != null && record.objectKey() != null && !record.objectKey().isBlank()) {
+      try {
+        url = expenseDocumentStorage.downloadUrl(record.objectKey());
+      } catch (RuntimeException ignored) {
+        url = record.storageUrl();
+      }
+    }
+    return new FinanceDtos.ExpenseDocumentView(
+        record.id(),
+        record.expenseRecordId(),
+        record.documentType(),
+        record.fileName(),
+        record.contentType(),
+        record.objectKey(),
+        url,
+        record.createdByUserId(),
+        record.createdAt()
     );
   }
 

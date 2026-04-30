@@ -1422,6 +1422,73 @@ public class InventoryRepository extends BaseRepository {
   public record SaleComponentMovement(long productId, long itemId, BigDecimal qtyChange) {
   }
 
+  /**
+   * Returns mapping productId -> list of modifier_option_id selected on this sale.
+   * Multiple sale_item rows of same product on same sale share their modifier ids list.
+   */
+  public java.util.Map<Long, java.util.List<Long>> findSaleModifierOptions(long saleId) {
+    java.util.Map<Long, java.util.List<Long>> out = new java.util.HashMap<>();
+    String sql = "SELECT product_id, modifier_option_id FROM core.sale_item_modifier WHERE sale_id = ?";
+    try (Connection conn = dataSource.getConnection();
+         PreparedStatement ps = conn.prepareStatement(sql)) {
+      ps.setLong(1, saleId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          long pid = rs.getLong(1);
+          long mod = rs.getLong(2);
+          out.computeIfAbsent(pid, k -> new java.util.ArrayList<>()).add(mod);
+        }
+      }
+      return out;
+    } catch (SQLException e) {
+      throw new IllegalStateException("findSaleModifierOptions saleId=" + saleId, e);
+    }
+  }
+
+  public java.util.Map<Long, java.util.List<ModifierRecipeEffect>> findModifierRecipeEffects(
+      java.util.Collection<Long> modifierOptionIds) {
+    java.util.Map<Long, java.util.List<ModifierRecipeEffect>> out = new java.util.HashMap<>();
+    if (modifierOptionIds == null || modifierOptionIds.isEmpty()) return out;
+    StringBuilder placeholders = new StringBuilder();
+    int n = modifierOptionIds.size();
+    for (int i = 0; i < n; i++) { if (i > 0) placeholders.append(','); placeholders.append('?'); }
+    String sql = """
+        SELECT modifier_option_id, effect_type, ingredient_id, substitute_ingredient_id,
+               qty_delta, multiplier
+          FROM core.modifier_recipe_effect
+         WHERE modifier_option_id IN (%s)
+        """.formatted(placeholders.toString());
+    try (Connection conn = dataSource.getConnection();
+         PreparedStatement ps = conn.prepareStatement(sql)) {
+      int idx = 1;
+      for (Long id : modifierOptionIds) ps.setLong(idx++, id);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          long modOptionId = rs.getLong(1);
+          String type = rs.getString(2);
+          long ing = rs.getLong(3); boolean ingNull = rs.wasNull();
+          long sub = rs.getLong(4); boolean subNull = rs.wasNull();
+          BigDecimal delta = rs.getBigDecimal(5);
+          BigDecimal mult = rs.getBigDecimal(6);
+          out.computeIfAbsent(modOptionId, k -> new java.util.ArrayList<>())
+             .add(new ModifierRecipeEffect(type,
+                 ingNull ? null : ing, subNull ? null : sub, delta, mult));
+        }
+      }
+      return out;
+    } catch (SQLException e) {
+      throw new IllegalStateException("findModifierRecipeEffects", e);
+    }
+  }
+
+  public record ModifierRecipeEffect(
+      String effectType,
+      Long ingredientId,
+      Long substituteIngredientId,
+      BigDecimal qtyDelta,
+      BigDecimal multiplier
+  ) {}
+
   private record SaleUsageTransaction(
       long inventoryTransactionId,
       Instant txnTime,

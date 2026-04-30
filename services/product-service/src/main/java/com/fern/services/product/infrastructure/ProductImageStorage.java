@@ -199,7 +199,26 @@ public class ProductImageStorage {
     String cookie = loginConsole();
     String filename = sanitizeFilename(originalFilename, key);
     String boundary = "----fern-product-image-" + UUID.randomUUID();
-    byte[] body = multipartBody(boundary, String.valueOf(data.length), filename, contentType, data);
+    byte[] body = multipartBody(boundary, "file", filename, contentType, data);
+    HttpResponse<String> response = sendConsoleUpload(cookie, boundary, body, key);
+    if (response.statusCode() >= 200 && response.statusCode() < 300) {
+      return;
+    }
+
+    if (isConsoleSizeFieldRequired(response.body())) {
+      String legacyBoundary = "----fern-product-image-" + UUID.randomUUID();
+      byte[] legacyBody = multipartBody(legacyBoundary, String.valueOf(data.length), filename, contentType, data);
+      response = sendConsoleUpload(cookie, legacyBoundary, legacyBody, key);
+      if (response.statusCode() >= 200 && response.statusCode() < 300) {
+        return;
+      }
+    }
+
+    throw ServiceException.badRequest("S3 console upload failed (" + response.statusCode() + "): "
+        + trimResponse(response.body()));
+  }
+
+  private HttpResponse<String> sendConsoleUpload(String cookie, String boundary, byte[] body, String key) {
     HttpRequest request = HttpRequest.newBuilder()
         .uri(URI.create(consoleEndpoint + "/api/v1/buckets/" + encodePath(bucket)
             + "/objects/upload?prefix=" + encodeQuery(key)))
@@ -208,11 +227,7 @@ public class ProductImageStorage {
         .header("Content-Type", "multipart/form-data; boundary=" + boundary)
         .POST(HttpRequest.BodyPublishers.ofByteArray(body))
         .build();
-    HttpResponse<String> response = sendString(request);
-    if (response.statusCode() < 200 || response.statusCode() >= 300) {
-      throw ServiceException.badRequest("S3 console upload failed (" + response.statusCode() + "): "
-          + trimResponse(response.body()));
-    }
+    return sendString(request);
   }
 
   private StoredObject downloadWithConsoleApi(String key) {
@@ -325,6 +340,12 @@ public class ProductImageStorage {
   private static String trimResponse(String value) {
     if (value == null) return "";
     return value.length() <= 200 ? value : value.substring(0, 200);
+  }
+
+  private static boolean isConsoleSizeFieldRequired(String responseBody) {
+    return responseBody != null
+        && responseBody.contains("strconv.ParseInt")
+        && responseBody.contains("parsing \\\"file\\\"");
   }
 
   public record StoredObject(byte[] data, String contentType) {}

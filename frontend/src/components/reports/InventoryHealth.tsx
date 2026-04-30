@@ -14,7 +14,7 @@ import { useInventoryHealthData, type LowStockAlert } from '@/hooks/use-dashboar
 export function InventoryHealth() {
   const { lowStockItems, loading, error } = useInventoryHealthData();
 
-  const outOfStockCount = lowStockItems.filter((item) => item.quantity === 0).length;
+  const outOfStockCount = lowStockItems.filter((item) => item.quantity <= 0).length;
   const lowStockCount = lowStockItems.filter((item) => item.quantity > 0).length;
   const byOutlet = lowStockItems.reduce<Record<string, LowStockAlert[]>>((groups, item) => {
     (groups[item.outletName] = groups[item.outletName] || []).push(item);
@@ -30,12 +30,12 @@ export function InventoryHealth() {
       <div>
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-1">
           <Layers className="h-3 w-3" />
-          <span>Reports</span>
+          <span>Regional Ops</span>
           <ChevronRight className="h-3 w-3" />
-          <span className="text-foreground font-medium">Inventory</span>
+          <span className="text-foreground font-medium">Inventory Exceptions</span>
         </div>
-        <h2 className="text-lg font-semibold text-foreground">Inventory Health</h2>
-        <p className="text-xs text-muted-foreground mt-0.5">Stock alerts load independently from revenue charts.</p>
+        <h2 className="text-lg font-semibold text-foreground">Inventory Exceptions</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">Low-stock and out-of-stock alerts by outlet in the selected scope.</p>
       </div>
 
       {error ? (
@@ -88,29 +88,32 @@ export function InventoryHealth() {
                     All items are above reorder level
                   </td>
                 </tr>
-              ) : lowStockItems.map((item, index) => (
-                <tr key={`${item.outletName}:${item.itemName}:${index}`} className={cn('border-b last:border-0 hover:bg-muted/20 transition-colors', item.quantity === 0 && 'bg-destructive/[0.02]')}>
-                  <td className="px-4 py-2.5">
-                    <p className="text-sm font-medium text-foreground">{item.itemName}</p>
-                    <p className="text-[10px] text-muted-foreground">{item.category}</p>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">{item.outletName}</td>
-                  <td className={cn('px-4 py-2.5 text-sm text-right font-medium', item.quantity === 0 ? 'text-destructive' : 'text-warning')}>
-                    {item.quantity}
-                  </td>
-                  <td className="px-4 py-2.5 text-sm text-right text-muted-foreground">{item.reorderLevel}</td>
-                  <td className="px-4 py-2.5">
-                    <span
-                      className={cn(
-                        'text-[10px] font-medium px-2 py-0.5 rounded-full',
-                        item.quantity === 0 ? 'bg-destructive/10 text-destructive' : 'bg-warning/10 text-warning',
-                      )}
-                    >
-                      {item.quantity === 0 ? 'Out of Stock' : 'Low'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              ) : lowStockItems.map((item, index) => {
+                const isOutOfStock = item.quantity <= 0;
+                return (
+                  <tr key={`${item.outletName}:${item.itemName}:${index}`} className={cn('border-b last:border-0 hover:bg-muted/20 transition-colors', isOutOfStock && 'bg-destructive/[0.02]')}>
+                    <td className="px-4 py-2.5">
+                      <p className="text-sm font-medium text-foreground">{item.itemName}</p>
+                      <p className="text-[10px] text-muted-foreground">{item.category}</p>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{item.outletName}</td>
+                    <td className={cn('px-4 py-2.5 text-sm text-right font-medium', isOutOfStock ? 'text-destructive' : 'text-warning')}>
+                      {item.quantity}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-right text-muted-foreground">{item.reorderLevel}</td>
+                    <td className="px-4 py-2.5">
+                      <span
+                        className={cn(
+                          'text-[10px] font-medium px-2 py-0.5 rounded-full',
+                          isOutOfStock ? 'bg-destructive/10 text-destructive' : 'bg-warning/10 text-warning',
+                        )}
+                      >
+                        {isOutOfStock ? 'Out of Stock' : 'Low'}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -124,7 +127,7 @@ export function InventoryHealth() {
           ) : (
             <div className="divide-y divide-border">
               {Object.entries(byOutlet).map(([outlet, items]) => {
-                const outletOutOfStockCount = items.filter((item) => item.quantity === 0).length;
+                const outletOutOfStockCount = items.filter((item) => item.quantity <= 0).length;
                 return (
                   <div key={outlet} className="px-4 py-3 hover:bg-muted/10 transition-colors">
                     <div className="flex items-center justify-between mb-1.5">

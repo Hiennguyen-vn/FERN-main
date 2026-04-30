@@ -63,3 +63,8 @@ spring.cloud.vault:
     backend: kv
     default-context: fern/shared
     application-name: fern/services/${spring.application.name}
+
+# ── FERN inventory settings ──────────────────────────────────────────
+fern:
+  inventory:
+    reservation-sweep-ms: ${FERN_INVENTORY_RESERVATION_SWEEP_MS:60000}

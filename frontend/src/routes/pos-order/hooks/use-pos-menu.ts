@@ -211,7 +211,7 @@ export function usePosMenu(outletId: string | null) {
         productApi.prices(token!, outletId!),
         productApi.modifierGroups(token!),
         productApi.availability(token!, { outletId: outletId! }).catch(() => [] as AvailabilityView[]),
-        inventoryApi.balances(token!, outletId!).catch((): StockBalanceView[] | null => null),
+        inventoryApi.balances(token!, outletId!).catch((): StockBalanceView[] => []),
       ]);
 
       const priceByProduct = new Map(
@@ -237,9 +237,10 @@ export function usePosMenu(outletId: string | null) {
         groups,
         buildAvailabilityLookup(outletAvailability),
         recipesByProduct,
-        stockBalances ? buildStockLookup(stockBalances) : null,
+        buildStockLookup(stockBalances),
       );
     },
-    staleTime: 30_000,
+    staleTime: 15_000,
+    refetchInterval: 60_000,
   });
 }

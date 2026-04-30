@@ -1,7 +1,9 @@
 package com.fern.services.sales.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -18,6 +20,8 @@ import com.fern.services.sales.api.SyncDtos;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -27,6 +31,7 @@ import java.util.Set;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class SyncServiceTest {
 
@@ -161,6 +166,36 @@ class SyncServiceTest {
         eq("fern.inventory.waste-recorded"), eq("9101"), any());
   }
 
+  @Test
+  void manifestReadsStockVersionFromLatestInventoryTransaction() throws Exception {
+    Connection conn = mock(Connection.class);
+    Statement statement = mock(Statement.class);
+    PreparedStatement ps = mock(PreparedStatement.class);
+    ResultSet rs = mock(ResultSet.class);
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    when(dataSource.getConnection()).thenReturn(conn);
+    when(conn.createStatement()).thenReturn(statement);
+    when(conn.prepareStatement(sqlCaptor.capture())).thenReturn(ps);
+    when(ps.executeQuery()).thenReturn(rs);
+    when(rs.next()).thenReturn(true);
+    when(rs.getLong("catalog_version")).thenReturn(100L);
+    when(rs.getLong("price_version")).thenReturn(200L);
+    when(rs.getLong("stock_version")).thenReturn(300L);
+    when(rs.getLong("recipe_version")).thenReturn(400L);
+    when(rs.getLong("menu_version")).thenReturn(500L);
+
+    SyncDtos.ManifestResponse response = newService().manifest();
+
+    assertEquals(100L, response.catalogVersion());
+    assertEquals(200L, response.priceVersion());
+    assertEquals(300L, response.stockVersion());
+    assertEquals(400L, response.recipeVersion());
+    assertEquals(500L, response.menuVersion());
+    assertTrue(sqlCaptor.getValue().contains("ORDER BY txn_time DESC"));
+    assertTrue(sqlCaptor.getValue().contains("LIMIT 1"));
+    assertFalse(sqlCaptor.getValue().contains("MAX(EXTRACT(EPOCH FROM txn_time)"));
+  }
+
   private SyncService newService() {
     return new SyncService(
         dataSource,
@@ -168,7 +203,8 @@ class SyncServiceTest {
         posMetrics,
         mock(SnowflakeIdGenerator.class),
         new ObjectMapper().findAndRegisterModules(),
-        outboxWriter);
+        outboxWriter,
+        new ManifestSigner("", "test-key"));
   }
 
   private SyncDtos.PushEvent event(String id, String type, Object payload) {

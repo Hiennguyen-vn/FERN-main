@@ -169,6 +169,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
   const modifierGroups = menuQuery.data?.modifierGroups ?? [];
 
   const handlePick = (item: PosMenuItem) => {
+    if (!item.isAvailable) return;
     if (!item.hasModifiers || modifierGroups.length === 0) {
       cart.addLine({ itemId: item.id, name: item.name, basePrice: item.price, toppings: [], quantity: 1 });
       return;
@@ -220,6 +221,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
     };
     history.save(order);
     setLastOrder(order);
+    void qc.invalidateQueries({ queryKey: ['pos-order-menu', outletId] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submit.phase]);
 

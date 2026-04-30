@@ -39,11 +39,6 @@ public class FinanceController {
     return ResponseEntity.status(HttpStatus.CREATED).body(financeService.createOtherExpense(request));
   }
 
-  @GetMapping("/expenses/{expenseId}")
-  public FinanceDtos.ExpenseView getExpense(@PathVariable long expenseId) {
-    return financeService.getExpense(expenseId);
-  }
-
   @GetMapping("/expenses")
   public PagedResult<FinanceDtos.ExpenseView> listExpenses(
       @RequestParam(required = false) Long outletId,
@@ -59,6 +54,17 @@ public class FinanceController {
     return financeService.listExpenses(outletId, startDate, endDate, sourceType, q, sortBy, sortDir, limit, offset);
   }
 
+  @GetMapping("/expenses/summary")
+  public List<FinanceDtos.ExpenseSummaryRow> expenseSummary(
+      @RequestParam(required = false) Long outletId,
+      @RequestParam(required = false) LocalDate startDate,
+      @RequestParam(required = false) LocalDate endDate,
+      @RequestParam(required = false) String sourceType,
+      @RequestParam(name = "q", required = false) String q
+  ) {
+    return financeService.expenseSummary(outletId, startDate, endDate, sourceType, q);
+  }
+
   @GetMapping("/expenses/monthly")
   public List<FinanceDtos.MonthlyExpenseRow> monthlyExpenses(
       @RequestParam(required = false) Long outletId,
@@ -66,5 +72,20 @@ public class FinanceController {
       @RequestParam(required = false) LocalDate endDate
   ) {
     return financeService.monthlyExpenses(outletId, startDate, endDate);
+  }
+
+  @GetMapping("/expenses/{expenseId:\\d+}")
+  public FinanceDtos.ExpenseView getExpense(@PathVariable long expenseId) {
+    return financeService.getExpense(expenseId);
+  }
+
+  @GetMapping("/expenses/{expenseId:\\d+}/detail")
+  public FinanceDtos.ExpenseDetailView getExpenseDetail(@PathVariable long expenseId) {
+    return financeService.getExpenseDetail(expenseId);
+  }
+
+  @PostMapping("/expenses/{expenseId:\\d+}/documents/pdf")
+  public FinanceDtos.ExpenseDocumentView exportExpensePdf(@PathVariable long expenseId) {
+    return financeService.exportExpensePdf(expenseId);
   }
 }

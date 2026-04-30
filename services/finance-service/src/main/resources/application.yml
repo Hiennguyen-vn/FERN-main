@@ -4,6 +4,8 @@ server:
 spring:
   application:
     name: finance-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
   threads:
     virtual:
       enabled: true

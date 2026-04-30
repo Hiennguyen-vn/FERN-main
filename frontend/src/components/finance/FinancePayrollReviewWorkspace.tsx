@@ -584,7 +584,13 @@ export function FinancePayrollReviewWorkspace({
                                   {runStatus}
                                 </span>
                                 <span className="text-[11px] text-muted-foreground">
-                                  {shortHrRef(row.run.id)} · {row.run.approvedAt ? formatDateTimeUtil(row.run.approvedAt) : 'Awaiting finance approval'}
+                                  {shortHrRef(row.run.id)} · {row.runStatus === 'paid'
+                                    ? `Paid${row.run.approvedAt ? ` · approved ${formatDateTimeUtil(row.run.approvedAt)}` : ''}`
+                                    : row.runStatus === 'approved' && row.run.approvedAt
+                                      ? formatDateTimeUtil(row.run.approvedAt)
+                                      : row.runStatus === 'rejected'
+                                        ? 'Rejected'
+                                        : 'Awaiting finance approval'}
                                 </span>
                               </div>
                             ) : (

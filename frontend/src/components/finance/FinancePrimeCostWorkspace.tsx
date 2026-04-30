@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import {
   financeApi,
   payrollApi,
+  type FinanceExpensesQuery,
   type ExpenseView,
   type PayrollPeriodView,
   type PayrollPeriodsQuery,
@@ -121,15 +122,21 @@ export function FinancePrimeCostWorkspace({
     setLoading(true);
     setError('');
     try {
-      const [expPage, runItems, periodItems] = await Promise.all([
-        financeApi.expenses(token, {
-          outletId: scopeOutletId || undefined,
-          startDate: periodRange.startDate,
-          endDate: periodRange.endDate,
-          limit: 500,
-          sortBy: 'businessDate',
-          sortDir: 'desc',
-        }),
+      const [expItems, runItems, periodItems] = await Promise.all([
+        periodRange.startDate && periodRange.endDate
+          ? collectPagedItems<ExpenseView, FinanceExpensesQuery>(
+              (query) => financeApi.expenses(token, query),
+              {
+                outletId: scopeOutletId || undefined,
+                startDate: periodRange.startDate,
+                endDate: periodRange.endDate,
+                sortBy: 'businessDate',
+                sortDir: 'desc',
+              },
+              500,
+              200,
+            )
+          : Promise.resolve([] as ExpenseView[]),
         collectPagedItems<PayrollRunView, PayrollRunsQuery>(
           (query) => payrollApi.runs(token, query),
           {
@@ -149,7 +156,7 @@ export function FinancePrimeCostWorkspace({
           100,
         ),
       ]);
-      setExpenses(expPage.items || []);
+      setExpenses(expItems);
       setRuns(runItems);
       setPeriods(periodItems);
     } catch (err: unknown) {

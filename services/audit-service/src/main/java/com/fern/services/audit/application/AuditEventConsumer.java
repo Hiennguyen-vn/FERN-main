@@ -6,6 +6,7 @@ import com.fern.common.idempotency.model.TtlPolicy;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fern.events.core.EventEnvelope;
 import com.fern.services.audit.infrastructure.AuditRepository;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
@@ -26,7 +27,6 @@ import org.springframework.stereotype.Service;
 public class AuditEventConsumer {
 
   private static final Logger log = LoggerFactory.getLogger(AuditEventConsumer.class);
-
   private final AuditRepository auditRepository;
   private final IdempotencyGuard idempotencyGuard;
   private final ObjectMapper objectMapper;
@@ -50,7 +50,32 @@ public class AuditEventConsumer {
       dltStrategy = DltStrategy.FAIL_ON_ERROR,
       autoCreateTopics = "true"
   )
-  @KafkaListener(topicPattern = "fern\\..+")
+  @KafkaListener(topics = {
+      "fern.auth.user-created",
+      "fern.auth.role-updated",
+      "fern.auth.user-role-changed",
+      "fern.org.region-created",
+      "fern.org.region-updated",
+      "fern.org.outlet-created",
+      "fern.org.outlet-updated",
+      "fern.org.exchange-rate-updated",
+      "fern.product.product-price-changed",
+      "fern.product.product-recipe-updated",
+      "fern.sales.sale-approved",
+      "fern.sales.sale-completed",
+      "fern.sales.sale-cancelled",
+      "fern.sales.payment-captured",
+      "fern.sales.inventory-oversell",
+      "fern.procurement.goods-receipt-posted",
+      "fern.procurement.invoice-approved",
+      "fern.inventory.stock-low-threshold",
+      "fern.inventory.stock-in-recorded",
+      "fern.inventory.waste-recorded",
+      "fern.audit.pos-recorded",
+      "fern.payroll.payroll-approved",
+      "fern.finance.invoice-issued",
+      "fern.finance.expense-record-created"
+  })
   public void consume(String message) {
     try {
       EventEnvelope<JsonNode> envelope = objectMapper.readValue(
@@ -78,7 +103,7 @@ public class AuditEventConsumer {
   }
 
   private AuditRepository.AuditEntry toAuditEntry(EventEnvelope<JsonNode> envelope) {
-    JsonNode payload = envelope.payload();
+    JsonNode payload = enrichPayload(envelope);
     return new AuditRepository.AuditEntry(
         snowflakeIdGenerator.generateId(),
         extractActorUserId(payload),
@@ -92,6 +117,32 @@ public class AuditEventConsumer {
         null,
         envelope.timestamp() == null ? Instant.now() : envelope.timestamp()
     );
+  }
+
+  private JsonNode enrichPayload(EventEnvelope<JsonNode> envelope) {
+    JsonNode payload = envelope.payload();
+    if (payload == null || !payload.isObject()) {
+      return payload;
+    }
+    ObjectNode copy = ((ObjectNode) payload).deepCopy();
+    putIfMissing(copy, "sourceEventId", envelope.eventId());
+    putIfMissing(copy, "aggregateId", envelope.aggregateId());
+    putIfMissing(copy, "eventType", envelope.eventType());
+    putIfMissing(copy, "sourceService", envelope.sourceComponent());
+    if (envelope.timestamp() != null) {
+      putIfMissing(copy, "eventTimestamp", envelope.timestamp().toString());
+    }
+    return copy;
+  }
+
+  private void putIfMissing(ObjectNode node, String field, String value) {
+    if (value == null || value.isBlank()) {
+      return;
+    }
+    JsonNode existing = node.get(field);
+    if (existing == null || existing.isNull() || existing.asText().isBlank()) {
+      node.put(field, value);
+    }
   }
 
   private Long extractActorUserId(JsonNode payload) {

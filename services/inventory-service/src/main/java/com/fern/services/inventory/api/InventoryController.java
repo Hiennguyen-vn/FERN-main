@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -20,9 +21,49 @@ import org.springframework.web.bind.annotation.RestController;
 public class InventoryController {
 
   private final InventoryService inventoryService;
+  private final com.fern.services.inventory.application.StockReservationService reservationService;
 
-  public InventoryController(InventoryService inventoryService) {
+  public InventoryController(
+      InventoryService inventoryService,
+      com.fern.services.inventory.application.StockReservationService reservationService
+  ) {
     this.inventoryService = inventoryService;
+    this.reservationService = reservationService;
+  }
+
+  @PostMapping("/reservations")
+  @ResponseStatus(HttpStatus.CREATED)
+  public java.util.Map<String, Object> reserveStock(
+      @RequestBody java.util.Map<String, Object> body
+  ) {
+    long locationId = ((Number) body.get("locationId")).longValue();
+    Long saleId = body.get("saleId") == null ? null : ((Number) body.get("saleId")).longValue();
+    Number ttl = (Number) body.get("ttlSeconds");
+    java.time.Duration ttlDuration = ttl == null ? java.time.Duration.ofMinutes(15)
+        : java.time.Duration.ofSeconds(ttl.longValue());
+    @SuppressWarnings("unchecked")
+    java.util.List<java.util.Map<String, Object>> linesIn =
+        (java.util.List<java.util.Map<String, Object>>) body.get("lines");
+    java.util.List<com.fern.services.inventory.application.StockReservationService.ReserveLine> lines =
+        new java.util.ArrayList<>();
+    if (linesIn != null) {
+      for (java.util.Map<String, Object> l : linesIn) {
+        long itemId = ((Number) l.get("itemId")).longValue();
+        java.math.BigDecimal qty = new java.math.BigDecimal(l.get("qty").toString());
+        lines.add(new com.fern.services.inventory.application.StockReservationService.ReserveLine(itemId, qty));
+      }
+    }
+    var reservations = reservationService.reserve(locationId, saleId, lines, ttlDuration);
+    return java.util.Map.of("reservations", reservations, "count", reservations.size());
+  }
+
+  @GetMapping("/stock-available")
+  public java.util.Map<String, Object> stockAvailable(
+      @RequestParam long locationId,
+      @RequestParam("itemId") java.util.List<Long> itemIds
+  ) {
+    return java.util.Map.of("locationId", locationId,
+        "available", reservationService.available(locationId, itemIds));
   }
 
   @GetMapping("/stock-balances/{outletId}/{itemId}")

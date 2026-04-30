@@ -19,6 +19,8 @@ import { cn } from '@/lib/utils';
 import {
   financeApi,
   payrollApi,
+  salesApi,
+  type DailyRevenueRow,
   type ExpenseView,
   type FinanceExpensesQuery,
   type PayrollPeriodView,
@@ -35,7 +37,7 @@ import type { FinanceTab } from '@/components/finance/finance-workspace-config';
 import {
   availablePeriodsFromMonthly,
   buildMonthlyPl,
-  buildRevenueSnapshot,
+  buildRevenueSnapshotFromDaily,
   describeFinanceScope,
   findPeriodComparison,
   formatPeriodLabel,
@@ -137,6 +139,9 @@ export function FinanceOverviewWorkspace({
   const [expenses, setExpenses] = useState<ExpenseView[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriodView[]>([]);
   const [runs, setRuns] = useState<PayrollRunView[]>([]);
+  const [dailyRevenueRows, setDailyRevenueRows] = useState<DailyRevenueRow[]>([]);
+  const [dailyRevenueLoading, setDailyRevenueLoading] = useState(false);
+  const [dailyRevenueError, setDailyRevenueError] = useState('');
   const [selectedPeriodKey, setSelectedPeriodKey] = useState('');
   const {
     revenueRows: monthlyRevenueRows,
@@ -287,32 +292,66 @@ export function FinanceOverviewWorkspace({
     [activePeriodKey, selectablePeriods],
   );
 
+  const loadDailyRevenue = useCallback(async (periodKey: string) => {
+    if (!token || !periodKey) {
+      setDailyRevenueRows([]);
+      return;
+    }
+    setDailyRevenueLoading(true);
+    setDailyRevenueError('');
+    try {
+      const [year, month] = periodKey.split('-').map(Number);
+      const start = new Date(Date.UTC(year, (month || 1) - 1, 1));
+      const end = new Date(Date.UTC(year, month || 1, 0));
+      const toISO = (date: Date) => date.toISOString().slice(0, 10);
+      const rows = await salesApi.dailyRevenue(token, {
+        outletId: scopeOutletId || undefined,
+        startDate: toISO(start),
+        endDate: toISO(end),
+      });
+      const visibleIds = new Set(scopedVisibleOutlets.map((outlet) => outlet.id));
+      setDailyRevenueRows(
+        visibleIds.size > 0
+          ? rows.filter((row) => visibleIds.has(String(row.outletId)))
+          : rows,
+      );
+    } catch (err: unknown) {
+      console.error('Finance overview daily revenue load failed', err);
+      setDailyRevenueRows([]);
+      setDailyRevenueError(getErrorMessage(err, 'Unable to load daily revenue'));
+    } finally {
+      setDailyRevenueLoading(false);
+    }
+  }, [scopeOutletId, scopedVisibleOutlets, token]);
+
+  useEffect(() => {
+    void loadDailyRevenue(activePeriodKey);
+  }, [activePeriodKey, loadDailyRevenue]);
+
   const revenueSnapshot = useMemo(
     () =>
-      buildRevenueSnapshot({
-        orders,
+      buildRevenueSnapshotFromDaily({
+        dailyRows: dailyRevenueRows,
         visibleOutlets: scopedVisibleOutlets,
-        periodKey: activePeriodKey,
         channelFilter: 'all',
       }),
-    [activePeriodKey, orders, scopedVisibleOutlets],
-  );
-  const comparisonSnapshot = useMemo(
-    () =>
-      comparisonPeriod
-        ? buildRevenueSnapshot({
-            orders,
-            visibleOutlets: scopedVisibleOutlets,
-            periodKey: comparisonPeriod.key,
-            channelFilter: 'all',
-          })
-        : null,
-    [comparisonPeriod, orders, scopedVisibleOutlets],
+    [dailyRevenueRows, scopedVisibleOutlets],
   );
 
+  const scopedExpenseOutletIds = useMemo(
+    () => new Set(scopedVisibleOutlets.map((outlet) => outlet.id)),
+    [scopedVisibleOutlets],
+  );
   const currentExpenses = useMemo(
-    () => expenses.filter((expense) => getPeriodKey(expense.businessDate || expense.createdAt) === activePeriodKey),
-    [activePeriodKey, expenses],
+    () =>
+      expenses.filter((expense) => {
+        if (getPeriodKey(expense.businessDate || expense.createdAt) !== activePeriodKey) {
+          return false;
+        }
+        return scopedExpenseOutletIds.size === 0
+          || scopedExpenseOutletIds.has(String(expense.outletId ?? ''));
+      }),
+    [activePeriodKey, expenses, scopedExpenseOutletIds],
   );
   const currentPeriodRuns = useMemo(
     () => runs.filter((run) => resolveRunPeriodKey(run) === activePeriodKey),
@@ -336,6 +375,17 @@ export function FinanceOverviewWorkspace({
       visibleOutlets: scopedVisibleOutlets,
     });
   }, [activePeriodKey, monthlyRevenueRows, monthlyExpenseRows, monthlyPayrollRows, scopedVisibleOutlets]);
+
+  const comparisonMonthlyPl = useMemo(() => {
+    if (!comparisonPeriod) return null;
+    return buildMonthlyPl({
+      revenueRows: monthlyRevenueRows,
+      expenseRows: monthlyExpenseRows,
+      payrollRows: monthlyPayrollRows,
+      periodKey: comparisonPeriod.key,
+      visibleOutlets: scopedVisibleOutlets,
+    });
+  }, [comparisonPeriod, monthlyRevenueRows, monthlyExpenseRows, monthlyPayrollRows, scopedVisibleOutlets]);
 
   const overviewKpis = useMemo((): OverviewKpis => {
     const pl = monthlyPl;
@@ -422,8 +472,10 @@ export function FinanceOverviewWorkspace({
     [currentExpenses],
   );
 
-  const revenueDeltaPct = comparisonSnapshot && comparisonSnapshot.netSales > 0
-    ? ((revenueSnapshot.netSales - comparisonSnapshot.netSales) / comparisonSnapshot.netSales) * 100
+  const displayOrderCount = monthlyPl?.completedOrders ?? revenueSnapshot.completedOrderCount;
+
+  const revenueDeltaPct = comparisonMonthlyPl && comparisonMonthlyPl.netSales > 0
+    ? ((overviewKpis.netSales - comparisonMonthlyPl.netSales) / comparisonMonthlyPl.netSales) * 100
     : null;
 
   return (
@@ -433,7 +485,7 @@ export function FinanceOverviewWorkspace({
         <div>
           <h2 className="text-lg font-semibold">{scopeLabel}</h2>
           <p className="text-xs text-muted-foreground">
-            {formatPeriodLabel(activePeriodKey)} · {revenueSnapshot.completedOrderCount} orders
+            {formatPeriodLabel(activePeriodKey)} · {displayOrderCount} orders
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -451,19 +503,24 @@ export function FinanceOverviewWorkspace({
             )}
           </select>
           <button
-            onClick={() => { void load(); void refreshSales(); void refreshMonthly(); }}
-            disabled={loading || salesLoading || monthlyLoading}
-            className="flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent disabled:opacity-60"
+            onClick={() => {
+              void load();
+              void refreshSales();
+              void refreshMonthly();
+              void loadDailyRevenue(activePeriodKey);
+            }}
+            className="flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-accent"
+            title={error || salesError || monthlyError || dailyRevenueError || 'Refresh'}
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', (loading || salesLoading || monthlyLoading) && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (loading || salesLoading || monthlyLoading || dailyRevenueLoading) && 'animate-spin')} />
             Refresh
           </button>
         </div>
       </div>
 
-      {(error || salesError || monthlyError) ? (
+      {(error || salesError || monthlyError || dailyRevenueError) ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-sm text-destructive">
-          {[error, salesError, monthlyError].filter(Boolean).join(' · ')}
+          {[error, salesError, monthlyError, dailyRevenueError].filter(Boolean).join(' · ')}
         </div>
       ) : null}
 
@@ -472,7 +529,7 @@ export function FinanceOverviewWorkspace({
         <KpiCard
           label="Net Sales"
           value={formatMoney(overviewKpis.netSales, overviewKpis.currency)}
-          sub={`${revenueSnapshot.completedOrderCount} orders`}
+          sub={`${displayOrderCount} orders`}
           delta={comparisonPeriod ? formatDelta(revenueDeltaPct) : undefined}
           deltaPositive={revenueDeltaPct != null ? revenueDeltaPct >= 0 : undefined}
         />
@@ -507,7 +564,15 @@ export function FinanceOverviewWorkspace({
             </div>
             <div className="h-[220px] px-3 py-3">
               {revenueSnapshot.trend.length === 0 ? (
-                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No data for this period.</div>
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                  {salesLoading || monthlyLoading || dailyRevenueLoading
+                    ? 'Loading revenue…'
+                    : salesError || monthlyError || dailyRevenueError
+                      ? 'Revenue data unavailable. Click Refresh to retry.'
+                      : monthlyPl && monthlyPl.completedOrders > 0
+                        ? 'Daily trend unavailable. Monthly revenue is loaded.'
+                      : 'No data for this period.'}
+                </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={revenueSnapshot.trend}>

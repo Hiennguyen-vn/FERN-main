@@ -88,7 +88,7 @@ public class GatewayRoutesConfiguration {
             });
             filters.circuitBreaker(config -> {
               config.setRouteId(routeId);
-              config.setName(route.serviceName());
+              config.setName(circuitBreakerName(route));
               config.setFallbackUri("forward:/internal/gateway/fallback/" + route.serviceName());
               config.addStatusCode("BAD_GATEWAY");
               config.addStatusCode("SERVICE_UNAVAILABLE");
@@ -118,6 +118,10 @@ public class GatewayRoutesConfiguration {
       return new GatewayRoutePolicy(reportRateLimiter);
     }
     return new GatewayRoutePolicy(defaultRateLimiter);
+  }
+
+  static String circuitBreakerName(GatewayRoute route) {
+    return routeId(route);
   }
 
   private static String routeId(GatewayRoute route) {

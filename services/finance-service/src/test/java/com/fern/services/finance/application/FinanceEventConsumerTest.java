@@ -99,6 +99,7 @@ class FinanceEventConsumerTest {
         eq("fern.finance.expense-record-created"),
         eq("501"),
         eq("finance.expense-record-created"),
+        any(),
         any()
     );
   }
@@ -163,6 +164,7 @@ class FinanceEventConsumerTest {
         eq("fern.finance.expense-record-created"),
         eq("601"),
         eq("finance.expense-record-created"),
+        any(),
         any()
     );
   }

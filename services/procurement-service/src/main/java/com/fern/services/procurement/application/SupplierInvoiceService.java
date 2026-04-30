@@ -13,7 +13,9 @@ import com.fern.services.procurement.infrastructure.ProcurementRepository;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Set;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -93,22 +95,39 @@ public class SupplierInvoiceService {
         invoiceId,
         RequestUserContextHolder.get().userId()
     );
+    RequestUserContext context = RequestUserContextHolder.get();
+    String correlationId = currentCorrelationId();
     InvoiceApprovedEvent event = new InvoiceApprovedEvent(
         view.id(),
         view.supplierId(),
+        outletId,
         view.invoiceDate(),
         view.currencyCode(),
         view.totalAmount(),
         view.linkedReceiptIds(),
-        view.approvedAt() == null ? clock.instant() : view.approvedAt()
+        view.approvedAt() == null ? clock.instant() : view.approvedAt(),
+        context.userId(),
+        context.username(),
+        sortedRoles(context),
+        correlationId
     );
     eventPublisher.publish(
         "fern.procurement.invoice-approved",
         Long.toString(view.id()),
         "procurement.invoice-approved",
-        event
+        event,
+        correlationId
     );
     return event;
+  }
+
+  private static List<String> sortedRoles(RequestUserContext context) {
+    return context.roles().stream().sorted().toList();
+  }
+
+  private static String currentCorrelationId() {
+    String correlationId = MDC.get("correlationId");
+    return correlationId == null || correlationId.isBlank() ? null : correlationId;
   }
 
   private long resolveOutletId(long receiptId) {

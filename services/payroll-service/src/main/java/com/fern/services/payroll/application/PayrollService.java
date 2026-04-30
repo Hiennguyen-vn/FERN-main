@@ -118,6 +118,33 @@ public class PayrollService {
         .orElseThrow(() -> ServiceException.notFound("Payroll period not found: " + periodId));
   }
 
+  public PayrollDtos.PayrollPeriodView closePeriod(long periodId) {
+    PayrollRepository.PayrollPeriodRecord record = payrollRepository.findPeriod(periodId)
+        .orElseThrow(() -> ServiceException.notFound("Payroll period not found: " + periodId));
+    requirePayrollApproveAccess(record.regionId());
+    if ("closed".equalsIgnoreCase(record.status())) {
+      throw ServiceException.conflict("PERIOD_ALREADY_CLOSED");
+    }
+    RequestUserContext context = RequestUserContextHolder.get();
+    PayrollRepository.PayrollPeriodRecord closed = payrollRepository.closePeriod(periodId, context.userId())
+        .orElseThrow(() -> ServiceException.notFound("Payroll period not found after close: " + periodId));
+    evictMonthlyPayrollCache();
+    return toDto(closed);
+  }
+
+  public PayrollDtos.PayrollPeriodView reopenPeriod(long periodId) {
+    PayrollRepository.PayrollPeriodRecord record = payrollRepository.findPeriod(periodId)
+        .orElseThrow(() -> ServiceException.notFound("Payroll period not found: " + periodId));
+    requirePayrollApproveAccess(record.regionId());
+    if (!"closed".equalsIgnoreCase(record.status())) {
+      throw ServiceException.conflict("PERIOD_NOT_CLOSED");
+    }
+    PayrollRepository.PayrollPeriodRecord reopened = payrollRepository.reopenPeriod(periodId)
+        .orElseThrow(() -> ServiceException.notFound("Payroll period not found after reopen: " + periodId));
+    evictMonthlyPayrollCache();
+    return toDto(reopened);
+  }
+
   public PagedResult<PayrollDtos.PayrollPeriodView> listPeriods(
       Long regionId,
       LocalDate startDate,
@@ -600,6 +627,7 @@ public class PayrollService {
         Long.toString(record.id()),
         record.regionId(),
         record.name(),
+        record.status(),
         record.startDate(),
         record.endDate(),
         record.payDate(),

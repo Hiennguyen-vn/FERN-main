@@ -79,6 +79,13 @@ public class PurchaseOrderService {
     return procurementRepository.approvePurchaseOrder(purchaseOrderId, RequestUserContextHolder.get().userId());
   }
 
+  public ProcurementDtos.PurchaseOrderView cancelPurchaseOrder(long purchaseOrderId) {
+    ProcurementDtos.PurchaseOrderView view = procurementRepository.findPurchaseOrder(purchaseOrderId)
+        .orElseThrow(() -> ServiceException.notFound("Purchase order not found: " + purchaseOrderId));
+    requireProcurementWrite(view.outletId(), true);
+    return procurementRepository.cancelPurchaseOrder(purchaseOrderId);
+  }
+
   private void requireProcurementWrite(long outletId, boolean approval) {
     RequestUserContext context = RequestUserContextHolder.get();
     if (approval) {

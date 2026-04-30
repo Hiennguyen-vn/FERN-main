@@ -42,6 +42,7 @@ public class PayrollRepository extends BaseRepository {
       long id,
       long regionId,
       String name,
+      String status,
       LocalDate startDate,
       LocalDate endDate,
       LocalDate payDate,
@@ -187,7 +188,7 @@ public class PayrollRepository extends BaseRepository {
   public Optional<PayrollPeriodRecord> findPeriod(long periodId) {
     return queryOne(
         """
-        SELECT id, region_id, name, start_date, end_date, pay_date, note, created_at, updated_at
+        SELECT id, region_id, name, status, start_date, end_date, pay_date, note, created_at, updated_at
         FROM core.payroll_period
         WHERE id = ?
         """,
@@ -199,7 +200,7 @@ public class PayrollRepository extends BaseRepository {
   public Optional<PayrollPeriodRecord> findPeriodByRegionAndWindow(long regionId, LocalDate startDate, LocalDate endDate) {
     return queryOne(
         """
-        SELECT id, region_id, name, start_date, end_date, pay_date, note, created_at, updated_at
+        SELECT id, region_id, name, status, start_date, end_date, pay_date, note, created_at, updated_at
         FROM core.payroll_period
         WHERE region_id = ? AND start_date = ? AND end_date = ?
         """,
@@ -249,7 +250,7 @@ public class PayrollRepository extends BaseRepository {
   ) {
     StringBuilder sql = new StringBuilder(
         """
-        SELECT id, region_id, name, start_date, end_date, pay_date, note, created_at, updated_at,
+        SELECT id, region_id, name, status, start_date, end_date, pay_date, note, created_at, updated_at,
                COUNT(*) OVER() AS total_count
         FROM core.payroll_period
         WHERE 1 = 1
@@ -330,6 +331,37 @@ public class PayrollRepository extends BaseRepository {
         absentDays,
         approvedByUserId
     );
+  }
+
+  public Optional<PayrollPeriodRecord> closePeriod(long periodId, long closedByUserId) {
+    execute(
+        """
+        UPDATE core.payroll_period
+        SET status = 'closed',
+            closed_at = NOW(),
+            closed_by_user_id = ?,
+            updated_at = NOW()
+        WHERE id = ?
+        """,
+        closedByUserId,
+        periodId
+    );
+    return findPeriod(periodId);
+  }
+
+  public Optional<PayrollPeriodRecord> reopenPeriod(long periodId) {
+    execute(
+        """
+        UPDATE core.payroll_period
+        SET status = 'open',
+            closed_at = NULL,
+            closed_by_user_id = NULL,
+            updated_at = NOW()
+        WHERE id = ?
+        """,
+        periodId
+    );
+    return findPeriod(periodId);
   }
 
   public Optional<PayrollTimesheetRecord> findTimesheet(long timesheetId) {
@@ -841,6 +873,7 @@ public class PayrollRepository extends BaseRepository {
           rs.getLong("id"),
           rs.getLong("region_id"),
           rs.getString("name"),
+          rs.getString("status"),
           rs.getDate("start_date").toLocalDate(),
           rs.getDate("end_date").toLocalDate(),
           rs.getDate("pay_date") == null ? null : rs.getDate("pay_date").toLocalDate(),

@@ -5,6 +5,26 @@ The backend remains the system of record and source of truth; the frontend lives
 
 The `common/` directory has now been imported from `.archived/common` into the active Maven reactor. The archive remains as historical source material, but the live code that should be built, tested, and extended now lives under the root `common/` directory.
 
+## Highland-Clone Scope (Beverage Chain Build)
+
+This repo is targeting a Highland-style beverage chain. Sprints 1-3 added:
+
+- **V54** legacy price drift flag (offline edge stale prices accepted + flagged)
+- **V55** modifier-aware inventory (size/sugar/topping → recipe effects: ADD/SCALE_ITEM/MULTIPLY/SUBSTITUTE)
+- **V56** advisory stock reservation + `core.stock_available` view (reduces FOR UPDATE contention at peak)
+- **V57** cash drawer ledger + per-session variance view (`core.cash_session_summary`)
+- **V58** loyalty MVP — `crm.customer`, `crm.points_ledger`, OTP mock (PDPL right-to-erasure via soft delete)
+- **V59** statement_timeout per role + PgBouncer (opt-in compose override)
+- **V60** sale_record customer link + auto-earn (10k VND = 1 point, 100 = voucher)
+- **Ed25519 manifest signing** for catalog sync (`fern.sync.manifest-private-key-pkcs8-b64`)
+- **Edge Dexie sweeper** (audit 90d / sales 30d TTL + storage warning telemetry)
+- **DLT replay endpoint** + admin UI page
+- **Frontend `/admin` module** with 4 tabs (Price Drift, DLT, Cash Recon, Loyalty)
+
+Generate manifest keypair: `./tools/gen-manifest-keypair.sh ./manifest-keys`.
+
+Out-of-scope (mocked or deferred): channel adapters (Grab/Shopee/Be), real payment gateways (VietQR/MoMo/ZaloPay), CQT e-invoice sync, real SMS OTP gateway, Helm/Terraform IaC, multi-region DR. Tracked in [audit.md](audit.md).
+
 ## Repository Layout
 
 - `.mvn/`

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
   procurementApi,
@@ -51,8 +52,13 @@ type GoodsReceiptDraftLine = {
 type InvoiceDraftLine = {
   key: string;
   goodsReceiptItemId: string;
+  itemId: string;
   description: string;
   qtyInvoiced: string;
+  /** GR qtyReceived — used for 3-way match variance display */
+  grQtyReceived: number;
+  /** PO qtyOrdered — used for 3-way match variance display */
+  poQtyOrdered: number;
   unitPrice: string;
   taxPercent: string;
   note: string;
@@ -892,16 +898,26 @@ export function InvoiceCreatePanel({
         if (cancelled) return;
         setSelectedReceipt(receipt);
         setSelectedPurchaseOrder(purchaseOrder);
+        const poItemByItemId = new Map(
+          (purchaseOrder.items || []).map((pi) => [String(pi.itemId ?? ''), pi]),
+        );
         setLines(
-          (receipt.items || []).map((item: GoodsReceiptItemView) => ({
-            key: createDraftKey('invoice-line'),
-            goodsReceiptItemId: String(item.id),
-            description: itemNameById.get(String(item.itemId || '')) || `Item ${item.itemId || item.id}`,
-            qtyInvoiced: toInputNumber(item.qtyReceived, '1'),
-            unitPrice: toInputNumber(item.unitCost, '0'),
-            taxPercent: '0',
-            note: String(item.note || ''),
-          })),
+          (receipt.items || []).map((item: GoodsReceiptItemView) => {
+            const itemId = String(item.itemId || '');
+            const poItem = poItemByItemId.get(itemId);
+            return {
+              key: createDraftKey('invoice-line'),
+              goodsReceiptItemId: String(item.id),
+              itemId,
+              description: itemNameById.get(itemId) || `Item ${item.itemId || item.id}`,
+              qtyInvoiced: toInputNumber(item.qtyReceived, '1'),
+              grQtyReceived: Number(item.qtyReceived ?? 0),
+              poQtyOrdered: Number(poItem?.qtyOrdered ?? 0),
+              unitPrice: toInputNumber(item.unitCost, '0'),
+              taxPercent: '0',
+              note: String(item.note || ''),
+            };
+          }),
         );
       } catch (error: unknown) {
         if (!cancelled) {
@@ -1088,7 +1104,9 @@ export function InvoiceCreatePanel({
           <thead>
             <tr className="border-b bg-muted/30">
               <th className="px-3 py-2 text-left text-[11px]">Description</th>
-              <th className="px-3 py-2 text-right text-[11px]">Qty</th>
+              <th className="px-3 py-2 text-right text-[11px] text-muted-foreground">PO Qty</th>
+              <th className="px-3 py-2 text-right text-[11px] text-muted-foreground">GR Qty</th>
+              <th className="px-3 py-2 text-right text-[11px]">Inv Qty</th>
               <th className="px-3 py-2 text-right text-[11px]">Unit Price</th>
               <th className="px-3 py-2 text-right text-[11px]">Tax %</th>
               <th className="px-3 py-2 text-right text-[11px]">Line Total</th>
@@ -1098,24 +1116,31 @@ export function InvoiceCreatePanel({
           <tbody>
             {lines.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-xs text-muted-foreground">
+                <td colSpan={8} className="px-3 py-6 text-center text-xs text-muted-foreground">
                   Select a goods receipt to load invoice lines
                 </td>
               </tr>
             ) : lines.map((line) => {
               const lineSubtotal = parsePositiveNumber(line.qtyInvoiced) * parseNonNegativeNumber(line.unitPrice);
+              const invQty = parsePositiveNumber(line.qtyInvoiced);
+              const qtyOverGr = line.grQtyReceived > 0 && invQty > line.grQtyReceived;
               return (
-                <tr key={line.key} className="border-b last:border-0">
+                <tr key={line.key} className={cn('border-b last:border-0', qtyOverGr ? 'bg-amber-50/60' : '')}>
                   <td className="px-3 py-2 text-sm">{line.description}</td>
+                  <td className="px-3 py-2 text-right text-xs font-mono text-muted-foreground">{line.poQtyOrdered > 0 ? line.poQtyOrdered.toFixed(2) : '—'}</td>
+                  <td className="px-3 py-2 text-right text-xs font-mono text-muted-foreground">{line.grQtyReceived > 0 ? line.grQtyReceived.toFixed(2) : '—'}</td>
                   <td className="px-3 py-2">
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.0001"
-                      className="h-8 w-24 rounded-md border border-input bg-background px-2 text-right text-xs"
-                      value={line.qtyInvoiced}
-                      onChange={(event) => updateLine(line.key, { qtyInvoiced: event.target.value })}
-                    />
+                    <div className="flex items-center justify-end gap-1">
+                      {qtyOverGr ? <span className="text-[9px] rounded-full border border-amber-300 bg-amber-100 px-1 py-0.5 text-amber-700">over</span> : null}
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.0001"
+                        className={cn('h-8 w-24 rounded-md border bg-background px-2 text-right text-xs', qtyOverGr ? 'border-amber-400' : 'border-input')}
+                        value={line.qtyInvoiced}
+                        onChange={(event) => updateLine(line.key, { qtyInvoiced: event.target.value })}
+                      />
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     <input

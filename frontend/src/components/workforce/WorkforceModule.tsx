@@ -20,8 +20,12 @@ import { cn } from '@/lib/utils';
 import {
   authApi,
   hrApi,
+  type AuthScopeView,
+  type AuthScopesQuery,
   type AuthUserListItem,
   type AuthUsersQuery,
+  type ContractView,
+  type ContractsQuery,
   type OutletStaffView,
   type WorkShiftsQuery,
   type ShiftView,
@@ -62,6 +66,13 @@ import {
 import type { Daypart, LiveStatus, DaySummary, DerivedException } from '@/types/workforce';
 
 type WorkforceTab = 'schedule' | 'daily-board' | 'attendance' | 'review';
+type StaffCandidate = AuthUserListItem & {
+  roles?: string[];
+  outletCode?: string | null;
+  outletName?: string | null;
+  hasActiveContract?: boolean | null;
+  source?: 'outlet_staff' | 'scope' | 'known_staff' | 'iam';
+};
 
 const TABS: { key: WorkforceTab; label: string; icon: React.ElementType }[] = [
   { key: 'daily-board', label: 'Daily Board', icon: LayoutDashboard },
@@ -185,6 +196,9 @@ function WorkforceModuleInner() {
   const [shifts, setShifts] = useState<ShiftView[]>([]);
   const [assignments, setAssignments] = useState<WorkShiftView[]>([]);
   const [users, setUsers] = useState<AuthUserListItem[]>([]);
+  const [outletStaff, setOutletStaff] = useState<OutletStaffView[]>([]);
+  const [scopeRows, setScopeRows] = useState<AuthScopeView[]>([]);
+  const [contracts, setContracts] = useState<ContractView[]>([]);
   const [knownStaff, setKnownStaff] = useState<Map<string, { id: string; fullName: string; username: string }>>(new Map());
   const [selectedTimecardId, setSelectedTimecardId] = useState<string | null>(null);
 
@@ -195,9 +209,19 @@ function WorkforceModuleInner() {
     setLoading(true);
     setError('');
     try {
-      const [shiftsData, outletStaffData, usersData] = await Promise.all([
+      const [shiftsData, outletStaffData, scopeData, contractData, usersData] = await Promise.all([
         hrApi.shifts(token, outletId),
         hrApi.outletStaff(token, outletId).catch(() => [] as OutletStaffView[]),
+        collectPagedItems<AuthScopeView, AuthScopesQuery>(
+          (query) => authApi.scopes(token, query),
+          { outletId, status: 'active', sortBy: 'username', sortDir: 'asc' as const },
+          500,
+        ).catch(() => [] as AuthScopeView[]),
+        collectPagedItems<ContractView, ContractsQuery>(
+          (query) => hrApi.contractsPaged(token, query),
+          { outletId, status: 'active', sortBy: 'startDate', sortDir: 'desc' as const },
+          500,
+        ).catch(() => [] as ContractView[]),
         collectPagedItems<AuthUserListItem, AuthUsersQuery>(
           (query) => authApi.users(token, query),
           { sortBy: 'username', sortDir: 'asc' as const },
@@ -206,6 +230,9 @@ function WorkforceModuleInner() {
       ]);
       setShifts(shiftsData);
       setUsers(usersData);
+      setOutletStaff(outletStaffData);
+      setScopeRows(scopeData);
+      setContracts(contractData);
       if (outletStaffData.length > 0) {
         setKnownStaff((prev) => {
           const next = new Map(prev);
@@ -261,6 +288,25 @@ function WorkforceModuleInner() {
   }, [activeTab, dateFilter, weekStart, loadAssignments]);
 
   const userMap = useMemo(() => new Map(users.map((u) => [String(u.id), u])), [users]);
+  const scopeByUserId = useMemo(() => {
+    const map = new Map<string, AuthScopeView>();
+    for (const row of scopeRows) {
+      const key = String(row.userId ?? '').trim();
+      if (key && !map.has(key)) map.set(key, row);
+    }
+    return map;
+  }, [scopeRows]);
+  const activeContractUserIds = useMemo(() => {
+    const active = new Set<string>();
+    for (const contract of contracts) {
+      const status = String(contract.status ?? '').toLowerCase();
+      if (!status || status === 'active') {
+        const key = String(contract.userId ?? '').trim();
+        if (key) active.add(key);
+      }
+    }
+    return active;
+  }, [contracts]);
 
   const getUserName = useCallback(
     (userId: string | null | undefined) => {
@@ -275,20 +321,76 @@ function WorkforceModuleInner() {
     [userMap, knownStaff],
   );
 
-  // Effective users for dropdowns — API list preferred, fallback to knownStaff
-  const effectiveUsers = useMemo<AuthUserListItem[]>(() => {
-    if (users.length > 0) return users;
-    return [...knownStaff.values()].map((s): AuthUserListItem => ({
-      id: s.id,
-      username: s.username,
-      fullName: s.fullName,
-      employeeCode: null,
-      email: null,
-      status: 'active',
-      createdAt: '',
-      updatedAt: '',
-    }));
-  }, [users, knownStaff]);
+  const effectiveUsers = useMemo<StaffCandidate[]>(() => {
+    const byId = new Map<string, StaffCandidate>();
+
+    const enrich = (
+      base: Partial<StaffCandidate> & { id: string },
+      source: StaffCandidate['source'],
+    ): StaffCandidate => {
+      const key = String(base.id);
+      const iam = userMap.get(key);
+      const scopeRow = scopeByUserId.get(key);
+      const contractAware = contracts.length > 0;
+      return {
+        ...iam,
+        id: key,
+        username: base.username ?? iam?.username ?? scopeRow?.username ?? '',
+        fullName: base.fullName ?? iam?.fullName ?? scopeRow?.fullName ?? '',
+        employeeCode: base.employeeCode ?? iam?.employeeCode ?? null,
+        email: base.email ?? iam?.email ?? null,
+        status: base.status ?? iam?.status ?? scopeRow?.userStatus ?? 'active',
+        createdAt: iam?.createdAt ?? '',
+        updatedAt: iam?.updatedAt ?? '',
+        roles: scopeRow?.roles ?? base.roles ?? [],
+        outletCode: scopeRow?.outletCode ?? base.outletCode ?? null,
+        outletName: scopeRow?.outletName ?? base.outletName ?? null,
+        hasActiveContract: contractAware ? activeContractUserIds.has(key) : null,
+        source,
+      };
+    };
+
+    if (outletStaff.length > 0) {
+      for (const staff of outletStaff) {
+        const key = String(staff.id ?? '').trim();
+        if (!key) continue;
+        byId.set(key, enrich({ ...staff, id: key }, 'outlet_staff'));
+      }
+    } else if (scopeRows.length > 0) {
+      for (const row of scopeRows) {
+        const key = String(row.userId ?? '').trim();
+        if (!key) continue;
+        byId.set(key, enrich({
+          id: key,
+          username: row.username,
+          fullName: row.fullName,
+          status: row.userStatus ?? 'active',
+          roles: row.roles,
+          outletCode: row.outletCode,
+          outletName: row.outletName,
+        }, 'scope'));
+      }
+    } else if (knownStaff.size > 0) {
+      for (const staff of knownStaff.values()) {
+        byId.set(staff.id, enrich({
+          id: staff.id,
+          username: staff.username,
+          fullName: staff.fullName,
+          status: 'active',
+        }, 'known_staff'));
+      }
+    } else {
+      for (const user of users) {
+        const key = String(user.id ?? '').trim();
+        if (!key) continue;
+        byId.set(key, enrich({ ...user, id: key }, 'iam'));
+      }
+    }
+
+    return [...byId.values()]
+      .filter(isOperationalCandidate)
+      .sort((left, right) => userDisplayName(left).localeCompare(userDisplayName(right)));
+  }, [activeContractUserIds, contracts.length, knownStaff, outletStaff, scopeByUserId, scopeRows, userMap, users]);
 
   const refresh = useCallback(() => {
     loadData();
@@ -565,6 +667,7 @@ function DailyBoardTab({
           assignedUserIds={assignments
             .filter((a) => String(a.shiftId ?? '') === assignModal.shiftId && a.workDate === date)
             .map((a) => String(a.userId ?? ''))}
+          dayAssignments={assignments.filter((a) => a.workDate === date)}
           onAssign={(userId) => {
             onAssign(assignModal.shiftId, userId, date, assignModal.workRole || undefined);
             setAssignModal(null);
@@ -993,9 +1096,11 @@ function ScheduleCellDetail({
 
   const filteredUsers = users.filter((u) => {
     if (assignedUserIds.has(String(u.id))) return false;
+    if (!isOperationalCandidate(u)) return false;
     if (!search) return true;
     const q = search.toLowerCase();
-    return userDisplayName(u).toLowerCase().includes(q);
+    const hay = `${userDisplayName(u)} ${u.username ?? ''} ${u.employeeCode ?? ''} ${candidateRoles(u).join(' ')}`.toLowerCase();
+    return hay.includes(q);
   });
 
   return (
@@ -1068,11 +1173,20 @@ function ScheduleCellDetail({
                 key={u.id}
                 onClick={() => setAssignUserId(String(u.id))}
                 className={cn(
-                  'w-full text-left px-2 py-1.5 text-sm hover:bg-muted transition-colors',
+                  'w-full text-left px-2 py-2 text-sm hover:bg-muted transition-colors',
                   String(u.id) === assignUserId && 'bg-primary/10 font-medium',
                 )}
               >
-                {userDisplayName(u)}
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium">{userDisplayName(u)}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">{u.username}</div>
+                    <StaffCandidateBadges user={u} />
+                  </div>
+                  {u.employeeCode ? (
+                    <span className="shrink-0 text-[10px] font-mono text-muted-foreground">{u.employeeCode}</span>
+                  ) : null}
+                </div>
               </button>
             ))}
           </div>
@@ -1746,8 +1860,69 @@ function MetricCard({ label, value, variant }: { label: string; value: string; v
   );
 }
 
+function candidateRoles(u: AuthUserListItem): string[] {
+  const roles = (u as StaffCandidate).roles;
+  return Array.isArray(roles) ? roles.map((role) => String(role).trim()).filter(Boolean) : [];
+}
+
+function candidateOutletLabel(u: AuthUserListItem): string {
+  const candidate = u as StaffCandidate;
+  return String(candidate.outletCode || candidate.outletName || '').trim();
+}
+
+function hasActiveContractBadge(u: AuthUserListItem): boolean | null {
+  const value = (u as StaffCandidate).hasActiveContract;
+  return typeof value === 'boolean' ? value : null;
+}
+
+function StaffCandidateBadges({ user, conflict }: { user: AuthUserListItem; conflict?: boolean }) {
+  const roles = candidateRoles(user).slice(0, 2);
+  const outlet = candidateOutletLabel(user);
+  const contract = hasActiveContractBadge(user);
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1">
+      {roles.map((role) => (
+        <span key={role} className="rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+          {getWorkRoleLabel(role)}
+        </span>
+      ))}
+      {outlet ? (
+        <span className="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">
+          {outlet}
+        </span>
+      ) : null}
+      {contract !== null ? (
+        <span className={cn(
+          'rounded-full border px-1.5 py-0.5 text-[10px] font-medium',
+          contract ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700',
+        )}>
+          {contract ? 'active contract' : 'no active contract'}
+        </span>
+      ) : null}
+      {conflict ? (
+        <span className="rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+          conflict
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function isOperationalCandidate(u: AuthUserListItem): boolean {
+  const status = String(u.status ?? '').toLowerCase();
+  if (status && status !== 'active') return false;
+  const uname = String(u.username ?? '').toLowerCase();
+  if (uname.includes('superadmin') || uname.includes('admin@') || uname === 'system') return false;
+  if (uname.startsWith('pos.') || uname.startsWith('pos_') || uname.startsWith('pos-')) return false;
+  if (uname.startsWith('pos.test') || uname.includes('postest') || uname.includes('test.user')) return false;
+  const excludedRoles = new Set(['superadmin', 'admin', 'finance', 'hr', 'procurement', 'region_manager']);
+  if (candidateRoles(u).some((role) => excludedRoles.has(role.toLowerCase()))) return false;
+  if (hasActiveContractBadge(u) === false) return false;
+  return true;
+}
+
 function QuickAssignModal({
-  users, shiftId, workRole, date, busyKey, assignedUserIds, onAssign, onClose,
+  users, shiftId, workRole, date, busyKey, assignedUserIds, dayAssignments, onAssign, onClose,
 }: {
   users: AuthUserListItem[];
   shiftId: string;
@@ -1755,24 +1930,46 @@ function QuickAssignModal({
   date: string;
   busyKey: string;
   assignedUserIds: string[];
+  dayAssignments: WorkShiftView[];
   onAssign: (userId: string) => void;
   onClose: () => void;
 }) {
   const [selectedUserId, setSelectedUserId] = useState('');
   const [search, setSearch] = useState('');
 
+  // Map userId → other-shift assignment same day (conflict signal)
+  const conflictByUserId = useMemo(() => {
+    const map = new Map<string, WorkShiftView>();
+    for (const a of dayAssignments) {
+      if (String(a.shiftId ?? '') === shiftId) continue;
+      const uid = String(a.userId ?? '');
+      if (!uid) continue;
+      if (!map.has(uid)) map.set(uid, a);
+    }
+    return map;
+  }, [dayAssignments, shiftId]);
+
   const filtered = useMemo(() => {
     const assignedSet = new Set(assignedUserIds);
-    return users.filter((u) => {
-      if (assignedSet.has(String(u.id))) return false;
-      if (!search) return true;
-      return userDisplayName(u).toLowerCase().includes(search.toLowerCase());
-    });
+    const seen = new Set<string>();
+    const q = search.trim().toLowerCase();
+    return users
+      .filter((u) => {
+        const id = String(u.id);
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
+        if (assignedSet.has(id)) return false;
+        if (!isOperationalCandidate(u)) return false;
+        if (!q) return true;
+        const hay = `${userDisplayName(u)} ${u.username ?? ''} ${u.employeeCode ?? ''} ${candidateRoles(u).join(' ')}`.toLowerCase();
+        return hay.includes(q);
+      })
+      .slice(0, 200);
   }, [users, assignedUserIds, search]);
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-background border rounded-xl shadow-xl p-4 w-96 space-y-3" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-background border rounded-xl shadow-xl p-4 w-[28rem] max-w-[calc(100vw-2rem)] space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-sm">
             Assign Staff{workRole ? ` — ${getWorkRoleLabel(workRole)}` : ''}
@@ -1795,18 +1992,30 @@ function QuickAssignModal({
               {users.length === 0 ? 'No staff data loaded' : 'No available staff found'}
             </div>
           )}
-          {filtered.map((u) => (
-            <button
-              key={u.id}
-              onClick={() => setSelectedUserId(String(u.id))}
-              className={cn(
-                'w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors',
-                String(u.id) === selectedUserId && 'bg-primary/10 font-medium',
-              )}
-            >
-              {userDisplayName(u)}
-            </button>
-          ))}
+          {filtered.map((u) => {
+            const conflict = conflictByUserId.get(String(u.id));
+            return (
+              <button
+                key={u.id}
+                onClick={() => setSelectedUserId(String(u.id))}
+                className={cn(
+                  'w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors',
+                  String(u.id) === selectedUserId && 'bg-primary/10 font-medium',
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium">{userDisplayName(u)}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">{u.username}</div>
+                    <StaffCandidateBadges user={u} conflict={Boolean(conflict)} />
+                  </div>
+                  {u.employeeCode ? (
+                    <span className="shrink-0 text-[10px] text-muted-foreground font-mono">{u.employeeCode}</span>
+                  ) : null}
+                </div>
+              </button>
+            );
+          })}
         </div>
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={onClose} className="text-sm text-muted-foreground hover:underline px-3 py-1.5">
