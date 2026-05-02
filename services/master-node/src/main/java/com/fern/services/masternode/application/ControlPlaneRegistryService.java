@@ -499,6 +499,9 @@ public class ControlPlaneRegistryService {
 
   private void requireInternalServiceAccess() {
     RequestUserContext context = RequestUserContextHolder.get();
+    if (context == null) {
+      throw ServiceException.unauthorized("Authentication required");
+    }
     if (context.internalService()) {
       return;
     }
@@ -510,6 +513,9 @@ public class ControlPlaneRegistryService {
 
   private void requireOperatorAccess() {
     RequestUserContext context = RequestUserContextHolder.get();
+    if (context == null) {
+      throw ServiceException.unauthorized("Authentication required");
+    }
     if (context.internalService() || context.hasRole("admin") || context.hasRole("superadmin")) {
       return;
     }

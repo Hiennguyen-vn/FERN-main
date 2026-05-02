@@ -713,6 +713,7 @@ services:
       - clickhouse-data:/var/lib/clickhouse
       - ./clickhouse/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
       - ./clickhouse/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+      - ./clickhouse/migrations:/docker-entrypoint-initdb.d/migrations:ro
     ulimits:
       nofile:
         soft: 262144
@@ -776,6 +777,7 @@ services:
       OPENSEARCH_JAVA_OPTS: "-Xms384m -Xmx384m"
       DISABLE_SECURITY_PLUGIN: "true"
       bootstrap.memory_lock: "false"
+      knn.plugin.enabled: "true"
     ports:
       - "127.0.0.1:${OPENSEARCH_PORT:-9200}:9200"
     volumes:
@@ -989,6 +991,35 @@ services:
     working_dir: /workspace
     volumes:
       - ../db:/workspace/db:rw
+
+  ai-query-service:
+    build:
+      context: ../ai-query-service
+      dockerfile: Dockerfile
+    profiles: ["ai"]
+    container_name: ai-query-service
+    ports:
+      - "127.0.0.1:${AI_QUERY_SERVICE_PORT:-8093}:8093"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: gpt-4.1
+      OPENAI_EMBEDDING_MODEL: text-embedding-3-small
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_DB: fern
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      OPENSEARCH_URL: http://opensearch:9200
+      REDIS_SENTINEL_HOSTS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      REDIS_SENTINEL_MASTER: fern-master
+      KAFKA_BOOTSTRAP: kafka:29092,kafka-2:29092,kafka-3:29092
+      KAFKA_AUDIT_TOPIC: fern.audit.ai-query
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-change-me}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8093/api/v1/ai-query/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
 
 volumes:
   postgres-primary-data:

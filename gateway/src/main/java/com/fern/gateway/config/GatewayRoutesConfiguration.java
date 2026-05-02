@@ -45,6 +45,12 @@ public class GatewayRoutesConfiguration {
   }
 
   @Bean
+  @Qualifier("aiQueryRateLimiter")
+  public RedisRateLimiter aiQueryRateLimiter() {
+    return new RedisRateLimiter(10, 20, 1);
+  }
+
+  @Bean
   public KeyResolver gatewayRateLimitKeyResolver() {
     return exchange -> Mono.just(resolveRateLimitKey(
         exchange.getRequest().getHeaders(),
@@ -59,7 +65,8 @@ public class GatewayRoutesConfiguration {
       @Qualifier("defaultRateLimiter") RedisRateLimiter defaultRateLimiter,
       @Qualifier("authRateLimiter") RedisRateLimiter authRateLimiter,
       @Qualifier("syncRateLimiter") RedisRateLimiter syncRateLimiter,
-      @Qualifier("reportRateLimiter") RedisRateLimiter reportRateLimiter
+      @Qualifier("reportRateLimiter") RedisRateLimiter reportRateLimiter,
+      @Qualifier("aiQueryRateLimiter") RedisRateLimiter aiQueryRateLimiter
   ) {
     RouteLocatorBuilder.Builder routes = builder.routes();
     String authBaseUrl = System.getenv().getOrDefault("AUTH_SERVICE_URL", "http://localhost:8081");
@@ -77,7 +84,8 @@ public class GatewayRoutesConfiguration {
           defaultRateLimiter,
           authRateLimiter,
           syncRateLimiter,
-          reportRateLimiter
+          reportRateLimiter,
+          aiQueryRateLimiter
       );
       routes.route(routeId, spec -> spec
           .path(route.pathPrefix(), route.pathPrefix() + "/**")
@@ -104,12 +112,14 @@ public class GatewayRoutesConfiguration {
       RedisRateLimiter defaultRateLimiter,
       RedisRateLimiter authRateLimiter,
       RedisRateLimiter syncRateLimiter,
-      RedisRateLimiter reportRateLimiter
+      RedisRateLimiter reportRateLimiter,
+      RedisRateLimiter aiQueryRateLimiter
   ) {
     return switch (route.rateLimitTier()) {
       case AUTH -> new GatewayRoutePolicy(authRateLimiter);
       case SYNC, TELEMETRY -> new GatewayRoutePolicy(syncRateLimiter);
       case REPORT -> new GatewayRoutePolicy(reportRateLimiter);
+      case AI_QUERY -> new GatewayRoutePolicy(aiQueryRateLimiter);
       case DEFAULT -> new GatewayRoutePolicy(defaultRateLimiter);
     };
   }

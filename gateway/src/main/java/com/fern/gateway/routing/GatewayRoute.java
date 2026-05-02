@@ -29,6 +29,7 @@ public record GatewayRoute(
     AUTH,
     SYNC,
     REPORT,
-    TELEMETRY
+    TELEMETRY,
+    AI_QUERY
   }
 }

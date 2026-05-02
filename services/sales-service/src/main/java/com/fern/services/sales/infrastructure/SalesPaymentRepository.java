@@ -1,5 +1,6 @@
 package com.fern.services.sales.infrastructure;
 
+import com.fern.common.middleware.ServiceException;
 import com.fern.common.repository.BaseRepository;
 import com.fern.services.sales.api.SalesDtos;
 import com.fern.services.sales.application.PaymentStateMachine;
@@ -165,7 +166,11 @@ public class SalesPaymentRepository extends BaseRepository {
         ps.setTimestamp(11, Timestamp.from(now));
         ps.setLong(12, saleId);
         ps.setTimestamp(13, Timestamp.from(saleCreatedAt));
-        ps.executeUpdate();
+        int updated = ps.executeUpdate();
+        if (updated == 0) {
+          throw ServiceException.conflict(
+              "Payment row vanished mid-transaction for sale " + saleId);
+        }
       }
       return;
     }
@@ -222,7 +227,7 @@ public class SalesPaymentRepository extends BaseRepository {
           rs.getString("payment_method"),
           rs.getBigDecimal("amount"),
           rs.getString("status"),
-          rs.getTimestamp("payment_time").toInstant(),
+          rs.getTimestamp("payment_time") == null ? null : rs.getTimestamp("payment_time").toInstant(),
           rs.getString("transaction_ref"),
           rs.getString("note")
       );

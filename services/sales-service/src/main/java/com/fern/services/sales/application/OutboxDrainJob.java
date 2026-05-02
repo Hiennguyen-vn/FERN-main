@@ -28,7 +28,7 @@ public class OutboxDrainJob {
         try {
             outboxRelay.drain();
         } catch (RuntimeException e) {
-            log.warn("outbox drain failed: {}", e.getMessage());
+            log.warn("outbox drain failed: {}", e.getMessage(), e);
         }
     }
 }

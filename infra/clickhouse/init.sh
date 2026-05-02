@@ -13,4 +13,15 @@ done
 
 echo "ClickHouse ready. Applying schema..."
 clickhouse-client --host="${CLICKHOUSE_HOST}" --port="${CLICKHOUSE_PORT}" --multiquery < "${SCHEMA_FILE}"
-echo "Schema applied successfully."
+echo "Schema applied."
+
+# Apply ordered migrations from /docker-entrypoint-initdb.d/migrations/V*.sql
+MIGRATIONS_DIR="/docker-entrypoint-initdb.d/migrations"
+if [ -d "${MIGRATIONS_DIR}" ]; then
+  for migration in "${MIGRATIONS_DIR}"/V*.sql; do
+    [ -f "${migration}" ] || continue
+    echo "Applying migration: $(basename "${migration}")"
+    clickhouse-client --host="${CLICKHOUSE_HOST}" --port="${CLICKHOUSE_PORT}" --multiquery < "${migration}"
+  done
+  echo "All migrations applied."
+fi

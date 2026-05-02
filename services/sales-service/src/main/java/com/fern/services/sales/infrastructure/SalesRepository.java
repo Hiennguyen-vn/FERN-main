@@ -2014,10 +2014,15 @@ public class SalesRepository extends BaseRepository {
   ) throws Exception {
     Map<Long, AggregatedSaleLine> aggregated = new LinkedHashMap<>();
     for (SalesDtos.SaleLineRequest line : request.items()) {
-      BigDecimal unitPrice = resolveUnitPrice(conn, line.productId(), request.outletId(), businessDate);
-      AggregatedSaleLine current = aggregated.get(line.productId());
+      BigDecimal basePrice = resolveUnitPrice(conn, line.productId(), request.outletId(), businessDate);
       Set<Long> promotionIds = line.promotionIds() == null ? Set.of() : Set.copyOf(line.promotionIds());
       Set<Long> modifierOptionIds = line.modifierOptionIds() == null ? Set.of() : Set.copyOf(line.modifierOptionIds());
+      BigDecimal variantDelta = line.variantId() != null
+          ? resolveVariantDelta(conn, line.variantId(), basePrice)
+          : BigDecimal.ZERO;
+      BigDecimal modifierDelta = resolveModifierDelta(conn, modifierOptionIds);
+      BigDecimal unitPrice = basePrice.add(variantDelta).add(modifierDelta);
+      AggregatedSaleLine current = aggregated.get(line.productId());
       if (current == null) {
         aggregated.put(line.productId(), new AggregatedSaleLine(
             line.productId(),
@@ -2507,6 +2512,47 @@ public class SalesRepository extends BaseRepository {
       }
     }
     throw ServiceException.notFound("No effective product price for product " + productId + " at outlet " + outletId);
+  }
+
+  private BigDecimal resolveVariantDelta(Connection conn, long variantId, BigDecimal basePrice) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        "SELECT price_modifier_type, price_modifier_value FROM core.product_variant WHERE id = ?"
+    )) {
+      ps.setLong(1, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) return BigDecimal.ZERO;
+        String type = rs.getString("price_modifier_type");
+        BigDecimal value = rs.getBigDecimal("price_modifier_value");
+        if (value == null) return BigDecimal.ZERO;
+        if ("percentage".equals(type)) {
+          return basePrice.multiply(value).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+        }
+        if ("fixed".equals(type)) {
+          return value;
+        }
+        return BigDecimal.ZERO;
+      }
+    }
+  }
+
+  private BigDecimal resolveModifierDelta(Connection conn, Set<Long> modifierOptionIds) throws Exception {
+    if (modifierOptionIds == null || modifierOptionIds.isEmpty()) return BigDecimal.ZERO;
+    String placeholders = modifierOptionIds.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(","));
+    try (PreparedStatement ps = conn.prepareStatement(
+        "SELECT COALESCE(SUM(price_adjustment), 0) AS total FROM core.modifier_option WHERE id IN (" + placeholders + ")"
+    )) {
+      int idx = 1;
+      for (Long id : modifierOptionIds) {
+        ps.setLong(idx++, id);
+      }
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) {
+          BigDecimal total = rs.getBigDecimal("total");
+          return total != null ? total : BigDecimal.ZERO;
+        }
+        return BigDecimal.ZERO;
+      }
+    }
   }
 
   private SalesDtos.SaleView mapSaleHeader(

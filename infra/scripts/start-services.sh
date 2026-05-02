@@ -118,6 +118,7 @@ for record in "${FERN_LOCAL_SERVICE_ORDER[@]}"; do
     if $DEV_MODE; then
       nohup env \
         PORT="$port" \
+        SPRING_PROFILES_ACTIVE="${SPRING_PROFILES_ACTIVE:-local}" \
         REDIS_HOST="${REDIS_HOST}" \
         REDIS_PORT="${REDIS_PORT}" \
         KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP}" \
@@ -142,6 +143,7 @@ for record in "${FERN_LOCAL_SERVICE_ORDER[@]}"; do
     else
       nohup env \
         PORT="$port" \
+        SPRING_PROFILES_ACTIVE="${SPRING_PROFILES_ACTIVE:-local}" \
         REDIS_HOST="${REDIS_HOST}" \
         REDIS_PORT="${REDIS_PORT}" \
         KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP}" \

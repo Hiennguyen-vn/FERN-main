@@ -357,19 +357,12 @@ manifest_record() {
 record_field() {
   local record="$1"
   local index="$2"
-  local part
-  local i=0
-  local old_ifs="$IFS"
-  IFS='|'
-  for part in $record; do
-    if [[ "$i" -eq "$index" ]]; then
-      IFS="$old_ifs"
-      printf '%s' "$part"
-      return 0
-    fi
-    i=$((i + 1))
-  done
-  IFS="$old_ifs"
+  local -a parts
+  IFS='|' read -ra parts <<< "$record"
+  if (( index < ${#parts[@]} )); then
+    printf '%s' "${parts[$index]}"
+    return 0
+  fi
   return 1
 }
 
@@ -432,6 +425,12 @@ service_jar_path() {
   if [[ "${#matches[@]}" -eq 0 ]]; then
     return 1
   fi
+  for match in "${matches[@]}"; do
+    if [[ "$match" == *-exec.jar ]]; then
+      printf '%s\n' "$match"
+      return 0
+    fi
+  done
   printf '%s\n' "${matches[0]}"
 }
 

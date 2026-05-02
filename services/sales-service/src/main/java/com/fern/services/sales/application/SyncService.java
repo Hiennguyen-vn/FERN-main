@@ -26,10 +26,13 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class SyncService extends BaseRepository {
+    private static final Logger log = LoggerFactory.getLogger(SyncService.class);
 
     static final String PAYMENT_BEFORE_APPROVAL_REJECTION = "Only approved orders can be marked as payment done";
 
@@ -528,6 +531,7 @@ public class SyncService extends BaseRepository {
                         payloadHash, "SUCCESS", null, parseInstantOrNull(event.clientOccurredAt()));
                 }
             } catch (Exception e) {
+                log.error("sync push event rejected type={} eventId={} idemKey={}", event.type(), event.eventId(), idemKey, e);
                 rejected.add(new SyncDtos.RejectedEvent(event.eventId(), e.getMessage()));
                 posMetrics.recordSyncPushEvent(event.type(), "rejected");
                 if (idemKey != null && !isRetryableSyncFailure(e.getMessage())) {

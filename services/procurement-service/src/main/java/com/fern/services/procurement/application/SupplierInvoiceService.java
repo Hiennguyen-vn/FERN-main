@@ -38,7 +38,16 @@ public class SupplierInvoiceService {
   }
 
   public ProcurementDtos.SupplierInvoiceView createInvoice(ProcurementDtos.CreateSupplierInvoiceRequest request) {
+    if (request.linkedReceiptIds() == null || request.linkedReceiptIds().isEmpty()) {
+      throw ServiceException.badRequest("linkedReceiptIds must not be empty");
+    }
     long outletId = resolveOutletId(request.linkedReceiptIds().getFirst());
+    for (Long receiptId : request.linkedReceiptIds()) {
+      long receiptOutletId = resolveOutletId(receiptId);
+      if (receiptOutletId != outletId) {
+        throw ServiceException.badRequest("All linked receipts must belong to the same outlet");
+      }
+    }
     requireProcurementWrite(outletId);
     return procurementRepository.createSupplierInvoice(
         idGenerator.generateId(),

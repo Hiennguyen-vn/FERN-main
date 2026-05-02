@@ -1,0 +1,43 @@
+# Static aliases for ai-query-service.
+# outlets: KHONG dinh nghia o day — seed dong tu fern.dim_outlet boi scripts/seed_knowledge_catalog.py.
+# Reason: outlets thay doi (mo them, doi ten); hard-code se le data.
+
+categories:
+  - alias_vi: ["tra sua", "trà sữa", "milk tea", "bubble tea", "tran chau", "trân châu"]
+    canonical_type: category
+    canonical_id: 1
+    canonical_name: "Tra sua"
+  - alias_vi: ["do uong", "đồ uống", "nuoc uong", "nước uống", "beverage", "drinks"]
+    canonical_type: category
+    canonical_id: 2
+    canonical_name: "Do uong"
+  - alias_vi: ["thuc an", "thức ăn", "do an", "đồ ăn", "food"]
+    canonical_type: category
+    canonical_id: 3
+    canonical_name: "Thuc an"
+  - alias_vi: ["banh ngot", "bánh ngọt", "dessert", "tráng miệng"]
+    canonical_type: category
+    canonical_id: 4
+    canonical_name: "Banh ngot"
+
+metrics:
+  - alias_vi: ["doanh thu", "revenue", "doanh so", "gmv"]
+    canonical_type: metric
+    canonical_id: null
+    canonical_name: "net_revenue"
+  - alias_vi: ["food cost", "fc", "gia von", "giá vốn", "cogs"]
+    canonical_type: metric
+    canonical_id: null
+    canonical_name: "cogs"
+  - alias_vi: ["labor cost", "lc", "chi phi nhan cong", "chi phí nhân công", "luong"]
+    canonical_type: metric
+    canonical_id: null
+    canonical_name: "payroll_cost"
+  - alias_vi: ["ton kho", "tồn kho", "stock", "inventory", "hang con", "nguyen lieu"]
+    canonical_type: metric
+    canonical_id: null
+    canonical_name: "stock_qty"
+  - alias_vi: ["loi nhuan", "lợi nhuận", "profit", "lai", "lãi"]
+    canonical_type: metric
+    canonical_id: null
+    canonical_name: "operating_profit"

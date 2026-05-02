@@ -22,6 +22,7 @@ public final class GatewayRouteCatalog {
     String financeUrl = env("FINANCE_SERVICE_URL", "http://localhost:8090");
     String auditUrl = env("AUDIT_SERVICE_URL", "http://localhost:8091");
     String reportUrl = env("REPORT_SERVICE_URL", "http://localhost:8092");
+    String aiQueryUrl = env("AI_QUERY_SERVICE_URL", "http://localhost:8093");
     String gatewayUrl = env("GATEWAY_URL", "http://localhost:8080");
 
     return List.of(
@@ -49,6 +50,7 @@ public final class GatewayRouteCatalog {
         new GatewayRoute("/api/v1/audit", "audit-service", auditUrl, RouteClass.USER, RateLimitTier.DEFAULT),
         new GatewayRoute("/api/v1/report", "report-service", reportUrl, RouteClass.USER, RateLimitTier.REPORT),
         new GatewayRoute("/api/v1/reports", "report-service", reportUrl, RouteClass.USER, RateLimitTier.REPORT),
+        new GatewayRoute("/api/v1/ai-query", "ai-query-service", aiQueryUrl, RouteClass.USER, RateLimitTier.AI_QUERY),
         new GatewayRoute("/api/v1/gateway", "gateway", gatewayUrl, RouteClass.PUBLIC, RateLimitTier.DEFAULT)
     );
   }

@@ -385,7 +385,11 @@ public class SalesService {
         .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
     requireSalesWriteForOutlet(context, existing.outletId());
     SalesDtos.SaleView approved = salesRepository.approveSale(saleId, context.userId());
-    try { autoEarnLoyalty(saleId); } catch (RuntimeException ignored) {}
+    try {
+      autoEarnLoyalty(saleId);
+    } catch (RuntimeException e) {
+      log.warn("loyalty auto-earn failed for sale {}: {}", saleId, e.getMessage());
+    }
     return approved;
   }
 
@@ -612,15 +616,15 @@ public class SalesService {
       if (flagged > 0 && posMetrics != null) {
         posMetrics.recordPriceDriftDetected(approved.outletId(), flagged);
       }
-    } catch (RuntimeException ignored) {
-      // Drift detection is best-effort; do not fail sync on its account.
+    } catch (RuntimeException e) {
+      log.warn("price drift detection failed for sale {}: {}", saleId, e.getMessage());
     }
 
     // Loyalty auto-earn: if sale linked to a customer, credit floor(total/10000) points.
     try {
       autoEarnLoyalty(saleId);
-    } catch (RuntimeException ignored) {
-      // Loyalty earn is best-effort; do not fail sync.
+    } catch (RuntimeException e) {
+      log.warn("loyalty auto-earn (sync) failed for sale {}: {}", saleId, e.getMessage());
     }
 
     // Persist manager override audit if edge attached one (manager unlocked the oversell at POS).

@@ -22,11 +22,15 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class InventoryService {
+
+  private static final Logger log = LoggerFactory.getLogger(InventoryService.class);
 
   private final InventoryRepository inventoryRepository;
   private final com.fern.services.inventory.infrastructure.InventoryLotRepository lotRepository;
@@ -259,7 +263,11 @@ public class InventoryService {
     );
     // T1: Confirm reservation (terminal state) now that hard deduction is committed.
     // Idempotent — settled rows skipped via WHERE settled_at IS NULL clause.
-    try { reservationService.confirmForSale(event.saleId()); } catch (RuntimeException ignored) {}
+    try {
+      reservationService.confirmForSale(event.saleId());
+    } catch (RuntimeException e) {
+      log.error("confirm reservation failed for sale {}: {}", event.saleId(), e.getMessage(), e);
+    }
     return inserted;
   }
 
@@ -274,7 +282,11 @@ public class InventoryService {
         "Sale " + event.saleId() + " cancelled"
     );
     // T1: Release reservation row (no movement applied beyond reverse usage above).
-    try { reservationService.releaseForSale(event.saleId()); } catch (RuntimeException ignored) {}
+    try {
+      reservationService.releaseForSale(event.saleId());
+    } catch (RuntimeException e) {
+      log.error("release reservation failed for sale {}: {}", event.saleId(), e.getMessage(), e);
+    }
     return inserted;
   }
 

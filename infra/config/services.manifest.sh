@@ -3,6 +3,8 @@ FERN_DEPENDENCY_SERVICES=(
   postgres-replica
   redis
   kafka
+  kafka-2
+  kafka-3
   prometheus
   grafana
 )
@@ -59,4 +61,5 @@ FERN_KAFKA_TOPICS=(
   "fern.org.outlet-updated|6"
   "fern.product.product-price-changed|12"
   "fern.outbox.dlq|6"
+  "fern.audit.ai-query|6"
 )
