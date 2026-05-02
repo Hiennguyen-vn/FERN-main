@@ -18,7 +18,13 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
   private static final Set<String> PUBLIC_PREFIXES = Set.of(
       "/actuator",
       "/health",
+      "/.well-known/jwks.json",
+      "/v3/api-docs",
+      "/swagger-ui",
+      "/swagger-ui.html",
       "/api/v1/auth/login",
+      "/api/v1/auth/internal/token",
+      "/api/v1/auth/.well-known/jwks.json",
       "/api/v1/sales/public",
       "/api/v1/product/product-images",
       "/api/v1/gateway/info",
@@ -31,6 +37,8 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
   private final SpringInternalServiceAuth internalServiceAuth;
   private final AuthSessionService authSessionService;
   private final DeviceTokenRegistry deviceTokenRegistry;
+  private SpringInternalJwtAuth internalJwtAuth;
+  private io.micrometer.core.instrument.MeterRegistry meterRegistry;
 
   public RequestAuthenticationFilter(
       JwtTokenService jwtTokenService,
@@ -42,6 +50,22 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
     this.internalServiceAuth = internalServiceAuth;
     this.authSessionService = authSessionService;
     this.deviceTokenRegistry = deviceTokenRegistry;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setInternalJwtAuth(SpringInternalJwtAuth internalJwtAuth) {
+    this.internalJwtAuth = internalJwtAuth;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setMeterRegistry(io.micrometer.core.instrument.MeterRegistry meterRegistry) {
+    this.meterRegistry = meterRegistry;
+  }
+
+  private void recordInternalAuthMethod(String type) {
+    if (meterRegistry != null) {
+      meterRegistry.counter("internal_auth_method_total", "type", type).increment();
+    }
   }
 
   @Override
@@ -123,8 +147,18 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
 
   private RequestUserContext resolveContext(HttpServletRequest request) {
     HttpHeaders headers = extractHeaders(request);
+    // W1.1: prefer per-service internal JWT when header present.
+    if (internalJwtAuth != null && internalJwtAuth.hasJwtHeader(headers)) {
+      JwtTokenService.InternalTokenClaims claims = internalJwtAuth.verify(headers);
+      recordInternalAuthMethod("jwt");
+      return new RequestUserContext(
+          null, claims.callerService(), null,
+          java.util.Set.of(), claims.scopes(), java.util.Set.of(),
+          true, true, claims.callerService(), null, null);
+    }
     SpringInternalServiceAuth.AuthenticatedService internal = internalServiceAuth.authenticate(headers);
     if (internal != null) {
+      recordInternalAuthMethod("shared_token");
       if ("pos-edge-agent".equals(internal.serviceName())) {
         throw ServiceException.forbidden("POS edge mini server must use device JWT authentication");
       }

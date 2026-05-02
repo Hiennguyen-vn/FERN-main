@@ -132,6 +132,7 @@ public final class ProcurementDtos {
       @NotNull @DecimalMin(value = "0.00") BigDecimal unitCost,
       LocalDate manufactureDate,
       LocalDate expiryDate,
+      String batchNo,
       String note
   ) {
   }
@@ -156,6 +157,7 @@ public final class ProcurementDtos {
       BigDecimal lineTotal,
       LocalDate manufactureDate,
       LocalDate expiryDate,
+      String batchNo,
       String note
   ) {
   }

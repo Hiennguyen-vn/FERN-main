@@ -20,6 +20,7 @@ export interface DashboardKPIs {
   outOfStockCount: number;
   pendingOrders: number;
   trackedItemsCount: number;
+  currencyCode?: string;
 }
 
 export interface RecentOrder {

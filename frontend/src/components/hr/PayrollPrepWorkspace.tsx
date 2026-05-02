@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
+  CalendarDays,
   CheckCircle2,
+  ChevronRight,
   Clock,
+  DollarSign,
   FileText,
+  Filter,
+  Lock,
+  MapPin,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Sparkles,
+  TrendingUp,
+  UserCheck,
+  Users,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -50,6 +62,38 @@ import {
   periodWindowLabel,
 } from '@/components/payroll/payroll-truth';
 import { cn } from '@/lib/utils';
+import {
+  ExceptionBanner,
+  KpiCard,
+  KpiStrip,
+  SegmentChip,
+  SegmentChipRow,
+  SeverityPill,
+} from '@/components/hr/hr-primitives';
+import {
+  type PrepStep,
+  buildDefaultPeriodForm,
+  buildDefaultRunForm,
+  buildDefaultTimesheetForm,
+  buildPeriodHeadline,
+  buildRegionCoverageLabel,
+  computeNetRunTotal,
+  computePayrollReadiness,
+  computeRosterImportStats,
+  computeRosterOperationalStats,
+  computeRunCoverageStats,
+  computeTimesheetAggregates,
+  countWorkingDays,
+  formatCurrency,
+  formatDate,
+  formatDateInput,
+  formatDateRange,
+  formatMonthYear,
+  getRegionName,
+  isContractEffectiveForPeriod,
+  normalizeValue,
+  toNumber,
+} from '@/components/hr/payroll-prep-calc';
 
 interface PayrollPrepWorkspaceProps {
   token: string;
@@ -60,98 +104,14 @@ interface PayrollPrepWorkspaceProps {
   scopeOutletId?: string;
 }
 
-function toNumber(value: unknown) {
-  const n = Number(value ?? 0);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function formatCurrency(value: unknown, currency = 'VND') {
-  return new Intl.NumberFormat('vi-VN', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(toNumber(value));
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return '—';
-  const d = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return value;
-  return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
-}
-
-function formatDateRange(s?: string | null, e?: string | null) {
-  if (!s && !e) return '—';
-  return `${formatDate(s)} – ${formatDate(e)}`;
-}
-
-function formatMonthYear(value?: string | null) {
-  if (!value) return 'Payroll prep';
-  const d = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return 'Payroll prep';
-  return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(d);
-}
-
-function formatDateInput(date: Date) {
-  const y = date.getFullYear();
-  const m = `${date.getMonth() + 1}`.padStart(2, '0');
-  const d = `${date.getDate()}`.padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-function normalizeValue(value: string | number | null | undefined) {
-  return String(value ?? '').trim();
-}
-
-function getRegionName(regionsById: Map<string, ScopeRegion>, regionId?: string | number | null) {
-  const key = normalizeValue(regionId);
-  if (!key) return 'Selected region';
-  return regionsById.get(key)?.name || `Region ${key}`;
-}
-
-function buildPeriodHeadline(period: PayrollPeriodView | null, regionName: string) {
-  const name = normalizeValue(period?.name);
-  if (name) return name;
-  return `${formatMonthYear(period?.startDate || period?.endDate || period?.payDate)} · ${regionName}`;
-}
-
-function buildDefaultPeriodForm(regionId = '') {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  const payDate = new Date(now.getFullYear(), now.getMonth() + 1, 5);
-  return {
-    regionId,
-    name: '',
-    startDate: formatDateInput(start),
-    endDate: formatDateInput(end),
-    payDate: formatDateInput(payDate),
-    note: '',
-  };
-}
-
-function buildDefaultTimesheetForm(outletId = '') {
-  return {
-    userId: '',
-    outletId,
-    workDays: '',
-    workHours: '',
-    overtimeHours: '0',
-    overtimeRate: '1.5',
-    lateCount: '0',
-    absentDays: '0',
-  };
-}
-
-function buildDefaultRunForm() {
-  return {
-    payrollTimesheetId: '',
-    currencyCode: 'VND',
-    baseSalaryAmount: '',
-    netSalary: '',
-    note: '',
-  };
+// Pure helpers imported from payroll-prep-calc — keep getInitials local as it has no external dep
+function getInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || 'HR';
 }
 
 /* ------------------------------------------------------------------ */
@@ -210,28 +170,10 @@ function Step2ReviewTimesheets({
 }: Step2Props) {
   const [addOpen, setAddOpen] = useState(false);
 
-  // Build a set of userIds that already have a timesheet
-  const coveredUserIds = useMemo(
-    () => new Set(timesheets.map((ts) => normalizeValue(ts.userId))),
-    [timesheets],
+  const reviewRows = useMemo(
+    () => timesheetRows,
+    [timesheetRows],
   );
-
-  const missingCount = payrollRoster.filter((e) => !coveredUserIds.has(e.userId)).length;
-
-  // Merge roster missing entries with timesheet rows for the table
-  type ReviewRow =
-    | { kind: 'ts'; ts: PayrollTimesheetView; run: PayrollRunView | undefined }
-    | { kind: 'missing'; userId: string; fullName: string; outletLabel: string };
-
-  const reviewRows = useMemo<ReviewRow[]>(() => {
-    const rows: ReviewRow[] = timesheetRows.map(({ ts, run }) => ({ kind: 'ts', ts, run }));
-    for (const entry of payrollRoster) {
-      if (!coveredUserIds.has(entry.userId)) {
-        rows.push({ kind: 'missing', userId: entry.userId, fullName: entry.fullName, outletLabel: entry.outletLabels[0] || '—' });
-      }
-    }
-    return rows;
-  }, [timesheetRows, payrollRoster, coveredUserIds]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -243,7 +185,6 @@ function Step2ReviewTimesheets({
             {summary.rosterCount > 0
               ? `${summary.timesheetCount} of ${summary.rosterCount} employees have timesheets`
               : `${summary.timesheetCount} timesheet${summary.timesheetCount === 1 ? '' : 's'} imported (roster not loaded)`}
-            {missingCount > 0 ? ` · ${missingCount} missing` : ''}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -378,31 +319,7 @@ function Step2ReviewTimesheets({
               <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">Loading…</td></tr>
             ) : reviewRows.length === 0 ? (
               <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">No timesheets yet — run the bulk import in Step 1 or add manually above</td></tr>
-            ) : reviewRows.map((row) => {
-              if (row.kind === 'missing') {
-                return (
-                  <tr key={`missing-${row.userId}`} className="border-b last:border-0 bg-amber-50/40 hover:bg-amber-50/60">
-                    <td className="px-4 py-2.5">
-                      <p className="text-xs font-medium text-muted-foreground">{row.fullName}</p>
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{row.outletLabel}</td>
-                    <td colSpan={6} className="px-4 py-2.5">
-                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
-                        Missing
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <button
-                        onClick={() => { setTimesheetForm((c) => ({ ...c, userId: row.userId })); setAddOpen(true); }}
-                        className="text-[11px] text-primary hover:underline"
-                      >
-                        Add
-                      </button>
-                    </td>
-                  </tr>
-                );
-              }
-              const { ts, run } = row;
+            ) : reviewRows.map(({ ts, run }) => {
               return (
                 <tr key={ts.id} className="border-b last:border-0 hover:bg-muted/20">
                   <td className="px-4 py-2.5">
@@ -442,11 +359,6 @@ function Step2ReviewTimesheets({
           {summary.rosterCount > 0
               ? `${summary.timesheetCount} of ${summary.rosterCount} employees have timesheets`
               : `${summary.timesheetCount} timesheet${summary.timesheetCount === 1 ? '' : 's'} imported (roster not loaded)`}
-          {missingCount > 0 ? (
-            <span className="ml-1.5 inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
-              {missingCount} missing
-            </span>
-          ) : null}
         </p>
         <button
           onClick={onNext}
@@ -488,23 +400,32 @@ export function PayrollPrepWorkspace({
   const [timesheetForm, setTimesheetForm] = useState(buildDefaultTimesheetForm(scopeOutletId || ''));
   const [runForm, setRunForm] = useState(buildDefaultRunForm());
   const [busyKey, setBusyKey] = useState('');
-  const [prepStep, setPrepStep] = useState<1 | 2 | 3>(1);
+  const [prepStep, setPrepStep] = useState<PrepStep>(1);
   const [bulkProgress, setBulkProgress] = useState<{ total: number; done: number; failed: number } | null>(null);
   const [salaryCalc, setSalaryCalc] = useState<CalculateSalaryResult | null>(null);
 
-  // Reset step on period change; auto-advance to step 2 when timesheets already loaded
+  // Roster inline filters (Step 1)
+  const [filterOutletId, setFilterOutletId] = useState('');
+  const [filterContractType, setFilterContractType] = useState('');
+  const [filterPayrollStatus, setFilterPayrollStatus] = useState<'all' | 'ready' | 'missing'>('all');
+
+  // Reset step and filters on period change; auto-advance to step 2 when timesheets already loaded
   const prevPeriodIdRef = useRef('');
   useEffect(() => {
     if (selectedPeriodId !== prevPeriodIdRef.current) {
       prevPeriodIdRef.current = selectedPeriodId;
       setPrepStep(1);
+      setFilterOutletId('');
+      setFilterContractType('');
+      setFilterPayrollStatus('all');
     }
   }, [selectedPeriodId]);
 
   const prevLoadingRef = useRef(false);
   useEffect(() => {
     if (!workspaceLoading && prevLoadingRef.current && timesheets.length > 0 && prepStep === 1) {
-      setPrepStep(2);
+      // Timesheets already exist — skip to Timesheets step
+      setPrepStep(3);
     }
     prevLoadingRef.current = workspaceLoading;
   }, [workspaceLoading, timesheets.length, prepStep]);
@@ -557,14 +478,39 @@ export function PayrollPrepWorkspace({
     return outlets.filter((o) => allowed.has(o.regionId));
   }, [outlets, selectedRegionScopeIds]);
 
+  const periodContracts = useMemo(
+    () => contracts.filter((contract) => isContractEffectiveForPeriod(contract, selectedPeriod)),
+    [contracts, selectedPeriod],
+  );
+
   const payrollRoster = useMemo(
-    () => buildContractDrivenPayrollRoster({ users, scopes: authScopes, contracts, outletsById, selectedRegionCodes }),
-    [authScopes, contracts, outletsById, selectedRegionCodes, users],
+    () => buildContractDrivenPayrollRoster({ users, scopes: authScopes, contracts: periodContracts, outletsById, selectedRegionCodes }),
+    [authScopes, outletsById, periodContracts, selectedRegionCodes, users],
   );
 
   const contractsByUserId = useMemo(
     () => new Map(payrollRoster.map((e) => [e.userId, e.contract])),
     [payrollRoster],
+  );
+
+  const eligibleUserIds = useMemo(
+    () => new Set(payrollRoster.map((entry) => entry.userId)),
+    [payrollRoster],
+  );
+
+  const visibleTimesheets = useMemo(
+    () => timesheets.filter((ts) => eligibleUserIds.has(normalizeValue(ts.userId))),
+    [eligibleUserIds, timesheets],
+  );
+
+  const visibleTimesheetIds = useMemo(
+    () => new Set(visibleTimesheets.map((ts) => String(ts.id))),
+    [visibleTimesheets],
+  );
+
+  const visibleRuns = useMemo(
+    () => runs.filter((run) => visibleTimesheetIds.has(normalizeValue(run.payrollTimesheetId))),
+    [runs, visibleTimesheetIds],
   );
 
   const selectedEmployee = useMemo(
@@ -573,18 +519,18 @@ export function PayrollPrepWorkspace({
   );
 
   const runsByTimesheetId = useMemo(
-    () => new Map(runs.filter((r) => normalizeValue(r.payrollTimesheetId)).map((r) => [String(r.payrollTimesheetId), r])),
-    [runs],
+    () => new Map(visibleRuns.filter((r) => normalizeValue(r.payrollTimesheetId)).map((r) => [String(r.payrollTimesheetId), r])),
+    [visibleRuns],
   );
 
   const availableRunTimesheets = useMemo(
-    () => timesheets.filter((ts) => !runsByTimesheetId.has(String(ts.id))).sort((a, b) => normalizeValue(a.userId).localeCompare(normalizeValue(b.userId))),
-    [runsByTimesheetId, timesheets],
+    () => visibleTimesheets.filter((ts) => !runsByTimesheetId.has(String(ts.id))).sort((a, b) => normalizeValue(a.userId).localeCompare(normalizeValue(b.userId))),
+    [runsByTimesheetId, visibleTimesheets],
   );
 
   const selectedRunSource = useMemo(
-    () => timesheets.find((ts) => ts.id === runForm.payrollTimesheetId) ?? null,
-    [runForm.payrollTimesheetId, timesheets],
+    () => visibleTimesheets.find((ts) => ts.id === runForm.payrollTimesheetId) ?? null,
+    [runForm.payrollTimesheetId, visibleTimesheets],
   );
 
   const selectedRunContract = useMemo(
@@ -593,16 +539,75 @@ export function PayrollPrepWorkspace({
   );
 
   const timesheetRows = useMemo(
-    () => timesheets.map((ts) => ({ ts, run: runsByTimesheetId.get(String(ts.id)) })).sort((a, b) => normalizeValue(a.ts.userId).localeCompare(normalizeValue(b.ts.userId))),
-    [runsByTimesheetId, timesheets],
+    () => visibleTimesheets.map((ts) => ({ ts, run: runsByTimesheetId.get(String(ts.id)) })).sort((a, b) => normalizeValue(a.ts.userId).localeCompare(normalizeValue(b.ts.userId))),
+    [runsByTimesheetId, visibleTimesheets],
   );
 
   const summary = useMemo(() => ({
     rosterCount: payrollRoster.length,
-    timesheetCount: timesheets.length,
-    draftRuns: runs.filter((r) => normalizeValue(r.status).toLowerCase() === 'draft').length,
-    approvedRuns: runs.filter((r) => normalizeValue(r.status).toLowerCase() === 'approved').length,
-  }), [payrollRoster.length, runs, timesheets.length]);
+    timesheetCount: visibleTimesheets.length,
+    draftRuns: visibleRuns.filter((r) => normalizeValue(r.status).toLowerCase() === 'draft').length,
+    approvedRuns: visibleRuns.filter((r) => normalizeValue(r.status).toLowerCase() === 'approved').length,
+  }), [payrollRoster.length, visibleRuns, visibleTimesheets.length]);
+
+  const importedTimesheetUserIds = useMemo(
+    () => new Set(visibleTimesheets.map((ts) => normalizeValue(ts.userId)).filter(Boolean)),
+    [visibleTimesheets],
+  );
+
+  const availableContractTypes = useMemo(() => {
+    const seen = new Set<string>();
+    for (const entry of payrollRoster) {
+      const t = normalizeValue(entry.contract.employmentType);
+      if (t) seen.add(t);
+    }
+    return [...seen].sort();
+  }, [payrollRoster]);
+
+  const filteredPayrollRoster = useMemo(() => {
+    return payrollRoster.filter((entry) => {
+      if (filterOutletId && entry.preferredOutletId !== filterOutletId) return false;
+      if (filterContractType && normalizeValue(entry.contract.employmentType) !== filterContractType) return false;
+      if (filterPayrollStatus === 'ready' && !importedTimesheetUserIds.has(entry.userId)) return false;
+      if (filterPayrollStatus === 'missing' && importedTimesheetUserIds.has(entry.userId)) return false;
+      return true;
+    });
+  }, [payrollRoster, filterOutletId, filterContractType, filterPayrollStatus, importedTimesheetUserIds]);
+
+  const rosterImportStats = useMemo(
+    () => computeRosterImportStats(payrollRoster.length, importedTimesheetUserIds, payrollRoster),
+    [importedTimesheetUserIds, payrollRoster],
+  );
+
+  const regionCoverageLabel = useMemo(
+    () => buildRegionCoverageLabel(selectedRegionCodes, selectedRegionName),
+    [selectedRegionCodes, selectedRegionName],
+  );
+
+  const rosterOperationalStats = useMemo(
+    () => computeRosterOperationalStats(payrollRoster),
+    [payrollRoster],
+  );
+
+  const runCoverageStats = useMemo(() => {
+    const generatedRunCount = visibleTimesheets.filter((ts) => runsByTimesheetId.has(String(ts.id))).length;
+    return computeRunCoverageStats(visibleTimesheets.length, generatedRunCount);
+  }, [runsByTimesheetId, visibleTimesheets]);
+
+  const timesheetAggregates = useMemo(
+    () => computeTimesheetAggregates(visibleTimesheets),
+    [visibleTimesheets],
+  );
+
+  const netRunTotal = useMemo(
+    () => computeNetRunTotal(visibleRuns),
+    [visibleRuns],
+  );
+
+  const payrollReadiness = useMemo(
+    () => computePayrollReadiness(payrollRoster.length, rosterImportStats.pendingRosterCount, runCoverageStats.pendingRunCount),
+    [payrollRoster.length, rosterImportStats.pendingRosterCount, runCoverageStats.pendingRunCount],
+  );
 
   /* ---- loaders ---- */
   const loadDirectory = useCallback(async () => {
@@ -870,22 +875,23 @@ export function PayrollPrepWorkspace({
     if (done > 0) toast.success(`${done} timesheet(s) imported`);
     if (failed > 0) toast.error(`${failed} failed`);
     await loadWorkspace();
-    setPrepStep(2);
+    setPrepStep(3);
   };
 
   /* ================================================================== */
   /*  RENDER                                                              */
   /* ================================================================== */
 
-  const STEPS = [
-    { step: 1 as const, label: 'Import Attendance', icon: Clock },
-    { step: 2 as const, label: 'Review Timesheets', icon: FileText },
-    { step: 3 as const, label: 'Generate Runs', icon: Sparkles },
+  const STEPS: Array<{ step: PrepStep; label: string; icon: React.ElementType }> = [
+    { step: 1, label: 'Period', icon: CalendarDays },
+    { step: 2, label: 'Roster', icon: Users },
+    { step: 3, label: 'Timesheets', icon: FileText },
+    { step: 4, label: 'Review & Lock', icon: Sparkles },
   ];
 
   return (
     <>
-      <div className="grid h-full xl:grid-cols-[260px_minmax(0,1fr)]">
+      <div className="grid h-full lg:grid-cols-[260px_minmax(0,1fr)]">
         {/* ── Sidebar: period list ── */}
         <aside className="surface-elevated flex flex-col overflow-hidden border-r">
           <div className="border-b px-4 py-4">
@@ -957,43 +963,51 @@ export function PayrollPrepWorkspace({
             </div>
           ) : (
             <>
-              {/* Period header */}
-              <div className="border-b px-6 py-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', periodWindowBadgeClass(inferPeriodWindowState(selectedPeriod)))}>
-                        {periodWindowLabel(inferPeriodWindowState(selectedPeriod))}
-                      </span>
-                      <span className="text-xs text-muted-foreground">{selectedRegionName}</span>
-                      <span className="text-xs text-muted-foreground">{formatDateRange(selectedPeriod.startDate, selectedPeriod.endDate)}</span>
-                    </div>
-                    <h2 className="mt-1 text-xl font-semibold tracking-tight">
-                      {buildPeriodHeadline(selectedPeriod, selectedRegionName)}
-                    </h2>
-                  </div>
-                  {/* Summary chips */}
-                  <div className="flex flex-wrap gap-3">
-                    {[
-                      { label: 'Rostered', value: summary.rosterCount },
-                      { label: 'Timesheets', value: summary.timesheetCount },
-                      { label: 'Draft runs', value: summary.draftRuns },
-                      { label: 'Approved', value: summary.approvedRuns },
-                    ].map((chip) => (
-                      <div key={chip.label} className="rounded-lg border bg-background px-3 py-1.5 text-center">
-                        <p className="text-base font-semibold leading-tight">{chip.value}</p>
-                        <p className="text-[10px] text-muted-foreground">{chip.label}</p>
-                      </div>
-                    ))}
-                  </div>
+              {/* Always-visible: slim period context ribbon */}
+              <div className="border-b bg-muted/20 px-5 py-2">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+                  <span className="font-semibold tracking-tight text-foreground truncate max-w-[260px]">
+                    {buildPeriodHeadline(selectedPeriod, selectedRegionName)}
+                  </span>
+                  <SeverityPill tone={
+                    inferPeriodWindowState(selectedPeriod) === 'locked' ? 'locked'
+                    : inferPeriodWindowState(selectedPeriod) === 'open' ? 'active'
+                    : inferPeriodWindowState(selectedPeriod) === 'upcoming' ? 'draft'
+                    : 'neutral'
+                  }>
+                    {periodWindowLabel(inferPeriodWindowState(selectedPeriod))}
+                  </SeverityPill>
+                  <span className="inline-flex items-center gap-1 text-muted-foreground">
+                    <CalendarDays className="h-3 w-3" />
+                    {formatDateRange(selectedPeriod.startDate, selectedPeriod.endDate)}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-muted-foreground">
+                    <MapPin className="h-3 w-3" />
+                    {regionCoverageLabel}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPrepStep(payrollReadiness.targetStep)}
+                    className={cn(
+                      'ml-auto inline-flex h-6 items-center gap-1.5 rounded-full px-3 text-[11px] font-medium transition',
+                      payrollReadiness.tone === 'green'
+                        ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                        : payrollReadiness.tone === 'blue'
+                          ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                          : 'bg-amber-600 text-white hover:bg-amber-700',
+                    )}
+                  >
+                    {payrollReadiness.actionLabel}
+                    <ChevronRight className="h-3 w-3" />
+                  </button>
                 </div>
-
-                {directoryError ? <p className="mt-2 text-xs text-destructive">{directoryError}</p> : null}
-                {workspaceError ? <p className="mt-2 text-xs text-destructive">{workspaceError}</p> : null}
+                {(directoryError || workspaceError) ? (
+                  <p className="mt-1 text-[11px] text-destructive">{directoryError || workspaceError}</p>
+                ) : null}
               </div>
 
-              {/* Step bar */}
-              <div className="flex items-center gap-0 border-b bg-muted/20 px-6 py-0">
+              {/* Sticky step nav */}
+              <div className="flex items-stretch gap-0 border-b bg-background px-2">
                 {STEPS.map((s, i) => {
                   const done = prepStep > s.step;
                   const active = prepStep === s.step;
@@ -1009,48 +1023,184 @@ export function PayrollPrepWorkspace({
                       {done ? (
                         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
                       ) : (
-                        <span className={cn('flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold', active ? 'bg-primary text-primary-foreground' : 'bg-muted-foreground/20 text-muted-foreground')}>
+                        <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold', active ? 'bg-primary text-primary-foreground' : 'bg-muted-foreground/20 text-muted-foreground')}>
                           {s.step}
                         </span>
                       )}
+                      <s.icon className="h-3.5 w-3.5 shrink-0" />
                       {s.label}
-                      {i < STEPS.length - 1 ? <span className="ml-4 text-muted-foreground/30">›</span> : null}
+                      {i < STEPS.length - 1 ? <span className="ml-3 text-muted-foreground/30">›</span> : null}
                     </button>
                   );
                 })}
               </div>
 
-              {/* ── STEP 1: Import Attendance ── */}
+              {/* ── STEP 1: Period overview ── */}
               {prepStep === 1 ? (
                 <div className="flex-1 overflow-y-auto">
-                  <div className="px-6 py-5 space-y-4">
-                    {/* Action bar */}
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-sm font-semibold">Import attendance data</h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {timesheets.length === 0
-                            ? `${payrollRoster.length} employees in this period`
-                            : payrollRoster.length > 0
-                              ? `${timesheets.length} of ${payrollRoster.length} employees have timesheets`
-                              : `${timesheets.length} timesheet${timesheets.length === 1 ? '' : 's'} imported (roster not loaded)`}
-                        </p>
+                  <div className="px-6 py-5 space-y-5">
+                    <KpiStrip cols={4}>
+                      <KpiCard icon={CalendarDays} label="Start date" value={formatDate(selectedPeriod.startDate)} />
+                      <KpiCard icon={CalendarDays} label="End date" value={formatDate(selectedPeriod.endDate)} />
+                      <KpiCard icon={Clock} label="Working days" value={countWorkingDays(selectedPeriod.startDate, selectedPeriod.endDate)} sub="Mon–Fri" />
+                      <KpiCard icon={Users} label="Target headcount" value={payrollRoster.length} tone={payrollRoster.length === 0 ? 'warn' : 'default'} sub="active contracts" />
+                    </KpiStrip>
+
+                    {payrollRoster.length === 0 && !directoryLoading ? (
+                      <ExceptionBanner
+                        tone="warn"
+                        icon={AlertTriangle}
+                        message="No active contracts matched this payroll scope. Verify region coverage or contract status."
+                        action={<button onClick={() => setPrepStep(2)} className="text-[11px] font-medium underline whitespace-nowrap">Check roster →</button>}
+                      />
+                    ) : null}
+
+                    {/* Readiness card */}
+                    <div className={cn(
+                      'rounded-2xl border p-4',
+                      payrollReadiness.tone === 'green' ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                      : payrollReadiness.tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900'
+                      : 'border-amber-200 bg-amber-50 text-amber-900',
+                    )}>
+                      <p className="text-[10px] font-semibold uppercase tracking-widest opacity-60">Next best action</p>
+                      <h3 className="mt-1.5 text-base font-semibold">{payrollReadiness.label}</h3>
+                      <p className="mt-1 text-sm opacity-80">{payrollReadiness.description}</p>
+                      <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+                        {[
+                          { label: 'Contracts', done: payrollRoster.length > 0, value: `${summary.rosterCount} active` },
+                          { label: 'Timesheets', done: rosterImportStats.pendingRosterCount === 0 && payrollRoster.length > 0, value: `${rosterImportStats.pendingRosterCount} pending` },
+                          { label: 'Payroll runs', done: runCoverageStats.pendingRunCount === 0 && timesheets.length > 0, value: `${runCoverageStats.pendingRunCount} pending` },
+                        ].map((item) => (
+                          <div key={item.label} className={cn('rounded-lg border p-3', payrollReadiness.tone === 'green' ? 'border-emerald-200 bg-emerald-50/50' : payrollReadiness.tone === 'blue' ? 'border-blue-200 bg-blue-50/50' : 'border-amber-200 bg-amber-50/50')}>
+                            <div className="flex items-center gap-1.5">
+                              {item.done ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <Clock className="h-3.5 w-3.5 opacity-50" />}
+                              <span className="font-medium">{item.label}</span>
+                            </div>
+                            <p className="mt-1 font-mono tabular-nums opacity-70">{item.value}</p>
+                          </div>
+                        ))}
                       </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => void bulkImportAll()}
-                          disabled={!!bulkProgress || payrollRoster.length === 0}
-                          className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-                        >
-                          <Clock className="h-3.5 w-3.5" />
-                          {bulkProgress ? `Importing ${bulkProgress.done}/${bulkProgress.total}…` : 'Import All from Attendance'}
-                        </button>
-                        <button
-                          onClick={() => setPrepStep(2)}
-                          className="inline-flex h-9 items-center gap-2 rounded-md border px-4 text-sm font-medium hover:bg-accent"
-                        >
-                          Enter manually
-                        </button>
+                    </div>
+
+                    {/* Period details */}
+                    <div className="rounded-xl border bg-card p-4 space-y-2.5">
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Period details</h3>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {[
+                          { label: 'Period name', value: buildPeriodHeadline(selectedPeriod, selectedRegionName) },
+                          { label: 'Pay date', value: formatDate(selectedPeriod.payDate) },
+                          { label: 'Region coverage', value: regionCoverageLabel },
+                          { label: 'Base pay exposure', value: formatCurrency(rosterOperationalStats.estimatedBaseSalary, rosterOperationalStats.currencyCode) },
+                          { label: 'Outlets covered', value: `${rosterOperationalStats.outletCount}` },
+                          { label: 'Primary contract type', value: rosterOperationalStats.topEmploymentType },
+                        ].map(({ label, value }) => (
+                          <div key={label} className="flex justify-between gap-3 text-xs py-1 border-b border-border/40 last:border-0">
+                            <span className="text-muted-foreground">{label}</span>
+                            <span className="font-medium text-right truncate">{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {selectedPeriod.note ? (
+                        <p className="text-xs text-muted-foreground italic border-t pt-2">Note: {selectedPeriod.note}</p>
+                      ) : null}
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => setPrepStep(2)}
+                        className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                      >
+                        Next: Review Roster →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ── STEP 2: Roster ── */}
+              {prepStep === 2 ? (
+                <div className="flex-1 overflow-y-auto">
+                  <div className="px-6 py-5 space-y-4">
+                    <KpiStrip cols={4}>
+                      <KpiCard icon={Users} label="Roster size" value={payrollRoster.length} />
+                      <KpiCard icon={UserCheck} label="Timesheets ready" value={rosterImportStats.importedRosterCount} tone={rosterImportStats.importedRosterCount > 0 ? 'success' : 'default'} />
+                      <KpiCard icon={Clock} label="Pending import" value={rosterImportStats.pendingRosterCount} tone={rosterImportStats.pendingRosterCount > 0 ? 'warn' : 'default'} />
+                      <KpiCard icon={ShieldCheck} label="Coverage" value={`${rosterImportStats.completionPercent}%`} sub="imported" tone={rosterImportStats.completionPercent === 100 ? 'success' : rosterImportStats.completionPercent > 50 ? 'warn' : 'critical'} />
+                    </KpiStrip>
+                    {/* Action bar */}
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+                      <div className="rounded-2xl border bg-background p-5 shadow-sm">
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Step 2 · Roster</p>
+                            <h3 className="mt-1 text-lg font-semibold">Import attendance for all employees</h3>
+                            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                              Pull approved shifts into timesheets for each employee in this payroll scope, then review and handle exceptions.
+                            </p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => void bulkImportAll()}
+                              disabled={!!bulkProgress || payrollRoster.length === 0}
+                              className="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 disabled:opacity-60"
+                            >
+                              <Clock className="h-4 w-4" />
+                              {bulkProgress ? `Importing ${bulkProgress.done}/${bulkProgress.total}` : 'Pull from Attendance'}
+                            </button>
+                            <button
+                              onClick={() => setPrepStep(3)}
+                              className="inline-flex h-10 items-center gap-2 rounded-full border bg-background px-4 text-sm font-medium hover:bg-accent"
+                            >
+                              Manual entry
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="mt-5">
+                          <div className="mb-2 flex items-center justify-between text-xs">
+                            <span className="font-medium">Timesheet coverage</span>
+                            <span className="text-muted-foreground">
+                              {rosterImportStats.importedRosterCount}/{summary.rosterCount} imported
+                            </span>
+                          </div>
+                          <div className="grid h-2 grid-cols-1 overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="rounded-full bg-primary transition-all duration-500"
+                              style={{ width: `${rosterImportStats.completionPercent}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border bg-muted/20 p-5">
+                        <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Payroll operator notes</p>
+                        <div className="mt-4 space-y-3 text-sm">
+                          <div className="flex items-start gap-3">
+                            <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
+                            <div>
+                              <p className="font-medium">{summary.rosterCount} active contracts matched</p>
+                              <p className="text-xs text-muted-foreground">{regionCoverageLabel} coverage</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            {rosterImportStats.pendingRosterCount === 0 && payrollRoster.length > 0 ? (
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
+                            ) : (
+                              <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-600" />
+                            )}
+                            <div>
+                              <p className="font-medium">{rosterImportStats.pendingRosterCount} employees without timesheets</p>
+                              <p className="text-xs text-muted-foreground">Use import first, then resolve missing rows manually.</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <ShieldCheck className="mt-0.5 h-4 w-4 text-primary" />
+                            <div>
+                              <p className="font-medium">{formatCurrency(rosterOperationalStats.estimatedBaseSalary, rosterOperationalStats.currencyCode)} base exposure</p>
+                              <p className="text-xs text-muted-foreground">Before deductions and overtime.</p>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -1070,37 +1220,136 @@ export function PayrollPrepWorkspace({
                       </div>
                     ) : null}
 
+                    {/* Roster filters */}
+                    {payrollRoster.length > 0 ? (
+                      <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-muted/20 px-3 py-2">
+                        <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                          <Filter className="h-3.5 w-3.5" />
+                          Filter:
+                        </div>
+                        <select
+                          value={filterOutletId}
+                          onChange={(e) => setFilterOutletId(e.target.value)}
+                          className="h-7 rounded-md border bg-background px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
+                        >
+                          <option value="">All outlets</option>
+                          {selectedRegionOutlets.map((o) => (
+                            <option key={o.id} value={o.id}>{o.code ? `${o.code} · ` : ''}{o.name}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={filterContractType}
+                          onChange={(e) => setFilterContractType(e.target.value)}
+                          className="h-7 rounded-md border bg-background px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
+                        >
+                          <option value="">All contract types</option>
+                          {availableContractTypes.map((type) => (
+                            <option key={type} value={type}>{formatHrEnumLabel(type)}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={filterPayrollStatus}
+                          onChange={(e) => setFilterPayrollStatus(e.target.value as 'all' | 'ready' | 'missing')}
+                          className="h-7 rounded-md border bg-background px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
+                        >
+                          <option value="all">All status</option>
+                          <option value="ready">Timesheet ready</option>
+                          <option value="missing">Needs import</option>
+                        </select>
+                        {(filterOutletId || filterContractType || filterPayrollStatus !== 'all') ? (
+                          <button
+                            onClick={() => { setFilterOutletId(''); setFilterContractType(''); setFilterPayrollStatus('all'); }}
+                            className="inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[11px] text-muted-foreground hover:bg-accent"
+                          >
+                            <X className="h-3 w-3" />
+                            Clear
+                          </button>
+                        ) : null}
+                        <span className="ml-auto text-[11px] text-muted-foreground">
+                          {filteredPayrollRoster.length !== payrollRoster.length
+                            ? `${filteredPayrollRoster.length} of ${payrollRoster.length} shown`
+                            : `${payrollRoster.length} employee${payrollRoster.length === 1 ? '' : 's'}`}
+                        </span>
+                      </div>
+                    ) : null}
+
                     {/* Roster table */}
-                    <div className="rounded-lg border overflow-hidden">
-                      <table className="w-full">
+                    <div className="overflow-x-auto rounded-2xl border bg-background shadow-sm">
+                      <table className="w-full min-w-[860px]">
                         <thead>
                           <tr className="border-b bg-muted/40">
-                            <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Employee</th>
-                            <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Code</th>
-                            <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Outlet</th>
-                            <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Contract type</th>
-                            <th className="px-4 py-2.5 text-left text-[11px] font-medium text-muted-foreground">Timesheet</th>
+                            <th className="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Employee</th>
+                            <th className="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Home outlet</th>
+                            <th className="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Contract</th>
+                            <th className="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Base pay</th>
+                            <th className="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Region</th>
+                            <th className="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Payroll status</th>
                           </tr>
                         </thead>
                         <tbody>
                           {payrollRoster.length === 0 ? (
-                            <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-muted-foreground">No employees in roster for this period</td></tr>
-                          ) : payrollRoster.map((entry) => {
+                            <tr>
+                              <td colSpan={6} className="px-4 py-12 text-center">
+                                <div className="mx-auto max-w-sm rounded-2xl border border-dashed bg-muted/20 p-6">
+                                  <Users className="mx-auto h-8 w-8 text-muted-foreground/60" />
+                                  <p className="mt-3 text-sm font-medium">No employees in this payroll scope</p>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    Add active contracts for {regionCoverageLabel}, or adjust region coverage, then reload payroll prep.
+                                  </p>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : filteredPayrollRoster.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                                No employees match the current filters.{' '}
+                                <button
+                                  onClick={() => { setFilterOutletId(''); setFilterContractType(''); setFilterPayrollStatus('all'); }}
+                                  className="text-primary hover:underline"
+                                >
+                                  Clear filters
+                                </button>
+                              </td>
+                            </tr>
+                          ) : filteredPayrollRoster.map((entry) => {
                             const has = timesheets.some((ts) => normalizeValue(ts.userId) === entry.userId);
                             return (
                               <tr key={entry.userId} className="border-b last:border-0 hover:bg-muted/20">
-                                <td className="px-4 py-2.5 text-sm font-medium">{entry.fullName}</td>
-                                <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{entry.employeeCode || '—'}</td>
-                                <td className="px-4 py-2.5 text-xs text-muted-foreground">{entry.outletLabels[0] || '—'}</td>
-                                <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatHrEnumLabel(entry.contract.employmentType)}</td>
-                                <td className="px-4 py-2.5">
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-3">
+                                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                                      {getInitials(entry.fullName)}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-medium">{entry.fullName}</p>
+                                      <p className="font-mono text-[11px] text-muted-foreground">{entry.employeeCode || shortHrRef(entry.userId)}</p>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="max-w-[220px] px-4 py-3 text-xs text-muted-foreground">
+                                  <p className="truncate">{entry.outletLabels[0] || 'No outlet assigned'}</p>
+                                </td>
+                                <td className="px-4 py-3 text-xs">
+                                  <p className="font-medium">{formatHrEnumLabel(entry.contract.employmentType)}</p>
+                                  <p className="text-muted-foreground">{formatHrEnumLabel(entry.contract.salaryType)}</p>
+                                </td>
+                                <td className="px-4 py-3 text-xs">
+                                  <p className="font-medium">{formatCurrency(entry.contract.baseSalary, entry.contract.currencyCode || 'VND')}</p>
+                                  <p className="text-muted-foreground">Monthly base</p>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <span className="inline-flex rounded-full border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                    {entry.contract.regionCode || '—'}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3">
                                   {has ? (
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200">
-                                      <CheckCircle2 className="h-3 w-3" /> Imported
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-medium text-emerald-700">
+                                      <CheckCircle2 className="h-3 w-3" /> Timesheet ready
                                     </span>
                                   ) : (
-                                    <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground border">
-                                      Pending
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-medium text-amber-700">
+                                      <Clock className="h-3 w-3" /> Needs import
                                     </span>
                                   )}
                                 </td>
@@ -1113,55 +1362,80 @@ export function PayrollPrepWorkspace({
 
                     <div className="flex justify-end">
                       <button
-                        onClick={() => setPrepStep(2)}
+                        onClick={() => setPrepStep(3)}
                         className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
                       >
-                        Next: Review Timesheets →
+                        Next: Timesheets →
                       </button>
                     </div>
                   </div>
                 </div>
               ) : null}
 
-              {/* ── STEP 2: Review Timesheets ── */}
-              {prepStep === 2 ? (
-                <Step2ReviewTimesheets
-                  timesheetRows={timesheetRows}
-                  payrollRoster={payrollRoster}
-                  timesheets={timesheets}
-                  workspaceLoading={workspaceLoading}
-                  busyKey={busyKey}
-                  selectedPeriod={selectedPeriod}
-                  timesheetForm={timesheetForm}
-                  setTimesheetForm={setTimesheetForm}
-                  selectedEmployee={selectedEmployee}
-                  selectedRegionOutlets={selectedRegionOutlets}
-                  usersById={usersById}
-                  outletsById={outletsById}
-                  summary={summary}
-                  createTimesheet={createTimesheet}
-                  importFromAttendance={importFromAttendance}
-                  onNext={() => setPrepStep(3)}
-                />
+              {/* ── STEP 3: Timesheets ── */}
+              {prepStep === 3 ? (
+                <div className="flex flex-col flex-1 overflow-hidden">
+                  <div className="px-6 py-4 border-b">
+                    <KpiStrip cols={4}>
+                      <KpiCard icon={Clock} label="Work hours" value={timesheetAggregates.totalWorkHours.toFixed(1)} sub="hrs captured" />
+                      <KpiCard icon={FileText} label="Timesheets" value={summary.timesheetCount} sub="included" tone={summary.timesheetCount > 0 ? 'success' : 'default'} />
+                      <KpiCard icon={TrendingUp} label="Overtime" value={timesheetAggregates.totalOvertimeHours.toFixed(1)} sub="hrs OT" tone={timesheetAggregates.totalOvertimeHours > 0 ? 'warn' : 'default'} />
+                      <KpiCard icon={UserCheck} label="Coverage" value={`${rosterImportStats.completionPercent}%`} sub="eligible roster" tone={rosterImportStats.completionPercent === 100 ? 'success' : 'default'} />
+                    </KpiStrip>
+                  </div>
+                  <Step2ReviewTimesheets
+                    timesheetRows={timesheetRows}
+                    payrollRoster={payrollRoster}
+                    timesheets={visibleTimesheets}
+                    workspaceLoading={workspaceLoading}
+                    busyKey={busyKey}
+                    selectedPeriod={selectedPeriod}
+                    timesheetForm={timesheetForm}
+                    setTimesheetForm={setTimesheetForm}
+                    selectedEmployee={selectedEmployee}
+                    selectedRegionOutlets={selectedRegionOutlets}
+                    usersById={usersById}
+                    outletsById={outletsById}
+                    summary={summary}
+                    createTimesheet={createTimesheet}
+                    importFromAttendance={importFromAttendance}
+                    onNext={() => setPrepStep(4)}
+                  />
+                </div>
               ) : null}
 
-              {/* ── STEP 3: Generate Runs ── */}
-              {prepStep === 3 ? (
-                <div className="flex-1 overflow-y-auto">
-                  <div className="grid xl:grid-cols-[380px_minmax(0,1fr)] h-full divide-x">
+              {/* ── STEP 4: Review & Lock ── */}
+              {prepStep === 4 ? (
+                <div className="flex flex-col flex-1 overflow-hidden">
+                  <div className="px-6 py-4 border-b space-y-4 shrink-0">
+                    <KpiStrip cols={4}>
+                      <KpiCard icon={Sparkles} label="Total runs" value={visibleRuns.length} />
+                      <KpiCard icon={FileText} label="Draft" value={summary.draftRuns} tone={summary.draftRuns > 0 ? 'warn' : 'default'} />
+                      <KpiCard icon={CheckCircle2} label="Approved" value={summary.approvedRuns} tone={summary.approvedRuns > 0 ? 'success' : 'default'} />
+                      <KpiCard icon={DollarSign} label="Net total" value={formatCurrency(netRunTotal.total, netRunTotal.currencyCode)} tone={netRunTotal.total > 0 ? 'default' : 'default'} />
+                    </KpiStrip>
+                    {availableRunTimesheets.length > 0 ? (
+                      <ExceptionBanner
+                        tone="info"
+                        icon={AlertTriangle}
+                        message={`${availableRunTimesheets.length} timesheet${availableRunTimesheets.length === 1 ? '' : 's'} without payroll runs`}
+                        action={
+                          <button
+                            onClick={() => void bulkGenerateAll()}
+                            disabled={!!bulkProgress}
+                            className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 text-[11px] font-medium text-primary-foreground disabled:opacity-60"
+                          >
+                            <Sparkles className="h-3.5 w-3.5" />
+                            {bulkProgress ? `${bulkProgress.done}/${bulkProgress.total}…` : `Generate All`}
+                          </button>
+                        }
+                      />
+                    ) : null}
+                  </div>
+                  <div className="grid xl:grid-cols-[380px_minmax(0,1fr)] flex-1 overflow-hidden divide-x">
                     {/* Left: generate run form */}
                     <div className="px-5 py-5 space-y-4 overflow-y-auto">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-semibold">Generate draft run</h3>
-                        <button
-                          onClick={() => void bulkGenerateAll()}
-                          disabled={!!bulkProgress || availableRunTimesheets.length === 0}
-                          className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                        >
-                          <Sparkles className="h-3 w-3" />
-                          {bulkProgress ? `${bulkProgress.done}/${bulkProgress.total}…` : `Generate All (${availableRunTimesheets.length})`}
-                        </button>
-                      </div>
+                      <h3 className="text-sm font-semibold">Generate draft run</h3>
 
                       {bulkProgress ? (
                         <div className="space-y-1">
@@ -1303,7 +1577,7 @@ export function PayrollPrepWorkspace({
                     <div className="flex flex-col overflow-hidden">
                       <div className="border-b px-5 py-3 flex items-center justify-between">
                         <div>
-                          <p className="text-sm font-semibold">Payroll runs ({runs.length})</p>
+                          <p className="text-sm font-semibold">Payroll runs ({visibleRuns.length})</p>
                           <p className="text-[11px] text-muted-foreground">{summary.draftRuns} draft · {summary.approvedRuns} approved</p>
                         </div>
                         <span className="text-xs text-muted-foreground">{availableRunTimesheets.length} pending</span>
@@ -1321,11 +1595,11 @@ export function PayrollPrepWorkspace({
                             </tr>
                           </thead>
                           <tbody>
-                            {workspaceLoading && runs.length === 0 ? (
+                            {workspaceLoading && visibleRuns.length === 0 ? (
                               <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-muted-foreground">Loading…</td></tr>
-                            ) : runs.length === 0 ? (
+                            ) : visibleRuns.length === 0 ? (
                               <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-muted-foreground">No runs yet</td></tr>
-                            ) : runs.map((run) => {
+                            ) : visibleRuns.map((run) => {
                               const runContract = contractsByUserId.get(String(run.userId));
                               return (
                                 <tr key={run.id} className="border-b last:border-0 hover:bg-muted/20">
@@ -1353,11 +1627,11 @@ export function PayrollPrepWorkspace({
                         </table>
                       </div>
                       {/* Runs summary footer */}
-                      {runs.length > 0 ? (
+                      {visibleRuns.length > 0 ? (
                         <div className="border-t px-5 py-2.5 flex items-center justify-between bg-background">
-                          <span className="text-[11px] text-muted-foreground">{runs.length} run(s)</span>
+                          <span className="text-[11px] text-muted-foreground">{visibleRuns.length} run(s)</span>
                           <span className="text-sm font-mono font-semibold">
-                            Total: {formatCurrency(runs.reduce((s, r) => s + toNumber(r.netSalary), 0), runs[0]?.currencyCode || 'VND')}
+                            Total: {formatCurrency(netRunTotal.total, netRunTotal.currencyCode)}
                           </span>
                         </div>
                       ) : null}

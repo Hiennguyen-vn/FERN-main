@@ -2,6 +2,16 @@ import { apiRequest, type PagedResponse } from '@/api/client';
 import { decodeArray, decodePaged } from '@/api/decoders';
 import { asDateOnly, asId, asNullableNumber, asNullableString, asRecord, asString } from '@/api/records';
 
+export interface VoidReason {
+  code: string;
+  label: string;
+  description: string | null;
+  requiresManagerApproval: boolean;
+  reversesInventory: boolean;
+  category: 'CUSTOMER' | 'OPERATIONAL' | 'COMPLIANCE' | 'FINANCIAL';
+  sortOrder: number;
+}
+
 export interface SaleLineItemView {
   productId?: string | null;
   note?: string | null;
@@ -555,8 +565,20 @@ export const salesApi = {
     apiRequest(`/api/v1/sales/orders/${saleId}/approve`, { method: 'POST', token }),
   markPaymentDone: async (token: string, saleId: string, payload: MarkPaymentDonePayload): Promise<unknown> =>
     apiRequest(`/api/v1/sales/orders/${saleId}/mark-payment-done`, { method: 'POST', token, body: payload }),
-  cancelOrder: async (token: string, saleId: string, payload?: { reason?: string | null }): Promise<unknown> =>
+  cancelOrder: async (
+    token: string,
+    saleId: string,
+    payload?: {
+      reason?: string | null;
+      reasonCode?: string | null;
+      managerUserId?: number | null;
+      managerPin?: string | null;
+      voidNote?: string | null;
+    },
+  ): Promise<unknown> =>
     apiRequest(`/api/v1/sales/orders/${saleId}/cancel`, { method: 'POST', token, body: payload ?? {} }),
+  listVoidReasons: async (token: string): Promise<VoidReason[]> =>
+    apiRequest('/api/v1/sales/void-reasons', { token }) as Promise<VoidReason[]>,
   posSessions: async (token: string, query: PosSessionsQuery): Promise<PagedResponse<PosSessionView>> =>
     decodePaged(await apiRequest('/api/v1/sales/pos-sessions', { token, query }), decodePosSession),
   openPosSession: async (token: string, payload: OpenPosSessionPayload): Promise<PosSessionView> =>
@@ -574,6 +596,8 @@ export const salesApi = {
     apiRequest(`/api/v1/sales/pos-sessions/${sessionId}/reconcile`, { method: 'POST', token, body: payload ?? {} }),
   orderingTables: async (token: string, outletId: string, status?: string): Promise<OrderingTableView[]> =>
     decodeArray(await apiRequest('/api/v1/sales/ordering-tables', { token, query: { outletId, status } }), decodeOrderingTable),
+  attachOrderingTable: async (token: string, saleId: string, tableId: string | number | null): Promise<unknown> =>
+    apiRequest(`/api/v1/sales/orders/${saleId}/ordering-table`, { method: 'POST', token, body: { tableId: tableId == null ? null : Number(tableId) } }),
   outletStats: async (token: string, outletId: string, onDate?: string): Promise<OutletStatsView> =>
     decodeOutletStats(await apiRequest('/api/v1/sales/outlet-stats', { token, query: { outletId, onDate } })),
   promotions: async (token: string, query: PromotionsQuery): Promise<PagedResponse<PromotionView>> =>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import {
   CalendarClock,
   Users,
@@ -39,7 +40,7 @@ export function SchedulingModule() {
   const [activeTab, setActiveTab] = useState<SchedulingTab>('shifts');
   const [busyKey, setBusyKey] = useState('');
 
-  const [dateFilter, setDateFilter] = useState(new Date().toISOString().slice(0, 10));
+  const [dateFilter, setDateFilter] = useState(todayLocalISO());
 
   const [shiftsLoading, setShiftsLoading] = useState(false);
   const [shiftsError, setShiftsError] = useState('');

@@ -40,6 +40,8 @@ import {
 } from '@/auth/authorization';
 import { useAuth } from '@/auth/use-auth';
 import type { PermissionState } from '@/types/shell';
+import { reportError } from '@/lib/report-error';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 type POSView =
@@ -139,7 +141,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
         });
         setProductNameById(next);
       } catch (error) {
-        console.error('Failed to load product names for POS orders', error);
+        reportError(error, 'pos.product-names.load');
       }
     };
     void loadProducts();
@@ -291,7 +293,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       mapped.forEach((o) => { detailMap[o.id] = o; });
       setOrdersMap(detailMap);
     } catch (error) {
-      console.error('Failed to load sale orders:', error);
+      reportError(error, 'pos.sale-orders.load');
       toast.error(getErrorMessage(error, 'Unable to load sale orders'));
       setOrders([]);
       setOrdersMap({});
@@ -313,7 +315,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       const mapped = await loadOrdersWithContext(page.items || [], context);
       mergeOrdersIntoState(mapped);
     } catch (error) {
-      console.error('Failed to load session orders:', error);
+      reportError(error, 'pos.session-orders.load');
       toast.error(getErrorMessage(error, 'Unable to load orders for this session'));
     } finally {
       setOrdersLoading(false);
@@ -349,7 +351,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       });
       setCustomers(page.items || []);
     } catch (error: unknown) {
-      console.error('POS customer load failed:', error);
+      reportError(error, 'pos.customers.load');
       setCustomers([]);
       setCustomersError(getErrorMessage(error, 'Unable to load customers'));
       setCustomersErrorState(resolveCapabilityState(error));
@@ -378,7 +380,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       const rows = await salesApi.orderingTables(token, scopedOutletId, status === 'all' ? undefined : status);
       setOrderingTables(Array.isArray(rows) ? rows : []);
     } catch (error: unknown) {
-      console.error('POS ordering tables load failed:', error);
+      reportError(error, 'pos.ordering-tables.load');
       setOrderingTables([]);
       setTablesError(getErrorMessage(error, 'Unable to load ordering tables'));
       setTablesErrorState(resolveCapabilityState(error));
@@ -476,6 +478,8 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     taxAmount: number,
     promoDiscount: number,
     paymentMethod: PaymentMethod,
+    paymentNote?: string,
+    totalCharged?: number,
   ): Promise<PaymentCompletionResult> => {
     if (!token) {
       const message = 'Please sign in first';
@@ -578,11 +582,16 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
         }
       }
 
+      const finalAmount = Number.isFinite(totalCharged) && (totalCharged ?? 0) > 0
+        ? totalCharged!
+        : (Number.isFinite(approvedTotal) ? approvedTotal : total);
       await salesApi.markPaymentDone(token, targetSaleId, {
         paymentMethod,
-        amount: Number.isFinite(approvedTotal) ? approvedTotal : total,
+        amount: finalAmount,
         paymentTime: new Date().toISOString(),
-        note: 'Captured from POS payment screen',
+        note: paymentNote && paymentNote.length > 0
+          ? `POS | ${paymentNote}`
+          : 'Captured from POS payment screen',
       });
 
       await fetchOrders();
@@ -590,21 +599,36 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       setView({ screen: 'session-detail', sessionId });
       return { ok: true };
     } catch (error: unknown) {
-      console.error('POS payment flow failed:', error);
+      reportError(error, 'pos.payment.complete');
       const message = getErrorMessage(error, 'Unable to create order/payment via backend APIs');
       toast.error(message);
       return { ok: false, errorMessage: message };
     }
   }, [fetchOrders, getOrder, getSession, scopedOutletId, token]);
 
-  const handleCancelOrder = useCallback(async (orderId: string, reason: string) => {
+  const handleCancelOrder = useCallback(async (
+    orderId: string,
+    payload: {
+      reason: string;
+      reasonCode?: string;
+      voidNote?: string;
+      managerPin?: string;
+      managerUserId?: number;
+    },
+  ) => {
     if (!token) {
       toast.error('Please sign in first');
       return;
     }
     const order = ordersMap[orderId] || orders.find((item) => item.id === orderId);
     try {
-      await salesApi.cancelOrder(token, orderId, { reason: reason.trim() || null });
+      await salesApi.cancelOrder(token, orderId, {
+        reason: payload.reason.trim() || null,
+        reasonCode: payload.reasonCode ?? null,
+        voidNote: payload.voidNote ?? null,
+        managerPin: payload.managerPin ?? null,
+        managerUserId: payload.managerUserId ?? null,
+      });
       toast.success('Order cancelled');
       await fetchOrders();
       if (order?.sessionId) {
@@ -785,7 +809,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
         subtotal={view.subtotal}
         taxAmount={view.taxAmount}
         onBack={() => setView({ screen: 'session-detail', sessionId: view.sessionId })}
-        onComplete={(paymentMethod) => {
+        onComplete={(payload) => {
           return handlePaymentComplete(
             view.sessionId,
             view.orderId,
@@ -795,7 +819,9 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
             view.subtotal,
             view.taxAmount,
             view.promoDiscount,
-            paymentMethod,
+            payload.paymentMethod,
+            payload.note,
+            payload.totalCharged,
           );
         }}
       />
@@ -809,8 +835,8 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       <CancelOrder
         order={order}
         onBack={() => setView({ screen: 'order-detail', orderId: order.id })}
-        onConfirm={(reason) => {
-          void handleCancelOrder(order.id, reason);
+        onConfirm={(payload) => {
+          void handleCancelOrder(order.id, payload);
         }}
       />
     );
@@ -1047,6 +1073,19 @@ function POSTablesScreen({
     }
   };
 
+  const grouped = useMemo(() => {
+    const buckets = new Map<string, OrderingTableView[]>();
+    for (const t of tables) {
+      const code = String(t.tableCode || t.code || '?');
+      // Section = leading alpha prefix or '#' for numeric-only.
+      const m = /^([A-Za-z]+)/.exec(code);
+      const section = m ? m[1].toUpperCase() : '#';
+      if (!buckets.has(section)) buckets.set(section, []);
+      buckets.get(section)!.push(t);
+    }
+    return Array.from(buckets.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [tables]);
+
   return (
     <div className="p-6 space-y-4 animate-fade-in">
       <button onClick={onBack} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
@@ -1089,41 +1128,47 @@ function POSTablesScreen({
             description="No ordering-table links were returned for the current outlet and status filter."
           />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted/30">
-                  {['Table', 'Status', 'Outlet', 'Public Route', 'Action'].map((header) => (
-                    <th key={header} className="text-left text-[11px] px-4 py-2.5">{header}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {tables.map((table: OrderingTableView) => (
-                  <tr key={String(table.tableToken)} className="border-b last:border-0">
-                    <td className="px-4 py-2.5 text-xs">
-                      {String(table.tableName || table.name || table.tableCode || table.code || '—')}
-                      <span className="text-muted-foreground"> · {String(table.tableCode || table.code || '—')}</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(table.status || '—')}</td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(table.outletName || table.outletCode || table.outletId || '—')}</td>
-                    <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground">{`/order/${String(table.tableToken || '')}`}</td>
-                    <td className="px-4 py-2.5">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-[10px]"
-                        onClick={() => {
-                          void copyPublicPath(String(table.tableToken || ''));
-                        }}
+          <div className="space-y-4">
+            {grouped.map(([section, sectionTables]) => (
+              <div key={section} className="border rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-muted/30 flex items-center justify-between">
+                  <span className="text-xs font-semibold">Khu {section}</span>
+                  <span className="text-[10px] text-muted-foreground">{sectionTables.length} bàn</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 p-3">
+                  {sectionTables.map((table) => {
+                    const status = String(table.status || 'unknown').toLowerCase();
+                    const code = String(table.tableCode || table.code || '—');
+                    const name = String(table.tableName || table.name || code);
+                    return (
+                      <div
+                        key={String(table.tableToken || table.id)}
+                        className={cn(
+                          'rounded-md border p-2 flex flex-col gap-1 text-xs',
+                          status === 'active' ? 'border-emerald-300 bg-emerald-50/40' : 'border-border bg-muted/20',
+                        )}
                       >
-                        Copy Route
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold">{code}</span>
+                          <span className={cn('text-[9px] px-1 rounded font-medium uppercase',
+                            status === 'active' ? 'bg-emerald-200 text-emerald-900' : 'bg-muted text-muted-foreground',
+                          )}>
+                            {status}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground truncate">{name}</span>
+                        <button
+                          onClick={() => { void copyPublicPath(String(table.tableToken || '')); }}
+                          className="text-[10px] text-primary underline self-start"
+                        >
+                          Copy URL
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

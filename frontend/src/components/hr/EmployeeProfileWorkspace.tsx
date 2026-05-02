@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import {
   Search, User, FileText, DollarSign, Clock,
   Eye, X, Phone, Mail, MapPin, Calendar, Briefcase, CreditCard,
+  Users, UserPlus, UserMinus, AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -24,6 +26,17 @@ import {
   shortHrRef,
 } from '@/components/hr/hr-display';
 import { ContractTimeline } from '@/components/hr/ContractTimeline';
+import {
+  ExceptionBanner,
+  FilterBar,
+  KpiCard,
+  KpiStrip,
+  SegmentChip,
+  SegmentChipRow,
+  SeverityPill,
+  WorkspaceHeader,
+  getInitials,
+} from '@/components/hr/hr-primitives';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
 import {
   Dialog,
@@ -254,7 +267,9 @@ export function EmployeeProfileWorkspace({
 }: EmployeeProfileWorkspaceProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [contractFilter, setContractFilter] = useState<'all' | 'active' | 'none'>('all');
+  const [segment, setSegment] = useState<'all' | 'active' | 'no_contract' | 'inactive'>('all');
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Data for selected employee
   const [contracts, setContracts] = useState<ContractView[]>([]);
@@ -279,11 +294,37 @@ export function EmployeeProfileWorkspace({
           (e.email || '').toLowerCase().includes(lower);
         if (!match) return false;
       }
-      if (contractFilter === 'active') return Boolean(e.activeContract);
-      if (contractFilter === 'none') return !e.activeContract;
-      return true;
+      if (contractFilter === 'active' && !e.activeContract) return false;
+      if (contractFilter === 'none' && e.activeContract) return false;
+      const status = String(e.status || '').toLowerCase();
+      switch (segment) {
+        case 'active': return status === 'active' && Boolean(e.activeContract);
+        case 'no_contract': return !e.activeContract;
+        case 'inactive': return status !== 'active' && status !== '';
+        default: return true;
+      }
     });
-  }, [hrEmployees, searchTerm, contractFilter]);
+  }, [hrEmployees, searchTerm, contractFilter, segment]);
+
+  const employeeCounts = useMemo(() => {
+    let active = 0;
+    let noContract = 0;
+    let inactive = 0;
+    let newThisMonth = 0;
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    for (const e of hrEmployees) {
+      const status = String(e.status || '').toLowerCase();
+      if (status === 'active' && e.activeContract) active++;
+      if (!e.activeContract) noContract++;
+      if (status && status !== 'active') inactive++;
+      if (e.createdAt) {
+        const created = new Date(e.createdAt);
+        if (Number.isFinite(created.getTime()) && created >= monthStart) newThisMonth++;
+      }
+    }
+    return { all: hrEmployees.length, active, noContract, inactive, newThisMonth };
+  }, [hrEmployees]);
 
   const loadEmployeeData = useCallback(async (userId: string) => {
     if (!token) return;
@@ -304,7 +345,7 @@ export function EmployeeProfileWorkspace({
           userId,
           outletId: scopeOutletId || undefined,
           startDate: new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10),
-          endDate: new Date().toISOString().slice(0, 10),
+          endDate: todayLocalISO(),
           limit: 200,
           offset: 0,
         }),
@@ -351,287 +392,288 @@ export function EmployeeProfileWorkspace({
   const selectedEmployee = selectedUserId ? hrEmployeesById.get(selectedUserId) : null;
   const activeContract = contracts.find((c) => String(c.status || '').toLowerCase() === 'active');
 
+  const openDrawer = (userId: string) => {
+    setSelectedUserId(userId);
+    setDrawerOpen(true);
+  };
+
   return (
-    <div className="flex flex-col md:flex-row gap-4 h-full">
-      {/* Mobile employee selector — visible only on small screens */}
-      <div className="md:hidden w-full px-1 pb-2">
-        <select
-          className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs"
-          value={selectedUserId || ''}
-          onChange={(e) => setSelectedUserId(e.target.value || null)}
-        >
-          <option value="">— Select employee —</option>
-          {filteredEmployees.map((emp) => (
-            <option key={emp.id} value={emp.id}>{emp.fullName || emp.username} {emp.employeeCode ? `(${emp.employeeCode})` : ''}</option>
-          ))}
-        </select>
-      </div>
+    <div className="space-y-5">
+      <WorkspaceHeader
+        title="Employees"
+        subtitle="Roster, contracts, payroll, and attendance per employee."
+      />
 
-      {/* Employee list — left panel (hidden on mobile) */}
-      <div className="hidden md:flex w-72 flex-shrink-0 surface-elevated flex-col">
-        <div className="p-3 border-b">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <input
-              className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-3 text-xs"
-              placeholder="Search employees..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <div className="flex items-center justify-between mt-1.5">
-            <p className="text-[10px] text-muted-foreground">{filteredEmployees.length} employees</p>
-            <select
-              className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
-              value={contractFilter}
-              onChange={(e) => setContractFilter(e.target.value as 'all' | 'active' | 'none')}
-            >
-              <option value="all">All</option>
-              <option value="active">Active contract</option>
-              <option value="none">No contract</option>
-            </select>
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {usersError ? (
-            <div className="p-3">
-              <div className="p-3 rounded-md bg-amber-50 border border-amber-200">
-                <p className="text-xs text-amber-800">{usersError}</p>
-              </div>
-            </div>
-          ) : null}
-          {filteredEmployees.map((emp) => (
+      {usersError ? (
+        <ExceptionBanner tone="warn" icon={AlertTriangle} message={<span>{usersError}</span>} />
+      ) : null}
+
+      {employeeCounts.noContract > 0 ? (
+        <ExceptionBanner
+          tone="warn"
+          icon={AlertTriangle}
+          message={
+            <>
+              <span className="font-medium">{employeeCounts.noContract} employee{employeeCounts.noContract === 1 ? '' : 's'}</span> without an active contract.
+            </>
+          }
+          action={
             <button
-              key={emp.id}
-              onClick={() => setSelectedUserId(emp.id)}
-              className={cn(
-                'w-full text-left px-3 py-2.5 border-b border-border/50 hover:bg-accent/50 transition-colors',
-                selectedUserId === emp.id ? 'bg-primary/5 border-l-2 border-l-primary' : '',
-              )}
+              type="button"
+              onClick={() => setSegment('no_contract')}
+              className="inline-flex h-7 items-center rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 text-[11px] font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
             >
-              <div className="flex items-center gap-2.5">
-                <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
-                  <User className="h-3.5 w-3.5 text-muted-foreground" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium truncate">{emp.fullName || emp.username}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{emp.employeeCode || emp.email || emp.username}</p>
-                  {emp.activeContract ? (
-                    <p className="text-[10px] text-emerald-600 truncate">{formatHrEnumLabel(emp.activeContract.employmentType)} · {formatHrEnumLabel(emp.activeContract.salaryType)}</p>
-                  ) : (
-                    <p className="text-[10px] text-amber-600">No active contract</p>
-                  )}
-                </div>
-              </div>
+              Review
             </button>
-          ))}
+          }
+        />
+      ) : null}
+
+      <KpiStrip cols={4}>
+        <KpiCard icon={Users} label="Headcount" value={employeeCounts.all} />
+        <KpiCard icon={UserPlus} label="Active" value={employeeCounts.active} tone="success" />
+        <KpiCard icon={UserMinus} label="No contract" value={employeeCounts.noContract} tone={employeeCounts.noContract > 0 ? 'warn' : 'default'} />
+        <KpiCard icon={Calendar} label="New this month" value={employeeCounts.newThisMonth} />
+      </KpiStrip>
+
+      <FilterBar>
+        <div className="relative w-full max-w-xs">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            className="h-8 w-full rounded-md border border-input bg-background pl-9 pr-3 text-xs"
+            placeholder="Search by name, code, email"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
         </div>
-      </div>
+        <select
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+          value={contractFilter}
+          onChange={(e) => setContractFilter(e.target.value as 'all' | 'active' | 'none')}
+        >
+          <option value="all">All contracts</option>
+          <option value="active">Active contract</option>
+          <option value="none">No contract</option>
+        </select>
+      </FilterBar>
 
-      {/* Employee detail — right panel */}
-      <div className="flex-1 overflow-y-auto space-y-4">
-        {!selectedUserId ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <User className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">Select an employee to view their profile</p>
-            </div>
+      <SegmentChipRow>
+        <SegmentChip label="All" count={employeeCounts.all} active={segment === 'all'} onClick={() => setSegment('all')} />
+        <SegmentChip label="Active" count={employeeCounts.active} active={segment === 'active'} tone="success" onClick={() => setSegment('active')} />
+        <SegmentChip label="No contract" count={employeeCounts.noContract} active={segment === 'no_contract'} tone="warn" onClick={() => setSegment('no_contract')} />
+        <SegmentChip label="Inactive" count={employeeCounts.inactive} active={segment === 'inactive'} onClick={() => setSegment('inactive')} />
+      </SegmentChipRow>
+
+      {/* Roster list */}
+      {filteredEmployees.length === 0 ? (
+        <div className="rounded-md border border-dashed border-border bg-card/40 px-6 py-12 text-center">
+          <User className="mx-auto h-6 w-6 text-muted-foreground/60" />
+          <p className="mt-3 text-sm font-medium text-foreground">No employees match this view</p>
+          <p className="mt-1 text-xs text-muted-foreground">Try a different segment or clear filters.</p>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-border/60 bg-card">
+          <div className="grid grid-cols-[40px_minmax(0,2fr)_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-3 border-b border-border/60 bg-muted/30 px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+            <span></span>
+            <span>Name</span>
+            <span className="hidden sm:block">Active contract</span>
+            <span className="hidden md:block">Email / phone</span>
+            <span>Status</span>
+            <span></span>
           </div>
-        ) : loading ? (
-          <div className="surface-elevated p-4">
-            <ListTableSkeleton columns={4} rows={3} />
-          </div>
-        ) : (
-          <>
-            {/* Employee header */}
-            <div className="surface-elevated p-4">
-              <div className="flex items-center gap-3">
-                <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-                  <User className="h-6 w-6 text-muted-foreground" />
+          {filteredEmployees.map((emp) => {
+            const status = String(emp.status || '').toLowerCase();
+            const tone = status === 'active' && emp.activeContract ? 'active' : (!emp.activeContract ? 'expiring' : 'neutral');
+            return (
+              <button
+                key={emp.id}
+                type="button"
+                onClick={() => openDrawer(emp.id)}
+                className="grid w-full grid-cols-[40px_minmax(0,2fr)_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-3 border-b border-border/40 px-4 py-2.5 text-left transition-colors last:border-0 hover:bg-accent/40"
+              >
+                <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/15">
+                  <span className="text-xs font-semibold tracking-tight text-primary">{getInitials(emp.fullName || emp.username)}</span>
                 </div>
-                <div className="flex-1">
-                  <h2 className="text-lg font-semibold">{selectedEmployee?.fullName || selectedEmployee?.username || 'Employee'}</h2>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {selectedEmployee?.employeeCode ? <span className="font-mono">{selectedEmployee.employeeCode}</span> : null}
-                    {selectedEmployee?.email ? <span>· {selectedEmployee.email}</span> : null}
-                    {selectedEmployee?.phone ? <span>· {selectedEmployee.phone}</span> : null}
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    {selectedEmployee?.status ? (
-                      <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium',
-                        selectedEmployee.status === 'active' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-muted text-muted-foreground border-border',
-                      )}>{formatHrEnumLabel(selectedEmployee.status)}</span>
-                    ) : null}
-                    {selectedEmployee?.gender ? <span className="text-[10px] text-muted-foreground">{formatHrEnumLabel(selectedEmployee.gender)}</span> : null}
-                    {selectedEmployee?.dob ? <span className="text-[10px] text-muted-foreground">· Born {formatDate(selectedEmployee.dob)}</span> : null}
-                  </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-foreground">{emp.fullName || emp.username}</p>
+                  <p className="truncate font-mono text-[10px] text-muted-foreground">{emp.employeeCode || emp.username}</p>
                 </div>
-                {/* View full profile button */}
-                <button
-                  onClick={() => setProfileSheetOpen(true)}
-                  className="h-8 px-3 rounded-md border text-xs hover:bg-accent flex items-center gap-1.5 flex-shrink-0"
-                >
-                  <Eye className="h-3.5 w-3.5" /> View Profile
-                </button>
-              </div>
-            </div>
-
-            {/* Quick stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="surface-elevated p-3">
-                <div className="flex items-center gap-1 mb-1">
-                  <FileText className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Contracts</span>
-                </div>
-                <p className="text-lg font-semibold">{contracts.length}</p>
-                {activeContract ? (
-                  <p className="text-[10px] text-emerald-600">{formatHrEnumLabel(activeContract.employmentType)}</p>
-                ) : (
-                  <p className="text-[10px] text-amber-600">No active contract</p>
-                )}
-              </div>
-              <div className="surface-elevated p-3">
-                <div className="flex items-center gap-1 mb-1">
-                  <DollarSign className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Payroll Runs</span>
-                </div>
-                <p className="text-lg font-semibold">{payrollRuns.length}</p>
-                {payrollRuns[0] ? (
-                  <p className="text-[10px] text-muted-foreground">Last: {formatCurrency(payrollRuns[0].netSalary, String(payrollRuns[0].currencyCode || 'USD'))}</p>
-                ) : null}
-              </div>
-              <div className="surface-elevated p-3">
-                <div className="flex items-center gap-1 mb-1">
-                  <Clock className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Attendance (30d)</span>
-                </div>
-                <p className="text-lg font-semibold">{attendanceSummary.total}</p>
-                <p className="text-[10px] text-muted-foreground">
-                  {attendanceSummary.present} present, {attendanceSummary.late} late
-                </p>
-              </div>
-              <div className="surface-elevated p-3">
-                <div className="flex items-center gap-1 mb-1">
-                  <DollarSign className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Current Salary</span>
-                </div>
-                <p className="text-lg font-semibold">
-                  {activeContract ? formatCurrency(activeContract.baseSalary, String(activeContract.currencyCode || 'USD')) : '—'}
-                </p>
-                {activeContract ? (
-                  <p className="text-[10px] text-muted-foreground">{formatHrEnumLabel(activeContract.salaryType)}</p>
-                ) : null}
-              </div>
-            </div>
-
-            {/* Contract timeline + list */}
-            {contracts.length > 0 ? (
-              <div className="surface-elevated p-4">
-                <h3 className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                  Contract History
-                </h3>
-                <ContractTimeline contracts={contracts} />
-
-                <div className="mt-4 space-y-0">
-                  {contracts.map((c) => {
-                    const cStatus = String(c.status || 'unknown').toLowerCase();
-                    return (
-                      <div
-                        key={String(c.id)}
-                        className="flex items-center justify-between py-2.5 border-b last:border-0 hover:bg-muted/20 cursor-pointer transition-colors rounded-sm px-1"
-                        onClick={() => setSelectedContractDetail(c)}
-                      >
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium">{shortHrRef(c.id)}</span>
-                            <span className={cn('text-[9px] px-1.5 py-0.5 rounded-full border font-medium', contractBadgeClass(cStatus))}>
-                              {formatHrEnumLabel(cStatus)}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-muted-foreground">
-                            {formatHrEnumLabel(c.employmentType)} · {formatDate(c.startDate)} — {formatDate(c.endDate)}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-mono">{formatCurrency(c.baseSalary, String(c.currencyCode || 'USD'))}</span>
-                          <Eye className="h-3.5 w-3.5 text-muted-foreground" />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-
-            {/* Payroll history */}
-            {payrollRuns.length > 0 ? (
-              <div className="surface-elevated p-4">
-                <h3 className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-                  <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
-                  Payroll History
-                </h3>
-                <div className="space-y-0">
-                  {payrollRuns.slice(0, 10).map((run) => {
-                    const rStatus = String(run.status || 'unknown').toLowerCase();
-                    return (
-                      <div key={String(run.id)} className="flex items-center justify-between py-2 border-b last:border-0">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium">{run.payrollPeriodName || shortHrRef(run.id)}</span>
-                            <span className={cn('text-[9px] px-1.5 py-0.5 rounded-full border font-medium', payrollBadgeClass(rStatus))}>
-                              {formatHrEnumLabel(rStatus)}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-muted-foreground">
-                            Base: {formatCurrency(run.baseSalaryAmount, String(run.currencyCode || 'USD'))}
-                            {run.approvedAt ? ` · Approved ${formatDate(run.approvedAt)}` : ''}
-                          </p>
-                        </div>
-                        <span className="text-sm font-mono font-semibold">
-                          {formatCurrency(run.netSalary, String(run.currencyCode || 'USD'))}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  {payrollRuns.length > 10 ? (
-                    <p className="text-[10px] text-muted-foreground pt-2">+{payrollRuns.length - 10} more runs</p>
+                <div className="hidden min-w-0 sm:block">
+                  {emp.activeContract ? (
+                    <p className="truncate text-xs text-foreground">
+                      {formatHrEnumLabel(emp.activeContract.employmentType)} · {formatHrEnumLabel(emp.activeContract.salaryType)}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">No active contract</p>
+                  )}
+                  {emp.activeContract ? (
+                    <p className="truncate font-mono text-[10px] text-muted-foreground">
+                      {formatCurrency(emp.activeContract.baseSalary, String(emp.activeContract.currencyCode || 'USD'))}
+                    </p>
                   ) : null}
                 </div>
-              </div>
-            ) : null}
-
-            {/* Attendance summary */}
-            {attendanceSummary.total > 0 ? (
-              <div className="surface-elevated p-4">
-                <h3 className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-                  <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-                  Attendance Summary (Last 30 Days)
-                </h3>
-                <div className="flex gap-3">
-                  {([
-                    { label: 'Present', value: attendanceSummary.present, cls: 'text-emerald-600 bg-emerald-50' },
-                    { label: 'Late', value: attendanceSummary.late, cls: 'text-amber-600 bg-amber-50' },
-                    { label: 'Absent', value: attendanceSummary.absent, cls: 'text-rose-600 bg-rose-50' },
-                  ]).map((stat) => (
-                    <div key={stat.label} className={cn('flex-1 rounded-md p-3 text-center', stat.cls)}>
-                      <p className="text-2xl font-bold">{stat.value}</p>
-                      <p className="text-[10px] font-medium">{stat.label}</p>
-                    </div>
-                  ))}
+                <div className="hidden min-w-0 md:block">
+                  {emp.email ? <p className="truncate text-xs text-muted-foreground">{emp.email}</p> : null}
+                  {emp.phone ? <p className="truncate font-mono text-[10px] text-muted-foreground">{emp.phone}</p> : null}
                 </div>
-                <div className="mt-3 h-2 rounded-full bg-muted overflow-hidden flex">
-                  <div className="bg-emerald-400 transition-all" style={{ width: `${(attendanceSummary.present / attendanceSummary.total) * 100}%` }} />
-                  <div className="bg-amber-400 transition-all" style={{ width: `${(attendanceSummary.late / attendanceSummary.total) * 100}%` }} />
-                  <div className="bg-rose-400 transition-all" style={{ width: `${(attendanceSummary.absent / attendanceSummary.total) * 100}%` }} />
-                </div>
-              </div>
-            ) : null}
-          </>
-        )}
-      </div>
+                <SeverityPill tone={tone}>
+                  {emp.status ? formatHrEnumLabel(emp.status) : 'Unknown'}
+                </SeverityPill>
+                <Eye className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+              </button>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Employee profile popup */}
+      {/* Employee detail drawer */}
+      <Sheet open={drawerOpen} onOpenChange={(v) => { if (!v) { setDrawerOpen(false); setSelectedUserId(null); } }}>
+        <SheetContent side="right" className="w-full sm:max-w-2xl flex flex-col p-0">
+          {selectedEmployee ? (
+            <>
+              <SheetHeader className="border-b border-border/60 p-5">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/15">
+                    <span className="text-sm font-semibold tracking-tight text-primary">{getInitials(selectedEmployee.fullName || selectedEmployee.username)}</span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <SheetTitle className="text-base">{selectedEmployee.fullName || selectedEmployee.username}</SheetTitle>
+                    <SheetDescription className="font-mono text-[11px]">
+                      {selectedEmployee.employeeCode || selectedEmployee.username}
+                      {selectedEmployee.email ? ` · ${selectedEmployee.email}` : ''}
+                    </SheetDescription>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setProfileSheetOpen(true)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent"
+                  >
+                    <Eye className="h-3.5 w-3.5" /> Full profile
+                  </button>
+                </div>
+              </SheetHeader>
+
+              <div className="flex-1 space-y-5 overflow-y-auto p-5">
+                {loading ? (
+                  <ListTableSkeleton columns={4} rows={3} />
+                ) : (
+                  <>
+                    {/* Quick KPI */}
+                    <KpiStrip cols={4}>
+                      <KpiCard icon={FileText} label="Contracts" value={contracts.length} sub={activeContract ? formatHrEnumLabel(activeContract.employmentType) : 'none active'} tone={activeContract ? 'success' : 'warn'} />
+                      <KpiCard icon={DollarSign} label="Payroll runs" value={payrollRuns.length} />
+                      <KpiCard icon={Clock} label="Attendance 30d" value={attendanceSummary.total} sub={`${attendanceSummary.present} present`} />
+                      <KpiCard
+                        icon={DollarSign}
+                        label="Current salary"
+                        value={activeContract ? formatCurrency(activeContract.baseSalary, String(activeContract.currencyCode || 'USD')) : '—'}
+                        sub={activeContract ? formatHrEnumLabel(activeContract.salaryType) : undefined}
+                        tone={activeContract ? 'default' : 'warn'}
+                      />
+                    </KpiStrip>
+
+                    {/* Contracts */}
+                    {contracts.length > 0 ? (
+                      <section className="rounded-md border border-border/60 bg-card">
+                        <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
+                          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Contract history</span>
+                          <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{contracts.length}</span>
+                        </div>
+                        <div className="px-4 py-3">
+                          <ContractTimeline contracts={contracts} />
+                        </div>
+                        <div className="border-t border-border/60">
+                          {contracts.map((c, idx) => {
+                            const cStatus = String(c.status || 'unknown').toLowerCase();
+                            return (
+                              <button
+                                key={String(c.id)}
+                                type="button"
+                                onClick={() => setSelectedContractDetail(c)}
+                                className={cn(
+                                  'flex w-full items-center gap-3 px-4 py-2.5 text-left text-xs transition-colors hover:bg-accent/40',
+                                  idx > 0 ? 'border-t border-border/40' : '',
+                                )}
+                              >
+                                <span className="font-mono text-[10px] text-muted-foreground">#{shortHrRef(c.id)}</span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-medium text-foreground">{formatHrEnumLabel(c.employmentType)} · {formatHrEnumLabel(c.salaryType)}</p>
+                                  <p className="truncate font-mono text-[10px] text-muted-foreground">{formatDate(c.startDate)} — {formatDate(c.endDate)}</p>
+                                </div>
+                                <span className="font-mono text-xs tabular-nums text-foreground">{formatCurrency(c.baseSalary, String(c.currencyCode || 'USD'))}</span>
+                                <SeverityPill tone={cStatus === 'active' ? 'active' : cStatus === 'terminated' ? 'locked' : cStatus === 'expired' ? 'expired' : 'neutral'}>
+                                  {formatHrEnumLabel(cStatus)}
+                                </SeverityPill>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {/* Payroll history */}
+                    {payrollRuns.length > 0 ? (
+                      <section className="rounded-md border border-border/60 bg-card">
+                        <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
+                          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Payroll history</span>
+                          <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{payrollRuns.length}</span>
+                        </div>
+                        <div>
+                          {payrollRuns.slice(0, 10).map((run, idx) => {
+                            const rStatus = String(run.status || 'unknown').toLowerCase();
+                            return (
+                              <div key={String(run.id)} className={cn('flex items-center gap-3 px-4 py-2.5 text-xs', idx > 0 ? 'border-t border-border/40' : '')}>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-medium text-foreground">{run.payrollPeriodName || shortHrRef(run.id)}</p>
+                                  <p className="truncate font-mono text-[10px] text-muted-foreground">
+                                    Base {formatCurrency(run.baseSalaryAmount, String(run.currencyCode || 'USD'))}
+                                    {run.approvedAt ? ` · Approved ${formatDate(run.approvedAt)}` : ''}
+                                  </p>
+                                </div>
+                                <span className="font-mono text-sm tabular-nums font-semibold text-foreground">
+                                  {formatCurrency(run.netSalary, String(run.currencyCode || 'USD'))}
+                                </span>
+                                <SeverityPill tone={rStatus === 'paid' || rStatus === 'approved' ? 'active' : rStatus === 'draft' ? 'draft' : rStatus === 'failed' ? 'expired' : 'neutral'}>
+                                  {formatHrEnumLabel(rStatus)}
+                                </SeverityPill>
+                              </div>
+                            );
+                          })}
+                          {payrollRuns.length > 10 ? (
+                            <p className="border-t border-border/40 px-4 py-2 font-mono text-[10px] text-muted-foreground">+{payrollRuns.length - 10} more runs</p>
+                          ) : null}
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {/* Attendance */}
+                    {attendanceSummary.total > 0 ? (
+                      <section className="rounded-md border border-border/60 bg-card p-4">
+                        <div className="mb-3 flex items-center justify-between">
+                          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Attendance · last 30 days</span>
+                          <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{attendanceSummary.total} shifts</span>
+                        </div>
+                        <KpiStrip cols={3}>
+                          <KpiCard icon={Clock} label="Present" value={attendanceSummary.present} tone="success" />
+                          <KpiCard icon={Clock} label="Late" value={attendanceSummary.late} tone={attendanceSummary.late > 0 ? 'warn' : 'default'} />
+                          <KpiCard icon={Clock} label="Absent" value={attendanceSummary.absent} tone={attendanceSummary.absent > 0 ? 'critical' : 'default'} />
+                        </KpiStrip>
+                        <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-muted">
+                          <div className="bg-emerald-500 transition-all" style={{ width: `${(attendanceSummary.present / attendanceSummary.total) * 100}%` }} />
+                          <div className="bg-amber-500 transition-all" style={{ width: `${(attendanceSummary.late / attendanceSummary.total) * 100}%` }} />
+                          <div className="bg-destructive transition-all" style={{ width: `${(attendanceSummary.absent / attendanceSummary.total) * 100}%` }} />
+                        </div>
+                      </section>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            </>
+          ) : null}
+        </SheetContent>
+      </Sheet>
+
+      {/* Employee profile dialog */}
       <EmployeeDetailSheet
         employee={selectedEmployee ?? null}
         open={profileSheetOpen}

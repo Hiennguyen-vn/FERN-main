@@ -1,3 +1,4 @@
+import { todayLocalISO } from '@/lib/date-format';
 import type {
   AuthScopeView,
   AuthUserListItem,
@@ -24,7 +25,7 @@ function normalizeValue(value: string | number | null | undefined) {
 
 export function inferPeriodWindowState(
   period?: Pick<PayrollPeriodView, 'startDate' | 'endDate'> | null,
-  today = new Date().toISOString().slice(0, 10),
+  today = todayLocalISO(),
 ): PeriodWindowState {
   if (!period?.startDate || !period?.endDate) {
     return 'planned';
@@ -66,24 +67,60 @@ export function periodWindowLabel(state: PeriodWindowState) {
 
 export function collectRegionScopeIds(regions: ScopeRegion[], rootRegionId: string) {
   const root = normalizeValue(rootRegionId);
-  if (!root) {
-    return [];
+  if (!root) return [];
+
+  // Build fast lookup maps
+  const idToCode = new Map<string, string>();
+  for (const region of regions) {
+    const id = normalizeValue(region.id);
+    const code = normalizeValue(region.code);
+    if (id) idToCode.set(id, code);
   }
 
-  const visited = new Set<string>();
-  const queue = [root];
+  // Build parent->children adjacency using explicit links first, then code-prefix inference
+  const childrenByParent = new Map<string, string[]>();
+  for (const region of regions) {
+    const id = normalizeValue(region.id);
+    if (!id) continue;
 
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current || visited.has(current)) {
+    const explicitParentId = normalizeValue(region.parentRegionId);
+    if (explicitParentId) {
+      const bucket = childrenByParent.get(explicitParentId) ?? [];
+      bucket.push(id);
+      childrenByParent.set(explicitParentId, bucket);
       continue;
     }
-    visited.add(current);
-    regions.forEach((region) => {
-      if (normalizeValue(region.parentRegionId) === current) {
-        queue.push(region.id);
+
+    // Infer parent by longest matching code prefix (e.g. VN-HCM-D1 → VN-HCM, not VN)
+    const code = idToCode.get(id) ?? '';
+    if (!code) continue;
+
+    let bestParentId = '';
+    let bestPrefixLen = 0;
+    for (const [otherId, otherCode] of idToCode) {
+      if (otherId === id || !otherCode) continue;
+      if (code.startsWith(`${otherCode}-`) && otherCode.length > bestPrefixLen) {
+        bestParentId = otherId;
+        bestPrefixLen = otherCode.length;
       }
-    });
+    }
+    if (bestParentId) {
+      const bucket = childrenByParent.get(bestParentId) ?? [];
+      bucket.push(id);
+      childrenByParent.set(bestParentId, bucket);
+    }
+  }
+
+  // BFS from root to collect all descendant region ids
+  const visited = new Set<string>();
+  const queue = [root];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    for (const child of childrenByParent.get(current) ?? []) {
+      queue.push(child);
+    }
   }
 
   return [...visited];

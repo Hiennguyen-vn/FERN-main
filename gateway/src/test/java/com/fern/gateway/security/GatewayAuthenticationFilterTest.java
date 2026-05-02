@@ -33,7 +33,7 @@ class GatewayAuthenticationFilterTest {
 
   private static final String JWT_SECRET = "test-jwt-secret-should-be-at-least-32-bytes";
   private static final String INTERNAL_TOKEN = "test-internal-token-should-be-at-least-32";
-  private static final String AUTH_COOKIE_NAME = "dorabets_session";
+  private static final String AUTH_COOKIE_NAME = "fern_session";
 
   @AfterEach
   void clearRuntimeEnvironment() {

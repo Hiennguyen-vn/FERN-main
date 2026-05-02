@@ -31,7 +31,7 @@ public class AuthMiddleware {
     private final InternalServiceAuth internalServiceAuth;
 
     public AuthMiddleware(TokenVerifier tokenVerifier) {
-        this(tokenVerifier, envOrDefault("AUTH_COOKIE_NAME", "dorabets_session"), new InternalServiceAuth());
+        this(tokenVerifier, envOrDefault("AUTH_COOKIE_NAME", "fern_session"), new InternalServiceAuth());
     }
 
     AuthMiddleware(TokenVerifier tokenVerifier, String authCookieName, InternalServiceAuth internalServiceAuth) {

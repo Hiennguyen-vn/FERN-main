@@ -19,7 +19,6 @@ import java.util.Map;
 import javax.sql.DataSource;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Append-only stock reservation layer. Reservations don't lock stock_balance —
@@ -48,7 +47,6 @@ public class StockReservationService {
   ) {}
 
   /** Reserves qty per line, single transaction, append-only. Returns created reservations. */
-  @Transactional
   public List<ReservationView> reserve(long locationId, Long saleId, List<ReserveLine> lines, Duration ttl) {
     if (lines == null || lines.isEmpty()) return List.of();
     Instant now = clock.instant();
@@ -105,7 +103,6 @@ public class StockReservationService {
     }
   }
 
-  @Transactional
   public int settleForSale(long saleId) {
     String sql = """
         UPDATE core.stock_reservation
@@ -122,10 +119,19 @@ public class StockReservationService {
     }
   }
 
+  /** Confirm reservation when sale-approved consumer applies movements. Terminal state. */
+  public int confirmForSale(long saleId) {
+    return settleForSale(saleId);
+  }
+
+  /** Release reservation when sale-cancelled. Terminal state, no movement applied. */
+  public int releaseForSale(long saleId) {
+    return settleForSale(saleId);
+  }
+
   /** Periodic compaction: settle reservations that are clearly stale (expired or older than 24h with sale advanced). */
   @Scheduled(fixedDelayString = "${fern.inventory.reservation-sweep-ms:60000}")
   @SchedulerLock(name = "stock-reservation-sweep", lockAtMostFor = "PT5M", lockAtLeastFor = "PT10S")
-  @Transactional
   public int sweepExpired() {
     String sql = """
         UPDATE core.stock_reservation

@@ -90,6 +90,7 @@ class AuthServiceTest {
         "Alice Example",
         "EMP-42",
         "alice@example.com",
+        null,
         "active",
         Instant.parse("2026-03-26T00:00:00Z"),
         Instant.parse("2026-03-27T00:00:00Z")
@@ -145,6 +146,7 @@ class AuthServiceTest {
         "Alice Example",
         "EMP-42",
         "alice@example.com",
+        null,
         "active",
         Instant.parse("2026-03-26T00:00:00Z"),
         Instant.parse("2026-03-27T00:00:00Z")
@@ -189,6 +191,7 @@ class AuthServiceTest {
         "Alice Example",
         "EMP-42",
         "alice@example.com",
+        null,
         "active",
         Instant.parse("2026-03-26T00:00:00Z"),
         Instant.parse("2026-03-27T00:00:00Z")
@@ -247,6 +250,7 @@ class AuthServiceTest {
         "Alice Example",
         "EMP-42",
         "alice@example.com",
+        null,
         "active",
         Instant.parse("2026-03-26T00:00:00Z"),
         Instant.parse("2026-03-27T00:00:00Z")
@@ -418,6 +422,7 @@ class AuthServiceTest {
         "New User",
         "EMP-101",
         "new.user@example.com",
+        null,
         "active",
         Instant.parse("2026-03-27T00:00:00Z"),
         Instant.parse("2026-03-27T00:00:00Z")

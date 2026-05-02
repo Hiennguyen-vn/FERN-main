@@ -202,7 +202,14 @@ public final class PayrollDtos {
       BigDecimal overtimeHours,
       BigDecimal overtimeRate,
       BigDecimal standardHoursPerMonth,
-      String calculationMethod
+      String calculationMethod,
+      BigDecimal grossPay,
+      BigDecimal socialInsurance,
+      BigDecimal healthInsurance,
+      BigDecimal unemploymentInsurance,
+      BigDecimal personalIncomeTax,
+      BigDecimal totalDeductions,
+      boolean deductionsApplied
   ) {
   }
 

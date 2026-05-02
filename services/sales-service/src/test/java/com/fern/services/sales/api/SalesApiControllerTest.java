@@ -167,9 +167,27 @@ class SalesApiControllerTest {
   @Test
   void telemetryControllerRecordsClientMetrics() {
     TelemetryController controller = new TelemetryController(new SimpleMeterRegistry());
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, "device", null, Set.of(), Set.of(), Set.of(10L),
+        true, false, null, 101L, 10L));
+    try {
+      var response = controller.ingest(new TelemetryDtos.ClientTelemetry(101L, 3, 42L, 2, 1));
+      assertEquals(204, response.getStatusCode().value());
+    } finally {
+      RequestUserContextHolder.clear();
+    }
+  }
 
-    var response = controller.ingest(new TelemetryDtos.ClientTelemetry(101L, 3, 42L, 2, 1));
-
-    assertEquals(204, response.getStatusCode().value());
+  @Test
+  void telemetryControllerRejectsNonDeviceContext() {
+    TelemetryController controller = new TelemetryController(new SimpleMeterRegistry());
+    RequestUserContextHolder.clear();
+    try {
+      ServiceException ex = assertThrows(ServiceException.class,
+          () -> controller.ingest(new TelemetryDtos.ClientTelemetry(101L, 3, 42L, 2, 1)));
+      assertEquals(403, ex.getStatusCode());
+    } finally {
+      RequestUserContextHolder.clear();
+    }
   }
 }

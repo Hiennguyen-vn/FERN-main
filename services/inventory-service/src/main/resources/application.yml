@@ -68,3 +68,11 @@ spring.cloud.vault:
 fern:
   inventory:
     reservation-sweep-ms: ${FERN_INVENTORY_RESERVATION_SWEEP_MS:60000}
+
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_ENABLED:true}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${SPRINGDOC_ENABLED:true}
+    path: /swagger-ui.html

@@ -1,6 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
 import { VOUCHERS } from '../data/mock-menu';
 
+export interface CartLineModifier {
+  groupCode: string;
+  groupName: string;
+  optionCode: string;
+  optionLabel: string;
+  priceDelta: number;
+}
+
 export interface CartLine {
   lineId: string;
   itemId: string;
@@ -11,6 +19,7 @@ export interface CartLine {
   sugar?: string;
   ice?: string;
   toppings: { code: string; name: string; priceAdd: number }[];
+  modifiers?: CartLineModifier[];
   note?: string;
   quantity: number;
 }

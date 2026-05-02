@@ -51,6 +51,7 @@ export interface GoodsReceiptItemView {
   lineTotal?: number | null;
   manufactureDate?: string | null;
   expiryDate?: string | null;
+  batchNo?: string | null;
   note?: string | null;
   [key: string]: unknown;
 }
@@ -236,6 +237,7 @@ function decodeGoodsReceiptItem(value: unknown): GoodsReceiptItemView {
     lineTotal: asNullableNumber(record.lineTotal),
     manufactureDate: asDateOnly(record.manufactureDate),
     expiryDate: asDateOnly(record.expiryDate),
+    batchNo: asNullableString(record.batchNo),
     note: asNullableString(record.note),
   };
 }

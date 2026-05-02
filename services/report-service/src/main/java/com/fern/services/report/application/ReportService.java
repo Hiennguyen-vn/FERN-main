@@ -17,10 +17,22 @@ public class ReportService {
 
   private final ReportRepository reportRepository;
   private final AuthorizationPolicyService authorizationPolicyService;
+  private com.fern.services.report.infrastructure.ClickHouseReportRepository clickHouseRepo;
+  private com.fern.services.report.infrastructure.ProjectionLagDetector lagDetector;
 
   public ReportService(ReportRepository reportRepository, AuthorizationPolicyService authorizationPolicyService) {
     this.reportRepository = reportRepository;
     this.authorizationPolicyService = authorizationPolicyService;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setClickHouseRepo(com.fern.services.report.infrastructure.ClickHouseReportRepository repo) {
+    this.clickHouseRepo = repo;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setLagDetector(com.fern.services.report.infrastructure.ProjectionLagDetector detector) {
+    this.lagDetector = detector;
   }
 
   public PagedResult<ReportDtos.SalesSummary> salesSummary(
@@ -34,16 +46,21 @@ public class ReportService {
       Integer offset
   ) {
     requireOutletRead(outletId);
-    return reportRepository.salesSummary(
-        outletId,
-        defaultStart(startDate),
-        defaultEnd(endDate),
-        QueryConventions.normalizeQuery(q),
-        sortBy,
-        sortDir,
-        QueryConventions.sanitizeLimit(limit, 50, 200),
-        QueryConventions.sanitizeOffset(offset)
-    );
+    LocalDate s = defaultStart(startDate);
+    LocalDate e = defaultEnd(endDate);
+    int safeLimit = QueryConventions.sanitizeLimit(limit, 50, 200);
+    int safeOffset = QueryConventions.sanitizeOffset(offset);
+    String normalizedQ = QueryConventions.normalizeQuery(q);
+    boolean chEligible = (normalizedQ == null || normalizedQ.isBlank())
+        && (sortBy == null || sortBy.isBlank());
+    if (chEligible && clickHouseRepo != null && (lagDetector == null || !lagDetector.isLagged())) {
+      try {
+        return clickHouseRepo.salesSummaryPaged(outletId, s, e, safeLimit, safeOffset);
+      } catch (RuntimeException ex) {
+        // Fall through to Postgres on ClickHouse failure.
+      }
+    }
+    return reportRepository.salesSummary(outletId, s, e, normalizedQ, sortBy, sortDir, safeLimit, safeOffset);
   }
 
   public PagedResult<ReportDtos.ExpenseSummary> expenseSummary(
@@ -115,13 +132,31 @@ public class ReportService {
 
   public List<ReportDtos.DailyPnl> dailyPnl(long outletId, LocalDate startDate, LocalDate endDate) {
     requireOutletRead(outletId);
-    return reportRepository.dailyPnl(outletId, defaultStart(startDate), defaultEnd(endDate));
+    LocalDate s = defaultStart(startDate);
+    LocalDate e = defaultEnd(endDate);
+    if (clickHouseRepo != null && (lagDetector == null || !lagDetector.isLagged())) {
+      try {
+        return clickHouseRepo.dailyPnl(outletId, s, e);
+      } catch (RuntimeException ex) {
+        // Fall through to Postgres on ClickHouse failure.
+      }
+    }
+    return reportRepository.dailyPnl(outletId, s, e);
   }
 
   public List<ReportDtos.TopSku> topSkus(long outletId, LocalDate startDate, LocalDate endDate, Integer limit) {
     requireOutletRead(outletId);
     int safe = limit == null || limit <= 0 ? 10 : Math.min(limit, 100);
-    return reportRepository.topSkus(outletId, defaultStart(startDate), defaultEnd(endDate), safe);
+    LocalDate s = defaultStart(startDate);
+    LocalDate e = defaultEnd(endDate);
+    if (clickHouseRepo != null && (lagDetector == null || !lagDetector.isLagged())) {
+      try {
+        return clickHouseRepo.topSkus(outletId, s, e, safe);
+      } catch (RuntimeException ex) {
+        // Fall through to Postgres on ClickHouse failure.
+      }
+    }
+    return reportRepository.topSkus(outletId, s, e, safe);
   }
 
   public List<ReportDtos.StaffKpi> staffKpi(long outletId, LocalDate startDate, LocalDate endDate) {
@@ -134,7 +169,16 @@ public class ReportService {
     if (context == null || !context.authenticated()) {
       throw ServiceException.forbidden("Cross-outlet report requires authentication");
     }
-    return reportRepository.crossOutletCompare(regionId, defaultStart(startDate), defaultEnd(endDate));
+    LocalDate s = defaultStart(startDate);
+    LocalDate e = defaultEnd(endDate);
+    if (clickHouseRepo != null && (lagDetector == null || !lagDetector.isLagged())) {
+      try {
+        return clickHouseRepo.crossOutletCompare(regionId, s, e);
+      } catch (RuntimeException ex) {
+        // Fall through to Postgres on ClickHouse failure.
+      }
+    }
+    return reportRepository.crossOutletCompare(regionId, s, e);
   }
 
   private void requireOutletRead(long outletId) {

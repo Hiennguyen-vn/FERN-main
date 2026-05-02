@@ -1,11 +1,14 @@
 package com.fern.services.inventory.infrastructure;
 
 import com.fern.common.middleware.ServiceException;
+import com.fern.common.outbox.OutboxWriter;
 import com.fern.common.repository.BaseRepository;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.spring.web.QueryConventions;
 import com.fern.events.inventory.OfflineInventoryMovementRecordedEvent;
 import com.fern.events.inventory.StockInSimpleRecordedEvent;
+import com.fern.events.inventory.StockLowThresholdEvent;
+import java.time.Clock;
 import com.fern.services.inventory.api.InventoryDtos;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.math.BigDecimal;
@@ -34,10 +37,42 @@ public class InventoryRepository extends BaseRepository {
   private static final Set<String> STOCK_COUNT_SORT_KEYS = Set.of("countDate", "status", "createdAt", "varianceValue");
 
   private final SnowflakeIdGenerator snowflakeIdGenerator;
+  private final OutboxWriter outboxWriter;
+  private final Clock clock;
 
-  public InventoryRepository(DataSource dataSource, SnowflakeIdGenerator snowflakeIdGenerator) {
+  public InventoryRepository(DataSource dataSource, SnowflakeIdGenerator snowflakeIdGenerator,
+      OutboxWriter outboxWriter, Clock clock) {
     super(dataSource);
     this.snowflakeIdGenerator = snowflakeIdGenerator;
+    this.outboxWriter = outboxWriter;
+    this.clock = clock;
+  }
+
+  private void appendLowStockOutboxIfNeeded(Connection conn, long outletId, long itemId,
+      String aggregateKey) throws SQLException {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT sb.qty_on_hand, i.min_stock_level
+        FROM core.stock_balance sb
+        JOIN core.item i ON i.id = sb.item_id
+        WHERE sb.location_id = ? AND sb.item_id = ?
+        """
+    )) {
+      ps.setLong(1, outletId);
+      ps.setLong(2, itemId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) return;
+        java.math.BigDecimal qtyOnHand = rs.getBigDecimal("qty_on_hand");
+        java.math.BigDecimal threshold = rs.getBigDecimal("min_stock_level");
+        if (qtyOnHand == null || threshold == null) return;
+        if (qtyOnHand.compareTo(threshold) > 0) return;
+        StockLowThresholdEvent event = new StockLowThresholdEvent(
+            outletId, itemId, qtyOnHand, threshold, clock.instant());
+        outboxWriter.append(conn, "stock_balance", itemId,
+            "fern.inventory.stock-low-threshold",
+            aggregateKey + ":" + itemId, event);
+      }
+    }
   }
 
   public Optional<InventoryDtos.StockBalanceView> findStockBalance(long outletId, long itemId) {
@@ -468,8 +503,13 @@ public class InventoryRepository extends BaseRepository {
         ps.setLong(2, sessionId);
         ps.executeUpdate();
       }
-      return findStockCountSessionTransactional(conn, sessionId)
+      InventoryDtos.StockCountSessionView posted = findStockCountSessionTransactional(conn, sessionId)
           .orElseThrow(() -> new IllegalStateException("Stock count session not found after post"));
+      for (InventoryDtos.StockCountLineView line : posted.lines()) {
+        appendLowStockOutboxIfNeeded(conn, posted.outletId(), line.itemId(),
+            "stock-count:" + sessionId);
+      }
+      return posted;
     });
   }
 
@@ -483,12 +523,13 @@ public class InventoryRepository extends BaseRepository {
       boolean allowOversell,
       List<SaleComponentMovement> movements
   ) {
+    if (saleCreatedAt == null) {
+      throw ServiceException.badRequest(
+          "saleCreatedAt is required (sales-service must populate event payload); cross-service DB read removed");
+    }
     return executeInTransaction(conn -> {
       acquireSaleInventoryLock(conn, saleId);
-      Instant effectiveSaleCreatedAt = saleCreatedAt == null
-          ? findSaleCreatedAt(conn, saleId)
-              .orElseThrow(() -> ServiceException.notFound("Sale not found for inventory movement: " + saleId))
-          : saleCreatedAt;
+      Instant effectiveSaleCreatedAt = saleCreatedAt;
       if (allowOversell) {
         try (PreparedStatement ps = conn.prepareStatement("SELECT set_config('fern.allow_oversell', 'true', true)")) {
           ps.executeQuery();
@@ -529,6 +570,9 @@ public class InventoryRepository extends BaseRepository {
           ps.executeUpdate();
         }
         inserted++;
+      }
+      for (SaleComponentMovement movement : movements) {
+        appendLowStockOutboxIfNeeded(conn, outletId, movement.itemId(), "sale:" + saleId);
       }
       return inserted;
     });
@@ -624,6 +668,28 @@ public class InventoryRepository extends BaseRepository {
           ps.setLong(1, transactionId);
           ps.setTimestamp(2, Timestamp.from(txnTime));
           ps.setLong(3, movement.goodsReceiptItemId());
+          ps.executeUpdate();
+        }
+
+        long lotId = snowflakeIdGenerator.generateId();
+        try (PreparedStatement ps = conn.prepareStatement(
+            """
+            INSERT INTO core.stock_lot (
+              id, item_id, location_id, batch_no, received_at, expires_at,
+              qty_received, qty_remaining, unit_cost, goods_receipt_id, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+            """
+        )) {
+          ps.setLong(1, lotId);
+          ps.setLong(2, movement.itemId());
+          ps.setLong(3, outletId);
+          ps.setString(4, movement.batchNo());
+          ps.setTimestamp(5, Timestamp.from(txnTime));
+          ps.setDate(6, movement.expiryDate() == null ? null : Date.valueOf(movement.expiryDate()));
+          ps.setBigDecimal(7, movement.qtyReceived());
+          ps.setBigDecimal(8, movement.qtyReceived());
+          ps.setBigDecimal(9, movement.unitCost() == null ? BigDecimal.ZERO : movement.unitCost());
+          ps.setLong(10, goodsReceiptId);
           ps.executeUpdate();
         }
         inserted++;
@@ -1055,18 +1121,21 @@ public class InventoryRepository extends BaseRepository {
   public List<GoodsReceiptMovement> findGoodsReceiptMovements(long goodsReceiptId) {
     return queryList(
         """
-        SELECT id, item_id, qty_received, unit_cost
+        SELECT id, item_id, qty_received, unit_cost, batch_no, expiry_date
         FROM core.goods_receipt_item
         WHERE receipt_id = ?
         ORDER BY id
         """,
         rs -> {
           try {
+            java.sql.Date exp = rs.getDate("expiry_date");
             return new GoodsReceiptMovement(
                 rs.getLong("id"),
                 rs.getLong("item_id"),
                 rs.getBigDecimal("qty_received"),
-                rs.getBigDecimal("unit_cost")
+                rs.getBigDecimal("unit_cost"),
+                rs.getString("batch_no"),
+                exp != null ? exp.toLocalDate() : null
             );
           } catch (SQLException e) {
             throw new IllegalStateException("Failed to map goods receipt movement", e);
@@ -1573,27 +1642,11 @@ public class InventoryRepository extends BaseRepository {
     }
   }
 
-  private Optional<Instant> findSaleCreatedAt(Connection conn, long saleId) throws SQLException {
-    try (PreparedStatement ps = conn.prepareStatement(
-        """
-        SELECT created_at
-        FROM core.sale_record
-        WHERE id = ?
-        LIMIT 1
-        """
-    )) {
-      ps.setLong(1, saleId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (!rs.next()) {
-          return Optional.empty();
-        }
-        Timestamp createdAt = rs.getTimestamp("created_at");
-        return createdAt == null ? Optional.empty() : Optional.of(createdAt.toInstant());
-      }
+  public record GoodsReceiptMovement(long goodsReceiptItemId, long itemId, BigDecimal qtyReceived, BigDecimal unitCost,
+                                     String batchNo, LocalDate expiryDate) {
+    public GoodsReceiptMovement(long goodsReceiptItemId, long itemId, BigDecimal qtyReceived, BigDecimal unitCost) {
+      this(goodsReceiptItemId, itemId, qtyReceived, unitCost, null, null);
     }
-  }
-
-  public record GoodsReceiptMovement(long goodsReceiptItemId, long itemId, BigDecimal qtyReceived, BigDecimal unitCost) {
   }
 
   public record OfflineStockInResult(
@@ -1617,4 +1670,5 @@ public class InventoryRepository extends BaseRepository {
       return reorderThreshold != null && qtyOnHand != null && qtyOnHand.compareTo(reorderThreshold) <= 0;
     }
   }
+
 }

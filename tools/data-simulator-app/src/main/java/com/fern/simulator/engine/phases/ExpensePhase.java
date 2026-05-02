@@ -78,5 +78,18 @@ public class ExpensePhase implements PhaseHandler {
         ctx.addExpenseSubtypeEvent(new SimulationContext.ExpenseSubtypeEvent(
                 expenseId, "operating", description, null));
         ctx.incrementRowCount("expense_operating", 1);
+
+        // Receipt PDF attached for ~70% of expenses.
+        if (ctx.getRandom().chance(0.70)) {
+            long docId = ctx.getIdGen().nextId();
+            String objectKey = "expense/" + outlet.getId() + "/" + day + "/" + docId + ".pdf";
+            String fileName = "receipt_" + day + "_" + sourceType + ".pdf";
+            java.time.OffsetDateTime createdAt = day.atStartOfDay()
+                    .atOffset(java.time.ZoneOffset.UTC).plusHours(10);
+            ctx.addExpenseDocumentEvent(new SimulationContext.ExpenseDocumentEvent(
+                    docId, expenseId, "expense_receipt_pdf", fileName, "application/pdf",
+                    objectKey, null, managerUserId, createdAt));
+            ctx.incrementRowCount("expense_document", 1);
+        }
     }
 }

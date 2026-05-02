@@ -7,7 +7,6 @@ import com.fern.common.spring.auth.CanonicalRole;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.common.spring.cache.JacksonCacheSerializer;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.spring.web.QueryConventions;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -37,7 +36,6 @@ public class PayrollService {
   private final HrServiceClient hrServiceClient;
   private final SalaryCalculator salaryCalculator;
   private final SnowflakeIdGenerator idGenerator;
-  private final TypedKafkaEventPublisher eventPublisher;
   private final Clock clock;
   private final AuthorizationPolicyService authorizationPolicyService;
   private final TieredCache<List<PayrollDtos.MonthlyPayrollRow>> monthlyPayrollCache;
@@ -48,7 +46,6 @@ public class PayrollService {
       HrServiceClient hrServiceClient,
       SalaryCalculator salaryCalculator,
       SnowflakeIdGenerator idGenerator,
-      TypedKafkaEventPublisher eventPublisher,
       Clock clock,
       AuthorizationPolicyService authorizationPolicyService,
       ObjectMapper objectMapper,
@@ -58,7 +55,6 @@ public class PayrollService {
     this.hrServiceClient = hrServiceClient;
     this.salaryCalculator = salaryCalculator;
     this.idGenerator = idGenerator;
-    this.eventPublisher = eventPublisher;
     this.clock = clock;
     this.authorizationPolicyService = authorizationPolicyService;
     this.monthlyPayrollCache = redisClientAdapter == null
@@ -80,11 +76,10 @@ public class PayrollService {
       HrServiceClient hrServiceClient,
       SalaryCalculator salaryCalculator,
       SnowflakeIdGenerator idGenerator,
-      TypedKafkaEventPublisher eventPublisher,
       Clock clock,
       AuthorizationPolicyService authorizationPolicyService
   ) {
-    this(payrollRepository, hrServiceClient, salaryCalculator, idGenerator, eventPublisher, clock, authorizationPolicyService, new ObjectMapper(), null);
+    this(payrollRepository, hrServiceClient, salaryCalculator, idGenerator, clock, authorizationPolicyService, new ObjectMapper(), null);
   }
 
   public PayrollDtos.PayrollPeriodView createPeriod(PayrollDtos.CreatePayrollPeriodRequest request) {
@@ -378,9 +373,10 @@ public class PayrollService {
     PayrollRepository.PayrollTimesheetRecord timesheet = payrollRepository.findTimesheet(request.timesheetId())
         .orElseThrow(() -> ServiceException.notFound("Payroll timesheet not found: " + request.timesheetId()));
 
-    PayrollDtos.EmployeeContractSummary contract = hrServiceClient.fetchLatestContract(scope.userId())
+    PayrollDtos.EmployeeContractSummary contract = payrollRepository.findEffectiveContractForTimesheet(request.timesheetId())
         .orElseThrow(() -> ServiceException.badRequest(
-            "No active contract found for user " + scope.userId()));
+            "No active contract found for user " + scope.userId()
+                + " in payroll period " + scope.payrollPeriodId()));
 
     return salaryCalculator.calculate(contract, timesheet, request.currencyCode().trim());
   }
@@ -399,9 +395,10 @@ public class PayrollService {
     if (resolvedBase == null || resolvedNet == null) {
       PayrollRepository.PayrollTimesheetRecord timesheet = payrollRepository.findTimesheet(request.payrollTimesheetId())
           .orElseThrow(() -> ServiceException.notFound("Payroll timesheet not found: " + request.payrollTimesheetId()));
-      PayrollDtos.EmployeeContractSummary contract = hrServiceClient.fetchLatestContract(timesheetScope.userId())
+      PayrollDtos.EmployeeContractSummary contract = payrollRepository.findEffectiveContractForTimesheet(request.payrollTimesheetId())
           .orElseThrow(() -> ServiceException.badRequest(
               "No active contract found for user " + timesheetScope.userId()
+                  + " in payroll period " + timesheetScope.payrollPeriodId()
                   + ". Provide baseSalaryAmount and netSalary manually or add an active contract."));
       PayrollDtos.CalculateSalaryResult calc = salaryCalculator.calculate(
           contract, timesheet, request.currencyCode().trim());
@@ -494,20 +491,15 @@ public class PayrollService {
     }
     PayrollRepository.PayrollApprovalProjection projection = payrollRepository.approvePayroll(
         payrollId,
-        RequestUserContextHolder.get().userId()
-    );
-    eventPublisher.publish(
-        "fern.payroll.payroll-approved",
-        Long.toString(projection.payroll().id()),
-        "payroll.payroll-approved",
-        new PayrollApprovedEvent(
-            projection.payroll().id(),
-            projection.userId(),
-            projection.payrollPeriodId(),
-            projection.outletId(),
-            projection.payroll().currencyCode(),
-            projection.payroll().netSalary(),
-            projection.payroll().approvedAt() == null ? clock.instant() : projection.payroll().approvedAt()
+        RequestUserContextHolder.get().userId(),
+        proj -> new PayrollApprovedEvent(
+            proj.payroll().id(),
+            proj.userId(),
+            proj.payrollPeriodId(),
+            proj.outletId(),
+            proj.payroll().currencyCode(),
+            proj.payroll().netSalary(),
+            proj.payroll().approvedAt() == null ? clock.instant() : proj.payroll().approvedAt()
         )
     );
     evictMonthlyPayrollCache();

@@ -1,0 +1,27 @@
+# Bitnami Redis Sentinel chart values — 3 sentinel + 3 redis (1 master, 2 replicas).
+# Install: helm install fern-redis bitnami/redis -f redis-sentinel.yaml -n fern
+sentinel:
+  enabled: true
+  quorum: 2
+
+architecture: replication
+
+replica:
+  replicaCount: 2
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: 1, memory: 1Gi }
+
+master:
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: 1, memory: 1Gi }
+
+auth:
+  enabled: true
+  existingSecret: fern-redis-auth
+  existingSecretPasswordKey: redis-password
+
+persistence:
+  enabled: true
+  size: 20Gi

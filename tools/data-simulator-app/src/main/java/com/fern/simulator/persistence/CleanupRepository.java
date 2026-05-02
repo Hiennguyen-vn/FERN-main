@@ -47,7 +47,7 @@ public final class CleanupRepository {
      * Number of ordered delete/mark steps in {@link #execute(Connection, String, CleanupProgressListener)}.
      * Keep this value in sync if the execution sequence is changed.
      */
-    private static final int CLEANUP_DELETE_STEP_COUNT = 53;
+    private static final int CLEANUP_DELETE_STEP_COUNT = 67;
 
     private CleanupRepository() {}
 
@@ -115,6 +115,17 @@ public final class CleanupRepository {
         counts.put("supplier_invoice_item", count(conn, "SELECT COUNT(*) FROM core.supplier_invoice_item WHERE invoice_id IN (SELECT id FROM tmp_cleanup_invoice_ids)"));
         counts.put("supplier_invoice_receipt", count(conn, "SELECT COUNT(*) FROM core.supplier_invoice_receipt WHERE invoice_id IN (SELECT id FROM tmp_cleanup_invoice_ids)"));
         counts.put("supplier_invoice", count(conn, "SELECT COUNT(*) FROM core.supplier_invoice WHERE id IN (SELECT id FROM tmp_cleanup_invoice_ids)"));
+        counts.put("cash_movement", count(conn, "SELECT COUNT(*) FROM core.cash_movement WHERE outlet_id IN (SELECT id FROM tmp_cleanup_outlet_ids)"));
+        counts.put("tax_rule", count(conn, "SELECT COUNT(*) FROM core.tax_rule WHERE outlet_id IN (SELECT id FROM tmp_cleanup_outlet_ids)"));
+        counts.put("expense_document", count(conn, "SELECT COUNT(*) FROM core.expense_document WHERE expense_record_id IN (SELECT id FROM tmp_cleanup_expense_ids)"));
+        counts.put("sale_oversell_line", count(conn, "SELECT COUNT(*) FROM core.sale_oversell_line WHERE sale_id IN (SELECT id FROM tmp_cleanup_sale_ids)"));
+        counts.put("stock_reservation", count(conn, "SELECT COUNT(*) FROM core.stock_reservation WHERE location_id IN (SELECT id FROM tmp_cleanup_outlet_ids)"));
+        counts.put("crm_points_ledger", count(conn, "SELECT COUNT(*) FROM crm.points_ledger WHERE sale_id IN (SELECT id FROM tmp_cleanup_sale_ids)"));
+        counts.put("crm_customer_orphan", count(conn, "SELECT COUNT(*) FROM crm.customer cu"
+                + " WHERE NOT EXISTS (SELECT 1 FROM crm.points_ledger pl2 WHERE pl2.customer_id = cu.id)"
+                + " AND NOT EXISTS (SELECT 1 FROM core.sale_record sr WHERE sr.customer_id = cu.id)"));
+        counts.put("crm_otp_orphan", count(conn, "SELECT COUNT(*) FROM crm.otp_request o"
+                + " WHERE NOT EXISTS (SELECT 1 FROM crm.customer cu WHERE cu.phone = o.phone)"));
         counts.put("sale_item_promotion", count(conn, "SELECT COUNT(*) FROM core.sale_item_promotion WHERE sale_id IN (SELECT id FROM tmp_cleanup_sale_ids)"));
         counts.put("promotion_scope", count(conn, "SELECT COUNT(*) FROM core.promotion_scope WHERE outlet_id IN (SELECT id FROM tmp_cleanup_outlet_ids)"));
         counts.put("promotion", count(conn, "SELECT COUNT(*) FROM core.promotion WHERE id IN (SELECT id FROM tmp_cleanup_promotion_ids)"));
@@ -133,6 +144,7 @@ public final class CleanupRepository {
         counts.put("manufacturing_transaction", count(conn, "SELECT COUNT(*) FROM core.manufacturing_transaction WHERE manufacturing_batch_id IN (SELECT id FROM tmp_cleanup_mfg_batch_ids)"));
         counts.put("manufacturing_batch", count(conn, "SELECT COUNT(*) FROM core.manufacturing_batch WHERE id IN (SELECT id FROM tmp_cleanup_mfg_batch_ids)"));
         counts.put("work_shift", count(conn, "SELECT COUNT(*) FROM core.work_shift WHERE shift_id IN (SELECT id FROM tmp_cleanup_shift_ids)"));
+        counts.put("shift_role_requirement", count(conn, "SELECT COUNT(*) FROM core.shift_role_requirement WHERE shift_id IN (SELECT id FROM tmp_cleanup_shift_ids)"));
         counts.put("shift", count(conn, "SELECT COUNT(*) FROM core.shift WHERE id IN (SELECT id FROM tmp_cleanup_shift_ids)"));
         counts.put("ordering_table", count(conn, "SELECT COUNT(*) FROM core.ordering_table WHERE outlet_id IN (SELECT id FROM tmp_cleanup_outlet_ids)"));
         counts.put("tax_rate", count(conn, "SELECT COUNT(*) FROM core.tax_rate WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)"));
@@ -152,6 +164,9 @@ public final class CleanupRepository {
         counts.put("purchase_order_item", count(conn, "SELECT COUNT(*) FROM core.purchase_order_item WHERE po_id IN (SELECT id FROM tmp_cleanup_po_ids)"));
         counts.put("purchase_order", count(conn, "SELECT COUNT(*) FROM core.purchase_order WHERE id IN (SELECT id FROM tmp_cleanup_po_ids)"));
         counts.put("supplier_procurement", count(conn, "SELECT COUNT(*) FROM core.supplier_procurement WHERE id IN (SELECT id FROM tmp_cleanup_supplier_ids)"));
+        counts.put("product_allergen", count(conn, "SELECT COUNT(*) FROM core.product_allergen WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)"));
+        counts.put("product_modifier_group", count(conn, "SELECT COUNT(*) FROM core.product_modifier_group WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)"));
+        counts.put("product_variant", count(conn, "SELECT COUNT(*) FROM core.product_variant WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)"));
         counts.put("product_outlet_availability", count(conn, "SELECT COUNT(*) FROM core.product_outlet_availability WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)"));
         counts.put("product_price", count(conn, "SELECT COUNT(*) FROM core.product_price WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)"));
         counts.put("recipe_item", count(conn, "SELECT COUNT(*) FROM core.recipe_item WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)"));
@@ -204,6 +219,23 @@ public final class CleanupRepository {
                 "sir.invoice_id IN (SELECT id FROM tmp_cleanup_invoice_ids)");
         runDeleteStep(conn, deleted, tracker, "supplier_invoice", "core.supplier_invoice si", "si",
                 "si.id IN (SELECT id FROM tmp_cleanup_invoice_ids)");
+        runDeleteStep(conn, deleted, tracker, "cash_movement", "core.cash_movement cmov", "cmov",
+                "cmov.outlet_id IN (SELECT id FROM tmp_cleanup_outlet_ids)");
+        runDeleteStep(conn, deleted, tracker, "tax_rule", "core.tax_rule trule", "trule",
+                "trule.outlet_id IN (SELECT id FROM tmp_cleanup_outlet_ids)");
+        runDeleteStep(conn, deleted, tracker, "expense_document", "core.expense_document edoc", "edoc",
+                "edoc.expense_record_id IN (SELECT id FROM tmp_cleanup_expense_ids)");
+        runDeleteStep(conn, deleted, tracker, "sale_oversell_line", "core.sale_oversell_line sol", "sol",
+                "sol.sale_id IN (SELECT id FROM tmp_cleanup_sale_ids)");
+        runDeleteStep(conn, deleted, tracker, "stock_reservation", "core.stock_reservation sres", "sres",
+                "sres.location_id IN (SELECT id FROM tmp_cleanup_outlet_ids)");
+        runDeleteStep(conn, deleted, tracker, "crm_points_ledger", "crm.points_ledger pl", "pl",
+                "pl.sale_id IN (SELECT id FROM tmp_cleanup_sale_ids)");
+        runDeleteStep(conn, deleted, tracker, "crm_customer_orphan", "crm.customer cu", "cu",
+                "NOT EXISTS (SELECT 1 FROM crm.points_ledger pl2 WHERE pl2.customer_id = cu.id)"
+                + " AND NOT EXISTS (SELECT 1 FROM core.sale_record sr WHERE sr.customer_id = cu.id)");
+        runDeleteStep(conn, deleted, tracker, "crm_otp_orphan", "crm.otp_request o", "o",
+                "NOT EXISTS (SELECT 1 FROM crm.customer cu WHERE cu.phone = o.phone)");
         runDeleteStep(conn, deleted, tracker, "sale_item_promotion", "core.sale_item_promotion sip", "sip",
                 "sip.sale_id IN (SELECT id FROM tmp_cleanup_sale_ids)");
         runDeleteStep(conn, deleted, tracker, "promotion_scope", "core.promotion_scope ps", "ps",
@@ -234,6 +266,8 @@ public final class CleanupRepository {
                 "mb.id IN (SELECT id FROM tmp_cleanup_mfg_batch_ids)");
         runDeleteStep(conn, deleted, tracker, "work_shift", "core.work_shift ws", "ws",
                 "ws.shift_id IN (SELECT id FROM tmp_cleanup_shift_ids)");
+        runDeleteStep(conn, deleted, tracker, "shift_role_requirement", "core.shift_role_requirement srr", "srr",
+                "srr.shift_id IN (SELECT id FROM tmp_cleanup_shift_ids)");
         runDeleteStep(conn, deleted, tracker, "shift", "core.shift sh", "sh",
                 "sh.id IN (SELECT id FROM tmp_cleanup_shift_ids)");
         runDeleteStep(conn, deleted, tracker, "tax_rate", "core.tax_rate tr", "tr",
@@ -285,6 +319,16 @@ public final class CleanupRepository {
                 """);
         runDeleteStep(conn, deleted, tracker, "supplier_procurement", "core.supplier_procurement supp", "supp",
                 "supp.id IN (SELECT id FROM tmp_cleanup_supplier_ids)");
+        runDeleteStep(conn, deleted, tracker, "product_allergen", "core.product_allergen pal", "pal",
+                "pal.product_id IN (SELECT id FROM tmp_cleanup_product_ids)");
+        runDeleteStep(conn, deleted, tracker, "product_modifier_group", "core.product_modifier_group pmg", "pmg",
+                "pmg.product_id IN (SELECT id FROM tmp_cleanup_product_ids)");
+        runDeleteStep(conn, deleted, tracker, "product_variant", "core.product_variant pv", "pv",
+                "pv.product_id IN (SELECT id FROM tmp_cleanup_product_ids)");
+        runDeleteStep(conn, deleted, tracker, "modifier_option_orphan", "core.modifier_option mopt", "mopt",
+                "NOT EXISTS (SELECT 1 FROM core.product_modifier_group pmg2 WHERE pmg2.modifier_group_id = mopt.modifier_group_id)");
+        runDeleteStep(conn, deleted, tracker, "modifier_group_orphan", "core.modifier_group mg", "mg",
+                "NOT EXISTS (SELECT 1 FROM core.product_modifier_group pmg2 WHERE pmg2.modifier_group_id = mg.id)");
         runDeleteStep(conn, deleted, tracker, "product_outlet_availability", "core.product_outlet_availability poa", "poa",
                 "poa.product_id IN (SELECT id FROM tmp_cleanup_product_ids)");
         runDeleteStep(conn, deleted, tracker, "product_price", "core.product_price ppr", "ppr",

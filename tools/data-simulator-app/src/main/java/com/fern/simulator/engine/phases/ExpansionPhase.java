@@ -1130,6 +1130,11 @@ public class ExpansionPhase implements PhaseHandler {
 
         ctx.addOutlet(outlet);
 
+        // Tax rule: default 10% VAT inclusive per outlet (regulatory baseline).
+        ctx.addTaxRuleEvent(new com.fern.simulator.engine.SimulationContext.TaxRuleEvent(
+                outletId, null, new java.math.BigDecimal("0.1000"), true, day));
+        ctx.incrementRowCount("tax_rule", 1);
+
         // Create shifts for this outlet
         String[][] shifts = {
                 {"06_08", "Open Prep", "06:00:00", "08:00:00", "0"},
@@ -1147,6 +1152,7 @@ public class ExpansionPhase implements PhaseHandler {
                     shiftId, outletId, code + "-" + s[0], s[1], s[2], s[3], Integer.parseInt(s[4])));
             ctx.incrementRowCount("shift", 1);
             ctx.registerShiftForOutlet(outletId, s[0], shiftId);
+            emitShiftRoleRequirements(ctx, shiftId, s[0]);
         }
 
         // Create ordering tables for this outlet (5-10 tables)
@@ -1270,5 +1276,32 @@ public class ExpansionPhase implements PhaseHandler {
         boolean hasData() {
             return months > 0;
         }
+    }
+
+    private static void emitShiftRoleRequirements(SimulationContext ctx, long shiftId, String shiftCode) {
+        // Peak shifts (lunch 12_14, dinner 18_20) need higher cashier + kitchen counts.
+        boolean peak = "12_14".equals(shiftCode) || "18_20".equals(shiftCode);
+        boolean prepShift = "06_08".equals(shiftCode) || "08_10".equals(shiftCode);
+        boolean closing = "20_22".equals(shiftCode);
+
+        int cashierCount = peak ? 2 : 1;
+        int kitchenCount = peak ? 3 : (prepShift ? 2 : 1);
+        int prepCount = prepShift ? 2 : 1;
+
+        ctx.addShiftRoleRequirementEvent(new SimulationContext.ShiftRoleRequirementEvent(
+                ctx.getIdGen().nextId(), shiftId, "cashier", cashierCount, false));
+        ctx.addShiftRoleRequirementEvent(new SimulationContext.ShiftRoleRequirementEvent(
+                ctx.getIdGen().nextId(), shiftId, "kitchen_staff", kitchenCount, false));
+        ctx.addShiftRoleRequirementEvent(new SimulationContext.ShiftRoleRequirementEvent(
+                ctx.getIdGen().nextId(), shiftId, "prep", prepCount, !prepShift));
+        if (peak) {
+            ctx.addShiftRoleRequirementEvent(new SimulationContext.ShiftRoleRequirementEvent(
+                    ctx.getIdGen().nextId(), shiftId, "support", 1, true));
+        }
+        if (closing) {
+            ctx.addShiftRoleRequirementEvent(new SimulationContext.ShiftRoleRequirementEvent(
+                    ctx.getIdGen().nextId(), shiftId, "closing_support", 1, false));
+        }
+        ctx.incrementRowCount("shift_role_requirement", peak ? 4 : (closing ? 4 : 3));
     }
 }

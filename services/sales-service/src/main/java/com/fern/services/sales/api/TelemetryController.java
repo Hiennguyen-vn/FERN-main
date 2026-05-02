@@ -1,5 +1,8 @@
 package com.fern.services.sales.api;
 
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,8 +21,16 @@ public class TelemetryController {
         this.meterRegistry = meterRegistry;
     }
 
+    private static void requireDeviceContext() {
+        RequestUserContext ctx = RequestUserContextHolder.get();
+        if (ctx == null || !ctx.isDeviceContext()) {
+            throw ServiceException.forbidden("Telemetry ingest requires device JWT");
+        }
+    }
+
     @PostMapping
     public ResponseEntity<Void> ingest(@RequestBody TelemetryDtos.ClientTelemetry body) {
+        requireDeviceContext();
         log.info("client-telemetry device={} outbox_depth={} sync_latency_ms={} failed_events={} sw_activations={}",
             body.deviceId(), body.outboxDepth(), body.syncLatencyMs(),
             body.failedEventCount(), body.swActivationCount());
@@ -32,11 +43,28 @@ public class TelemetryController {
         if (body.swActivationCount() > 0) {
             meterRegistry.counter("client_sw_activations_total").increment(body.swActivationCount());
         }
+        if (body.oldestPendingAgeSeconds() != null) {
+            meterRegistry.gauge("client_oldest_pending_age_seconds",
+                java.util.List.of(io.micrometer.core.instrument.Tag.of("device_id", String.valueOf(body.deviceId()))),
+                body.oldestPendingAgeSeconds());
+        }
+        if (body.recipeVersion() != null) {
+            meterRegistry.gauge("client_recipe_version",
+                java.util.List.of(io.micrometer.core.instrument.Tag.of("device_id", String.valueOf(body.deviceId()))),
+                body.recipeVersion());
+        }
+        if (body.manifestKid() != null && !body.manifestKid().isBlank()) {
+            // Track per-kid presence for fleet-wide kid drift alert.
+            meterRegistry.counter("client_manifest_kid_seen_total",
+                "device_id", String.valueOf(body.deviceId()),
+                "kid", body.manifestKid()).increment();
+        }
         return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/storage-warning")
     public ResponseEntity<Void> storageWarning(@RequestBody java.util.Map<String, Object> body) {
+        requireDeviceContext();
         Object outletId = body.getOrDefault("outletId", "unknown");
         Object deviceId = body.getOrDefault("deviceId", "unknown");
         Object ratio    = body.getOrDefault("storageRatio", 0);
@@ -51,6 +79,7 @@ public class TelemetryController {
 
     @PostMapping("/clock-skew")
     public ResponseEntity<Void> clockSkew(@RequestBody java.util.Map<String, Object> body) {
+        requireDeviceContext();
         Object outletId = body.getOrDefault("outletId", "unknown");
         Object skewSec  = body.getOrDefault("skewSeconds", 0);
         double s = 0;

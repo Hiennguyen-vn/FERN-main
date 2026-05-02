@@ -4,7 +4,6 @@ import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.spring.web.QueryConventions;
 import com.fern.events.procurement.InvoiceApprovedEvent;
@@ -24,20 +23,17 @@ public class SupplierInvoiceService {
   private final ProcurementRepository procurementRepository;
   private final SnowflakeIdGenerator idGenerator;
   private final AuthorizationPolicyService authorizationPolicyService;
-  private final TypedKafkaEventPublisher eventPublisher;
   private final Clock clock;
 
   public SupplierInvoiceService(
       ProcurementRepository procurementRepository,
       SnowflakeIdGenerator idGenerator,
       AuthorizationPolicyService authorizationPolicyService,
-      TypedKafkaEventPublisher eventPublisher,
       Clock clock
   ) {
     this.procurementRepository = procurementRepository;
     this.idGenerator = idGenerator;
     this.authorizationPolicyService = authorizationPolicyService;
-    this.eventPublisher = eventPublisher;
     this.clock = clock;
   }
 
@@ -91,33 +87,23 @@ public class SupplierInvoiceService {
         .orElseThrow(() -> ServiceException.notFound("Supplier invoice not found: " + invoiceId));
     long outletId = resolveOutletId(existing.linkedReceiptIds().getFirst());
     requireProcurementWrite(outletId);
-    ProcurementDtos.SupplierInvoiceView view = procurementRepository.approveSupplierInvoice(
-        invoiceId,
-        RequestUserContextHolder.get().userId()
-    );
     RequestUserContext context = RequestUserContextHolder.get();
     String correlationId = currentCorrelationId();
     InvoiceApprovedEvent event = new InvoiceApprovedEvent(
-        view.id(),
-        view.supplierId(),
+        existing.id(),
+        existing.supplierId(),
         outletId,
-        view.invoiceDate(),
-        view.currencyCode(),
-        view.totalAmount(),
-        view.linkedReceiptIds(),
-        view.approvedAt() == null ? clock.instant() : view.approvedAt(),
+        existing.invoiceDate(),
+        existing.currencyCode(),
+        existing.totalAmount(),
+        existing.linkedReceiptIds(),
+        clock.instant(),
         context.userId(),
         context.username(),
         sortedRoles(context),
         correlationId
     );
-    eventPublisher.publish(
-        "fern.procurement.invoice-approved",
-        Long.toString(view.id()),
-        "procurement.invoice-approved",
-        event,
-        correlationId
-    );
+    procurementRepository.approveSupplierInvoice(invoiceId, context.userId(), event);
     return event;
   }
 

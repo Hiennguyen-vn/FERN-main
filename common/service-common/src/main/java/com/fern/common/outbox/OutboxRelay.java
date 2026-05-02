@@ -1,6 +1,7 @@
 package com.fern.common.outbox;
 
 import com.fern.common.spring.events.TypedKafkaEventPublisher;
+import com.fern.common.util.UuidV5;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -138,7 +139,9 @@ public class OutboxRelay {
 
     private void publishEvent(OutboxEvent event) throws Exception {
         JsonNode payloadNode = objectMapper.readTree(event.payload());
-        publisher.publishAndAwait(event.topic(), event.eventKey(), event.aggregateType(), payloadNode);
+        String stableEventId = UuidV5.fromOutboxId(event.id()).toString();
+        publisher.publishAndAwaitWithId(stableEventId, event.topic(), event.eventKey(),
+            event.aggregateType(), payloadNode, null);
     }
 
     private void markPublished(OutboxEvent event, String owner) {

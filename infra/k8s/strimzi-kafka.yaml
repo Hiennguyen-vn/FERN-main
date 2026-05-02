@@ -1,0 +1,75 @@
+# Strimzi Kafka cluster — 3 brokers, RF=3, min.insync.replicas=2.
+# Apply after `kubectl create -f https://strimzi.io/install/latest?namespace=fern`.
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: fern
+  namespace: fern
+spec:
+  kafka:
+    version: 3.9.0
+    replicas: 3
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+    config:
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      inter.broker.protocol.version: "3.9"
+      log.retention.hours: 168
+      auto.create.topics.enable: false
+    storage:
+      type: jbod
+      volumes:
+        - id: 0
+          type: persistent-claim
+          size: 100Gi
+          deleteClaim: false
+    resources:
+      requests:
+        memory: 4Gi
+        cpu: "1"
+      limits:
+        memory: 8Gi
+        cpu: "2"
+  zookeeper:
+    replicas: 0   # KRaft mode; comment out if using ZK
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+---
+# Topic manifests — match infra/config/services.manifest.sh entries.
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: fern.sales.sale-completed
+  namespace: fern
+  labels: { strimzi.io/cluster: fern }
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    min.insync.replicas: "2"
+    retention.ms: "604800000"
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: fern.outbox.dlq
+  namespace: fern
+  labels: { strimzi.io/cluster: fern }
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    min.insync.replicas: "2"
+    retention.ms: "1209600000"  # 14d

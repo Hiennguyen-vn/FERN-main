@@ -160,6 +160,29 @@ public class DayPersister {
                 }
             }
 
+            // 6c. Catalog depth: modifier groups + options + product_modifier_group
+            //     + product_variant + product_allergen.
+            for (var mg : ctx.getDirtyModifierGroups()) {
+                SimulatorRepository.insertModifierGroup(conn, mg);
+                totalRowsWritten++;
+            }
+            for (var mo : ctx.getDirtyModifierOptions()) {
+                SimulatorRepository.insertModifierOption(conn, mo);
+                totalRowsWritten++;
+            }
+            for (var pmg : ctx.getDirtyProductModifierGroups()) {
+                SimulatorRepository.insertProductModifierGroup(conn, pmg);
+                totalRowsWritten++;
+            }
+            for (var pv : ctx.getDirtyProductVariants()) {
+                SimulatorRepository.insertProductVariant(conn, pv);
+                totalRowsWritten++;
+            }
+            for (var pa : ctx.getDirtyProductAllergens()) {
+                SimulatorRepository.insertProductAllergen(conn, pa);
+                totalRowsWritten++;
+            }
+
             // 7. Employees (newly hired)
             for (SimEmployee emp : ctx.getDirtyEmployees()) {
                 SimulatorRepository.insertAppUser(conn, emp);
@@ -185,6 +208,10 @@ public class DayPersister {
             for (var shift : ctx.getDirtyShifts()) {
                 SimulatorRepository.insertShift(conn, shift.id(), shift.outletId(),
                         shift.code(), shift.name(), shift.startTime(), shift.endTime(), shift.breakMinutes());
+                totalRowsWritten++;
+            }
+            for (var srr : ctx.getDirtyShiftRoleRequirements()) {
+                SimulatorRepository.insertShiftRoleRequirement(conn, srr);
                 totalRowsWritten++;
             }
             for (var table : ctx.getDirtyOrderingTables()) {
@@ -267,6 +294,20 @@ public class DayPersister {
                 totalRowsWritten++;
             }
 
+            // 11b. CRM customers + OTP (before sales for FK link).
+            for (var c : ctx.getDirtyCustomers()) {
+                SimulatorRepository.insertCrmCustomer(conn, c);
+                totalRowsWritten++;
+            }
+            for (var c : ctx.getDirtyCustomerUpdates()) {
+                SimulatorRepository.updateCrmCustomer(conn, c);
+                totalRowsWritten++;
+            }
+            for (var otp : ctx.getDirtyOtpRequests()) {
+                SimulatorRepository.insertOtpRequest(conn, otp);
+                totalRowsWritten++;
+            }
+
             long salesStartedAt = System.nanoTime();
             // 12. POS Sessions
             for (var posSession : ctx.getDirtyPosSessions()) {
@@ -287,7 +328,9 @@ public class DayPersister {
                         sale.posSessionId(), sale.currencyCode(), sale.orderType(),
                         sale.status(), sale.paymentStatus(),
                         sale.subtotal(), sale.discount(), sale.taxAmount(), sale.totalAmount(),
-                        sale.orderingTableId(), saleCreatedAt);
+                        sale.orderingTableId(), saleCreatedAt,
+                        sale.customerId(), sale.pointsEarned(), sale.pointsRedeemed(),
+                        sale.voidReasonCode(), sale.voidedBy(), sale.voidedAt());
                 totalRowsWritten++;
 
                 for (var item : sale.items()) {
@@ -322,6 +365,39 @@ public class DayPersister {
                 }
             }
             recordSection("salesMs", salesStartedAt);
+
+            // Flush sale/pos_session batches so subsequent immediate inserts can FK them.
+            batchWriter.flush();
+
+            // 13a-CRM. Points ledger (after sales for sale_id FK).
+            for (var pl : ctx.getDirtyPointsLedgers()) {
+                SimulatorRepository.insertPointsLedger(conn, pl);
+                totalRowsWritten++;
+            }
+
+            // 13a-Cash. Cash movements (after pos_session + sales).
+            for (var cm : ctx.getDirtyCashMovements()) {
+                SimulatorRepository.insertCashMovement(conn, cm);
+                totalRowsWritten++;
+            }
+
+            // 13a-Oversell. Oversell lines per sale.
+            for (var ov : ctx.getDirtyOversellLines()) {
+                SimulatorRepository.insertSaleOversellLine(conn, ov);
+                totalRowsWritten++;
+            }
+
+            // 13a-Reservation. Stock reservations per sale.
+            for (var sr : ctx.getDirtyStockReservations()) {
+                SimulatorRepository.insertStockReservation(conn, sr);
+                totalRowsWritten++;
+            }
+
+            // 13c. Tax rules (one-time per outlet, idempotent).
+            for (var tr : ctx.getDirtyTaxRules()) {
+                SimulatorRepository.insertTaxRule(conn, tr);
+                totalRowsWritten++;
+            }
 
             // 13b. POS Session Reconciliations
             for (var recon : ctx.getDirtyReconciliations()) {
@@ -530,6 +606,12 @@ public class DayPersister {
                         totalRowsWritten++;
                     }
                 }
+            }
+
+            // 30b. Expense documents (after expense_record).
+            for (var ed : ctx.getDirtyExpenseDocuments()) {
+                SimulatorRepository.insertExpenseDocument(conn, ed);
+                totalRowsWritten++;
             }
 
             // 31. Auth Sessions

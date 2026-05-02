@@ -284,4 +284,9 @@ public class ProductController {
   public void deleteModifierOption(@PathVariable long optionId) {
     variantRepository.deleteOption(optionId);
   }
+
+  @GetMapping("/food-costs")
+  public List<ProductDtos.FoodCostView> listFoodCosts(@RequestParam(required = false) Long productId) {
+    return productService.listFoodCosts(productId);
+  }
 }

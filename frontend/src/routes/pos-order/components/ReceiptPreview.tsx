@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Printer } from 'lucide-react';
 import type { SavedOrder } from '../hooks/use-order-history';
 import { formatDateTime, formatVnd } from '../utils/format';
+import { buildLineSubtitle } from '../utils/line-modifiers';
 
 interface Props {
   open: boolean;
@@ -22,9 +23,9 @@ export function ReceiptPreview({ open, onOpenChange, order }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm p-0">
-        <DialogHeader className="px-4 py-3 border-b flex-row items-center justify-between space-y-0">
+        <DialogHeader className="px-4 py-3 border-b flex-row items-center justify-between space-y-0 print:hidden">
           <DialogTitle className="text-base">Hóa đơn</DialogTitle>
-          <Button variant="ghost" size="sm" onClick={() => window.print()}>
+          <Button variant="ghost" size="sm" aria-label="Print receipt" onClick={() => window.print()}>
             <Printer className="w-4 h-4 mr-1" /> In
           </Button>
         </DialogHeader>
@@ -51,8 +52,9 @@ export function ReceiptPreview({ open, onOpenChange, order }: Props) {
           <Divider />
 
           {order.lines.map((l) => {
-            const subtitle = [l.size && `Size ${l.size}`, l.sugar !== undefined && `Đường ${l.sugar}%`, l.ice !== undefined && `Đá ${l.ice}%`, ...l.toppings.map((t) => `+${t.name}`)].filter(Boolean).join(' · ');
-            const unit = l.basePrice + (l.sizePriceAdd ?? 0) + l.toppings.reduce((s, t) => s + t.priceAdd, 0);
+            const subtitle = buildLineSubtitle(l);
+            const modifierDelta = (l.modifiers ?? []).reduce((s, m) => s + (m.priceDelta || 0), 0);
+            const unit = l.basePrice + (l.sizePriceAdd ?? 0) + l.toppings.reduce((s, t) => s + t.priceAdd, 0) + modifierDelta;
             return (
               <div key={l.lineId} className="mb-1">
                 <div className="flex justify-between gap-2">

@@ -1,8 +1,11 @@
 package com.fern.services.payroll.infrastructure;
 
+import com.fern.common.outbox.OutboxWriter;
 import com.fern.common.repository.BaseRepository;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.spring.web.QueryConventions;
+import com.fern.events.payroll.PayrollApprovedEvent;
+import com.fern.services.payroll.api.PayrollDtos;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.Date;
@@ -34,8 +37,11 @@ public class PayrollRepository extends BaseRepository {
       "payrollPeriodStartDate", "userId", "outletId"
   );
 
-  public PayrollRepository(DataSource dataSource) {
+  private final OutboxWriter outboxWriter;
+
+  public PayrollRepository(DataSource dataSource, OutboxWriter outboxWriter) {
     super(dataSource);
+    this.outboxWriter = outboxWriter;
   }
 
   public record PayrollPeriodRecord(
@@ -391,6 +397,30 @@ public class PayrollRepository extends BaseRepository {
     );
   }
 
+  public Optional<PayrollDtos.EmployeeContractSummary> findEffectiveContractForTimesheet(long timesheetId) {
+    return queryOne(
+        """
+        SELECT ec.user_id, ec.employment_type, ec.salary_type, ec.base_salary, ec.currency_code
+        FROM core.payroll_timesheet pt
+        JOIN core.payroll_period pp ON pp.id = pt.payroll_period_id
+        JOIN LATERAL (
+          SELECT user_id, employment_type, salary_type, base_salary, currency_code, start_date, created_at
+          FROM core.employee_contract ec
+          WHERE ec.user_id = pt.user_id
+            AND ec.status = 'active'
+            AND ec.deleted_at IS NULL
+            AND ec.start_date <= pp.end_date
+            AND (ec.end_date IS NULL OR ec.end_date >= pp.start_date)
+          ORDER BY ec.start_date DESC, ec.created_at DESC
+          LIMIT 1
+        ) ec ON TRUE
+        WHERE pt.id = ?
+        """,
+        this::mapEmployeeContractSummary,
+        timesheetId
+    );
+  }
+
   public boolean outletBelongsToRegionScope(long outletId, long regionId) {
     return queryOne(
         """
@@ -626,7 +656,7 @@ public class PayrollRepository extends BaseRepository {
         """
         SELECT
           pt.outlet_id,
-          to_char(date_trunc('month', COALESCE(pp.pay_date, pp.end_date, pp.start_date)), 'YYYY-MM') AS month,
+          to_char(date_trunc('month', pp.start_date), 'YYYY-MM') AS month,
           p.status::text AS status,
           COUNT(*) AS record_count,
           COALESCE(SUM(p.base_salary_amount), 0) AS base_salary,
@@ -645,14 +675,14 @@ public class PayrollRepository extends BaseRepository {
       params.add(outletId);
     }
     if (startDate != null) {
-      sql.append(" AND COALESCE(pp.pay_date, pp.end_date, pp.start_date) >= ?");
+      sql.append(" AND pp.start_date >= ?");
       params.add(java.sql.Date.valueOf(startDate));
     }
     if (endDate != null) {
-      sql.append(" AND COALESCE(pp.pay_date, pp.end_date, pp.start_date) <= ?");
+      sql.append(" AND pp.start_date <= ?");
       params.add(java.sql.Date.valueOf(endDate));
     }
-    sql.append(" GROUP BY pt.outlet_id, date_trunc('month', COALESCE(pp.pay_date, pp.end_date, pp.start_date)), p.status");
+    sql.append(" GROUP BY pt.outlet_id, date_trunc('month', pp.start_date), p.status");
     sql.append(" ORDER BY pt.outlet_id, month, status");
 
     return executeInTransaction(conn -> {
@@ -749,7 +779,8 @@ public class PayrollRepository extends BaseRepository {
     });
   }
 
-  public PayrollApprovalProjection approvePayroll(long payrollId, Long approvedByUserId) {
+  public PayrollApprovalProjection approvePayroll(long payrollId, Long approvedByUserId,
+      java.util.function.Function<PayrollApprovalProjection, PayrollApprovedEvent> eventBuilder) {
     return executeInTransaction(conn -> {
       try (PreparedStatement ps = conn.prepareStatement(
           """
@@ -769,6 +800,7 @@ public class PayrollRepository extends BaseRepository {
         ps.setLong(2, payrollId);
         ps.executeUpdate();
       }
+      PayrollApprovalProjection projection;
       try (PreparedStatement ps = conn.prepareStatement(
           """
           SELECT p.id, p.payroll_timesheet_id, p.currency_code, p.base_salary_amount, p.net_salary, p.status,
@@ -784,7 +816,7 @@ public class PayrollRepository extends BaseRepository {
           if (!rs.next()) {
             throw new IllegalStateException("Payroll not found after approval: " + payrollId);
           }
-          return new PayrollApprovalProjection(
+          projection = new PayrollApprovalProjection(
               mapPayroll(rs),
               rs.getLong("payroll_period_id"),
               rs.getLong("user_id"),
@@ -792,6 +824,10 @@ public class PayrollRepository extends BaseRepository {
           );
         }
       }
+      PayrollApprovedEvent event = eventBuilder.apply(projection);
+      outboxWriter.append(conn, "payroll", payrollId,
+          "fern.payroll.payroll-approved", Long.toString(payrollId), event);
+      return projection;
     });
   }
 
@@ -957,6 +993,20 @@ public class PayrollRepository extends BaseRepository {
       );
     } catch (SQLException e) {
       throw new IllegalStateException("Unable to map payroll timesheet scope", e);
+    }
+  }
+
+  private PayrollDtos.EmployeeContractSummary mapEmployeeContractSummary(ResultSet rs) {
+    try {
+      return new PayrollDtos.EmployeeContractSummary(
+          rs.getLong("user_id"),
+          rs.getString("employment_type"),
+          rs.getString("salary_type"),
+          rs.getBigDecimal("base_salary"),
+          rs.getString("currency_code")
+      );
+    } catch (SQLException e) {
+      throw new IllegalStateException("Unable to map employee contract summary", e);
     }
   }
 

@@ -18,8 +18,8 @@ export function toNum(value: unknown): number {
  * formatMoney — compact currency formatting (no decimals for large values).
  * Use for KPI cards and table cells.
  */
-export function formatMoney(value: unknown, currency = 'USD'): string {
-  return new Intl.NumberFormat('en-US', {
+export function formatMoney(value: unknown, currency = 'VND'): string {
+  return new Intl.NumberFormat('vi-VN', {
     style: 'currency',
     currency,
     minimumFractionDigits: 0,
@@ -30,8 +30,8 @@ export function formatMoney(value: unknown, currency = 'USD'): string {
 /**
  * formatMoneyExact — two-decimal formatting for ledger rows / payroll detail.
  */
-export function formatMoneyExact(value: unknown, currency = 'USD'): string {
-  return new Intl.NumberFormat('en-US', {
+export function formatMoneyExact(value: unknown, currency = 'VND'): string {
+  return new Intl.NumberFormat('vi-VN', {
     style: 'currency',
     currency,
     minimumFractionDigits: 2,

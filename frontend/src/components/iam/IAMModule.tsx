@@ -985,7 +985,7 @@ export function IAMModule() {
                 const meta = dirMeta.get(u.id);
                 return (
                   <tr key={u.id} className="cursor-pointer transition-colors hover:bg-muted/20" onClick={() => { setSelectedUserId(u.id); setDetailTab('assignments'); setUserDetailOpen(true); }}>
-                    <td className="px-3 py-2"><div className="font-medium">{u.fullName || u.username}</div><div className="text-xs text-muted-foreground">{u.username}</div></td>
+                    <td className="px-3 py-2 max-w-[220px]" title={`${u.fullName || u.username} · ${u.username}`}><div className="font-medium truncate">{u.fullName || u.username}</div><div className="text-xs text-muted-foreground truncate">{u.username}</div></td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{u.email || '—'}</td>
                     <td className="px-3 py-2 text-xs">{meta?.primaryRoleLabel || '—'}{meta && meta.additionalRoleCount > 0 ? <span className="text-muted-foreground"> +{meta.additionalRoleCount}</span> : null}</td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{meta?.scopeSummary || '—'}</td>
@@ -1089,7 +1089,7 @@ export function IAMModule() {
                 const rr = roleRefs.find((r) => r.code === a.canonicalRole);
                 return (
                   <tr key={a.key}>
-                    <td className="px-3 py-2"><div className="text-xs font-medium">{a.fullName || a.username}</div><div className="text-[10px] text-muted-foreground">{a.username}</div></td>
+                    <td className="px-3 py-2 max-w-[200px]" title={`${a.fullName || a.username} · ${a.username}`}><div className="text-xs font-medium truncate">{a.fullName || a.username}</div><div className="text-[10px] text-muted-foreground truncate">{a.username}</div></td>
                     <td className="px-3 py-2"><StatusDot status={a.userStatus || 'unknown'} /></td>
                     <td className="px-3 py-2"><RoleBadge label={rr?.name || a.canonicalRole} tone={rr?.tone || 'neutral'} /></td>
                     <td className="px-3 py-2"><ScopePill scopeType={a.scopeType} label={summarizeScope(a)} /></td>
@@ -1256,7 +1256,7 @@ export function IAMModule() {
               : filteredOverrides.length === 0 ? <tr><td colSpan={4} className="p-6"><EmptyState title="No grants" description="No matching permission grants." /></td></tr>
               : filteredOverrides.map((r, i) => (
                 <tr key={`${r.userId}:${r.outletId}:${r.permissionCode}:${i}`}>
-                  <td className="px-3 py-2"><div className="text-xs font-medium">{r.fullName || r.username}</div></td>
+                  <td className="px-3 py-2 max-w-[200px]" title={`${r.fullName || r.username} · ${r.username}`}><div className="text-xs font-medium truncate">{r.fullName || r.username}</div></td>
                   <td className="px-3 py-2 text-xs">{r.permissionName || r.permissionCode}{IAM_SENSITIVE_PERMISSION_CODES.has(r.permissionCode) ? <Badge variant="outline" className="ml-1 border-amber-300 bg-amber-50 text-[10px] text-amber-700">!</Badge> : null}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{r.outletName || r.outletCode || r.outletId}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{formatDateTime(r.assignedAt)}</td>

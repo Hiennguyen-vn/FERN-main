@@ -119,6 +119,7 @@ public class CleanupCommand implements Runnable {
                             throw e;
                         }
                     }
+                    reconcileStockBalance(conn);
                     System.out.printf("  %-35s %s%n", AnsiColors.bold("TOTAL"),
                             AnsiColors.bold(String.format("%,d rows affected", grandTotal)));
                 } else {
@@ -137,6 +138,7 @@ public class CleanupCommand implements Runnable {
                                 System.out.printf("  %-35s %,d rows affected%n", entry.getKey(), entry.getValue());
                             }
                         }
+                        reconcileStockBalance(conn);
                         System.out.println();
                         System.out.printf("  %-35s %s%n", AnsiColors.bold("TOTAL"),
                                 AnsiColors.bold(String.format("%,d rows affected", total)));
@@ -149,6 +151,20 @@ public class CleanupCommand implements Runnable {
         } catch (Exception e) {
             System.err.println(AnsiColors.red("✗ Cleanup failed: ") + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    private static void reconcileStockBalance(java.sql.Connection conn) {
+        try {
+            boolean prev = conn.getAutoCommit();
+            conn.setAutoCommit(true);
+            try (var stmt = conn.createStatement()) {
+                stmt.execute("SELECT core.reconcile_stock_balance_from_ledger()");
+            }
+            conn.setAutoCommit(prev);
+            System.out.println(AnsiColors.green("✓") + " stock_balance reconciled from ledger");
+        } catch (Exception e) {
+            System.err.println(AnsiColors.red("⚠") + " stock_balance reconcile failed: " + e.getMessage());
         }
     }
 }

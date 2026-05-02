@@ -41,7 +41,11 @@ class InventoryRepositoryIT {
     TestFixtures.seedBaseline(dataSource);
     resetInventoryTables();
     seedItemAndStock();
-    repository = new InventoryRepository(dataSource, new SnowflakeIdGenerator(1L));
+    com.fern.common.outbox.OutboxWriter outboxWriter = new com.fern.common.outbox.OutboxWriter(
+        new com.fasterxml.jackson.databind.ObjectMapper(),
+        new SnowflakeIdGenerator(1L)::generateId);
+    repository = new InventoryRepository(dataSource, new SnowflakeIdGenerator(1L), outboxWriter,
+        java.time.Clock.systemUTC());
   }
 
   @Test

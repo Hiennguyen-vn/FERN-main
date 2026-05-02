@@ -54,7 +54,7 @@ public class AuthUserRepository extends BaseRepository {
   public Optional<AuthUserRecord> findByUsername(String username) {
     return queryOne(
         """
-        SELECT id, username, password_hash, full_name, employee_code, email, status, created_at, updated_at
+        SELECT id, username, password_hash, full_name, employee_code, email, phone, status, created_at, updated_at
         FROM core.app_user
         WHERE username = ? AND deleted_at IS NULL
         """,
@@ -66,7 +66,7 @@ public class AuthUserRepository extends BaseRepository {
   public Optional<AuthUserRecord> findById(long userId) {
     return queryOne(
         """
-        SELECT id, username, password_hash, full_name, employee_code, email, status, created_at, updated_at
+        SELECT id, username, password_hash, full_name, employee_code, email, phone, status, created_at, updated_at
         FROM core.app_user
         WHERE id = ? AND deleted_at IS NULL
         """,
@@ -575,6 +575,54 @@ public class AuthUserRepository extends BaseRepository {
     });
   }
 
+  public AuthUserRecord updateProfile(long userId, String fullName, String email, String phone) {
+    return executeInTransaction(conn -> {
+      Instant now = clock.instant();
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          UPDATE core.app_user
+          SET full_name = ?, email = ?, phone = ?, updated_at = ?
+          WHERE id = ? AND deleted_at IS NULL
+          """
+      )) {
+        ps.setString(1, fullName);
+        ps.setString(2, email);
+        ps.setString(3, phone);
+        ps.setTimestamp(4, Timestamp.from(now));
+        ps.setLong(5, userId);
+        int updated = ps.executeUpdate();
+        if (updated == 0) {
+          throw ServiceException.notFound("User not found: " + userId);
+        }
+      }
+      return findByIdTransactional(conn, userId)
+          .orElseThrow(() -> new IllegalStateException("Updated user not found: " + userId));
+    });
+  }
+
+  public void updatePassword(long userId, String newPasswordHash) {
+    executeInTransaction(conn -> {
+      Instant now = clock.instant();
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          UPDATE core.app_user
+          SET password_hash = ?, password_changed_at = ?, updated_at = ?
+          WHERE id = ? AND deleted_at IS NULL
+          """
+      )) {
+        ps.setString(1, newPasswordHash);
+        ps.setTimestamp(2, Timestamp.from(now));
+        ps.setTimestamp(3, Timestamp.from(now));
+        ps.setLong(4, userId);
+        int updated = ps.executeUpdate();
+        if (updated == 0) {
+          throw ServiceException.notFound("User not found: " + userId);
+        }
+      }
+      return null;
+    });
+  }
+
   public Set<Long> findUserIdsByRoleCode(String roleCode) {
     return new LinkedHashSet<>(queryList(
         """
@@ -660,7 +708,7 @@ public class AuthUserRepository extends BaseRepository {
   private Optional<AuthUserRecord> findByIdTransactional(Connection conn, long userId) throws Exception {
     try (PreparedStatement ps = conn.prepareStatement(
         """
-        SELECT id, username, password_hash, full_name, employee_code, email, status, created_at, updated_at
+        SELECT id, username, password_hash, full_name, employee_code, email, phone, status, created_at, updated_at
         FROM core.app_user
         WHERE id = ? AND deleted_at IS NULL
         """
@@ -977,6 +1025,7 @@ public class AuthUserRepository extends BaseRepository {
           rs.getString("full_name"),
           rs.getString("employee_code"),
           rs.getString("email"),
+          rs.getString("phone"),
           rs.getString("status"),
           rs.getTimestamp("created_at").toInstant(),
           rs.getTimestamp("updated_at").toInstant()
@@ -1001,6 +1050,7 @@ public class AuthUserRepository extends BaseRepository {
       String fullName,
       String employeeCode,
       String email,
+      String phone,
       String status,
       Instant createdAt,
       Instant updatedAt

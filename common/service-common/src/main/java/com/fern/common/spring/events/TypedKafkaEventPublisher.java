@@ -33,7 +33,7 @@ public class TypedKafkaEventPublisher {
   }
 
   public <T> void publish(String topic, String aggregateId, String eventType, T payload, String traceId) {
-    publishInternal(topic, aggregateId, eventType, payload, traceId, false);
+    publishInternal(null, topic, aggregateId, eventType, payload, traceId, false);
   }
 
   public <T> void publishAndAwait(String topic, String aggregateId, String eventType, T payload) {
@@ -41,10 +41,20 @@ public class TypedKafkaEventPublisher {
   }
 
   public <T> void publishAndAwait(String topic, String aggregateId, String eventType, T payload, String traceId) {
-    publishInternal(topic, aggregateId, eventType, payload, traceId, true);
+    publishInternal(null, topic, aggregateId, eventType, payload, traceId, true);
+  }
+
+  /**
+   * Outbox relay overload: caller supplies deterministic eventId so reclaim/retry
+   * yields identical envelope.eventId. See UuidV5.fromOutboxId.
+   */
+  public <T> void publishAndAwaitWithId(String eventId, String topic, String aggregateId,
+      String eventType, T payload, String traceId) {
+    publishInternal(eventId, topic, aggregateId, eventType, payload, traceId, true);
   }
 
   private <T> void publishInternal(
+      String eventIdOrNull,
       String topic,
       String aggregateId,
       String eventType,
@@ -54,7 +64,7 @@ public class TypedKafkaEventPublisher {
   ) {
     try {
       EventEnvelope<T> envelope = new EventEnvelope<>(
-        UUID.randomUUID().toString(),
+        eventIdOrNull != null ? eventIdOrNull : UUID.randomUUID().toString(),
         aggregateId,
         eventType,
         clock.instant(),

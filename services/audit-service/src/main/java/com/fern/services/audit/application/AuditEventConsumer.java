@@ -88,7 +88,7 @@ public class AuditEventConsumer {
       }
       idempotencyGuard.execute(
           "audit-service",
-          envelope.eventId(),
+          idempotencyKey(envelope),
           message,
           TtlPolicy.BET,
           () -> {
@@ -253,5 +253,9 @@ public class AuditEventConsumer {
     } catch (Exception ex) {
       throw new IllegalStateException("Failed to serialize audit idempotency response", ex);
     }
+  }
+
+  private static String idempotencyKey(EventEnvelope<?> envelope) {
+    return envelope.eventId() + ":" + envelope.aggregateId();
   }
 }

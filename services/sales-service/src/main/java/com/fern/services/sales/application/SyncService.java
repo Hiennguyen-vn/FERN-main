@@ -8,6 +8,7 @@ import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.services.sales.api.SyncDtos;
 import com.fern.services.sales.api.SyncDtos.CatalogRow;
+import com.fern.services.sales.api.SyncDtos.ModifierEffectRow;
 import com.fern.services.sales.api.SyncDtos.RecipeComponentRow;
 import com.fern.services.sales.api.SyncDtos.RecipeRow;
 import com.fern.services.sales.api.SyncDtos.StockRow;
@@ -371,7 +372,8 @@ public class SyncService extends BaseRepository {
                             rs.getString("yield_uom_code"),
                             rs.getString("status"),
                             rs.getLong("updated_at_ms"),
-                            loadRecipeComponents(conn, productId, version)
+                            loadRecipeComponents(conn, productId, version),
+                            loadModifierEffects(conn, productId)
                         ));
                     }
                 }
@@ -665,6 +667,43 @@ public class SyncService extends BaseRepository {
             }
         }
         return components;
+    }
+
+    private List<ModifierEffectRow> loadModifierEffects(Connection conn, long productId) throws SQLException {
+        String sql = """
+            SELECT mre.modifier_option_id,
+                   mre.effect_type,
+                   mre.ingredient_id,
+                   mre.substitute_ingredient_id,
+                   mre.multiplier,
+                   mre.qty_delta
+            FROM core.modifier_recipe_effect mre
+            JOIN core.modifier_option mo ON mo.id = mre.modifier_option_id
+            JOIN core.product_modifier_group pmg ON pmg.modifier_group_id = mo.modifier_group_id
+            WHERE pmg.product_id = ?
+              AND mo.is_active = TRUE
+            ORDER BY mre.modifier_option_id, mre.effect_type
+            """;
+        List<ModifierEffectRow> effects = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, productId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Long ingredientId = rs.getObject("ingredient_id") == null ? null : rs.getLong("ingredient_id");
+                    Long substituteId = rs.getObject("substitute_ingredient_id") == null
+                        ? null : rs.getLong("substitute_ingredient_id");
+                    effects.add(new ModifierEffectRow(
+                        rs.getLong("modifier_option_id"),
+                        rs.getString("effect_type"),
+                        ingredientId,
+                        substituteId,
+                        toPlainString(rs.getBigDecimal("multiplier")),
+                        toPlainString(rs.getBigDecimal("qty_delta"))
+                    ));
+                }
+            }
+        }
+        return effects;
     }
 
     private long computeMenuVersion(Connection conn) throws SQLException {

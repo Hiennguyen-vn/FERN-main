@@ -27,7 +27,7 @@ This is a future-state architecture package, not a claim that all listed service
 
 ```mermaid
 flowchart LR
-  Client["Web, mobile, admin, partner clients"] --> Gateway["gateway:8080\nJavalin"]
+  Client["Web, mobile, admin, partner clients"] --> Gateway["gateway:8080\nSpring Cloud Gateway"]
 
   Gateway --> Auth["auth-service:8081"]
   Gateway --> Org["org-service:8083"]
@@ -129,7 +129,7 @@ flowchart LR
 
 | Service | Module path | Runtime | Port | Authoritative writer for | Database access pattern | Common modules | Direct synchronous dependencies |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Gateway | `gateway/` | Javalin | `8080` | None | No business DB writes; Redis-backed rate limit and routing cache only | `common-utils`, `common-model`, `service-common`, `idempotency-core`, `event-schemas` | `auth-service`, `master-node`, all business services |
+| Gateway | `gateway/` | Spring Cloud Gateway WebFlux | `8080` | None | No business DB writes; Redis-backed rate limit and routing cache only | `common-utils`, `common-model`, `service-common`, `idempotency-core`, `event-schemas` | `auth-service`, `master-node`, all business services |
 | Master Node | `services/master-node/` | Spring Boot | `8082` | Planned control-plane tables: `service_instance`, `service_assignment`, `service_config_profile`, `feature_flag`, `service_release`, `service_rollout` | PostgreSQL primary via HikariCP, Redis hot cache, Kafka for topology/config events | `common-utils`, `common-model`, `event-schemas` | None for business reads; all services call into it |
 | Auth Service | `services/auth-service/{core,spring,aws-lambda}` | Spring Boot + AWS Lambda | `8081` | `app_user`, `role`, `permission`, `role_permission`, `user_role`, `user_permission` | PostgreSQL primary via HikariCP, Redis L1/L2 for sessions and claims | `common-utils`, `common-model`, `event-schemas`, `idempotency-core` | `org-service` for outlet and region validation on admin assignment flows |
 | Organization Service | `services/org-service/` | Spring Boot | `8083` | `currency`, `region`, `exchange_rate`, `outlet` | PostgreSQL primary via HikariCP, Redis tiered cache | `common-utils`, `common-model`, `event-schemas`, `idempotency-core` | None |
@@ -928,7 +928,7 @@ fern-backend
 | Module | Required dependencies |
 | --- | --- |
 | `common/event-schemas` | `common-utils`, Jackson annotations, `jackson-datatype-jsr310`, JUnit for DTO tests |
-| `gateway` | `common-utils`, `common-model`, `service-common`, `idempotency-core`, `event-schemas`, `javalin`, `postgresql` optional none, `jedis`, `kafka-clients`, Jackson |
+| `gateway` | `common-utils`, `common-model`, `service-common`, `idempotency-core`, `event-schemas`, `spring-cloud-starter-gateway-server-webflux`, `spring-boot-starter-actuator`, `jedis`, `kafka-clients`, Jackson |
 | `services/master-node` | `common-utils`, `common-model`, `event-schemas`, `spring-boot-starter-web`, `spring-boot-starter-actuator`, `spring-boot-starter-validation`, `postgresql`, `HikariCP`, `jedis`, `kafka-clients` |
 | `services/auth-service/core` | `common-utils`, `common-model`, `event-schemas` |
 | `services/auth-service/spring` | `auth-service-core`, `common-utils`, `common-model`, `event-schemas`, `idempotency-core`, `spring-boot-starter-web`, `spring-boot-starter-actuator`, `spring-boot-starter-validation`, `postgresql`, `HikariCP`, `jedis`, `kafka-clients` |

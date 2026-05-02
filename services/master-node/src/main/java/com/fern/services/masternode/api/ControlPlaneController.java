@@ -1,5 +1,8 @@
 package com.fern.services.masternode.api;
 
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.RequestUserContext;
+import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.services.masternode.application.ControlPlaneRegistryService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -23,11 +26,19 @@ public class ControlPlaneController {
     this.registryService = registryService;
   }
 
+  private static void requireInternalCaller() {
+    RequestUserContext ctx = RequestUserContextHolder.get();
+    if (ctx == null || !ctx.internalService()) {
+      throw ServiceException.forbidden("Control plane requires internal service token");
+    }
+  }
+
   @PostMapping("/api/v1/control/services/register")
   @ResponseStatus(HttpStatus.CREATED)
   public ControlPlaneDtos.ServiceRegistrationResponse register(
       @Valid @RequestBody ControlPlaneDtos.ServiceRegistrationRequest request
   ) {
+    requireInternalCaller();
     return registryService.register(request);
   }
 
@@ -39,6 +50,7 @@ public class ControlPlaneController {
     ControlPlaneDtos.ServiceHeartbeatRequest payload = request == null
         ? new ControlPlaneDtos.ServiceHeartbeatRequest(null, null, null, null, null, null)
         : request;
+    requireInternalCaller();
     return registryService.heartbeat(instanceId, payload);
   }
 
@@ -46,11 +58,13 @@ public class ControlPlaneController {
   public ControlPlaneDtos.MasterHeartbeatResponse masterHeartbeat(
       @Valid @RequestBody ControlPlaneDtos.MasterHeartbeatRequest request
   ) {
+    requireInternalCaller();
     return registryService.upsertHeartbeat(request);
   }
 
   @GetMapping("/api/v1/master/registry/{serviceName}")
   public List<ControlPlaneDtos.ServiceInstanceView> registry(@PathVariable String serviceName) {
+    requireInternalCaller();
     return registryService.discovery(serviceName);
   }
 
@@ -63,11 +77,13 @@ public class ControlPlaneController {
     ControlPlaneDtos.ServiceDeregisterRequest payload = request == null
         ? new ControlPlaneDtos.ServiceDeregisterRequest("shutdown", 0)
         : request;
+    requireInternalCaller();
     registryService.deregister(instanceId, payload);
   }
 
   @GetMapping("/api/v1/control/services")
   public List<ControlPlaneDtos.ServiceSummaryView> listServices() {
+    requireInternalCaller();
     return registryService.listServices();
   }
 
@@ -78,26 +94,31 @@ public class ControlPlaneController {
       @RequestParam(required = false) Long outletId,
       @RequestParam(required = false) String capability
   ) {
+    requireInternalCaller();
     return registryService.listInstances(serviceName, regionCode, outletId, capability);
   }
 
   @GetMapping({"/api/v1/control/config/{serviceName}", "/api/v1/master/config/{serviceName}"})
   public ControlPlaneDtos.EffectiveConfigResponse getConfig(@PathVariable String serviceName) {
+    requireInternalCaller();
     return registryService.getConfig(serviceName);
   }
 
   @GetMapping({"/api/v1/control/assignments/{serviceName}", "/api/v1/master/assignments/{serviceName}"})
   public ControlPlaneDtos.ServiceAssignmentsResponse getAssignments(@PathVariable String serviceName) {
+    requireInternalCaller();
     return registryService.getAssignments(serviceName);
   }
 
   @GetMapping({"/api/v1/control/health/system", "/api/v1/master/health/system"})
   public ControlPlaneDtos.SystemHealthResponse systemHealth() {
+    requireInternalCaller();
     return registryService.systemHealth();
   }
 
   @GetMapping({"/api/v1/control/health/services/{serviceName}", "/api/v1/master/health/services/{serviceName}"})
   public ControlPlaneDtos.ServiceHealthResponse serviceHealth(@PathVariable String serviceName) {
+    requireInternalCaller();
     return registryService.serviceHealth(serviceName);
   }
 
@@ -106,6 +127,7 @@ public class ControlPlaneController {
   public ControlPlaneDtos.CreateReleaseResponse createRelease(
       @Valid @RequestBody ControlPlaneDtos.CreateReleaseRequest request
   ) {
+    requireInternalCaller();
     return registryService.createRelease(request);
   }
 
@@ -115,11 +137,13 @@ public class ControlPlaneController {
       @PathVariable long releaseId,
       @Valid @RequestBody ControlPlaneDtos.CreateRolloutRequest request
   ) {
+    requireInternalCaller();
     return registryService.createRollout(releaseId, request);
   }
 
   @GetMapping({"/api/v1/control/releases/{releaseId}", "/api/v1/master/releases/{releaseId}"})
   public ControlPlaneDtos.ReleaseView getRelease(@PathVariable long releaseId) {
+    requireInternalCaller();
     return registryService.getRelease(releaseId);
   }
 }

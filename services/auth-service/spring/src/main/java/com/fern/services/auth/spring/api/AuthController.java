@@ -35,7 +35,7 @@ public class AuthController {
 
   public AuthController(
       AuthService authService,
-      @Value("${AUTH_COOKIE_NAME:dorabets_session}") String authCookieName,
+      @Value("${AUTH_COOKIE_NAME:fern_session}") String authCookieName,
       @Value("${AUTH_COOKIE_SAME_SITE:Lax}") String authCookieSameSite,
       @Value("${AUTH_COOKIE_SECURE:false}") boolean authCookieSecure,
       @Value("${AUTH_COOKIE_DOMAIN:}") String authCookieDomain
@@ -61,6 +61,17 @@ public class AuthController {
   @GetMapping("/me")
   public AuthDtos.MeResponse me() {
     return authService.me();
+  }
+
+  @PutMapping("/me/profile")
+  public AuthDtos.UserSummary updateMyProfile(@Valid @RequestBody AuthDtos.UpdateProfileRequest request) {
+    return authService.updateMyProfile(request);
+  }
+
+  @PostMapping("/me/change-password")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void changeMyPassword(@Valid @RequestBody AuthDtos.ChangePasswordRequest request) {
+    authService.changeMyPassword(request);
   }
 
   @PostMapping("/refresh")

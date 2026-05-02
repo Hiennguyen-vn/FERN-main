@@ -1,0 +1,29 @@
+{
+  "name": "fern-clickhouse-sink-events",
+  "config": {
+    "connector.class": "com.clickhouse.kafka.connect.ClickHouseSinkConnector",
+    "tasks.max": "3",
+    "topics": "fern.sales.sale-completed,fern.sales.payment-captured,fern.inventory.stock-low-threshold,fern.finance.expense-record-created,fern.finance.invoice-issued,fern.procurement.goods-receipt-posted,fern.procurement.invoice-approved,fern.payroll.payroll-approved",
+    "hostname": "clickhouse",
+    "port": "8123",
+    "database": "fern",
+    "username": "default",
+    "password": "",
+    "ssl": "false",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
+    "exactlyOnce": "false",
+    "errors.tolerance": "all",
+    "errors.deadletterqueue.topic.name": "fern.outbox.dlq",
+    "errors.deadletterqueue.context.headers.enable": "true",
+    "tableMapping.fern.sales.sale-completed": "events_sale_completed",
+    "tableMapping.fern.sales.payment-captured": "events_payment_captured",
+    "tableMapping.fern.inventory.stock-low-threshold": "events_stock_low",
+    "tableMapping.fern.finance.expense-record-created": "events_expense_created",
+    "tableMapping.fern.finance.invoice-issued": "events_invoice_issued",
+    "tableMapping.fern.procurement.goods-receipt-posted": "events_goods_receipt_posted",
+    "tableMapping.fern.procurement.invoice-approved": "events_invoice_approved",
+    "tableMapping.fern.payroll.payroll-approved": "events_payroll_approved"
+  }
+}

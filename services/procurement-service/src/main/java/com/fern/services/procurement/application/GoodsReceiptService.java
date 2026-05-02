@@ -4,7 +4,6 @@ import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.spring.web.QueryConventions;
 import com.fern.events.procurement.GoodsReceiptPostedEvent;
@@ -25,20 +24,17 @@ public class GoodsReceiptService {
   private final ProcurementRepository procurementRepository;
   private final SnowflakeIdGenerator idGenerator;
   private final AuthorizationPolicyService authorizationPolicyService;
-  private final TypedKafkaEventPublisher eventPublisher;
   private final Clock clock;
 
   public GoodsReceiptService(
       ProcurementRepository procurementRepository,
       SnowflakeIdGenerator idGenerator,
       AuthorizationPolicyService authorizationPolicyService,
-      TypedKafkaEventPublisher eventPublisher,
       Clock clock
   ) {
     this.procurementRepository = procurementRepository;
     this.idGenerator = idGenerator;
     this.authorizationPolicyService = authorizationPolicyService;
-    this.eventPublisher = eventPublisher;
     this.clock = clock;
   }
 
@@ -104,39 +100,34 @@ public class GoodsReceiptService {
         .orElseThrow(() -> ServiceException.notFound(
             "Purchase order not found for goods receipt: " + existingReceipt.poId()));
     requireProcurementWrite(purchaseOrder.outletId());
-    ProcurementDtos.GoodsReceiptView receipt = procurementRepository.postGoodsReceipt(receiptId);
     RequestUserContext context = RequestUserContextHolder.get();
     String correlationId = currentCorrelationId();
     GoodsReceiptPostedEvent event = new GoodsReceiptPostedEvent(
-        receipt.id(),
-        receipt.poId(),
+        existingReceipt.id(),
+        existingReceipt.poId(),
         purchaseOrder.supplierId(),
         purchaseOrder.outletId(),
-        receipt.businessDate(),
-        receipt.currencyCode(),
-        receipt.items().stream()
+        existingReceipt.businessDate(),
+        existingReceipt.currencyCode(),
+        existingReceipt.items().stream()
             .map(item -> new GoodsReceiptPostedLineItem(
                 item.itemId(),
                 item.uomCode(),
                 item.qtyReceived(),
                 item.unitCost(),
-                item.lineTotal()
+                item.lineTotal(),
+                item.batchNo(),
+                item.expiryDate()
             ))
             .toList(),
-        receipt.totalPrice(),
+        existingReceipt.totalPrice(),
         clock.instant(),
         context.userId(),
         context.username(),
         sortedRoles(context),
         correlationId
     );
-    eventPublisher.publish(
-        "fern.procurement.goods-receipt-posted",
-        Long.toString(receipt.id()),
-        "procurement.goods-receipt-posted",
-        event,
-        correlationId
-    );
+    procurementRepository.postGoodsReceipt(receiptId, event);
     return event;
   }
 

@@ -5,7 +5,6 @@ import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.common.spring.cache.JacksonCacheSerializer;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.spring.web.QueryConventions;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -33,7 +32,6 @@ public class FinanceService {
 
   private final FinanceRepository financeRepository;
   private final SnowflakeIdGenerator idGenerator;
-  private final TypedKafkaEventPublisher eventPublisher;
   private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
   private final TieredCache<List<FinanceDtos.MonthlyExpenseRow>> monthlyExpenseCache;
@@ -44,7 +42,6 @@ public class FinanceService {
   public FinanceService(
       FinanceRepository financeRepository,
       SnowflakeIdGenerator idGenerator,
-      TypedKafkaEventPublisher eventPublisher,
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock,
       ObjectMapper objectMapper,
@@ -55,7 +52,6 @@ public class FinanceService {
     this(
         financeRepository,
         idGenerator,
-        eventPublisher,
         authorizationPolicyService,
         clock,
         objectMapper,
@@ -68,7 +64,6 @@ public class FinanceService {
   private FinanceService(
       FinanceRepository financeRepository,
       SnowflakeIdGenerator idGenerator,
-      TypedKafkaEventPublisher eventPublisher,
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock,
       ObjectMapper objectMapper,
@@ -78,7 +73,6 @@ public class FinanceService {
   ) {
     this.financeRepository = financeRepository;
     this.idGenerator = idGenerator;
-    this.eventPublisher = eventPublisher;
     this.authorizationPolicyService = authorizationPolicyService;
     this.clock = clock;
     this.expenseDocumentStorage = expenseDocumentStorage;
@@ -100,14 +94,12 @@ public class FinanceService {
   public FinanceService(
       FinanceRepository financeRepository,
       SnowflakeIdGenerator idGenerator,
-      TypedKafkaEventPublisher eventPublisher,
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock
   ) {
     this(
         financeRepository,
         idGenerator,
-        eventPublisher,
         authorizationPolicyService,
         clock,
         new ObjectMapper(),
@@ -120,7 +112,6 @@ public class FinanceService {
   FinanceService(
       FinanceRepository financeRepository,
       SnowflakeIdGenerator idGenerator,
-      TypedKafkaEventPublisher eventPublisher,
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock,
       ExpenseDocumentStorage expenseDocumentStorage,
@@ -129,7 +120,6 @@ public class FinanceService {
     this(
         financeRepository,
         idGenerator,
-        eventPublisher,
         authorizationPolicyService,
         clock,
         new ObjectMapper(),
@@ -143,6 +133,13 @@ public class FinanceService {
     requireFinanceWrite(request.outletId());
     requireOpenFinancePeriod(request.outletId(), request.businessDate());
     long expenseId = idGenerator.generateId();
+    RequestUserContext context = RequestUserContextHolder.get();
+    String correlationId = currentCorrelationId();
+    ExpenseRecordCreatedEvent event = new ExpenseRecordCreatedEvent(
+        expenseId, expenseId, request.amount(), request.currencyCode().trim(),
+        clock.instant(), expenseId, request.outletId(),
+        context.userId(), context.username(), sortedRoles(context), correlationId, null
+    );
     FinanceRepository.ExpenseRecord record = financeRepository.createOperatingExpense(
         expenseId,
         request.outletId(),
@@ -150,10 +147,10 @@ public class FinanceService {
         request.currencyCode().trim(),
         request.amount(),
         trimToNull(request.note()),
-        RequestUserContextHolder.get().userId(),
-        request.description().trim()
+        context.userId(),
+        request.description().trim(),
+        event
     );
-    publishExpenseCreated(record, expenseId);
     evictMonthlyExpenseCache();
     return toDto(record);
   }
@@ -162,6 +159,13 @@ public class FinanceService {
     requireFinanceWrite(request.outletId());
     requireOpenFinancePeriod(request.outletId(), request.businessDate());
     long expenseId = idGenerator.generateId();
+    RequestUserContext context = RequestUserContextHolder.get();
+    String correlationId = currentCorrelationId();
+    ExpenseRecordCreatedEvent event = new ExpenseRecordCreatedEvent(
+        expenseId, expenseId, request.amount(), request.currencyCode().trim(),
+        clock.instant(), expenseId, request.outletId(),
+        context.userId(), context.username(), sortedRoles(context), correlationId, null
+    );
     FinanceRepository.ExpenseRecord record = financeRepository.createOtherExpense(
         expenseId,
         request.outletId(),
@@ -169,10 +173,10 @@ public class FinanceService {
         request.currencyCode().trim(),
         request.amount(),
         trimToNull(request.note()),
-        RequestUserContextHolder.get().userId(),
-        request.description().trim()
+        context.userId(),
+        request.description().trim(),
+        event
     );
-    publishExpenseCreated(record, expenseId);
     evictMonthlyExpenseCache();
     return toDto(record);
   }
@@ -297,31 +301,6 @@ public class FinanceService {
         .orElseThrow(() -> ServiceException.notFound("Expense not found: " + expenseId));
     requireFinanceRead(record.outletId());
     return record;
-  }
-
-  private void publishExpenseCreated(FinanceRepository.ExpenseRecord record, long sourceId) {
-    RequestUserContext context = RequestUserContextHolder.get();
-    String correlationId = currentCorrelationId();
-    eventPublisher.publish(
-        "fern.finance.expense-record-created",
-        Long.toString(record.id()),
-        "finance.expense-record-created",
-        new ExpenseRecordCreatedEvent(
-            record.id(),
-            sourceId,
-            record.amount(),
-            record.currencyCode(),
-            clock.instant(),
-            record.id(),
-            record.outletId(),
-            context.userId(),
-            context.username(),
-            sortedRoles(context),
-            correlationId,
-            null
-        ),
-        correlationId
-    );
   }
 
   private static List<String> sortedRoles(RequestUserContext context) {

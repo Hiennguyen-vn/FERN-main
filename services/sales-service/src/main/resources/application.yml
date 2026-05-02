@@ -94,3 +94,11 @@ fern:
   loyalty:
     mock-otp: ${FERN_LOYALTY_MOCK_OTP:true}
     mock-otp-code: ${FERN_LOYALTY_MOCK_OTP_CODE:123456}
+
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_ENABLED:true}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${SPRINGDOC_ENABLED:true}
+    path: /swagger-ui.html

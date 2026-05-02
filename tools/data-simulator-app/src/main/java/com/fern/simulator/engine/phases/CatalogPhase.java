@@ -163,8 +163,113 @@ public class CatalogPhase implements PhaseHandler {
             ctx.addProduct(new SimProduct(productId, code, def.name(),
                     def.category(), catId, recipeItems,
                     def.price(), totalCost, "VND"));
+            emitCatalogDepth(ctx, productId, def.name(), def.category(), def.price());
         }
         log.info("Created {} products with fixed recipes", ctx.getProducts().size());
+    }
+
+    private static final String[][] MODIFIER_GROUPS = {
+            {"size", "Size", "single", "1", "1"},
+            {"spice", "Spice level", "single", "0", "1"},
+            {"toppings", "Toppings", "multiple", "0", "3"},
+            {"sweetness", "Sweetness", "single", "0", "1"}
+    };
+    private static final String[][] MODIFIER_OPTIONS = {
+            {"size", "S", "Small", "0"},
+            {"size", "M", "Medium", "5000"},
+            {"size", "L", "Large", "10000"},
+            {"spice", "MILD", "Mild", "0"},
+            {"spice", "MEDIUM", "Medium", "0"},
+            {"spice", "HOT", "Hot", "0"},
+            {"toppings", "EGG", "Add egg", "5000"},
+            {"toppings", "CHEESE", "Add cheese", "8000"},
+            {"toppings", "BACON", "Add bacon", "12000"},
+            {"sweetness", "0", "0%", "0"},
+            {"sweetness", "50", "50%", "0"},
+            {"sweetness", "100", "100%", "0"}
+    };
+    private static final String[] ALLERGENS = {
+            "GLUTEN", "DAIRY", "EGGS", "PEANUTS", "TREE_NUTS", "SOY",
+            "FISH", "SHELLFISH", "SESAME", "MUSTARD"
+    };
+
+    private static void seedModifierGroups(SimulationContext ctx) {
+        if (ctx.isModifierGroupsSeeded()) return;
+        ctx.markModifierGroupsSeeded();
+        var idsByCode = ctx.modifierGroupIdsByCode();
+        for (String[] mg : MODIFIER_GROUPS) {
+            long groupId = ctx.getIdGen().nextId();
+            idsByCode.put(mg[0], groupId);
+            ctx.addModifierGroupEvent(new SimulationContext.ModifierGroupEvent(
+                    groupId, mg[0], mg[1], mg[2],
+                    Integer.parseInt(mg[3]), Integer.parseInt(mg[4])));
+            ctx.incrementRowCount("modifier_group", 1);
+        }
+        java.util.Map<String, Integer> orderByGroup = new java.util.HashMap<>();
+        for (String[] mo : MODIFIER_OPTIONS) {
+            long groupId = idsByCode.get(mo[0]);
+            int dispOrder = orderByGroup.merge(mo[0], 1, Integer::sum);
+            ctx.addModifierOptionEvent(new SimulationContext.ModifierOptionEvent(
+                    ctx.getIdGen().nextId(), groupId, mo[1], mo[2],
+                    new java.math.BigDecimal(mo[3]), dispOrder));
+            ctx.incrementRowCount("modifier_option", 1);
+        }
+    }
+
+    private void emitCatalogDepth(SimulationContext ctx, long productId, String productName,
+                                   String category, long basePrice) {
+        seedModifierGroups(ctx);
+        var rng = ctx.getRandom();
+        var groupIds = ctx.modifierGroupIdsByCode();
+
+        // Attach modifier groups: size always; spice/sweetness/toppings probabilistic.
+        ctx.addProductModifierGroupEvent(new SimulationContext.ProductModifierGroupEvent(
+                productId, groupIds.get("size"), false, 1));
+        ctx.incrementRowCount("product_modifier_group", 1);
+        if (rng.chance(0.45)) {
+            ctx.addProductModifierGroupEvent(new SimulationContext.ProductModifierGroupEvent(
+                    productId, groupIds.get("spice"), false, 2));
+            ctx.incrementRowCount("product_modifier_group", 1);
+        }
+        if (rng.chance(0.30)) {
+            ctx.addProductModifierGroupEvent(new SimulationContext.ProductModifierGroupEvent(
+                    productId, groupIds.get("toppings"), false, 3));
+            ctx.incrementRowCount("product_modifier_group", 1);
+        }
+        if (rng.chance(0.25)) {
+            ctx.addProductModifierGroupEvent(new SimulationContext.ProductModifierGroupEvent(
+                    productId, groupIds.get("sweetness"), false, 4));
+            ctx.incrementRowCount("product_modifier_group", 1);
+        }
+
+        // Variants: ~30% products have S/M/L variants priced as fixed offsets.
+        if (rng.chance(0.30)) {
+            String[][] variants = {{"S", "Small", "-5000"}, {"M", "Medium", "0"}, {"L", "Large", "8000"}};
+            int idx = 0;
+            for (String[] v : variants) {
+                ctx.addProductVariantEvent(new SimulationContext.ProductVariantEvent(
+                        ctx.getIdGen().nextId(), productId, v[0], productName + " (" + v[1] + ")",
+                        "fixed", new java.math.BigDecimal(v[2]), ++idx));
+                ctx.incrementRowCount("product_variant", 1);
+            }
+        }
+
+        // Allergens: assign 0-3 based on category heuristic.
+        java.util.Set<String> assigned = new java.util.LinkedHashSet<>();
+        switch (category == null ? "" : category.toUpperCase()) {
+            case "PROTEIN", "MEAT" -> { assigned.add("SOY"); }
+            case "SEAFOOD" -> { assigned.add("FISH"); assigned.add("SHELLFISH"); }
+            case "EGG_DAIRY", "DAIRY" -> { assigned.add("DAIRY"); assigned.add("EGGS"); }
+            case "NOODLE", "GRAIN" -> { assigned.add("GLUTEN"); }
+            case "SAUCE" -> { assigned.add("SOY"); assigned.add("SESAME"); }
+            default -> {}
+        }
+        if (rng.chance(0.20)) assigned.add(ALLERGENS[rng.intBetween(0, ALLERGENS.length - 1)]);
+        for (String code : assigned) {
+            ctx.addProductAllergenEvent(new SimulationContext.ProductAllergenEvent(
+                    productId, code, false));
+            ctx.incrementRowCount("product_allergen", 1);
+        }
     }
 
     private void initializeOutletStock(SimulationContext ctx, SimOutlet outlet) {

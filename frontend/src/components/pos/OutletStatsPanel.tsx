@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import {
   ArrowLeft, ShoppingBag, DollarSign, BarChart3, TrendingUp,
   Activity, Loader2, XCircle,
@@ -9,6 +10,7 @@ import { salesApi, type OutletHourlyRevenueView } from '@/api/fern-api';
 import { EmptyState, ServiceUnavailablePage } from '@/components/shell/PermissionStates';
 import { normalizeNumericId } from '@/constants/pos';
 import type { OutletTodayStats } from '@/types/pos';
+import { formatPosCurrency } from '@/components/pos/sale-order-utils';
 
 interface Props {
   onBack: () => void;
@@ -38,7 +40,7 @@ export function OutletStatsPanel({ onBack }: Props) {
         const live = await salesApi.outletStats(token, outletId);
         const mapped: OutletTodayStats = {
           outletId: String(live.outletId ?? outletId),
-          businessDate: String(live.businessDate ?? new Date().toISOString().slice(0, 10)),
+          businessDate: String(live.businessDate ?? todayLocalISO()),
           ordersToday: Number(live.ordersToday ?? 0),
           completedSales: Number(live.completedSales ?? 0),
           cancelledOrders: Number(live.cancelledOrders ?? 0),
@@ -127,8 +129,8 @@ export function OutletStatsPanel({ onBack }: Props) {
             {[
               { label: 'Orders Today', value: stats.ordersToday, icon: ShoppingBag, color: 'text-primary' },
               { label: 'Completed', value: stats.completedSales, icon: Activity, color: 'text-success' },
-              { label: 'Revenue', value: `$${stats.revenueToday.toLocaleString(undefined, { maximumFractionDigits: 2 })}`, icon: DollarSign, color: 'text-foreground' },
-              { label: 'Avg Order', value: `$${stats.averageOrderValue.toFixed(2)}`, icon: BarChart3, color: 'text-foreground' },
+              { label: 'Revenue', value: formatPosCurrency(stats.revenueToday, stats.currencyCode), icon: DollarSign, color: 'text-foreground' },
+              { label: 'Avg Order', value: formatPosCurrency(stats.averageOrderValue, stats.currencyCode), icon: BarChart3, color: 'text-foreground' },
               { label: 'Cancelled', value: stats.cancelledOrders, icon: XCircle, color: 'text-destructive' },
             ].map((kpi) => (
               <div key={kpi.label} className="surface-elevated p-4">
@@ -187,7 +189,7 @@ export function OutletStatsPanel({ onBack }: Props) {
                     <div key={hour.hour} className="flex-1 flex flex-col items-center gap-1">
                       <div className="w-full rounded-t bg-primary/20 hover:bg-primary/40 transition-colors relative group" style={{ height: `${Math.max(pct, 4)}%` }}>
                         <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-foreground text-background text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                          ${hour.revenue.toFixed(2)}
+                          {formatPosCurrency(hour.revenue, stats.currencyCode)}
                         </div>
                       </div>
                       <span className="text-[8px] text-muted-foreground">{hour.hour.slice(0, 2)}</span>

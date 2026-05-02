@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/use-auth';
 import { ApiError } from '@/api/client';
+import { resolveCanonicalRoles } from '@/components/finance/finance-utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -72,8 +73,18 @@ export default function Login() {
       }
 
       try {
-        await login(email.trim(), password);
-        navigate('/shell');
+        const session = await login(email.trim(), password);
+        // Role-aware landing per business rules.
+        const rolesByOutlet = session?.rolesByOutlet ?? {};
+        const allRoles = resolveCanonicalRoles(rolesByOutlet);
+        const outletIds = Object.keys(rolesByOutlet);
+        const isManagerTier = allRoles.has('superadmin') || allRoles.has('admin') || allRoles.has('region_manager') || allRoles.has('outlet_manager');
+        const isStaffOnly = !isManagerTier && allRoles.has('staff');
+        let landing = '/shell';
+        if (isStaffOnly) {
+          landing = outletIds.length === 1 ? `/posorder?outlet=${outletIds[0]}` : '/posorder';
+        }
+        navigate(landing);
       } catch (error) {
         if (error instanceof ApiError) {
           if (error.status === 401) {

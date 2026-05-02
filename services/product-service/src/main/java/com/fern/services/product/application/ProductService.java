@@ -290,6 +290,10 @@ public class ProductService {
     return productRepository.createItemCategory(request);
   }
 
+  public java.util.List<ProductDtos.FoodCostView> listFoodCosts(Long productId) {
+    return productRepository.listFoodCosts(productId);
+  }
+
   private static String trimToNull(String value) {
     if (value == null) {
       return null;

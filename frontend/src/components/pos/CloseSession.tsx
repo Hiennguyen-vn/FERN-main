@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
-  ArrowLeft, AlertTriangle, Loader2, CheckCircle2, Clock,
-  DollarSign, ShoppingBag,
+  ArrowLeft, AlertTriangle, Loader2, Clock,
+  DollarSign, ShoppingBag, Printer,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,17 +32,24 @@ export function CloseSession({ session, onBack, onConfirm }: Props) {
 
   return (
     <div className="p-6 animate-fade-in">
-      <button onClick={onBack} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mb-4">
+      <button onClick={onBack} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mb-4 print:hidden">
         <ArrowLeft className="h-3 w-3" /> Back
       </button>
 
-      <div className="max-w-lg mx-auto surface-elevated p-6 space-y-5">
+      <div className="max-w-lg mx-auto surface-elevated p-6 space-y-5 pos-print-area">
         <div className="text-center">
-          <div className="mx-auto h-12 w-12 rounded-xl bg-warning/10 flex items-center justify-center mb-3">
+          <div className="mx-auto h-12 w-12 rounded-xl bg-warning/10 flex items-center justify-center mb-3 print:hidden">
             <Clock className="h-6 w-6 text-warning" />
           </div>
-          <h2 className="text-lg font-semibold text-foreground">Close Session</h2>
-          <p className="text-sm text-muted-foreground mt-1">{session.code}</p>
+          <h2 className="text-lg font-semibold text-foreground">Z-Report — Close Session</h2>
+          <p className="text-sm text-muted-foreground mt-1 font-mono">{session.code}</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">{session.outletName ?? '—'} · {new Date().toLocaleString('vi-VN')}</p>
+        </div>
+
+        <div className="flex justify-end print:hidden">
+          <Button variant="outline" size="sm" aria-label="Print Z-report" className="h-7 text-xs gap-1" onClick={() => window.print()}>
+            <Printer className="h-3 w-3" /> In Z-report
+          </Button>
         </div>
 
         {/* Session summary */}
@@ -80,12 +87,14 @@ export function CloseSession({ session, onBack, onConfirm }: Props) {
           )}
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2 print:hidden">
           <Label htmlFor="close-note" className="text-sm font-medium text-foreground">Closing Note (optional)</Label>
           <Input id="close-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g., End of evening shift" className="h-9" />
         </div>
 
-        <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-info/5 border border-info/10">
+        {note && <div className="hidden print:block text-[11px] border-t pt-2"><strong>Note:</strong> {note}</div>}
+
+        <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-info/5 border border-info/10 print:hidden">
           <AlertTriangle className="h-3.5 w-3.5 text-info flex-shrink-0 mt-0.5" />
           <p className="text-[11px] text-muted-foreground">
             Closing the session prevents new orders. You can still reconcile the session after closing.
@@ -93,9 +102,9 @@ export function CloseSession({ session, onBack, onConfirm }: Props) {
         </div>
 
         {!confirming ? (
-          <Button className="w-full h-10" onClick={() => setConfirming(true)}>Close Session</Button>
+          <Button className="w-full h-10 print:hidden" onClick={() => setConfirming(true)}>Close Session</Button>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2 print:hidden">
             <div className="p-2.5 rounded-md bg-warning/8 border border-warning/15 text-center">
               <p className="text-xs font-medium text-foreground">Confirm session close?</p>
               <p className="text-[10px] text-muted-foreground mt-0.5">No new orders can be created after closing.</p>
@@ -108,6 +117,11 @@ export function CloseSession({ session, onBack, onConfirm }: Props) {
             </div>
           </div>
         )}
+
+        <div className="hidden print:block border-t border-dashed pt-3 text-center text-[10px] text-muted-foreground">
+          ─── End of Z-Report ───<br/>
+          Generated {new Date().toISOString()}
+        </div>
       </div>
     </div>
   );

@@ -162,4 +162,20 @@ public class InventoryController {
   public InventoryDtos.StockCountSessionView postStockCountSession(@PathVariable long sessionId) {
     return inventoryService.postStockCountSession(sessionId);
   }
+
+  @GetMapping("/stock-lots")
+  public java.util.List<InventoryDtos.StockLotView> listStockLots(
+      @RequestParam(required = false) Long itemId,
+      @RequestParam(required = false) Long locationId,
+      @RequestParam(required = false) String status,
+      @RequestParam(required = false) Integer limit,
+      @RequestParam(required = false) Integer offset) {
+    return inventoryService.listStockLots(itemId, locationId, status, limit, offset);
+  }
+
+  @PostMapping("/stock-lots")
+  @ResponseStatus(HttpStatus.CREATED)
+  public InventoryDtos.StockLotView createStockLot(@Valid @RequestBody InventoryDtos.CreateStockLotRequest req) {
+    return inventoryService.createStockLot(req);
+  }
 }

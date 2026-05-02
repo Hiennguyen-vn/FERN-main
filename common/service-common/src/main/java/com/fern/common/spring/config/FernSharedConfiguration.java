@@ -309,14 +309,26 @@ public class FernSharedConfiguration {
   @ConditionalOnMissingBean
   public JwtTokenService jwtTokenService(
       ObjectMapper objectMapper,
-      @Value("${jwt.secret:}") String jwtSecretFromConfig
+      @Value("${jwt.algorithm:${JWT_ALGORITHM:HS256}}") String jwtAlgorithm,
+      @Value("${jwt.secret:}") String jwtSecretFromConfig,
+      @Value("${jwt.private-key-pem:${JWT_PRIVATE_KEY_PEM:}}") String privateKeyPem,
+      @Value("${jwt.public-key-pem:${JWT_PUBLIC_KEY_PEM:}}") String publicKeyPem,
+      @Value("${jwt.key-id:${JWT_KEY_ID:fern-rsa-1}}") String keyId,
+      @Value("${jwt.issuer:${JWT_ISSUER:fern}}") String issuer,
+      @Value("${jwt.audience:${JWT_AUDIENCE:fern-services}}") String audience
   ) {
-    // Prefer Vault-bound `jwt.secret` (kv/fern/shared/jwt#secret). Fall back to JWT_SECRET env so
-    // legacy bootstrap and CI without Vault keep working.
+    JwtTokenService.Algorithm alg = JwtTokenService.Algorithm.valueOf(jwtAlgorithm.trim().toUpperCase());
     String secret = (jwtSecretFromConfig != null && !jwtSecretFromConfig.isBlank())
         ? jwtSecretFromConfig
-        : requireEnv("JWT_SECRET");
-    return new JwtTokenService(objectMapper, secret);
+        : System.getenv("JWT_SECRET");
+    byte[] secretBytes = (secret == null || secret.isBlank())
+        ? null
+        : secret.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    java.security.interfaces.RSAPrivateKey priv = (privateKeyPem == null || privateKeyPem.isBlank())
+        ? null : JwtTokenService.parseRsaPrivateKey(privateKeyPem);
+    java.security.interfaces.RSAPublicKey pub = (publicKeyPem == null || publicKeyPem.isBlank())
+        ? null : JwtTokenService.parseRsaPublicKey(publicKeyPem);
+    return new JwtTokenService(alg, secretBytes, priv, pub, keyId, issuer, audience);
   }
 
   @Bean

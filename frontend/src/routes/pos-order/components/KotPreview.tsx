@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Printer } from 'lucide-react';
 import type { SavedOrder } from '../hooks/use-order-history';
 import { formatDateTime } from '../utils/format';
+import { buildLineSubtitle } from '../utils/line-modifiers';
 
 interface Props {
   open: boolean;
@@ -15,9 +16,9 @@ export function KotPreview({ open, onOpenChange, order }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm p-0">
-        <DialogHeader className="px-4 py-3 border-b flex-row items-center justify-between space-y-0">
+        <DialogHeader className="px-4 py-3 border-b flex-row items-center justify-between space-y-0 print:hidden">
           <DialogTitle className="text-base">Phiếu pha chế (KOT)</DialogTitle>
-          <Button variant="ghost" size="sm" onClick={() => window.print()}>
+          <Button variant="ghost" size="sm" aria-label="Print KOT" onClick={() => window.print()}>
             <Printer className="w-4 h-4 mr-1" /> In
           </Button>
         </DialogHeader>
@@ -33,7 +34,7 @@ export function KotPreview({ open, onOpenChange, order }: Props) {
 
           <div className="space-y-3">
             {order.lines.map((l) => {
-              const subtitle = [l.size && `Size ${l.size}`, l.sugar !== undefined && `Đường ${l.sugar}%`, l.ice !== undefined && `Đá ${l.ice}%`, ...l.toppings.map((t) => `+${t.name}`)].filter(Boolean).join(' · ');
+              const subtitle = buildLineSubtitle(l);
               return (
                 <div key={l.lineId} className="border-b border-dashed pb-2">
                   <div className="text-base font-bold">× {l.quantity} {l.name}</div>

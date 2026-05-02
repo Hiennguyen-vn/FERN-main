@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import {
   Package, Leaf, BookOpen, DollarSign, Search, RefreshCw, Plus, Save, Trash2,
   Loader2,
@@ -94,7 +95,7 @@ export function CatalogModule() {
   const [pricesLoading, setPricesLoading] = useState(false);
   const [pricesTotal, setPricesTotal] = useState(0);
   const [pricesHasMore, setPricesHasMore] = useState(false);
-  const [priceForm, setPriceForm] = useState({ productId: '', priceAmount: '0', effectiveFrom: new Date().toISOString().slice(0, 10) });
+  const [priceForm, setPriceForm] = useState({ productId: '', priceAmount: '0', effectiveFrom: todayLocalISO() });
 
   // Query states
   const itemsQuery = useListQueryState({ initialLimit: 25, initialSortBy: 'name', initialSortDir: 'asc' as const });
@@ -303,11 +304,22 @@ export function CatalogModule() {
                 <th className="text-left text-[11px] px-4 py-2.5">Code</th><th className="text-left text-[11px] px-4 py-2.5">Name</th><th className="text-left text-[11px] px-4 py-2.5">UOM</th><th className="text-right text-[11px] px-4 py-2.5">Min Stock</th><th className="text-left text-[11px] px-4 py-2.5">Status</th>
               </tr></thead><tbody>
                 {itemsLoading && items.length === 0 ? <ListTableSkeleton columns={5} rows={6} /> : items.length === 0 ? <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">No ingredients</td></tr> : items.map(item => (
-                  <tr key={String(item.id)} onClick={() => setSelectedItem(item)} className="border-b last:border-0 hover:bg-muted/20 cursor-pointer">
+                  <tr
+                    key={String(item.id)}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`View details for ${item.name || item.code || item.id}`}
+                    onClick={() => setSelectedItem(item)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedItem(item); } }}
+                    className="border-b last:border-0 hover:bg-muted/20 cursor-pointer focus:outline-none focus:bg-muted/30 focus:ring-1 focus:ring-inset focus:ring-primary"
+                  >
                     <td className="px-4 py-2.5 text-xs font-mono">{String(item.code || item.id)}</td>
                     <td className="px-4 py-2.5 text-sm">{String(item.name || '—')}</td>
                     <td className="px-4 py-2.5 text-xs text-muted-foreground">{String(item.baseUomCode || item.unitCode || '—')}</td>
-                    <td className="px-4 py-2.5 text-right text-xs">{Number(item.minStockLevel || 0).toFixed(2)}</td>
+                    <td className="px-4 py-2.5 text-right text-xs font-mono">
+                      {Number(item.minStockLevel || 0).toFixed(2)}
+                      <span className="text-muted-foreground ml-1">{String(item.baseUomCode || item.unitCode || '')}</span>
+                    </td>
                     <td className="px-4 py-2.5"><StatusBadge status={item.status} /></td>
                   </tr>
                 ))}

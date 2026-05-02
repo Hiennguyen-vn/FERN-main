@@ -4,7 +4,6 @@ import com.fern.common.idempotency.IdempotencyGuard;
 import com.fern.common.idempotency.model.IdempotencyResult;
 import com.fern.common.idempotency.model.TtlPolicy;
 import com.fern.common.spring.auth.InternalExecutionContext;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.core.EventEnvelope;
@@ -37,7 +36,6 @@ public class FinanceEventConsumer {
   private final FinanceRepository financeRepository;
   private final IdempotencyGuard idempotencyGuard;
   private final SnowflakeIdGenerator idGenerator;
-  private final TypedKafkaEventPublisher eventPublisher;
   private final ObjectMapper objectMapper;
   private final Clock clock;
   private final FinanceService financeService;
@@ -48,7 +46,6 @@ public class FinanceEventConsumer {
       FinanceRepository financeRepository,
       IdempotencyGuard idempotencyGuard,
       SnowflakeIdGenerator idGenerator,
-      TypedKafkaEventPublisher eventPublisher,
       ObjectMapper objectMapper,
       Clock clock,
       FinanceService financeService,
@@ -57,7 +54,6 @@ public class FinanceEventConsumer {
     this.financeRepository = financeRepository;
     this.idempotencyGuard = idempotencyGuard;
     this.idGenerator = idGenerator;
-    this.eventPublisher = eventPublisher;
     this.objectMapper = objectMapper;
     this.clock = clock;
     this.financeService = financeService;
@@ -68,11 +64,10 @@ public class FinanceEventConsumer {
       FinanceRepository financeRepository,
       IdempotencyGuard idempotencyGuard,
       SnowflakeIdGenerator idGenerator,
-      TypedKafkaEventPublisher eventPublisher,
       ObjectMapper objectMapper,
       Clock clock
   ) {
-    this(financeRepository, idempotencyGuard, idGenerator, eventPublisher, objectMapper, clock, null, null);
+    this(financeRepository, idempotencyGuard, idGenerator, objectMapper, clock, null, null);
   }
 
   @RetryableTopic(
@@ -130,7 +125,7 @@ public class FinanceEventConsumer {
       }
       idempotencyGuard.execute(
           "finance-service",
-          envelope.eventId(),
+          idempotencyKey(envelope),
           rawMessage,
           TtlPolicy.SETTLEMENT,
           () -> {
@@ -163,7 +158,7 @@ public class FinanceEventConsumer {
       }
       idempotencyGuard.execute(
           "finance-service",
-          envelope.eventId(),
+          idempotencyKey(envelope),
           rawMessage,
           TtlPolicy.SETTLEMENT,
           () -> {
@@ -171,21 +166,21 @@ public class FinanceEventConsumer {
               FinanceRepository.GoodsReceiptExpenseCandidate candidate = financeRepository
                   .findGoodsReceiptExpenseCandidate(receiptId)
                   .orElseThrow(() -> new IllegalStateException("Goods receipt not found: " + receiptId));
-              FinanceRepository.ExpenseRecord record = financeRepository.createInventoryPurchaseExpense(
-                  idGenerator.generateId(),
+              long expenseId = idGenerator.generateId();
+              long outletId = event.outletId() == null ? candidate.outletId() : event.outletId();
+              ExpenseRecordCreatedEvent createdEvent = new ExpenseRecordCreatedEvent(
+                  expenseId, receiptId, candidate.totalPrice(), candidate.currencyCode(),
+                  clock.instant(), expenseId, outletId,
+                  event.actorUserId(), event.actorUsername(),
+                  event.actorRoles() == null ? List.of() : event.actorRoles(),
+                  event.correlationId(), envelope.eventId()
+              );
+              financeRepository.createInventoryPurchaseExpense(
+                  expenseId,
                   candidate,
                   null,
-                  "Auto-created from supplier invoice " + event.supplierInvoiceId()
-              );
-              publishExpenseCreated(
-                  record,
-                  receiptId,
-                  event.outletId() == null ? candidate.outletId() : event.outletId(),
-                  event.actorUserId(),
-                  event.actorUsername(),
-                  event.actorRoles(),
-                  event.correlationId(),
-                  envelope.eventId()
+                  "Auto-created from supplier invoice " + event.supplierInvoiceId(),
+                  createdEvent
               );
             }
             if (financeService != null) financeService.evictMonthlyExpenseCache();
@@ -217,27 +212,24 @@ public class FinanceEventConsumer {
       }
       idempotencyGuard.execute(
           "finance-service",
-          envelope.eventId(),
+          idempotencyKey(envelope),
           rawMessage,
           TtlPolicy.SETTLEMENT,
           () -> {
             FinanceRepository.PayrollExpenseCandidate candidate = financeRepository.findPayrollExpenseCandidate(event.payrollId())
                 .orElseThrow(() -> new IllegalStateException("Payroll not found: " + event.payrollId()));
+            long expenseId = idGenerator.generateId();
+            ExpenseRecordCreatedEvent createdEvent = new ExpenseRecordCreatedEvent(
+                expenseId, event.payrollId(), candidate.amount(), candidate.currencyCode(),
+                clock.instant(), expenseId, event.outletId(),
+                null, null, List.of(), null, envelope.eventId()
+            );
             FinanceRepository.ExpenseRecord record = financeRepository.createPayrollExpense(
-                idGenerator.generateId(),
+                expenseId,
                 candidate,
                 null,
-                "Auto-created from approved payroll " + event.payrollId()
-            );
-            publishExpenseCreated(
-                record,
-                event.payrollId(),
-                event.outletId(),
-                null,
-                null,
-                List.of(),
-                null,
-                envelope.eventId()
+                "Auto-created from approved payroll " + event.payrollId(),
+                createdEvent
             );
             if (financeService != null) financeService.evictMonthlyExpenseCache();
             return IdempotencyResult.created(
@@ -251,43 +243,15 @@ public class FinanceEventConsumer {
     }
   }
 
-  private void publishExpenseCreated(
-      FinanceRepository.ExpenseRecord record,
-      long sourceId,
-      Long outletId,
-      Long actorUserId,
-      String actorUsername,
-      List<String> actorRoles,
-      String correlationId,
-      String sourceEventId
-  ) {
-    eventPublisher.publish(
-        "fern.finance.expense-record-created",
-        Long.toString(record.id()),
-        "finance.expense-record-created",
-        new ExpenseRecordCreatedEvent(
-            record.id(),
-            sourceId,
-            record.amount(),
-            record.currencyCode(),
-            clock.instant(),
-            record.id(),
-            outletId == null ? record.outletId() : outletId,
-            actorUserId,
-            actorUsername,
-            actorRoles == null ? List.of() : actorRoles,
-            correlationId,
-            sourceEventId
-        ),
-        correlationId
-    );
-  }
-
   private String toJson(Object value) {
     try {
       return objectMapper.writeValueAsString(value);
     } catch (Exception e) {
       throw new IllegalStateException("Unable to serialize idempotency response", e);
     }
+  }
+
+  private static String idempotencyKey(EventEnvelope<?> envelope) {
+    return envelope.eventId() + ":" + envelope.aggregateId();
   }
 }

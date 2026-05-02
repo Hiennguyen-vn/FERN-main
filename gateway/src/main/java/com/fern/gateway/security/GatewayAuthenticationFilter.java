@@ -47,7 +47,7 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
       SpringInternalServiceAuth internalServiceAuth,
       AuthSessionService authSessionService,
       DeviceTokenRegistry deviceTokenRegistry,
-      @org.springframework.beans.factory.annotation.Value("${AUTH_COOKIE_NAME:dorabets_session}") String authCookieName
+      @org.springframework.beans.factory.annotation.Value("${AUTH_COOKIE_NAME:fern_session}") String authCookieName
   ) {
     this.jwtTokenService = jwtTokenService;
     this.internalServiceAuth = internalServiceAuth;
@@ -153,8 +153,9 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
 
   private boolean isDevicePath(ServerHttpRequest request) {
     String path = request.getURI().getPath();
-    return path.startsWith("/api/v1/sync/")
-        || path.startsWith("/api/v1/devices/refresh");
+    if (path.startsWith("/api/v1/devices/refresh")) return true;
+    com.fern.gateway.routing.GatewayRoute route = com.fern.gateway.routing.GatewayRouteCatalog.resolve(path);
+    return route != null && route.routeClass() == com.fern.gateway.routing.GatewayRoute.RouteClass.DEVICE;
   }
 
   private boolean isTerminalOrderWrite(ServerHttpRequest request) {
@@ -165,6 +166,8 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
   private boolean isPublicPath(String path) {
     return path.startsWith("/actuator")
         || path.startsWith("/health")
+        || path.equals("/.well-known/jwks.json")
+        || path.equals("/api/v1/auth/.well-known/jwks.json")
         || path.equals("/api/v1/gateway/info")
         || path.equals("/api/v1/gateway/routes")
         || path.equals("/api/v1/gateway/targets")

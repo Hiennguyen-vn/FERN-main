@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { todayLocalISO } from '@/lib/date-format';
 import { salesApi, type PosSessionView } from '@/api/sales-api';
 import { useAuth } from '@/auth/use-auth';
 
@@ -21,7 +22,7 @@ export function usePosSession(outletId: string | null, currencyCode: string) {
 
   const openMutation = useMutation({
     mutationFn: async (payload: { sessionCode: string; openingCash: number; note?: string }) => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayLocalISO();
       const opened = await salesApi.openPosSession(token!, {
         sessionCode: payload.sessionCode,
         outletId: outletId!,

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import { RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { hrApi, type AuthUserListItem, type ContractView } from '@/api/fern-api';
@@ -67,7 +68,7 @@ export function ContractRenewalDialog({
 
   const defaultStart = contract.endDate
     ? addDays(contract.endDate, 1)
-    : new Date().toISOString().slice(0, 10);
+    : todayLocalISO();
 
   const [form, setForm] = useState({
     employmentType: String(contract.employmentType || 'indefinite'),

@@ -1,0 +1,46 @@
+name: Chaos Nightly
+
+on:
+  schedule:
+    # 03:00 UTC daily (10:00 UTC+7)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  chaos:
+    if: github.ref == 'refs/heads/staging' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Boot infra stack
+        working-directory: infra
+        run: |
+          docker compose up -d --wait postgres kafka1 kafka2 kafka3 redis-master inventory-service sales-service
+
+      - name: Run kafka-outage scenario
+        run: ./infra/chaos/run-chaos.sh kafka-outage
+        continue-on-error: true
+        id: kafka-outage
+
+      - name: Run inventory-lag scenario
+        run: ./infra/chaos/run-chaos.sh inventory-lag
+        continue-on-error: true
+        id: inventory-lag
+
+      - name: Aggregate chaos results
+        run: |
+          fail=0
+          [[ "${{ steps.kafka-outage.outcome }}" == "success" ]] || fail=1
+          [[ "${{ steps.inventory-lag.outcome }}" == "success" ]] || fail=1
+          if [[ $fail -eq 1 ]]; then
+            echo "::error::One or more chaos scenarios failed"
+            exit 1
+          fi
+          echo "✓ all chaos scenarios passed"
+
+      - name: Teardown
+        if: always()
+        working-directory: infra
+        run: docker compose down -v

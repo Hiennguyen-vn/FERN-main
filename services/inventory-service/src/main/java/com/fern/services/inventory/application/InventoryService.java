@@ -4,10 +4,8 @@ import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.spring.web.QueryConventions;
-import com.fern.events.inventory.StockLowThresholdEvent;
 import com.fern.events.inventory.OfflineInventoryMovementRecordedEvent;
 import com.fern.events.inventory.StockInSimpleRecordedEvent;
 import com.fern.events.procurement.GoodsReceiptPostedEvent;
@@ -20,7 +18,6 @@ import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,23 +29,26 @@ import org.springframework.transaction.annotation.Transactional;
 public class InventoryService {
 
   private final InventoryRepository inventoryRepository;
+  private final com.fern.services.inventory.infrastructure.InventoryLotRepository lotRepository;
+  private final com.fern.services.inventory.infrastructure.StockBalanceRepository stockBalanceRepository;
   private final AuthorizationPolicyService authorizationPolicyService;
-  private final TypedKafkaEventPublisher eventPublisher;
   private final SnowflakeIdGenerator idGenerator;
   private final Clock clock;
   private final StockReservationService reservationService;
 
   public InventoryService(
       InventoryRepository inventoryRepository,
+      com.fern.services.inventory.infrastructure.InventoryLotRepository lotRepository,
+      com.fern.services.inventory.infrastructure.StockBalanceRepository stockBalanceRepository,
       AuthorizationPolicyService authorizationPolicyService,
-      TypedKafkaEventPublisher eventPublisher,
       SnowflakeIdGenerator idGenerator,
       Clock clock,
       StockReservationService reservationService
   ) {
     this.inventoryRepository = inventoryRepository;
+    this.lotRepository = lotRepository;
+    this.stockBalanceRepository = stockBalanceRepository;
     this.authorizationPolicyService = authorizationPolicyService;
-    this.eventPublisher = eventPublisher;
     this.idGenerator = idGenerator;
     this.clock = clock;
     this.reservationService = reservationService;
@@ -56,7 +56,7 @@ public class InventoryService {
 
   public InventoryDtos.StockBalanceView getStockBalance(long outletId, long itemId) {
     requireInventoryRead(outletId);
-    return inventoryRepository.findStockBalance(outletId, itemId)
+    return stockBalanceRepository.findStockBalance(outletId, itemId)
         .orElseThrow(() -> ServiceException.notFound(
             "Stock balance not found for outlet " + outletId + " item " + itemId));
   }
@@ -71,7 +71,7 @@ public class InventoryService {
       Integer offset
   ) {
     requireInventoryRead(outletId);
-    return inventoryRepository.listStockBalances(
+    return stockBalanceRepository.listStockBalances(
         outletId,
         lowOnly,
         QueryConventions.normalizeQuery(q),
@@ -173,9 +173,6 @@ public class InventoryService {
         sessionId,
         RequestUserContextHolder.get().userId()
     );
-    for (InventoryDtos.StockCountLineView line : posted.lines()) {
-      publishLowStockIfNeeded(posted.outletId(), line.itemId(), "stock-count:" + sessionId);
-    }
     return posted;
   }
 
@@ -260,11 +257,9 @@ public class InventoryService {
         event.allowOversell() || event.oversell(),
         movements
     );
-    // Mark advisory reservations as settled now that hard deduction is committed.
-    try { reservationService.settleForSale(event.saleId()); } catch (RuntimeException ignored) {}
-    for (InventoryRepository.SaleComponentMovement movement : movements) {
-      publishLowStockIfNeeded(event.outletId(), movement.itemId(), "sale:" + event.saleId());
-    }
+    // T1: Confirm reservation (terminal state) now that hard deduction is committed.
+    // Idempotent — settled rows skipped via WHERE settled_at IS NULL clause.
+    try { reservationService.confirmForSale(event.saleId()); } catch (RuntimeException ignored) {}
     return inserted;
   }
 
@@ -278,6 +273,8 @@ public class InventoryService {
         event.cancelledByUserId(),
         "Sale " + event.saleId() + " cancelled"
     );
+    // T1: Release reservation row (no movement applied beyond reverse usage above).
+    try { reservationService.releaseForSale(event.saleId()); } catch (RuntimeException ignored) {}
     return inserted;
   }
 
@@ -302,23 +299,6 @@ public class InventoryService {
   @Transactional
   public InventoryRepository.OfflineInventoryMovementResult applyOfflineWaste(OfflineInventoryMovementRecordedEvent event) {
     return inventoryRepository.applyOfflineWaste(event, clock.instant());
-  }
-
-  private void publishLowStockIfNeeded(long outletId, long itemId, String aggregateId) {
-    inventoryRepository.findLowStockState(outletId, itemId)
-        .filter(InventoryRepository.LowStockState::isLow)
-        .ifPresent(state -> eventPublisher.publish(
-            "fern.inventory.stock-low-threshold",
-            aggregateId + ":" + itemId,
-            "inventory.stock.low-threshold",
-            new StockLowThresholdEvent(
-                state.outletId(),
-                state.itemId(),
-                state.qtyOnHand(),
-                state.reorderThreshold(),
-                clock.instant()
-            )
-        ));
   }
 
   private void requireInventoryWrite(long outletId) {
@@ -349,6 +329,14 @@ public class InventoryService {
       return Set.of(requestedOutletId);
     }
     return readable;
+  }
+
+  public java.util.List<InventoryDtos.StockLotView> listStockLots(Long itemId, Long locationId, String status, Integer limit, Integer offset) {
+    return lotRepository.listStockLots(itemId, locationId, status, sanitizeLimit(limit), sanitizeOffset(offset));
+  }
+
+  public InventoryDtos.StockLotView createStockLot(InventoryDtos.CreateStockLotRequest req) {
+    return lotRepository.createStockLot(req);
   }
 
   private int sanitizeLimit(Integer limit) {

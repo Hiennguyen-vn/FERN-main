@@ -62,6 +62,11 @@ public class GatewayRoutesConfiguration {
       @Qualifier("reportRateLimiter") RedisRateLimiter reportRateLimiter
   ) {
     RouteLocatorBuilder.Builder routes = builder.routes();
+    String authBaseUrl = System.getenv().getOrDefault("AUTH_SERVICE_URL", "http://localhost:8081");
+    routes.route("jwks-public", spec -> spec
+        .path("/.well-known/jwks.json")
+        .filters(f -> f.rewritePath("/.well-known/jwks.json", "/api/v1/auth/.well-known/jwks.json"))
+        .uri(authBaseUrl));
     for (GatewayRoute route : GatewayRouteCatalog.routes()) {
       if ("gateway".equals(route.serviceName())) {
         continue;
@@ -79,13 +84,6 @@ public class GatewayRoutesConfiguration {
           .filters(filters -> {
             filters.addResponseHeader("X-Gateway-Upstream-Service", route.serviceName());
             filters.addResponseHeader("X-Gateway-Route-Id", routeId);
-            filters.requestRateLimiter(config -> {
-              config.setRouteId(routeId);
-              config.setKeyResolver(gatewayRateLimitKeyResolver);
-              config.setRateLimiter(policy.rateLimiter());
-              config.setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
-              config.setDenyEmptyKey(Boolean.TRUE);
-            });
             filters.circuitBreaker(config -> {
               config.setRouteId(routeId);
               config.setName(circuitBreakerName(route));
@@ -108,20 +106,16 @@ public class GatewayRoutesConfiguration {
       RedisRateLimiter syncRateLimiter,
       RedisRateLimiter reportRateLimiter
   ) {
-    if (route.pathPrefix().startsWith("/api/v1/auth")) {
-      return new GatewayRoutePolicy(authRateLimiter);
-    }
-    if (route.pathPrefix().startsWith("/api/v1/sync")) {
-      return new GatewayRoutePolicy(syncRateLimiter);
-    }
-    if (route.pathPrefix().startsWith("/api/v1/report")) {
-      return new GatewayRoutePolicy(reportRateLimiter);
-    }
-    return new GatewayRoutePolicy(defaultRateLimiter);
+    return switch (route.rateLimitTier()) {
+      case AUTH -> new GatewayRoutePolicy(authRateLimiter);
+      case SYNC, TELEMETRY -> new GatewayRoutePolicy(syncRateLimiter);
+      case REPORT -> new GatewayRoutePolicy(reportRateLimiter);
+      case DEFAULT -> new GatewayRoutePolicy(defaultRateLimiter);
+    };
   }
 
   static String circuitBreakerName(GatewayRoute route) {
-    return routeId(route);
+    return route.serviceName();
   }
 
   private static String routeId(GatewayRoute route) {
@@ -137,6 +131,11 @@ public class GatewayRoutesConfiguration {
     if (internalService != null) {
       String outletScope = trim(headers.getFirst("X-Internal-Outlet-Ids"));
       return "svc:" + internalService + ":" + (outletScope == null ? "all" : outletScope);
+    }
+    String deviceId = trim(headers.getFirst("X-Internal-Device-Id"));
+    if (deviceId != null) {
+      String deviceOutlet = trim(headers.getFirst("X-Internal-Device-Outlet-Id"));
+      return "device:" + deviceId + ":" + (deviceOutlet == null ? "?" : deviceOutlet);
     }
     String internalUserId = trim(headers.getFirst(InternalServiceAuth.HEADER_USER_ID));
     if (internalUserId != null) {

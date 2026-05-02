@@ -17,12 +17,10 @@ import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import com.fern.events.inventory.OfflineInventoryMovementRecordedEvent;
 import com.fern.events.inventory.StockInSimpleRecordedEvent;
-import com.fern.events.inventory.StockLowThresholdEvent;
 import com.fern.events.procurement.GoodsReceiptPostedEvent;
 import com.fern.events.sales.SaleApprovedEvent;
 import com.fern.events.sales.SaleCancelledEvent;
@@ -57,16 +55,19 @@ class InventoryServiceTest {
   @Mock
   private AuthorizationPolicyService authorizationPolicyService;
   @Mock
-  private TypedKafkaEventPublisher eventPublisher;
-  @Mock
   private SnowflakeIdGenerator idGenerator;
+  @Mock
+  private com.fern.services.inventory.infrastructure.StockBalanceRepository stockBalanceRepository;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-04-27T10:00:00Z"), ZoneOffset.UTC);
   private InventoryService service;
 
   @BeforeEach
   void setUp() {
-    service = new InventoryService(inventoryRepository, authorizationPolicyService, eventPublisher, idGenerator, clock,
+    service = new InventoryService(inventoryRepository,
+        org.mockito.Mockito.mock(com.fern.services.inventory.infrastructure.InventoryLotRepository.class),
+        stockBalanceRepository,
+        authorizationPolicyService, idGenerator, clock,
         org.mockito.Mockito.mock(StockReservationService.class));
     RequestUserContextHolder.set(new RequestUserContext(
         USER_ID, "alice", "sess", Set.of("admin"), Set.of(), Set.of(OUTLET_ID), true, false, null, null, null));
@@ -88,18 +89,18 @@ class InventoryServiceTest {
   void getStockBalanceReturnsRepositoryResultWhenAuthorized() {
     when(authorizationPolicyService.resolveInventoryReadableOutletIds(any())).thenReturn(Set.of(OUTLET_ID));
     InventoryDtos.StockBalanceView expected = sampleBalance();
-    when(inventoryRepository.findStockBalance(OUTLET_ID, ITEM_ID)).thenReturn(Optional.of(expected));
+    when(stockBalanceRepository.findStockBalance(OUTLET_ID, ITEM_ID)).thenReturn(Optional.of(expected));
 
     InventoryDtos.StockBalanceView actual = service.getStockBalance(OUTLET_ID, ITEM_ID);
 
     assertSame(expected, actual);
-    verify(inventoryRepository).findStockBalance(OUTLET_ID, ITEM_ID);
+    verify(stockBalanceRepository).findStockBalance(OUTLET_ID, ITEM_ID);
   }
 
   @Test
   void getStockBalanceThrowsNotFoundWhenMissing() {
     when(authorizationPolicyService.resolveInventoryReadableOutletIds(any())).thenReturn(Set.of(OUTLET_ID));
-    when(inventoryRepository.findStockBalance(OUTLET_ID, ITEM_ID)).thenReturn(Optional.empty());
+    when(stockBalanceRepository.findStockBalance(OUTLET_ID, ITEM_ID)).thenReturn(Optional.empty());
 
     ServiceException ex = assertThrows(ServiceException.class,
         () -> service.getStockBalance(OUTLET_ID, ITEM_ID));
@@ -111,7 +112,7 @@ class InventoryServiceTest {
     when(authorizationPolicyService.resolveInventoryReadableOutletIds(any())).thenReturn(Set.of(99L));
 
     assertThrows(ServiceException.class, () -> service.getStockBalance(OUTLET_ID, ITEM_ID));
-    verify(inventoryRepository, never()).findStockBalance(anyLong(), anyLong());
+    verify(stockBalanceRepository, never()).findStockBalance(anyLong(), anyLong());
   }
 
   @Test
@@ -126,14 +127,14 @@ class InventoryServiceTest {
     when(authorizationPolicyService.resolveInventoryReadableOutletIds(any())).thenReturn(Set.of(OUTLET_ID));
     PagedResult<InventoryDtos.StockBalanceView> page =
         PagedResult.of(List.of(sampleBalance()), 50, 0, 1L);
-    when(inventoryRepository.listStockBalances(eq(OUTLET_ID), eq(true), any(), any(), any(), anyInt(), anyInt()))
+    when(stockBalanceRepository.listStockBalances(eq(OUTLET_ID), eq(true), any(), any(), any(), anyInt(), anyInt()))
         .thenReturn(page);
 
     PagedResult<InventoryDtos.StockBalanceView> result =
         service.listStockBalances(OUTLET_ID, true, "  abc ", "qty", "asc", 200, 0);
 
     assertEquals(1, result.items().size());
-    verify(inventoryRepository).listStockBalances(eq(OUTLET_ID), eq(true), any(), eq("qty"), eq("asc"), anyInt(), anyInt());
+    verify(stockBalanceRepository).listStockBalances(eq(OUTLET_ID), eq(true), any(), eq("qty"), eq("asc"), anyInt(), anyInt());
   }
 
   @Test
@@ -250,23 +251,17 @@ class InventoryServiceTest {
   }
 
   @Test
-  void postStockCountSessionPublishesLowStockForLowLines() {
+  void postStockCountSessionDelegatesToRepository() {
     InventoryDtos.StockCountSessionView draft = sampleStockCountSession("draft");
     InventoryDtos.StockCountSessionView posted = sampleStockCountSession("posted");
     when(inventoryRepository.findStockCountSession(9001L)).thenReturn(Optional.of(draft));
     when(authorizationPolicyService.canWriteInventory(any(), eq(OUTLET_ID))).thenReturn(true);
     when(inventoryRepository.postStockCountSession(9001L, USER_ID)).thenReturn(posted);
-    when(inventoryRepository.findLowStockState(OUTLET_ID, ITEM_ID)).thenReturn(Optional.of(
-        new InventoryRepository.LowStockState(OUTLET_ID, ITEM_ID, new BigDecimal("2.0000"), new BigDecimal("5.0000"))));
 
     InventoryDtos.StockCountSessionView result = service.postStockCountSession(9001L);
 
     assertSame(posted, result);
-    verify(eventPublisher).publish(
-        eq("fern.inventory.stock-low-threshold"),
-        eq("stock-count:9001:88"),
-        eq("inventory.stock.low-threshold"),
-        any(StockLowThresholdEvent.class));
+    verify(inventoryRepository).postStockCountSession(9001L, USER_ID);
   }
 
   @Test
@@ -297,8 +292,6 @@ class InventoryServiceTest {
         eq(44L), eq(OUTLET_ID), eq(LocalDate.parse("2026-04-27")),
         eq(Instant.parse("2026-04-27T09:55:00Z")), eq(clock.instant()), eq(USER_ID), eq(true), any()))
         .thenReturn(1);
-    when(inventoryRepository.findLowStockState(OUTLET_ID, ITEM_ID)).thenReturn(Optional.of(
-        new InventoryRepository.LowStockState(OUTLET_ID, ITEM_ID, new BigDecimal("1.0000"), new BigDecimal("3.0000"))));
 
     int inserted = service.applySaleApproved(event);
 
@@ -311,11 +304,6 @@ class InventoryServiceTest {
         eq(Instant.parse("2026-04-27T09:55:00Z")), eq(clock.instant()), eq(USER_ID), eq(true), movements.capture());
     assertEquals(List.of(new InventoryRepository.SaleComponentMovement(501L, ITEM_ID, new BigDecimal("-0.5000"))),
         movements.getValue());
-    verify(eventPublisher).publish(
-        eq("fern.inventory.stock-low-threshold"),
-        eq("sale:44:88"),
-        eq("inventory.stock.low-threshold"),
-        any(StockLowThresholdEvent.class));
   }
 
   @Test

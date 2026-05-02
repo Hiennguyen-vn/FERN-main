@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import {
   Search,
   FileText,
@@ -6,8 +7,12 @@ import {
   AlertTriangle,
   RefreshCw,
   X,
-  MoreHorizontal,
   Download,
+  ChevronDown,
+  ChevronRight,
+  MoreVertical,
+  Plus,
+  Wallet,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -15,11 +20,13 @@ import {
   hrApi,
   type AuthUserListItem,
   type ContractView,
+  type ContractsQuery,
   type ScopeOutlet,
   type ScopeRegion,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
 import { useListQueryState } from '@/hooks/use-list-query-state';
+import { collectPagedItems } from '@/lib/collect-paged-items';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
 import { EmptyState } from '@/components/shell/PermissionStates';
@@ -29,6 +36,17 @@ import {
   getHrUserDisplay,
   shortHrRef,
 } from '@/components/hr/hr-display';
+import {
+  ExceptionBanner,
+  FilterBar,
+  KpiCard,
+  KpiStrip,
+  SegmentChip,
+  SegmentChipRow,
+  SeverityPill,
+  WorkspaceHeader,
+  getInitials,
+} from '@/components/hr/hr-primitives';
 import { ContractDetailSheet } from '@/components/hr/ContractDetailSheet';
 import { ContractRenewalDialog } from '@/components/hr/ContractRenewalDialog';
 
@@ -64,7 +82,7 @@ const DEFAULT_CONTRACT_FORM = {
   baseSalary: '',
   currencyCode: 'USD',
   regionCode: '',
-  startDate: new Date().toISOString().slice(0, 10),
+  startDate: todayLocalISO(),
   endDate: '',
   taxCode: '',
   bankAccount: '',
@@ -121,6 +139,8 @@ export function ContractsWorkspace({
     return new Set([...counts.entries()].filter(([, n]) => n > 1).map(([uid]) => uid));
   }, [contracts]);
   const [bulkTerminateConfirm, setBulkTerminateConfirm] = useState(false);
+  const [segment, setSegment] = useState<'all' | 'active' | 'expiring' | 'expired' | 'probation' | 'terminated'>('all');
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const contractsQuery = useListQueryState<{ outletId?: string; status?: string; endDateFrom?: string; endDateTo?: string }>({
     initialLimit: 20,
@@ -144,17 +164,21 @@ export function ContractsWorkspace({
     const expiryWindowEnd = new Date();
     expiryWindowEnd.setDate(expiryWindowEnd.getDate() + 30);
     const expiryWindowEndStr = expiryWindowEnd.toISOString().slice(0, 10);
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = todayLocalISO();
 
     try {
-      const [page, activeCount, expiringCount, terminatedCount] = await Promise.all([
-        hrApi.contractsPaged(token, {
-          ...contractListQuery,
-          outletId: outletId || undefined,
-          status: contractFilters.status,
-          endDateFrom: contractFilters.endDateFrom,
-          endDateTo: contractFilters.endDateTo,
-        }),
+      const [allItems, activeCount, expiringCount, terminatedCount] = await Promise.all([
+        collectPagedItems<ContractView, ContractsQuery>(
+          (q) => hrApi.contractsPaged(token, q),
+          {
+            ...contractListQuery,
+            outletId: outletId || undefined,
+            status: contractFilters.status,
+            endDateFrom: contractFilters.endDateFrom,
+            endDateTo: contractFilters.endDateTo,
+          } as ContractsQuery,
+          500,
+        ),
         hrApi.contractsPaged(token, { outletId: outletId || undefined, status: 'active', limit: 1, offset: 0 }),
         hrApi.contractsPaged(token, {
           outletId: outletId || undefined,
@@ -166,9 +190,9 @@ export function ContractsWorkspace({
         }),
         hrApi.contractsPaged(token, { outletId: outletId || undefined, status: 'terminated', limit: 1, offset: 0 }),
       ]);
-      setContracts(page.items || []);
-      setContractsTotal(page.total || page.totalCount || 0);
-      setContractsHasMore(page.hasMore || page.hasNextPage || false);
+      setContracts(allItems);
+      setContractsTotal(allItems.length);
+      setContractsHasMore(false);
       setContractExpiryStats({
         active: activeCount.total || activeCount.totalCount || 0,
         expiring: expiringCount.total || expiringCount.totalCount || 0,
@@ -194,7 +218,7 @@ export function ContractsWorkspace({
   }, [loadContracts]);
 
   const handleKpiClick = (type: 'active' | 'expiring' | 'terminated') => {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = todayLocalISO();
     const expiryEnd = new Date();
     expiryEnd.setDate(expiryEnd.getDate() + 30);
     const expiryEndStr = expiryEnd.toISOString().slice(0, 10);
@@ -230,7 +254,7 @@ export function ContractsWorkspace({
 
   const bulkTerminate = async () => {
     if (selectedIds.size === 0 || !token) return;
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = todayLocalISO();
     setBulkBusy(true);
     const results = await Promise.allSettled(
       Array.from(selectedIds).map((id) =>
@@ -270,7 +294,7 @@ export function ContractsWorkspace({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `contracts-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `contracts-${todayLocalISO()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success(`Exported ${selectedContracts.length} contracts`);
@@ -301,7 +325,7 @@ export function ContractsWorkspace({
       });
       toast.success('Contract created');
       setCreateContractDialog(false);
-      setContractForm({ ...DEFAULT_CONTRACT_FORM, startDate: new Date().toISOString().slice(0, 10) });
+      setContractForm({ ...DEFAULT_CONTRACT_FORM, startDate: todayLocalISO() });
       await loadContracts();
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, 'Failed to create contract'));
@@ -329,278 +353,413 @@ export function ContractsWorkspace({
 
   const contractStats = contractExpiryStats;
 
+  // Per-page derived counts (segment filter operates on already-paged data)
+  const todayStr = todayLocalISO();
+  const expiry30 = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  function classifyContract(c: ContractView): 'active' | 'expiring' | 'expired' | 'probation' | 'terminated' | 'other' {
+    const status = String(c.status || '').toLowerCase();
+    const empType = String(c.employmentType || '').toLowerCase();
+    const end = c.endDate ? String(c.endDate).slice(0, 10) : '';
+    if (status === 'terminated') return 'terminated';
+    if (status === 'expired') return 'expired';
+    if (status === 'active') {
+      if (end && end < todayStr) return 'expired';
+      if (end && end >= todayStr && end <= expiry30) return 'expiring';
+      if (empType === 'probation') return 'probation';
+      return 'active';
+    }
+    return 'other';
+  }
+
+  const pageCounts = useMemo(() => {
+    let active = 0;
+    let expiring = 0;
+    let expired = 0;
+    let probation = 0;
+    let terminated = 0;
+    for (const c of contracts) {
+      const k = classifyContract(c);
+      if (k === 'active') active++;
+      else if (k === 'expiring') expiring++;
+      else if (k === 'expired') expired++;
+      else if (k === 'probation') probation++;
+      else if (k === 'terminated') terminated++;
+    }
+    return { all: contracts.length, active, expiring, expired, probation, terminated };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contracts]);
+
+  const filteredContracts = useMemo(() => {
+    if (segment === 'all') return contracts;
+    return contracts.filter((c) => classifyContract(c) === segment);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contracts, segment]);
+
+  const groupedContracts = useMemo(() => {
+    const map = new Map<string, ContractView[]>();
+    for (const c of filteredContracts) {
+      const uid = String(c.userId ?? '_unassigned');
+      const arr = map.get(uid);
+      if (arr) arr.push(c);
+      else map.set(uid, [c]);
+    }
+    return Array.from(map.entries()).map(([userId, items]) => {
+      const sorted = [...items].sort((a, b) => String(b.startDate ?? '').localeCompare(String(a.startDate ?? '')));
+      return { userId, contracts: sorted };
+    });
+  }, [filteredContracts]);
+
+  const toggleGroup = (userId: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  };
+
+  function daysUntil(date: string | null | undefined): number | null {
+    if (!date) return null;
+    const d = new Date(String(date));
+    if (Number.isNaN(d.getTime())) return null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Math.round((d.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+  }
+
+  function severityToneFromKind(kind: ReturnType<typeof classifyContract>) {
+    switch (kind) {
+      case 'active': return 'active' as const;
+      case 'expiring': return 'expiring' as const;
+      case 'expired': return 'expired' as const;
+      case 'probation': return 'expiring' as const;
+      case 'terminated': return 'locked' as const;
+      default: return 'neutral' as const;
+    }
+  }
+
   return (
     <>
-      <div className="space-y-4">
-        {/* KPI cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {([
-            { key: 'active' as const, label: 'Active Contracts', value: contractStats.active, icon: CheckCircle2 },
-            { key: 'expiring' as const, label: 'Expiring Soon', value: contractStats.expiring, icon: AlertTriangle },
-            { key: 'terminated' as const, label: 'Ended', value: contractStats.terminated, icon: FileText },
-          ]).map((kpi) => {
-            const isKpiActive = kpi.key === 'expiring'
-              ? !!contractsQuery.filters.endDateFrom
-              : contractsQuery.filters.status === (kpi.key === 'active' ? 'active' : 'terminated') && !contractsQuery.filters.endDateFrom;
-            return (
-              <button
-                key={kpi.label}
-                onClick={() => isKpiActive ? clearKpiFilter() : handleKpiClick(kpi.key)}
-                className={cn(
-                  'surface-elevated p-4 text-left transition-colors hover:bg-accent/50 relative',
-                  isKpiActive ? 'bg-primary/10 border-primary/30' : '',
-                )}
-              >
-                {isKpiActive ? (
-                  <span className="absolute top-2 right-2 text-muted-foreground hover:text-foreground"><X className="h-3 w-3" /></span>
-                ) : null}
-                <div className="flex items-center gap-1.5 mb-2">
-                  <kpi.icon className={cn('h-3.5 w-3.5', isKpiActive ? 'text-primary' : 'text-muted-foreground')} />
-                  <span className={cn('text-[10px] uppercase tracking-wide', isKpiActive ? 'text-primary' : 'text-muted-foreground')}>{kpi.label}</span>
-                </div>
-                <p className="text-xl font-semibold">{kpi.value}</p>
-              </button>
-            );
-          })}
-          {/* Employment type distribution */}
-          <div className="surface-elevated p-4">
-            <div className="flex items-center gap-1.5 mb-2">
-              <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">By Type</span>
-            </div>
-            <div className="space-y-1">
-              {Object.entries(
-                contracts.reduce<Record<string, number>>((acc, c) => {
-                  const t = String(c.employmentType || 'unknown');
-                  acc[t] = (acc[t] || 0) + 1;
-                  return acc;
-                }, {}),
-              ).sort(([, a], [, b]) => b - a).slice(0, 4).map(([type, count]) => (
-                <div key={type} className="flex justify-between text-[10px]">
-                  <span className="text-muted-foreground">{formatHrEnumLabel(type)}</span>
-                  <span className="font-medium">{count}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+      <div className="space-y-5">
+        <WorkspaceHeader
+          title="Contracts"
+          subtitle="Employment terms, salary basis, and expiry risk."
+          actions={
+            <button
+              type="button"
+              onClick={() => setCreateContractDialog(true)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[11px] font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New contract
+            </button>
+          }
+        />
 
-        {/* Contract table */}
-        <div className="surface-elevated p-4 space-y-3">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold">Contracts ({contractsTotal})</h3>
-              <p className="text-xs text-muted-foreground">Track employment terms, salary basis, and expiry risk from the active contract register.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <input
-                  className="h-8 w-64 rounded-md border border-input bg-background pl-8 pr-3 text-xs"
-                  placeholder="Search contracts"
-                  value={contractsQuery.searchInput}
-                  onChange={(event) => contractsQuery.setSearchInput(event.target.value)}
-                />
-              </div>
-              <select
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                value={contractsQuery.filters.status || 'all'}
-                onChange={(event) => contractsQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
-              >
-                <option value="all">All statuses</option>
-                <option value="draft">Draft</option>
-                <option value="active">Active</option>
-                <option value="expired">Expired</option>
-                <option value="terminated">Terminated</option>
-              </select>
-              <select
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                value={`${contractsQuery.sortBy || 'startDate'}:${contractsQuery.sortDir}`}
-                onChange={(event) => {
-                  const [field, direction] = event.target.value.split(':');
-                  contractsQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
-                }}
-              >
-                <option value="startDate:desc">Latest start date</option>
-                <option value="endDate:asc">Ending soon</option>
-                <option value="status:asc">Status A-Z</option>
-                <option value="createdAt:desc">Last created</option>
-              </select>
+        {/* Exception banner: surface expiring contracts */}
+        {contractStats.expiring > 0 ? (
+          <ExceptionBanner
+            tone="warn"
+            icon={AlertTriangle}
+            message={
+              <>
+                <span className="font-medium">{contractStats.expiring} contract{contractStats.expiring === 1 ? '' : 's'}</span> expiring in the next 30 days.
+              </>
+            }
+            action={
               <button
-                onClick={() => void loadContracts()}
-                disabled={contractsLoading}
-                className="h-8 px-2.5 rounded border text-[11px] flex items-center gap-1 hover:bg-accent disabled:opacity-60"
+                type="button"
+                onClick={() => { setSegment('expiring'); handleKpiClick('expiring'); }}
+                className="inline-flex h-7 items-center rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 text-[11px] font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
               >
-                <RefreshCw className={cn('h-3.5 w-3.5', contractsLoading ? 'animate-spin' : '')} /> Refresh
+                Review
               </button>
-              <button
-                onClick={() => setCreateContractDialog(true)}
-                className="h-8 px-3 rounded bg-primary text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
-              >
-                + New Contract
-              </button>
-            </div>
-          </div>
+            }
+          />
+        ) : null}
 
-          {/* Bulk action bar */}
-          {selectedIds.size > 0 ? (
-            <div className="flex items-center gap-3 p-3 rounded-md bg-primary/5 border border-primary/20">
-              <span className="text-xs font-medium">{selectedIds.size} selected</span>
-              <button
-                onClick={() => setBulkTerminateConfirm(true)}
-                disabled={bulkBusy}
-                className="h-7 px-2.5 rounded border border-destructive/50 text-[10px] text-destructive hover:bg-destructive/10 disabled:opacity-50 flex items-center gap-1"
-              >
-                <X className="h-3 w-3" /> End selected contracts
-              </button>
-              <button
-                onClick={exportCsv}
-                className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent flex items-center gap-1"
-              >
-                <Download className="h-3 w-3" /> Export CSV
-              </button>
-              <button
-                onClick={() => setSelectedIds(new Set())}
-                className="text-[10px] text-muted-foreground hover:text-foreground ml-auto"
-              >
-                Clear selection
-              </button>
-            </div>
-          ) : null}
+        {/* KPI strip */}
+        <KpiStrip cols={5}>
+          <KpiCard icon={CheckCircle2} label="Active" value={contractStats.active} tone="success" />
+          <KpiCard icon={AlertTriangle} label="Expiring 30d" value={contractStats.expiring} tone={contractStats.expiring > 0 ? 'warn' : 'default'} />
+          <KpiCard icon={X} label="Ended" value={contractStats.terminated} />
+          <KpiCard icon={FileText} label="On page" value={contracts.length} />
+          <KpiCard icon={Wallet} label="Total" value={contractsTotal} />
+        </KpiStrip>
 
-          {contractsError ? <p className="text-xs text-destructive">{contractsError}</p> : null}
-
-          {contracts.length === 0 && !contractsLoading ? (
-            <EmptyState
-              title="No contracts available"
-              description="No contract rows were returned for the current scope and filters."
+        {/* Filter bar */}
+        <FilterBar>
+          <div className="relative w-full max-w-xs">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              className="h-8 w-full rounded-md border border-input bg-background pl-9 pr-3 text-xs"
+              placeholder="Search contracts"
+              value={contractsQuery.searchInput}
+              onChange={(event) => contractsQuery.setSearchInput(event.target.value)}
             />
-          ) : (
-            <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
-              <table className="w-full">
-                <thead className="sticky top-0 z-10">
-                  <tr className="border-b bg-card">
-                    <th className="px-2 py-2.5 w-8">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.size === contracts.length && contracts.length > 0}
-                        onChange={toggleSelectAll}
-                        className="rounded border-input"
-                      />
-                    </th>
-                    {['Contract', 'Employee', 'Type', 'Base Salary', 'Period', 'Status', ''].map((header) => (
-                      <th key={header} className={cn('text-xs px-4 py-2.5', header === 'Base Salary' ? 'text-right' : 'text-left')}>
-                        {header}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {contractsLoading && contracts.length === 0 ? (
-                    <ListTableSkeleton columns={8} rows={6} />
-                  ) : contracts.map((contract) => {
-                    const status = String(contract.status || 'unknown').toLowerCase();
-                    const userDisplay = getHrUserDisplay(usersById, contract.userId);
-                    const isActive = status === 'active' || status === 'draft';
-                    return (
-                      <tr
-                        key={String(contract.id)}
-                        className={cn('border-b last:border-0 hover:bg-accent/30 cursor-pointer transition-colors', selectedIds.has(String(contract.id)) ? 'bg-primary/5' : '')}
-                        onClick={() => setSelectedContract(contract)}
-                      >
-                        <td className="px-2 py-2.5">
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.has(String(contract.id))}
-                            onChange={(e) => { e.stopPropagation(); toggleSelect(String(contract.id)); }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="rounded border-input"
-                          />
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <div className="flex flex-col">
-                            <span className="text-xs font-medium">{shortHrRef(contract.id)}</span>
-                            <span className="text-[11px] text-muted-foreground">{String(contract.regionCode || '—')}</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <div className="flex flex-col gap-0.5">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-medium">{userDisplay.primary}</span>
-                              {overlapUserIds.has(String(contract.userId ?? '')) ? (
-                                <span className="rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[9px] font-medium text-amber-700">overlap</span>
-                              ) : null}
+          </div>
+          <select
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+            value={contractsQuery.filters.status || 'all'}
+            onChange={(event) => contractsQuery.setFilter('status', event.target.value === 'all' ? undefined : event.target.value)}
+          >
+            <option value="all">All statuses</option>
+            <option value="draft">Draft</option>
+            <option value="active">Active</option>
+            <option value="expired">Expired</option>
+            <option value="terminated">Terminated</option>
+          </select>
+          <select
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+            value={`${contractsQuery.sortBy || 'startDate'}:${contractsQuery.sortDir}`}
+            onChange={(event) => {
+              const [field, direction] = event.target.value.split(':');
+              contractsQuery.applySort(field, direction === 'asc' ? 'asc' : 'desc');
+            }}
+          >
+            <option value="startDate:desc">Latest start date</option>
+            <option value="endDate:asc">Ending soon</option>
+            <option value="status:asc">Status A-Z</option>
+            <option value="createdAt:desc">Last created</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => void loadContracts()}
+            disabled={contractsLoading}
+            className="h-8 rounded-md border border-border bg-card px-2.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent disabled:opacity-60 inline-flex items-center gap-1.5"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', contractsLoading ? 'animate-spin' : '')} />
+            Refresh
+          </button>
+          {contractsQuery.filters.status || contractsQuery.filters.endDateFrom ? (
+            <button
+              type="button"
+              onClick={clearKpiFilter}
+              className="h-8 rounded-md border border-border bg-card px-2.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent"
+            >
+              Clear filters
+            </button>
+          ) : null}
+        </FilterBar>
+
+        {/* Segments */}
+        <SegmentChipRow
+          action={
+            selectedIds.size > 0 ? (
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{selectedIds.size} selected</span>
+                <button
+                  type="button"
+                  onClick={() => setBulkTerminateConfirm(true)}
+                  disabled={bulkBusy}
+                  className="inline-flex h-7 items-center gap-1 rounded-md border border-destructive/40 bg-destructive/5 px-2.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-60"
+                >
+                  <X className="h-3 w-3" />
+                  End {selectedIds.size}
+                </button>
+                <button
+                  type="button"
+                  onClick={exportCsv}
+                  className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-card px-2.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent"
+                >
+                  <Download className="h-3 w-3" />
+                  CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-[10px] text-muted-foreground hover:text-foreground"
+                >
+                  Clear
+                </button>
+              </div>
+            ) : null
+          }
+        >
+          <SegmentChip label="All" count={pageCounts.all} active={segment === 'all'} onClick={() => setSegment('all')} />
+          <SegmentChip label="Active" count={pageCounts.active} active={segment === 'active'} tone="success" onClick={() => setSegment('active')} />
+          <SegmentChip label="Expiring 30d" count={pageCounts.expiring} active={segment === 'expiring'} tone="warn" onClick={() => setSegment('expiring')} />
+          <SegmentChip label="Probation" count={pageCounts.probation} active={segment === 'probation'} tone="warn" onClick={() => setSegment('probation')} />
+          <SegmentChip label="Expired" count={pageCounts.expired} active={segment === 'expired'} tone="critical" onClick={() => setSegment('expired')} />
+          <SegmentChip label="Terminated" count={pageCounts.terminated} active={segment === 'terminated'} onClick={() => setSegment('terminated')} />
+        </SegmentChipRow>
+
+        {/* Error */}
+        {contractsError ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+            {contractsError}
+          </div>
+        ) : null}
+
+        {/* Grouped list */}
+        {contractsLoading && contracts.length === 0 ? (
+          <div className="rounded-md border border-border/60 bg-card p-2">
+            <ListTableSkeleton columns={4} rows={6} />
+          </div>
+        ) : groupedContracts.length === 0 ? (
+          <EmptyState
+            title="No contracts in this view"
+            description="Try a different segment or status filter."
+          />
+        ) : (
+          <div className="space-y-2">
+            {groupedContracts.map((group) => {
+              const userDisplay = getHrUserDisplay(usersById, group.userId);
+              const initials = getInitials(userDisplay.primary);
+              const collapsed = collapsedGroups.has(group.userId);
+              const overlap = overlapUserIds.has(group.userId);
+              const activeCount = group.contracts.filter((c) => classifyContract(c) === 'active' || classifyContract(c) === 'expiring' || classifyContract(c) === 'probation').length;
+              return (
+                <div key={group.userId} className="overflow-hidden rounded-md border border-border/60 bg-card">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.userId)}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/50"
+                  >
+                    {collapsed
+                      ? <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+                      : <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />}
+
+                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/15">
+                      <span className="text-xs font-semibold tracking-tight text-primary">{initials}</span>
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium text-foreground">{userDisplay.primary}</span>
+                        {overlap ? (
+                          <SeverityPill tone="expiring">overlap</SeverityPill>
+                        ) : null}
+                      </div>
+                      {userDisplay.secondary ? (
+                        <span className="block truncate font-mono text-[10px] text-muted-foreground">{userDisplay.secondary}</span>
+                      ) : null}
+                    </div>
+
+                    <div className="flex flex-shrink-0 items-center gap-5 text-right">
+                      <div>
+                        <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Contracts</p>
+                        <p className="font-mono text-sm font-semibold tabular-nums text-foreground">{group.contracts.length}</p>
+                      </div>
+                      <div>
+                        <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Active</p>
+                        <p className="font-mono text-sm font-semibold tabular-nums text-foreground">{activeCount}</p>
+                      </div>
+                    </div>
+                  </button>
+
+                  {!collapsed ? (
+                    <div className="border-t border-border/60 bg-muted/20">
+                      {group.contracts.map((contract, idx) => {
+                        const kind = classifyContract(contract);
+                        const status = String(contract.status || 'unknown').toLowerCase();
+                        const id = String(contract.id);
+                        const isActive = status === 'active' || status === 'draft';
+                        const days = daysUntil(contract.endDate);
+                        return (
+                          <div
+                            key={id}
+                            className={cn(
+                              'flex cursor-pointer items-center gap-3 px-4 py-2.5 text-xs transition-colors hover:bg-accent/40',
+                              idx > 0 ? 'border-t border-border/40' : '',
+                              selectedIds.has(id) ? 'bg-primary/5' : '',
+                            )}
+                            onClick={() => setSelectedContract(contract)}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(id)}
+                              onChange={(e) => { e.stopPropagation(); toggleSelect(id); }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="rounded border-input"
+                            />
+
+                            <div className="w-24 flex-shrink-0">
+                              <p className="font-mono text-[10px] text-muted-foreground">#{shortHrRef(id)}</p>
+                              <p className="font-mono text-[10px] text-muted-foreground/70">{String(contract.regionCode || '—')}</p>
                             </div>
-                            {userDisplay.secondary ? <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span> : null}
-                          </div>
-                        </td>
-                        <td className="px-4 py-2.5 text-xs">{formatHrEnumLabel(contract.employmentType)} · {formatHrEnumLabel(contract.salaryType)}</td>
-                        <td className="px-4 py-2.5 text-right text-sm font-mono">{formatCurrency(contract.baseSalary, String(contract.currencyCode || 'USD'))}</td>
-                        <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDate(contract.startDate)} — {formatDate(contract.endDate)}</td>
-                        <td className="px-4 py-2.5 text-xs">
-                          <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium', contractBadgeClass(status))}>
-                            {formatHrEnumLabel(status)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <div className="relative" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const menu = e.currentTarget.nextElementSibling;
-                                if (menu) menu.classList.toggle('hidden');
-                              }}
-                              className="h-7 w-7 rounded hover:bg-accent flex items-center justify-center"
-                            >
-                              <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
-                            </button>
-                            <div className="hidden absolute right-0 top-full mt-1 z-20 w-40 rounded-md border bg-popover shadow-md py-1">
-                              <button
-                                onClick={() => setSelectedContract(contract)}
-                                className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent"
-                              >
-                                View Details
-                              </button>
+
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate font-medium text-foreground">
+                                {formatHrEnumLabel(contract.employmentType)} · {formatHrEnumLabel(contract.salaryType)}
+                              </p>
+                              <p className="truncate font-mono text-[10px] text-muted-foreground">
+                                {formatDate(contract.startDate)} — {formatDate(contract.endDate)}
+                              </p>
+                            </div>
+
+                            <div className="hidden w-32 flex-shrink-0 text-right sm:block">
+                              <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Base</p>
+                              <p className="font-mono text-[12px] tabular-nums text-foreground">{formatCurrency(contract.baseSalary, String(contract.currencyCode || 'USD'))}</p>
+                            </div>
+
+                            <div className="hidden w-28 flex-shrink-0 md:block">
+                              {days !== null && days >= 0 && days <= 30 ? (
+                                <span className="inline-flex items-center rounded border border-amber-500/30 bg-amber-500/5 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-amber-700 dark:text-amber-400">
+                                  {days}d left
+                                </span>
+                              ) : days !== null && days < 0 ? (
+                                <span className="inline-flex items-center rounded border border-destructive/30 bg-destructive/5 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-destructive">
+                                  {Math.abs(days)}d overdue
+                                </span>
+                              ) : (
+                                <span className="font-mono text-[10px] text-muted-foreground">—</span>
+                              )}
+                            </div>
+
+                            <SeverityPill tone={severityToneFromKind(kind)}>{formatHrEnumLabel(status)}</SeverityPill>
+
+                            <div className="flex flex-shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
                               {isActive ? (
                                 <>
                                   <button
-                                    onClick={() => {
-                                      setSelectedContract(null);
-                                      setRenewContract(contract);
-                                    }}
-                                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent"
+                                    type="button"
+                                    onClick={() => { setSelectedContract(null); setRenewContract(contract); }}
+                                    title="Renew"
+                                    className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                                   >
-                                    Renew Contract
+                                    <RefreshCw className="h-3 w-3" />
                                   </button>
                                   <button
-                                    onClick={() => setTerminateDialog({ contractId: String(contract.id), endDate: new Date().toISOString().slice(0, 10) })}
-                                    className="w-full text-left px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10"
+                                    type="button"
+                                    onClick={() => setTerminateDialog({ contractId: id, endDate: todayLocalISO() })}
+                                    title="End contract"
+                                    className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-card text-destructive transition-colors hover:bg-destructive/10 hover:border-destructive/40"
                                   >
-                                    End Contract
+                                    <X className="h-3 w-3" />
                                   </button>
                                 </>
                               ) : null}
+                              <button
+                                type="button"
+                                onClick={() => setSelectedContract(contract)}
+                                title="Details"
+                                className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                              >
+                                <MoreVertical className="h-3 w-3" />
+                              </button>
                             </div>
                           </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-          <ListPaginationControls
-            total={contractsTotal}
-            limit={contractsQuery.limit}
-            offset={contractsQuery.offset}
-            hasMore={contractsHasMore}
-            disabled={contractsLoading}
-            onPageChange={contractsQuery.setPage}
-            onLimitChange={contractsQuery.setPageSize}
-          />
-        </div>
+        {contractsTotal > 0 ? (
+          <div className="flex items-center justify-between rounded-md border border-border/60 bg-muted/30 px-4 py-2 text-xs">
+            <span className="font-mono text-muted-foreground">{contractsTotal} contract{contractsTotal === 1 ? '' : 's'}</span>
+          </div>
+        ) : null}
       </div>
 
       {/* Create contract dialog */}
@@ -812,7 +971,7 @@ export function ContractsWorkspace({
         }}
         onTerminate={(contractId) => {
           setSelectedContract(null);
-          setTerminateDialog({ contractId, endDate: new Date().toISOString().slice(0, 10) });
+          setTerminateDialog({ contractId, endDate: todayLocalISO() });
         }}
         onRenew={(contract) => {
           setSelectedContract(null);

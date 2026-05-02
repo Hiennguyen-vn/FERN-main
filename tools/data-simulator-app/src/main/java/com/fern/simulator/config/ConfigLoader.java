@@ -97,7 +97,8 @@ public final class ConfigLoader {
                 preset.expansion != null ? preset.expansion : base.expansion,
                 preset.regions != null ? preset.regions : base.regions,
                 preset.probability != null ? preset.probability : base.probability,
-                preset.realism != null ? preset.realism : base.realism
+                preset.realism != null ? preset.realism : base.realism,
+                preset.crm != null ? preset.crm : base.crm
         );
     }
 
@@ -125,7 +126,8 @@ public final class ConfigLoader {
                 wrapper.expansion,
                 wrapper.regions,
                 wrapper.probability,
-                wrapper.realism
+                wrapper.realism,
+                wrapper.crm
         );
     }
 
@@ -137,6 +139,7 @@ public final class ConfigLoader {
         public java.util.List<SimulationConfig.RegionConfig> regions;
         public SimulationConfig.ProbabilityConfig probability;
         public SimulationConfig.RealismConfig realism;
+        public SimulationConfig.CrmConfig crm;
     }
 
     private static class SimulationSection {

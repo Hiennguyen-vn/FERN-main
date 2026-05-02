@@ -71,7 +71,7 @@ public class InventoryEventConsumer {
       }
       idempotencyGuard.execute(
           "inventory-service",
-          envelope.eventId(),
+          idempotencyKey(envelope),
           message,
           TtlPolicy.BET,
           () -> {
@@ -112,7 +112,7 @@ public class InventoryEventConsumer {
       }
       idempotencyGuard.execute(
           "inventory-service",
-          envelope.eventId(),
+          idempotencyKey(envelope),
           message,
           TtlPolicy.BET,
           () -> {
@@ -153,7 +153,7 @@ public class InventoryEventConsumer {
       }
       idempotencyGuard.execute(
           "inventory-service",
-          envelope.eventId(),
+          idempotencyKey(envelope),
           message,
           TtlPolicy.BET,
           () -> {
@@ -324,5 +324,10 @@ public class InventoryEventConsumer {
     } catch (Exception ex) {
       throw new IllegalStateException("Failed to serialize idempotency request body", ex);
     }
+  }
+
+  /** Composite idempotency key disambiguates per-aggregate retries. */
+  private static String idempotencyKey(EventEnvelope<?> envelope) {
+    return envelope.eventId() + ":" + envelope.aggregateId();
   }
 }

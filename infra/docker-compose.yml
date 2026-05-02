@@ -311,6 +311,8 @@ services:
       AUTH_COOKIE_SAME_SITE: ${AUTH_COOKIE_SAME_SITE:-Lax}
       WORKER_ID: ${WORKER_ID:-1}
       SERVER_PORT: 8082
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318/v1/traces}
+      OTEL_SAMPLE_RATIO: ${OTEL_SAMPLE_RATIO:-0.0}
     depends_on:
       postgres:
         condition: service_healthy
@@ -361,6 +363,8 @@ services:
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       AUTH_COOKIE_SAME_SITE: ${AUTH_COOKIE_SAME_SITE:-Lax}
       PORT: 8080
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318/v1/traces}
+      OTEL_SAMPLE_RATIO: ${OTEL_SAMPLE_RATIO:-0.0}
     depends_on:
       master-node:
         condition: service_healthy

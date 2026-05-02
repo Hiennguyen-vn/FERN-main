@@ -1,8 +1,10 @@
 package com.fern.services.finance.infrastructure;
 
+import com.fern.common.outbox.OutboxWriter;
 import com.fern.common.repository.BaseRepository;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.spring.web.QueryConventions;
+import com.fern.events.finance.ExpenseRecordCreatedEvent;
 import com.fern.services.finance.api.FinanceDtos;
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -25,8 +27,11 @@ public class FinanceRepository extends BaseRepository {
 
   private static final Set<String> EXPENSE_SORT_KEYS = Set.of("businessDate", "createdAt", "amount", "sourceType", "id");
 
-  public FinanceRepository(DataSource dataSource) {
+  private final OutboxWriter outboxWriter;
+
+  public FinanceRepository(DataSource dataSource, OutboxWriter outboxWriter) {
     super(dataSource);
+    this.outboxWriter = outboxWriter;
   }
 
   public record ExpenseRecord(
@@ -583,7 +588,8 @@ public class FinanceRepository extends BaseRepository {
       BigDecimal amount,
       String note,
       Long createdByUserId,
-      String description
+      String description,
+      ExpenseRecordCreatedEvent event
   ) {
     return executeInTransaction(conn -> {
       insertExpenseRecord(conn, expenseId, outletId, businessDate, currencyCode, amount, "operating_expense", note, createdByUserId);
@@ -594,8 +600,11 @@ public class FinanceRepository extends BaseRepository {
         ps.setString(2, description);
         ps.executeUpdate();
       }
-      return findExpenseTransactional(conn, expenseId)
+      ExpenseRecord record = findExpenseTransactional(conn, expenseId)
           .orElseThrow(() -> new IllegalStateException("Expense not found after create: " + expenseId));
+      outboxWriter.append(conn, "expense_record", expenseId,
+          "fern.finance.expense-record-created", Long.toString(expenseId), event);
+      return record;
     });
   }
 
@@ -607,7 +616,8 @@ public class FinanceRepository extends BaseRepository {
       BigDecimal amount,
       String note,
       Long createdByUserId,
-      String description
+      String description,
+      ExpenseRecordCreatedEvent event
   ) {
     return executeInTransaction(conn -> {
       insertExpenseRecord(conn, expenseId, outletId, businessDate, currencyCode, amount, "other", note, createdByUserId);
@@ -618,8 +628,11 @@ public class FinanceRepository extends BaseRepository {
         ps.setString(2, description);
         ps.executeUpdate();
       }
-      return findExpenseTransactional(conn, expenseId)
+      ExpenseRecord record = findExpenseTransactional(conn, expenseId)
           .orElseThrow(() -> new IllegalStateException("Expense not found after create: " + expenseId));
+      outboxWriter.append(conn, "expense_record", expenseId,
+          "fern.finance.expense-record-created", Long.toString(expenseId), event);
+      return record;
     });
   }
 
@@ -627,7 +640,8 @@ public class FinanceRepository extends BaseRepository {
       long expenseId,
       GoodsReceiptExpenseCandidate candidate,
       Long createdByUserId,
-      String note
+      String note,
+      ExpenseRecordCreatedEvent event
   ) {
     return executeInTransaction(conn -> {
       insertExpenseRecord(
@@ -648,8 +662,11 @@ public class FinanceRepository extends BaseRepository {
         ps.setLong(2, candidate.goodsReceiptId());
         ps.executeUpdate();
       }
-      return findExpenseTransactional(conn, expenseId)
+      ExpenseRecord record = findExpenseTransactional(conn, expenseId)
           .orElseThrow(() -> new IllegalStateException("Expense not found after create: " + expenseId));
+      outboxWriter.append(conn, "expense_record", expenseId,
+          "fern.finance.expense-record-created", Long.toString(expenseId), event);
+      return record;
     });
   }
 
@@ -657,7 +674,8 @@ public class FinanceRepository extends BaseRepository {
       long expenseId,
       PayrollExpenseCandidate candidate,
       Long createdByUserId,
-      String note
+      String note,
+      ExpenseRecordCreatedEvent event
   ) {
     return executeInTransaction(conn -> {
       insertExpenseRecord(
@@ -678,8 +696,11 @@ public class FinanceRepository extends BaseRepository {
         ps.setLong(2, candidate.payrollId());
         ps.executeUpdate();
       }
-      return findExpenseTransactional(conn, expenseId)
+      ExpenseRecord record = findExpenseTransactional(conn, expenseId)
           .orElseThrow(() -> new IllegalStateException("Expense not found after create: " + expenseId));
+      outboxWriter.append(conn, "expense_record", expenseId,
+          "fern.finance.expense-record-created", Long.toString(expenseId), event);
+      return record;
     });
   }
 

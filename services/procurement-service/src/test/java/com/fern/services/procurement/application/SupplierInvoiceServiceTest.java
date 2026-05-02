@@ -7,14 +7,12 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.events.procurement.InvoiceApprovedEvent;
 import com.fern.services.procurement.api.ProcurementDtos;
@@ -42,8 +40,6 @@ class SupplierInvoiceServiceTest {
   private SnowflakeIdGenerator idGenerator;
   @Mock
   private AuthorizationPolicyService authorizationPolicyService;
-  @Mock
-  private TypedKafkaEventPublisher eventPublisher;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
 
@@ -53,7 +49,7 @@ class SupplierInvoiceServiceTest {
   }
 
   @Test
-  void approveInvoicePublishesFinanceEvent() {
+  void approveInvoiceWritesOutboxViaRepository() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     , null, null));
@@ -115,23 +111,16 @@ class SupplierInvoiceServiceTest {
     when(procurementRepository.findSupplierInvoice(300L)).thenReturn(java.util.Optional.of(invoice));
     when(procurementRepository.findGoodsReceipt(500L)).thenReturn(java.util.Optional.of(receipt));
     when(procurementRepository.findPurchaseOrder(600L)).thenReturn(java.util.Optional.of(po));
-    when(procurementRepository.approveSupplierInvoice(300L, null)).thenReturn(invoice);
 
     SupplierInvoiceService service = new SupplierInvoiceService(
         procurementRepository,
         idGenerator,
         authorizationPolicyService,
-        eventPublisher,
         clock
     );
     InvoiceApprovedEvent event = service.approveInvoice(300L);
 
-    verify(eventPublisher).publish(
-        eq("fern.procurement.invoice-approved"),
-        eq("300"),
-        eq("procurement.invoice-approved"),
-        any(InvoiceApprovedEvent.class)
-    );
+    verify(procurementRepository).approveSupplierInvoice(eq(300L), any(), any(InvoiceApprovedEvent.class));
     assertEquals(300L, event.supplierInvoiceId());
     assertEquals(List.of(500L), event.linkedReceiptIds());
   }
@@ -212,7 +201,6 @@ class SupplierInvoiceServiceTest {
         procurementRepository,
         idGenerator,
         authorizationPolicyService,
-        eventPublisher,
         clock
     );
 
@@ -222,8 +210,7 @@ class SupplierInvoiceServiceTest {
     verify(procurementRepository).findSupplierInvoice(300L);
     verify(procurementRepository).findGoodsReceipt(500L);
     verify(procurementRepository).findPurchaseOrder(600L);
-    verify(procurementRepository, never()).approveSupplierInvoice(300L, 91L);
-    verifyNoInteractions(eventPublisher);
+    verify(procurementRepository, never()).approveSupplierInvoice(anyLong(), any(), any());
   }
 
   @Test
@@ -244,7 +231,6 @@ class SupplierInvoiceServiceTest {
         procurementRepository,
         idGenerator,
         authorizationPolicyService,
-        eventPublisher,
         clock
     );
 
@@ -297,7 +283,6 @@ class SupplierInvoiceServiceTest {
         procurementRepository,
         idGenerator,
         authorizationPolicyService,
-        eventPublisher,
         clock
     );
     service.listInvoices(

@@ -1,21 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import {
   Package, BookOpen, DollarSign, Store, X, Loader2, Save, Edit2, Check,
-  Plus, ArrowRight, AlertTriangle, MapPin, ImageIcon, Upload,
+  Plus, ArrowRight, AlertTriangle, MapPin, ImageIcon, Upload, ShieldAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   productApi, orgApi,
-  type ProductView, type RecipeView, type PriceView, type AvailabilityView,
+  type ProductView, type RecipeView, type PriceView, type AvailabilityView, type FoodCostView,
 } from '@/api/fern-api';
+import { fnbApi, type ProductAllergenView, type ProductAllergenInput } from '@/api/fnb-api';
 import { getErrorMessage } from '@/api/decoders';
 import { EmptyState } from '@/components/shell/PermissionStates';
 import { StatusBadge } from '@/components/catalog/StatusBadge';
 import { ScopePill } from '@/components/catalog/shared';
 import { getProductImageUploadErrorMessage, validateProductImageFile } from '@/components/catalog/product-image-upload';
+import { AllergenSelector } from '@/components/fnb/AllergenSelector';
+import { AllergenBadgeRow } from '@/components/fnb/AllergenBadgeRow';
 
-type DetailTab = 'identity' | 'recipe' | 'pricing' | 'availability';
+type DetailTab = 'identity' | 'recipe' | 'pricing' | 'availability' | 'allergens';
 
 interface OrgOutlet { id: string; code: string; name: string; regionId: string | number; }
 interface OrgRegion { id: string; code: string; name: string; currencyCode: string; }
@@ -50,6 +54,13 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
   // Item names for recipe display
   const [itemNames, setItemNames] = useState<Record<string, string>>({});
 
+  // Allergens
+  const [allergens, setAllergens] = useState<ProductAllergenView[]>([]);
+  const [savingAllergens, setSavingAllergens] = useState(false);
+
+  // Food cost rollup
+  const [foodCost, setFoodCost] = useState<FoodCostView | null>(null);
+
   // Refresh key to force all-prices reload after save
   const [priceRefreshKey, setPriceRefreshKey] = useState(0);
 
@@ -58,7 +69,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
   const [priceScope, setPriceScope] = useState<'outlet' | 'region'>('outlet');
   const [priceTargetOutletId, setPriceTargetOutletId] = useState('');
   const [priceTargetRegionId, setPriceTargetRegionId] = useState('');
-  const [priceForm, setPriceForm] = useState({ amount: '', effectiveFrom: new Date().toISOString().slice(0, 10) });
+  const [priceForm, setPriceForm] = useState({ amount: '', effectiveFrom: todayLocalISO() });
 
   const pid = String(product.id);
 
@@ -105,12 +116,16 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
     if (!token) return;
     setLoading(true);
     try {
-      const [r, avail] = await Promise.all([
+      const [r, avail, allerg, fc] = await Promise.all([
         productApi.recipe(token, pid).catch(() => null as RecipeView | null),
         productApi.availability(token, { productId: pid }).catch(() => [] as AvailabilityView[]),
+        fnbApi.getProductAllergens(token, pid).catch(() => [] as ProductAllergenView[]),
+        productApi.listFoodCosts(token, pid).catch(() => [] as FoodCostView[]),
       ]);
       setRecipe(r);
       setAvailability(avail);
+      setAllergens(allerg);
+      setFoodCost(fc.length > 0 ? fc[0] : null);
 
       // Load prices at current outlet
       if (outletId) {
@@ -251,11 +266,24 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
         toast.error('Select a target outlet or region'); setSaving(''); return;
       }
       setShowPriceForm(false);
-      setPriceForm({ amount: '', effectiveFrom: new Date().toISOString().slice(0, 10) });
+      setPriceForm({ amount: '', effectiveFrom: todayLocalISO() });
       setPriceRefreshKey(k => k + 1);
       void loadDetail();
       onProductUpdated();
     } catch (e) { toast.error(getErrorMessage(e, 'Failed to set price')); } finally { setSaving(''); }
+  };
+
+  const saveAllergens = async (next: ProductAllergenInput[]) => {
+    setSavingAllergens(true);
+    try {
+      const updated = await fnbApi.setProductAllergens(token, pid, next);
+      setAllergens(updated);
+      toast.success('Allergens saved');
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Failed to save allergens'));
+    } finally {
+      setSavingAllergens(false);
+    }
   };
 
   // Toggle availability
@@ -277,11 +305,13 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
       { key: 'recipe', label: 'Recipe', icon: BookOpen },
       { key: 'pricing', label: 'Pricing', icon: DollarSign },
       { key: 'availability', label: `Outlets (${availCount}/${outlets.length})`, icon: Store },
+      { key: 'allergens', label: `Allergens${allergens.length > 0 ? ` (${allergens.length})` : ''}`, icon: ShieldAlert },
     ]
     : [
       { key: 'identity', label: 'Product', icon: Package },
       { key: 'recipe', label: 'Recipe', icon: BookOpen },
       { key: 'pricing', label: 'Pricing', icon: DollarSign },
+      { key: 'allergens', label: `Allergens${allergens.length > 0 ? ` (${allergens.length})` : ''}`, icon: ShieldAlert },
     ];
   const priceCount = allPrices.length || prices.length;
   const pricedOutletIds = new Set(allPrices.map(p => String(p.outletId)));
@@ -510,6 +540,29 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
                   <div><p className="text-[10px] text-muted-foreground">Yield</p><p className="text-xs mt-0.5">{recipe.yieldQty} {recipe.yieldUomCode}</p></div>
                   <div><p className="text-[10px] text-muted-foreground">Status</p><StatusBadge status={recipe.status} className="mt-0.5" /></div>
                 </div>
+                {foodCost && (
+                  <div className="border rounded-lg p-3 bg-muted/10 grid grid-cols-3 gap-3">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Theoretical Cost</p>
+                      <p className="text-sm font-mono mt-0.5">{foodCost.theoreticalCost != null ? Number(foodCost.theoreticalCost).toLocaleString('vi-VN') : '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost / unit</p>
+                      <p className="text-sm font-mono mt-0.5">{foodCost.costPerYieldUnit != null ? Number(foodCost.costPerYieldUnit).toLocaleString('vi-VN') : '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Food Cost %</p>
+                      {foodCost.foodCostPercent != null ? (() => {
+                        const pct = Number(foodCost.foodCostPercent);
+                        const tone = pct < 25 ? 'text-emerald-600' : pct < 35 ? 'text-amber-600' : 'text-red-600';
+                        return <p className={cn('text-sm font-semibold mt-0.5 font-mono', tone)}>{pct.toFixed(1)}%</p>;
+                      })() : <p className="text-sm text-muted-foreground mt-0.5">— (no sell price)</p>}
+                      {foodCost.sellPrice != null && (
+                        <p className="text-[10px] text-muted-foreground">vs sell {Number(foodCost.sellPrice).toLocaleString('vi-VN')}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {recipe.items && recipe.items.length > 0 && (
                   <div className="border rounded-lg overflow-hidden">
                     <table className="w-full"><thead><tr className="border-b bg-muted/30">
@@ -875,6 +928,30 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
                   </div>
                 );
               })()
+            )}
+          </div>
+        ) : tab === 'allergens' ? (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
+                Allergen declarations
+              </p>
+              {allergens.length > 0 && (
+                <AllergenBadgeRow allergens={allergens} size="sm" showLabel />
+              )}
+            </div>
+            {allergens.length === 0 && (
+              <p className="text-xs text-muted-foreground">Chưa khai báo allergen cho sản phẩm này.</p>
+            )}
+            <AllergenSelector
+              value={allergens}
+              onChange={(next) => { void saveAllergens(next); }}
+              disabled={!canManageCatalog || savingAllergens}
+            />
+            {savingAllergens && (
+              <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" /> Đang lưu...
+              </p>
             )}
           </div>
         ) : null}

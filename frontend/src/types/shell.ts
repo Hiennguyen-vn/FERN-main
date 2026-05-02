@@ -6,13 +6,16 @@ export interface ShellScope {
   level: ScopeLevel;
   regionId?: string;
   regionName?: string;
+  regionCode?: string;
   outletId?: string;
   outletName?: string;
+  outletCode?: string;
 }
 
 export interface ScopeOption {
   id: string;
   name: string;
+  code?: string;
   level: ScopeLevel;
   parentId?: string;
   children?: ScopeOption[];

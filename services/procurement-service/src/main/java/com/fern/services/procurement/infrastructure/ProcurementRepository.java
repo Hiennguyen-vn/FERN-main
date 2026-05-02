@@ -1,9 +1,12 @@
 package com.fern.services.procurement.infrastructure;
 
+import com.fern.common.outbox.OutboxWriter;
 import com.fern.common.repository.BaseRepository;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.spring.web.QueryConventions;
 import com.fern.common.middleware.ServiceException;
+import com.fern.events.procurement.GoodsReceiptPostedEvent;
+import com.fern.events.procurement.InvoiceApprovedEvent;
 import com.fern.services.procurement.api.ProcurementDtos;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.math.BigDecimal;
@@ -32,10 +35,13 @@ public class ProcurementRepository extends BaseRepository {
   private static final Set<String> SUPPLIER_PAYMENT_SORT_KEYS = Set.of("paymentTime", "status", "amount", "id");
 
   private final SnowflakeIdGenerator snowflakeIdGenerator;
+  private final OutboxWriter outboxWriter;
 
-  public ProcurementRepository(DataSource dataSource, SnowflakeIdGenerator snowflakeIdGenerator) {
+  public ProcurementRepository(DataSource dataSource, SnowflakeIdGenerator snowflakeIdGenerator,
+      OutboxWriter outboxWriter) {
     super(dataSource);
     this.snowflakeIdGenerator = snowflakeIdGenerator;
+    this.outboxWriter = outboxWriter;
   }
 
   public ProcurementDtos.SupplierView createSupplier(
@@ -603,7 +609,8 @@ public class ProcurementRepository extends BaseRepository {
     });
   }
 
-  public ProcurementDtos.GoodsReceiptView postGoodsReceipt(long receiptId) {
+  public ProcurementDtos.GoodsReceiptView postGoodsReceipt(long receiptId,
+      GoodsReceiptPostedEvent event) {
     return executeInTransaction(conn -> {
       ProcurementDtos.GoodsReceiptView receipt = findGoodsReceiptTransactional(conn, receiptId)
           .orElseThrow(() -> new IllegalStateException("Goods receipt not found: " + receiptId));
@@ -616,8 +623,11 @@ public class ProcurementRepository extends BaseRepository {
       for (ProcurementDtos.GoodsReceiptItemView item : receipt.items()) {
         updatePurchaseOrderReceiptProgress(conn, receipt.poId(), item.itemId(), item.qtyReceived());
       }
-      return findGoodsReceiptTransactional(conn, receiptId)
+      ProcurementDtos.GoodsReceiptView posted = findGoodsReceiptTransactional(conn, receiptId)
           .orElseThrow(() -> new IllegalStateException("Goods receipt not found after posting"));
+      outboxWriter.append(conn, "goods_receipt", receiptId,
+          "fern.procurement.goods-receipt-posted", Long.toString(receiptId), event);
+      return posted;
     });
   }
 
@@ -794,7 +804,8 @@ public class ProcurementRepository extends BaseRepository {
     });
   }
 
-  public ProcurementDtos.SupplierInvoiceView approveSupplierInvoice(long invoiceId, Long approvedByUserId) {
+  public ProcurementDtos.SupplierInvoiceView approveSupplierInvoice(long invoiceId,
+      Long approvedByUserId, InvoiceApprovedEvent event) {
     return executeInTransaction(conn -> {
       try (PreparedStatement ps = conn.prepareStatement(
           """
@@ -814,8 +825,11 @@ public class ProcurementRepository extends BaseRepository {
         ps.setLong(2, invoiceId);
         ps.executeUpdate();
       }
-      return findSupplierInvoiceTransactional(conn, invoiceId)
+      ProcurementDtos.SupplierInvoiceView approved = findSupplierInvoiceTransactional(conn, invoiceId)
           .orElseThrow(() -> new IllegalStateException("Supplier invoice not found after approval"));
+      outboxWriter.append(conn, "supplier_invoice", invoiceId,
+          "fern.procurement.invoice-approved", Long.toString(invoiceId), event);
+      return approved;
     });
   }
 
@@ -1087,8 +1101,8 @@ public class ProcurementRepository extends BaseRepository {
         """
         INSERT INTO core.goods_receipt_item (
           id, receipt_id, po_id, item_id, uom_code, qty_received, unit_cost,
-          line_total, manufacture_date, expiry_date, note
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          line_total, manufacture_date, expiry_date, batch_no, note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
     )) {
       ps.setLong(1, rowId);
@@ -1101,7 +1115,8 @@ public class ProcurementRepository extends BaseRepository {
       ps.setBigDecimal(8, item.qtyReceived().multiply(item.unitCost()));
       ps.setDate(9, item.manufactureDate() == null ? null : Date.valueOf(item.manufactureDate()));
       ps.setDate(10, item.expiryDate() == null ? null : Date.valueOf(item.expiryDate()));
-      ps.setString(11, item.note());
+      ps.setString(11, item.batchNo());
+      ps.setString(12, item.note());
       ps.executeUpdate();
       return rowId;
     }
@@ -1148,7 +1163,7 @@ public class ProcurementRepository extends BaseRepository {
       throws Exception {
     try (PreparedStatement ps = conn.prepareStatement(
         """
-        SELECT id, item_id, uom_code, qty_received, unit_cost, line_total, manufacture_date, expiry_date, note
+        SELECT id, item_id, uom_code, qty_received, unit_cost, line_total, manufacture_date, expiry_date, batch_no, note
         FROM core.goods_receipt_item
         WHERE receipt_id = ?
         ORDER BY item_id
@@ -1167,6 +1182,7 @@ public class ProcurementRepository extends BaseRepository {
               rs.getBigDecimal("line_total"),
               toLocalDate(rs.getDate("manufacture_date")),
               toLocalDate(rs.getDate("expiry_date")),
+              rs.getString("batch_no"),
               rs.getString("note")
           ));
         }

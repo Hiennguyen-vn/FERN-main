@@ -41,6 +41,8 @@ class SalesServiceTest {
   @Mock
   private SalesRepository salesRepository;
   @Mock
+  private com.fern.services.sales.infrastructure.SalesPromotionRepository promotionRepository;
+  @Mock
   private AuthorizationPolicyService authorizationPolicyService;
   @Mock
   private IdempotencyGuard idempotencyGuard;
@@ -329,13 +331,13 @@ class SalesServiceTest {
         Instant.parse("2026-03-28T00:00:00Z"),
         Set.of(7L)
     );
-    when(salesRepository.createPromotion(request)).thenReturn(promotion);
+    when(promotionRepository.createPromotion(request)).thenReturn(promotion);
     when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(7L))).thenReturn(true);
 
-    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock, promotionRepository);
     SalesDtos.PromotionView result = service.createPromotion(request);
 
-    verify(salesRepository).createPromotion(request);
+    verify(promotionRepository).createPromotion(request);
     assertEquals("700", result.id());
   }
 
@@ -883,7 +885,7 @@ class SalesServiceTest {
         null
     , null, null));
     when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(Set.of(2000L, 2002L));
-    when(salesRepository.listPromotions(
+    when(promotionRepository.listPromotions(
         Set.of(2000L),
         "active",
         Instant.parse("2026-03-30T00:00:00Z"),
@@ -894,7 +896,7 @@ class SalesServiceTest {
         0
     )).thenReturn(PagedResult.of(List.of(), 100, 0, 0));
 
-    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock, promotionRepository);
     service.listPromotions(
         2000L,
         "active",
@@ -906,7 +908,7 @@ class SalesServiceTest {
         null
     );
 
-    verify(salesRepository).listPromotions(
+    verify(promotionRepository).listPromotions(
         Set.of(2000L),
         "active",
         Instant.parse("2026-03-30T00:00:00Z"),
@@ -953,15 +955,15 @@ class SalesServiceTest {
         Instant.parse("2026-04-30T23:59:59Z"),
         Set.of(2000L, 2002L)
     );
-    when(salesRepository.findPromotion(9400L)).thenReturn(Optional.of(existing));
-    when(salesRepository.updatePromotionStatus(9400L, "inactive")).thenReturn(inactive);
+    when(promotionRepository.findPromotion(9400L)).thenReturn(Optional.of(existing));
+    when(promotionRepository.updatePromotionStatus(9400L, "inactive")).thenReturn(inactive);
     when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2000L))).thenReturn(true);
     when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(2002L))).thenReturn(true);
 
-    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock, promotionRepository);
     SalesDtos.PromotionView result = service.deactivatePromotion(9400L);
 
-    verify(salesRepository).updatePromotionStatus(9400L, "inactive");
+    verify(promotionRepository).updatePromotionStatus(9400L, "inactive");
     assertEquals("inactive", result.status());
   }
 
@@ -971,7 +973,7 @@ class SalesServiceTest {
         15L, "cashier", "sess-15", Set.of("cashier"), Set.of(), Set.of(2000L), true, false, null
     , null, null));
     when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(Set.of(2000L));
-    when(salesRepository.findPromotion(9401L)).thenReturn(Optional.of(new SalesDtos.PromotionView(
+    when(promotionRepository.findPromotion(9401L)).thenReturn(Optional.of(new SalesDtos.PromotionView(
         "9401",
         "US Breakfast Combo",
         "amount",
@@ -983,7 +985,7 @@ class SalesServiceTest {
         Set.of(2100L)
     )));
 
-    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock, promotionRepository);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.getPromotion(9401L));
     assertEquals(403, exception.getStatusCode());
@@ -1005,10 +1007,10 @@ class SalesServiceTest {
         Instant.parse("2026-04-30T23:59:59Z"),
         Set.of(2000L, 2002L)
     );
-    when(salesRepository.findPromotion(9400L)).thenReturn(Optional.of(promotion));
+    when(promotionRepository.findPromotion(9400L)).thenReturn(Optional.of(promotion));
     when(authorizationPolicyService.resolveSalesReadableOutletIds(any())).thenReturn(Set.of(2000L));
 
-    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock, promotionRepository);
 
     SalesDtos.PromotionView result = service.getPromotion(9400L);
     assertEquals("9400", result.id());

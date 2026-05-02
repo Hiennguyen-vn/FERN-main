@@ -1,7 +1,16 @@
-import { useState } from 'react';
-import { Globe, MapPin, Store, ChevronRight, Info, X } from 'lucide-react';
-import type { ShellScope, ScopeOption, ScopeLevel } from '@/types/shell';
-import { cn } from '@/lib/utils';
+import { useMemo } from 'react';
+import { Globe, MapPin, Store, Check } from 'lucide-react';
+import type { ShellScope, ScopeOption } from '@/types/shell';
+import {
+  CommandDialog,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandSeparator,
+  CommandShortcut,
+} from '@/components/ui/command';
 
 interface ScopeSelectorProps {
   open: boolean;
@@ -11,163 +20,139 @@ interface ScopeSelectorProps {
   onScopeChange: (scope: ShellScope) => void;
 }
 
-const SCOPE_ICONS: Record<ScopeLevel, React.ElementType> = {
-  system: Globe,
-  region: MapPin,
-  outlet: Store,
-};
+function parseSubRegion(name: string): string | null {
+  const m = name.match(/\b([A-Z]{2}-[A-Z]{2,})\b/);
+  return m ? m[1] : null;
+}
 
-const SCOPE_LABELS: Record<ScopeLevel, string> = {
-  system: 'System-wide',
-  region: 'Region',
-  outlet: 'Outlet',
-};
+type OutletEntry = { region: ScopeOption; outlet: ScopeOption; subRegion: string | null };
 
 export function ScopeSelector({ open, onClose, currentScope, scopeTree, onScopeChange }: ScopeSelectorProps) {
-  const [expandedRegion, setExpandedRegion] = useState<string | null>(
-    currentScope.regionId || null
-  );
-
-  if (!open) return null;
-
   const systemNode = scopeTree[0];
-  const regions = systemNode?.children || [];
+
+  const leafRegions = useMemo(() => {
+    const result: ScopeOption[] = [];
+    function walk(nodes: ScopeOption[]) {
+      for (const node of nodes) {
+        if (node.level === 'region' && node.children?.some((c) => c.level === 'outlet')) {
+          result.push(node);
+        }
+        if (node.children) walk(node.children);
+      }
+    }
+    walk(systemNode?.children || []);
+    return result;
+  }, [systemNode]);
+
+  const outletEntries = useMemo<OutletEntry[]>(() => {
+    const result: OutletEntry[] = [];
+    for (const region of leafRegions) {
+      for (const outlet of region.children || []) {
+        result.push({ region, outlet, subRegion: parseSubRegion(outlet.name) });
+      }
+    }
+    return result;
+  }, [leafRegions]);
+
+  const subRegionGroups = useMemo(() => {
+    const map = new Map<string, OutletEntry[]>();
+    for (const entry of outletEntries) {
+      const key = entry.subRegion ?? '—';
+      const arr = map.get(key) ?? [];
+      arr.push(entry);
+      map.set(key, arr);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [outletEntries]);
+
+  const pickSystem = () => {
+    onScopeChange({ level: 'system' });
+    onClose();
+  };
+
+  const pickRegion = (region: ScopeOption) => {
+    onScopeChange({ level: 'region', regionId: region.id, regionName: region.name, regionCode: region.code });
+    onClose();
+  };
+
+  const pickOutlet = (region: ScopeOption, outlet: ScopeOption) => {
+    onScopeChange({
+      level: 'outlet',
+      regionId: region.id,
+      regionName: region.name,
+      regionCode: region.code,
+      outletId: outlet.id,
+      outletName: outlet.name,
+      outletCode: outlet.code,
+    });
+    onClose();
+  };
+
+  const isSystemActive = currentScope.level === 'system';
+  const isRegionActive = (id: string) =>
+    currentScope.level === 'region' && currentScope.regionId === id && !currentScope.outletId;
+  const isOutletActive = (id: string) => currentScope.outletId === id;
 
   return (
-    <>
-      {/* Backdrop */}
-      <div className="fixed inset-0 bg-foreground/20 z-40" onClick={onClose} />
+    <CommandDialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <CommandInput placeholder="Search region, sub-region, or outlet..." />
+      <CommandList className="max-h-[420px]">
+        <CommandEmpty>No scope found.</CommandEmpty>
 
-      {/* Panel */}
-      <div className="fixed right-4 top-16 w-[380px] max-h-[calc(100vh-5rem)] bg-card rounded-xl border shadow-surface-xl z-50 flex flex-col animate-fade-in">
-        {/* Header */}
-        <div className="px-5 pt-5 pb-3 border-b">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground">Scope Selection</h2>
-            <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1.5">
-            Changing scope adjusts data visibility and available actions across the platform.
-          </p>
-        </div>
-
-        {/* Info banner */}
-        <div className="mx-4 mt-3 flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-info/5 border border-info/10">
-          <Info className="h-3.5 w-3.5 text-info mt-0.5 flex-shrink-0" />
-          <p className="text-[11px] text-muted-foreground leading-relaxed">
-            Your accessible scope depends on your role permissions. Some levels may not be available.
-          </p>
-        </div>
-
-        {/* Scope tree */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-1">
-          {/* System */}
-          <button
-            onClick={() => {
-              onScopeChange({ level: 'system' });
-              onClose();
-            }}
-            className={cn(
-              'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
-              currentScope.level === 'system' && !currentScope.regionId
-                ? 'bg-primary/8 border border-primary/15 text-primary font-medium'
-                : 'hover:bg-accent text-foreground'
-            )}
+        <CommandGroup heading="All">
+          <CommandItem
+            value="all-system all regions vietnam"
+            onSelect={pickSystem}
+            className="gap-2"
           >
-            <Globe className="h-4 w-4 flex-shrink-0" />
+            <Globe className="h-4 w-4 text-muted-foreground" />
             <span>All Regions</span>
-            <span className="ml-auto scope-chip scope-chip-system text-[10px]">System</span>
-          </button>
+            <CommandShortcut>System</CommandShortcut>
+            {isSystemActive && <Check className="h-4 w-4 text-primary ml-1" />}
+          </CommandItem>
+          {leafRegions.map((region) => (
+            <CommandItem
+              key={`region-${region.id}`}
+              value={`region ${region.name} ${region.code ?? ''}`}
+              onSelect={() => pickRegion(region)}
+              className="gap-2"
+            >
+              <MapPin className="h-4 w-4 text-muted-foreground" />
+              <span>All {region.name}</span>
+              {region.code && (
+                <span className="font-mono text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                  {region.code}
+                </span>
+              )}
+              <CommandShortcut>{region.children?.length ?? 0} outlets</CommandShortcut>
+              {isRegionActive(region.id) && <Check className="h-4 w-4 text-primary ml-1" />}
+            </CommandItem>
+          ))}
+        </CommandGroup>
 
-          {/* Regions */}
-          {regions.map((region) => {
-            const isExpanded = expandedRegion === region.id;
-            const isActive = currentScope.regionId === region.id && currentScope.level === 'region';
-
-            return (
-              <div key={region.id}>
-                <div className="flex items-center">
-                  <button
-                    onClick={() => setExpandedRegion(isExpanded ? null : region.id)}
-                    className="p-1 text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', isExpanded && 'rotate-90')} />
-                  </button>
-                  <button
-                    onClick={() => {
-                      onScopeChange({ level: 'region', regionId: region.id, regionName: region.name });
-                      onClose();
-                    }}
-                    className={cn(
-                      'flex-1 flex items-center gap-3 px-2 py-2 rounded-lg text-sm transition-colors',
-                      isActive
-                        ? 'bg-primary/8 border border-primary/15 text-primary font-medium'
-                        : 'hover:bg-accent text-foreground'
-                    )}
-                  >
-                    <MapPin className="h-4 w-4 flex-shrink-0" />
-                    <span>{region.name}</span>
-                    <span className="ml-auto text-[10px] text-muted-foreground">
-                      {region.children?.length || 0} outlets
-                    </span>
-                  </button>
-                </div>
-
-                {/* Outlets */}
-                {isExpanded && region.children && (
-                  <div className="ml-8 mt-0.5 space-y-0.5">
-                    {region.children.map((outlet) => {
-                      const isOutletActive = currentScope.outletId === outlet.id;
-                      return (
-                        <button
-                          key={outlet.id}
-                          onClick={() => {
-                            onScopeChange({
-                              level: 'outlet',
-                              regionId: region.id,
-                              regionName: region.name,
-                              outletId: outlet.id,
-                              outletName: outlet.name,
-                            });
-                            onClose();
-                          }}
-                          className={cn(
-                            'w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors',
-                            isOutletActive
-                              ? 'bg-primary/8 border border-primary/15 text-primary font-medium'
-                              : 'hover:bg-accent text-foreground'
-                          )}
-                        >
-                          <Store className="h-3.5 w-3.5 flex-shrink-0" />
-                          <span>{outlet.name}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Current scope footer */}
-        <div className="px-5 py-3 border-t bg-muted/50">
-          <div className="flex items-center gap-2">
-            {(() => {
-              const Icon = SCOPE_ICONS[currentScope.level];
-              return <Icon className="h-3.5 w-3.5 text-muted-foreground" />;
-            })()}
-            <p className="text-xs text-muted-foreground">
-              Active: <span className="font-medium text-foreground">
-                {currentScope.outletName || currentScope.regionName || 'System-wide'}
-              </span>
-              <span className="ml-1.5 text-muted-foreground">({SCOPE_LABELS[currentScope.level]})</span>
-            </p>
+        {subRegionGroups.map(([subRegion, entries]) => (
+          <div key={subRegion}>
+            <CommandSeparator />
+            <CommandGroup heading={subRegion}>
+              {entries.map(({ region, outlet }) => (
+                <CommandItem
+                  key={outlet.id}
+                  value={`outlet ${outlet.name} ${outlet.code ?? ''} ${region.name}`}
+                  onSelect={() => pickOutlet(region, outlet)}
+                  className="gap-2"
+                >
+                  <Store className="h-4 w-4 text-muted-foreground" />
+                  <span className="flex-1 truncate">{outlet.name}</span>
+                  {outlet.code && (
+                    <span className="font-mono text-[10px] text-muted-foreground">{outlet.code}</span>
+                  )}
+                  {isOutletActive(outlet.id) && <Check className="h-4 w-4 text-primary ml-1" />}
+                </CommandItem>
+              ))}
+            </CommandGroup>
           </div>
-        </div>
-      </div>
-    </>
+        ))}
+      </CommandList>
+    </CommandDialog>
   );
 }

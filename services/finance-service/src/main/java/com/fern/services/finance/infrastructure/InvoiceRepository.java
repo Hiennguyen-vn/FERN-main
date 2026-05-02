@@ -1,6 +1,8 @@
 package com.fern.services.finance.infrastructure;
 
+import com.fern.common.outbox.OutboxWriter;
 import com.fern.common.repository.BaseRepository;
+import com.fern.events.finance.InvoiceIssuedEvent;
 import com.fern.services.finance.api.FinanceDtos;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
@@ -56,8 +58,11 @@ public class InvoiceRepository extends BaseRepository {
       long amountCents
   ) {}
 
-  public InvoiceRepository(DataSource dataSource) {
+  private final OutboxWriter outboxWriter;
+
+  public InvoiceRepository(DataSource dataSource, OutboxWriter outboxWriter) {
     super(dataSource);
+    this.outboxWriter = outboxWriter;
   }
 
   public Optional<InvoiceRecord> findBySaleId(long saleId) {
@@ -115,7 +120,7 @@ public class InvoiceRepository extends BaseRepository {
     });
   }
 
-  public void insertInvoice(InvoiceRecord inv, List<InvoiceLineRecord> lines) {
+  public void insertInvoice(InvoiceRecord inv, List<InvoiceLineRecord> lines, InvoiceIssuedEvent event) {
     executeInTransaction(conn -> {
       try (var ps = conn.prepareStatement(
           "INSERT INTO finance.invoice (id,outlet_id,sale_id,invoice_number,invoice_year,invoice_serial," +
@@ -162,6 +167,8 @@ public class InvoiceRepository extends BaseRepository {
           ps.executeUpdate();
         }
       }
+      outboxWriter.append(conn, "invoice", inv.id(),
+          "fern.finance.invoice-issued", Long.toString(inv.id()), event);
       return null;
     });
   }

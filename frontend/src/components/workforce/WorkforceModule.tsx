@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, Component, type ReactNode, type ErrorInfo } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import {
   AlertTriangle,
   CalendarDays,
@@ -100,7 +101,7 @@ function workShiftUserName(
 }
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  return todayLocalISO();
 }
 
 function addDays(dateStr: string, days: number): string {

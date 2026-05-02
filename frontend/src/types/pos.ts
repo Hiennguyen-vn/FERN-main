@@ -79,6 +79,7 @@ export interface ProductItem {
   price: number;
   sku: string;
   available: boolean;
+  allergens?: Array<{ code: string; label: string; icon: string | null; isTraces: boolean }>;
 }
 
 export interface ReconciliationData {
@@ -131,6 +132,7 @@ export interface LoyaltyEvent {
 export interface OutletTodayStats {
   outletId: string;
   businessDate: string;
+  currencyCode?: string;
   ordersToday: number;
   completedSales: number;
   cancelledOrders: number;

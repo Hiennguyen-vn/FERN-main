@@ -63,6 +63,17 @@ public class SalesController {
     return java.util.Map.of("saleId", saleId, "customerId", customerId);
   }
 
+  @PostMapping("/orders/{saleId}/ordering-table")
+  public java.util.Map<String, Object> attachOrderingTable(
+      @PathVariable long saleId,
+      @RequestBody java.util.Map<String, Object> body
+  ) {
+    Long tableId = body.get("tableId") == null ? null
+        : ((Number) body.get("tableId")).longValue();
+    salesService.attachOrderingTable(saleId, tableId);
+    return java.util.Map.of("saleId", saleId, "tableId", tableId == null ? "" : tableId);
+  }
+
   @PostMapping("/orders")
   @ResponseStatus(HttpStatus.CREATED)
   public SalesDtos.SaleView submitSale(
@@ -179,6 +190,11 @@ public class SalesController {
       @RequestBody(required = false) SalesDtos.CancelSaleRequest request
   ) {
     return salesService.cancelSale(saleId, request);
+  }
+
+  @GetMapping("/void-reasons")
+  public java.util.List<SalesDtos.VoidReasonView> listVoidReasons() {
+    return salesService.listVoidReasons();
   }
 
   @GetMapping("/pos-sessions")

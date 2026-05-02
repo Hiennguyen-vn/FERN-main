@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import {
   Building2, FileText, Truck, Receipt, CreditCard, Search, RefreshCw,
 } from 'lucide-react';
+import { reportError } from '@/lib/report-error';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
@@ -231,7 +232,7 @@ export function ProcurementModule() {
         setOutlets(hierarchy.outlets || []);
       })
       .catch((error: unknown) => {
-        console.error('Procurement org hierarchy load failed', error);
+        reportError(error, 'procurement.org-hierarchy.load');
         if (!active) return;
         setRegions([]);
         setOutlets([]);
@@ -382,7 +383,7 @@ export function ProcurementModule() {
       setSuppliersTotal(page.total || page.totalCount || 0);
       setSuppliersHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Procurement suppliers load failed', error);
+      reportError(error, 'procurement.suppliers.load');
       setSuppliers([]);
       setSuppliersTotal(0);
       setSuppliersHasMore(false);
@@ -406,7 +407,7 @@ export function ProcurementModule() {
       setPoTotal(page.total || page.totalCount || 0);
       setPoHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Procurement purchase orders load failed', error);
+      reportError(error, 'procurement.purchase-orders.load');
       setPurchaseOrders([]);
       setPoTotal(0);
       setPoHasMore(false);
@@ -430,7 +431,7 @@ export function ProcurementModule() {
       setGrTotal(page.total || page.totalCount || 0);
       setGrHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Procurement goods receipts load failed', error);
+      reportError(error, 'procurement.goods-receipts.load');
       setGoodsReceipts([]);
       setGrTotal(0);
       setGrHasMore(false);
@@ -454,7 +455,7 @@ export function ProcurementModule() {
       setInvoiceTotal(page.total || page.totalCount || 0);
       setInvoiceHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Procurement invoices load failed', error);
+      reportError(error, 'procurement.invoices.load');
       setInvoices([]);
       setInvoiceTotal(0);
       setInvoiceHasMore(false);
@@ -478,7 +479,7 @@ export function ProcurementModule() {
       setPaymentTotal(page.total || page.totalCount || 0);
       setPaymentHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Procurement payments load failed', error);
+      reportError(error, 'procurement.payments.load');
       setPayments([]);
       setPaymentTotal(0);
       setPaymentHasMore(false);
@@ -735,8 +736,8 @@ export function ProcurementModule() {
                           <p className="text-[11px] text-muted-foreground">{String(item?.code || line.itemId || 'No item code')}</p>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-right text-sm font-mono">{orderedQty.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.qtyReceived || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{orderedQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.qtyReceived || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
                       <td className="px-4 py-3 text-sm">{String(line.uomCode || item?.baseUomCode || item?.unitCode || '—')}</td>
                       <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(unitPrice, currencyCode)}</td>
                       <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(orderedQty * unitPrice, currencyCode)}</td>
@@ -815,10 +816,10 @@ export function ProcurementModule() {
                           <p className="text-[11px] text-muted-foreground">{String(item?.code || line.itemId || 'No item code')}</p>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.qtyReceived || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.qtyReceived || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
                       <td className="px-4 py-3 text-sm">{String(line.uomCode || item?.baseUomCode || item?.unitCode || '—')}</td>
-                      <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.unitCost || 0).toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.lineTotal || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(Number(line.unitCost || 0), currencyCode)}</td>
+                      <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(Number(line.lineTotal || 0), currencyCode)}</td>
                       <td className="px-4 py-3 text-sm">{formatDateLabel(line.manufactureDate)}</td>
                       <td className="px-4 py-3 text-sm">{formatDateLabel(line.expiryDate)}</td>
                       <td className="px-4 py-3 text-sm text-muted-foreground">{String(line.note || '—')}</td>
@@ -920,9 +921,9 @@ export function ProcurementModule() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{String(line.goodsReceiptItemId || '—')}</td>
-                    <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.qtyInvoiced || 0).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.qtyInvoiced || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
                     <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(line.unitPrice || 0, currencyCode)}</td>
-                    <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.taxPercent || 0).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-sm font-mono">{Number(line.taxPercent || 0).toFixed(1)}%</td>
                     <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(line.taxAmount || 0, currencyCode)}</td>
                     <td className="px-4 py-3 text-right text-sm font-mono">{formatProcurementAmount(line.lineTotal || 0, currencyCode)}</td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">{String(line.note || '—')}</td>

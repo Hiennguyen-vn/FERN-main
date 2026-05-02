@@ -43,22 +43,24 @@ public class ReportRepository extends BaseRepository {
           """
           SELECT sales_rows.*, COUNT(*) OVER() AS total_count
           FROM (
-            SELECT outlet_id,
-                   DATE(created_at) AS business_date,
+            SELECT sr.outlet_id,
+                   ((sr.created_at AT TIME ZONE r.timezone_name - INTERVAL '3 hours')::date) AS business_date,
                    COUNT(*) AS sale_count,
-                   COALESCE(SUM(subtotal), 0) AS subtotal,
-                   COALESCE(SUM(discount), 0) AS discount,
-                   COALESCE(SUM(tax_amount), 0) AS tax_amount,
-                   COALESCE(SUM(total_amount), 0) AS total_amount
-            FROM core.sale_record
-            WHERE outlet_id = ?
-              AND status IN (
+                   COALESCE(SUM(sr.subtotal), 0) AS subtotal,
+                   COALESCE(SUM(sr.discount), 0) AS discount,
+                   COALESCE(SUM(sr.tax_amount), 0) AS tax_amount,
+                   COALESCE(SUM(sr.total_amount), 0) AS total_amount
+            FROM core.sale_record sr
+            JOIN core.outlet o ON o.id = sr.outlet_id
+            JOIN core.region r ON r.id = o.region_id
+            WHERE sr.outlet_id = ?
+              AND sr.status IN (
                 'completed'::sale_order_status_enum,
                 'payment_done'::sale_order_status_enum
               )
-              AND created_at >= ?
-              AND created_at < (?::date + INTERVAL '1 day')
-            GROUP BY outlet_id, DATE(created_at)
+              AND sr.created_at >= ?
+              AND sr.created_at < (?::date + INTERVAL '1 day')
+            GROUP BY sr.outlet_id, ((sr.created_at AT TIME ZONE r.timezone_name - INTERVAL '3 hours')::date)
           ) sales_rows
           WHERE 1 = 1
           """
@@ -388,13 +390,16 @@ public class ReportRepository extends BaseRepository {
       try (PreparedStatement ps = conn.prepareStatement(
           """
           WITH s AS (
-            SELECT outlet_id, DATE(created_at) AS business_date,
-                   COALESCE(SUM(total_amount), 0) AS sales_total
-            FROM core.sale_record
-            WHERE outlet_id = ?
-              AND status IN ('completed'::sale_order_status_enum, 'payment_done'::sale_order_status_enum)
-              AND created_at >= ? AND created_at < (?::date + INTERVAL '1 day')
-            GROUP BY outlet_id, DATE(created_at)
+            SELECT sr.outlet_id,
+                   ((sr.created_at AT TIME ZONE r.timezone_name - INTERVAL '3 hours')::date) AS business_date,
+                   COALESCE(SUM(sr.total_amount), 0) AS sales_total
+            FROM core.sale_record sr
+            JOIN core.outlet o ON o.id = sr.outlet_id
+            JOIN core.region r ON r.id = o.region_id
+            WHERE sr.outlet_id = ?
+              AND sr.status IN ('completed'::sale_order_status_enum, 'payment_done'::sale_order_status_enum)
+              AND sr.created_at >= ? AND sr.created_at < (?::date + INTERVAL '1 day')
+            GROUP BY sr.outlet_id, ((sr.created_at AT TIME ZONE r.timezone_name - INTERVAL '3 hours')::date)
           ), e AS (
             SELECT outlet_id, business_date, COALESCE(SUM(amount), 0) AS expense_total
             FROM core.expense_record

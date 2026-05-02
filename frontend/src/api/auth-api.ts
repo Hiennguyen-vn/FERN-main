@@ -18,6 +18,7 @@ export interface FernUser {
   fullName: string;
   employeeCode?: string | null;
   email?: string | null;
+  phone?: string | null;
   status?: string | null;
   [key: string]: unknown;
 }
@@ -200,6 +201,7 @@ function decodeUser(value: unknown): FernUser {
     fullName: asString(record.fullName ?? record.username ?? 'Unknown user'),
     employeeCode: asNullableString(record.employeeCode),
     email: asNullableString(record.email),
+    phone: asNullableString(record.phone),
     status: asNullableString(record.status),
   };
 }
@@ -402,4 +404,23 @@ export const authApi = {
       token,
       body: { status },
     }),
+  updateMyProfile: async (
+    token: string,
+    payload: { fullName: string; email?: string | null; phone?: string | null },
+  ): Promise<FernUser> =>
+    decodeUser(await apiRequest('/api/v1/auth/me/profile', {
+      method: 'PUT',
+      token,
+      body: payload,
+    })),
+  changeMyPassword: async (
+    token: string,
+    payload: { currentPassword: string; newPassword: string },
+  ): Promise<void> => {
+    await apiRequest('/api/v1/auth/me/change-password', {
+      method: 'POST',
+      token,
+      body: payload,
+    });
+  },
 };

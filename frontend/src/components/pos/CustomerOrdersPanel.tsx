@@ -62,6 +62,8 @@ export function CustomerOrdersPanel({
   const [orders, setOrders] = useState<SaleListItemView[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState('');
+  const [ordersHasMore, setOrdersHasMore] = useState(false);
+  const ORDERS_PAGE_SIZE = 50;
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [selectedDetail, setSelectedDetail] = useState<SaleDetailView | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -76,7 +78,7 @@ export function CustomerOrdersPanel({
 
   const resolvedOutletName = outletName || 'Selected outlet';
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (append = false) => {
     if (!token || !outletId) {
       setOrders([]);
       setOrdersError('');
@@ -86,12 +88,13 @@ export function CustomerOrdersPanel({
     setOrdersLoading(true);
     setOrdersError('');
     try {
+      const offset = append ? orders.length : 0;
       const [ordersPage, sessionsPage] = await Promise.all([
         salesApi.orders(token, {
           outletId,
           publicOrderOnly: true,
-          limit: 100,
-          offset: 0,
+          limit: ORDERS_PAGE_SIZE,
+          offset,
           sortBy: 'createdAt',
           sortDir: 'desc',
         }),
@@ -102,7 +105,9 @@ export function CustomerOrdersPanel({
         }),
       ]);
 
-      setOrders(ordersPage.items || []);
+      const items = ordersPage.items || [];
+      setOrders((prev) => append ? [...prev, ...items] : items);
+      setOrdersHasMore(items.length >= ORDERS_PAGE_SIZE);
       setSessionCodeById(new Map(
         (sessionsPage.items || []).map((s: PosSessionView) => [
           String(s.id),
@@ -225,19 +230,25 @@ export function CustomerOrdersPanel({
   const handleApprove = useCallback(async (order: SaleOrder) => {
     if (!token) { toast.error('Please sign in first'); return; }
     setApproveBusyId(order.id);
+    // Optimistic flip — update list immediately so the UI doesn't flicker through a loading state.
+    const previousOrders = orders;
+    setOrders((prev) => prev.map((o) => (
+      String(o.id) === order.id ? { ...o, status: 'approved' } : o
+    )));
     try {
       await salesApi.approveOrder(token, order.id);
       toast.success('Customer order approved');
-      await loadOrders();
       const refreshed = await salesApi.orderDetail(token, order.id);
       setSelectedDetail(refreshed);
       await Promise.resolve(onQueueMutation?.());
     } catch (error: unknown) {
+      // Revert optimistic state on failure.
+      setOrders(previousOrders);
       toast.error(getErrorMessage(error, 'Unable to approve customer order'));
     } finally {
       setApproveBusyId('');
     }
-  }, [loadOrders, onQueueMutation, token]);
+  }, [onQueueMutation, orders, token]);
 
   const openPaymentCapture = useCallback(async (order: SaleOrder) => {
     if (!token) { toast.error('Please sign in first'); return; }
@@ -280,17 +291,17 @@ export function CustomerOrdersPanel({
     }
   }, [orders, outletId, productNameById, resolvedOutletName, sessionCodeById, token, user.displayName]);
 
-  const handleCompletePayment = useCallback(async (paymentMethod: PaymentMethod) => {
+  const handleCompletePayment = useCallback(async (payload: { paymentMethod: PaymentMethod; totalCharged: number; note: string }) => {
     if (!token || !paymentTarget) {
       return { ok: false, errorMessage: 'Payment target is missing' };
     }
     setPaymentBusyId(paymentTarget.id);
     try {
       await salesApi.markPaymentDone(token, paymentTarget.id, {
-        paymentMethod,
-        amount: paymentTarget.total,
+        paymentMethod: payload.paymentMethod,
+        amount: payload.totalCharged > 0 ? payload.totalCharged : paymentTarget.total,
         paymentTime: new Date().toISOString(),
-        note: 'Captured from customer-order queue',
+        note: payload.note ? `Customer-queue | ${payload.note}` : 'Captured from customer-order queue',
       });
       toast.success('Customer order payment captured');
       await loadOrders();
@@ -459,6 +470,22 @@ export function CustomerOrdersPanel({
                   })}
                 </tbody>
               </table>
+              {ordersHasMore && (
+                <div className="px-4 py-3 border-t bg-muted/10 flex items-center justify-between">
+                  <span className="text-[10px] text-muted-foreground">
+                    Đã hiển thị {orders.length} đơn
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    disabled={ordersLoading}
+                    onClick={() => void loadOrders(true)}
+                  >
+                    {ordersLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Tải thêm'}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </div>

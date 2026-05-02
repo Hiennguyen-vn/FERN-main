@@ -83,12 +83,28 @@ interface OutletPerformanceRow {
   outletId: string;
   outletCode: string;
   outletName: string;
+  outletSubRegion: string | null;
   netSales: number;
   payroll: number;
   laborPct: number | null;
   otherExpenses: number;
   otherOpExPct: number | null;
   status: 'clear' | 'watch' | 'risk' | 'no-sales';
+}
+
+/** Extract sub-region code from outlet name (e.g. "Outlet 1 - VN-HCM" → "VN-HCM"). */
+function extractOutletSubRegion(name: string): string | null {
+  const m = name.match(/\b([A-Z]{2}-[A-Z]{2,})\b/);
+  return m ? m[1] : null;
+}
+
+/** Shorten outlet name: "Outlet 1 - VN-HCM" → "Outlet 1", "Outlet VN-HCM-2" → "Outlet 2". */
+function shortOutletLabel(name: string): string {
+  const dashIdx = name.indexOf(' - ');
+  if (dashIdx > 0) return name.slice(0, dashIdx).trim();
+  const suffixNum = name.match(/[A-Z]+-(\d+)\s*$/i);
+  if (suffixNum) return `Outlet ${suffixNum[1]}`;
+  return name;
 }
 
 function sourceLabel(sourceType?: string | null, subtype?: string | null): {
@@ -176,6 +192,12 @@ export function FinanceOverviewWorkspace({
     () => new Map(outlets.map((outlet) => [outlet.id, outlet])),
     [outlets],
   );
+
+  // Derive the display currency from the active region (falls back to VND for VN deployments)
+  const scopeCurrency = useMemo(() => {
+    const region = regions.find((r) => String(r.id) === String(scopeRegionId ?? ''));
+    return String(region?.currencyCode || 'VND').toUpperCase();
+  }, [regions, scopeRegionId]);
   const scopeLabel = useMemo(
     () =>
       describeFinanceScope({
@@ -389,7 +411,7 @@ export function FinanceOverviewWorkspace({
 
   const overviewKpis = useMemo((): OverviewKpis => {
     const pl = monthlyPl;
-    const currency = pl?.currency || revenueSnapshot.currency || 'USD';
+    const currency = pl?.currency || revenueSnapshot.currency || scopeCurrency;
     if (!pl) {
       return {
         netSales: 0,
@@ -457,6 +479,7 @@ export function FinanceOverviewWorkspace({
         outletId: row.outletId,
         outletCode: row.outletCode,
         outletName: row.outletName,
+        outletSubRegion: extractOutletSubRegion(row.outletName),
         netSales: row.netSales,
         payroll: row.payroll,
         laborPct: row.laborPct,
@@ -529,9 +552,9 @@ export function FinanceOverviewWorkspace({
         <KpiCard
           label="Net Sales"
           value={formatMoney(overviewKpis.netSales, overviewKpis.currency)}
-          sub={`${displayOrderCount} orders`}
-          delta={comparisonPeriod ? formatDelta(revenueDeltaPct) : undefined}
-          deltaPositive={revenueDeltaPct != null ? revenueDeltaPct >= 0 : undefined}
+          sub={displayOrderCount === 0 ? 'No orders this period' : `${displayOrderCount} orders`}
+          delta={comparisonPeriod && displayOrderCount > 0 ? formatDelta(revenueDeltaPct) : undefined}
+          deltaPositive={revenueDeltaPct != null && displayOrderCount > 0 ? revenueDeltaPct >= 0 : undefined}
         />
         <KpiCard
           label="Labor Cost"
@@ -608,8 +631,17 @@ export function FinanceOverviewWorkspace({
                     outletPerformanceRows.map((row) => (
                       <tr key={row.outletId} className="border-b last:border-0 hover:bg-accent/20">
                         <td className="px-4 py-2.5">
-                          <span className="text-sm font-medium">{row.outletCode}</span>
-                          <span className="ml-1.5 text-xs text-muted-foreground">{row.outletName}</span>
+                          <div className="flex items-center gap-2">
+                            {row.outletSubRegion && (
+                              <span className="shrink-0 font-mono text-[9px] font-medium text-primary/70 bg-primary/8 px-1.5 py-0.5 rounded border border-primary/15">
+                                {row.outletSubRegion}
+                              </span>
+                            )}
+                            <div>
+                              <div className="text-sm font-medium leading-tight">{shortOutletLabel(row.outletName)}</div>
+                              <div className="font-mono text-[10px] text-muted-foreground">{row.outletCode}</div>
+                            </div>
+                          </div>
                         </td>
                         <td className="px-4 py-2.5 text-right font-mono text-sm">{formatMoney(row.netSales, overviewKpis.currency)}</td>
                         <td className={cn('px-4 py-2.5 text-right text-sm', row.laborPct != null && row.laborPct > 100 && 'text-red-600')}>

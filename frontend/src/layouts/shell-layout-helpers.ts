@@ -78,7 +78,8 @@ function buildOutletScopeOption(
 ): ScopeOption {
   return {
     id: outlet.id,
-    name: `${outlet.code} · ${outlet.name}`,
+    name: outlet.name,
+    code: outlet.code,
     level: 'outlet',
     parentId: parentRegionId,
   };
@@ -89,7 +90,7 @@ function sortScopeTreeChildren(nodes: ScopeOption[]) {
 }
 
 function computeFullScopeTree(
-  regions: Array<{ id: string; name: string }>,
+  regions: Array<{ id: string; name: string; code?: string }>,
   outlets: Array<{ id: string; regionId: string; code: string; name: string }>,
 ): ScopeOption[] {
   const regionsById = new Map<string, ScopeOption>();
@@ -97,6 +98,7 @@ function computeFullScopeTree(
     regionsById.set(region.id, {
       id: region.id,
       name: region.name,
+      code: region.code,
       level: 'region',
       parentId: 'system',
       children: [],
@@ -134,7 +136,7 @@ function computeFullScopeTree(
 }
 
 function computeAssignedScopeTree(
-  regions: Array<{ id: string; name: string }>,
+  regions: Array<{ id: string; name: string; code?: string }>,
   outlets: Array<{ id: string; regionId: string; code: string; name: string }>,
   scopeAssignments: AuthBusinessScopeView[],
 ): ScopeOption[] {
@@ -150,6 +152,7 @@ function computeAssignedScopeTree(
     const created: ScopeOption = {
       id: regionId,
       name: region?.name || `Region ${regionId}`,
+      code: region?.code,
       level: 'region',
       parentId: 'system',
       children: [],
@@ -212,7 +215,7 @@ function computeAssignedScopeTree(
 }
 
 export function computeScopeTree(
-  regions: Array<{ id: string; name: string }>,
+  regions: Array<{ id: string; name: string; code?: string }>,
   outlets: Array<{ id: string; regionId: string; code: string; name: string }>,
   scopeAssignments?: AuthBusinessScopeView[],
 ): ScopeOption[] {
@@ -229,14 +232,16 @@ export function defaultScope(level: ScopeLevel, scopeTree: ScopeOption[]): Shell
   const firstOutlet = firstRegion?.children?.[0];
   if (level === 'system' || !firstRegion) return { level: 'system' };
   if (level === 'region' || !firstOutlet) {
-    return { level: 'region', regionId: firstRegion.id, regionName: firstRegion.name };
+    return { level: 'region', regionId: firstRegion.id, regionName: firstRegion.name, regionCode: firstRegion.code };
   }
   return {
     level: 'outlet',
     regionId: firstRegion.id,
     regionName: firstRegion.name,
+    regionCode: firstRegion.code,
     outletId: firstOutlet.id,
     outletName: firstOutlet.name,
+    outletCode: firstOutlet.code,
   };
 }
 

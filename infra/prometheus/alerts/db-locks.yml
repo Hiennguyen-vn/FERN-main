@@ -1,0 +1,35 @@
+groups:
+  - name: db-locks
+    interval: 30s
+    rules:
+      - alert: PostgresDeadlockSpike
+        expr: rate(pg_stat_database_deadlocks{datname="fern"}[5m]) > 1/60
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Postgres deadlock rate > 1/min for 5m"
+          description: "Deadlocks {{ $value }}/s on db={{ $labels.datname }}. Investigate top conflicting queries via pg_stat_activity wait events."
+
+      - alert: PostgresLockWaitP95High
+        expr: histogram_quantile(0.95, rate(pg_lock_wait_seconds_bucket[5m])) > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Postgres lock wait p95 > 2s"
+          description: "p95 wait {{ $value }}s. Check pg_stat_activity wait_event_type='Lock'."
+
+      - alert: PostgresExclusiveLocksHigh
+        expr: sum by (mode) (pg_locks_count{mode=~"AccessExclusiveLock|ExclusiveLock"}) > 50
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Excessive exclusive locks ({{ $value }})"
+          description: "Long-held AccessExclusive/Exclusive locks may indicate hung migrations or VACUUM FULL."
+
+      - alert: PostgresIdleInTxLongRunning
+        expr: pg_stat_activity_max_tx_duration{state="idle in transaction"} > 300
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Idle-in-transaction held > 5m"
+          description: "Connection has held tx open > {{ $value }}s. Will block VACUUM and table-rewrite migrations."

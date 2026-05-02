@@ -50,8 +50,4 @@
   animation: pos-pop 0.45s cubic-bezier(0.2, 1.2, 0.4, 1);
 }
 
-@media print {
-  body * { visibility: hidden; }
-  .pos-print-area, .pos-print-area * { visibility: visible; }
-  .pos-print-area { position: absolute; left: 0; top: 0; width: 80mm; }
-}
+/* Print rules moved to global src/index.css for cross-route consistency. */

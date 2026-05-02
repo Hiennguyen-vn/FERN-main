@@ -240,4 +240,13 @@ public final class ProductDtos {
   public record PresignImageRequest(@NotBlank String contentType, long size) {}
 
   public record PresignedUploadResult(String uploadUrl, String finalUrl, String expiresAt, String contentType) {}
+
+  public record FoodCostView(
+      long productId,
+      int version,
+      java.math.BigDecimal theoreticalCost,
+      java.math.BigDecimal costPerYieldUnit,
+      java.math.BigDecimal sellPrice,
+      java.math.BigDecimal foodCostPercent
+  ) {}
 }

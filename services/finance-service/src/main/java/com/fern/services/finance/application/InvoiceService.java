@@ -5,7 +5,6 @@ import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.common.spring.auth.SpringInternalServiceAuth;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.events.finance.InvoiceIssuedEvent;
 import com.fern.events.sales.PaymentCapturedEvent;
 import com.fern.services.finance.api.FinanceDtos;
@@ -39,7 +38,6 @@ public class InvoiceService {
 
   private final InvoiceRepository invoiceRepository;
   private final SnowflakeIdGenerator idGenerator;
-  private final TypedKafkaEventPublisher eventPublisher;
   private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
   private final RestClient salesRestClient;
@@ -52,7 +50,6 @@ public class InvoiceService {
   public InvoiceService(
       InvoiceRepository invoiceRepository,
       SnowflakeIdGenerator idGenerator,
-      TypedKafkaEventPublisher eventPublisher,
       AuthorizationPolicyService authorizationPolicyService,
       Clock clock,
       RestClient.Builder restClientBuilder,
@@ -61,7 +58,6 @@ public class InvoiceService {
   ) {
     this.invoiceRepository = invoiceRepository;
     this.idGenerator = idGenerator;
-    this.eventPublisher = eventPublisher;
     this.authorizationPolicyService = authorizationPolicyService;
     this.clock = clock;
     this.salesRestClient = restClientBuilder.build();
@@ -158,14 +154,9 @@ public class InvoiceService {
         now
     );
 
-    invoiceRepository.insertInvoice(inv, lineRecords);
-
-    eventPublisher.publish(
-        "fern.finance.invoice-issued",
-        Long.toString(invoiceId),
-        "finance.invoice-issued",
-        new InvoiceIssuedEvent(invoiceId, event.saleId(), sale.outletId(), invoiceNumber, now)
-    );
+    InvoiceIssuedEvent issuedEvent = new InvoiceIssuedEvent(
+        invoiceId, event.saleId(), sale.outletId(), invoiceNumber, now);
+    invoiceRepository.insertInvoice(inv, lineRecords, issuedEvent);
 
     log.info("Invoice issued: {} for sale {}", invoiceNumber, event.saleId());
     return toView(inv, lineRecords);

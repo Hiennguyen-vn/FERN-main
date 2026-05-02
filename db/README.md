@@ -542,6 +542,28 @@ Design a new PostgreSQL table in the core schema that follows the existing FERN 
 Audit the existing constraint set for [table name], explain current invariants, propose the exact constraint changes and migration risks, and only then update the Flyway migration set, db docs, and SQL tests consistently.
 ```
 
+## Simulator Data Path
+
+`tools/data-simulator-app` writes directly into the canonical schemas (`core.*`, `crm.*`)
+via JDBC batch inserts, **bypassing the service layer**. This is intentional:
+
+- **Why bypass**: services validate at runtime against business rules that block
+  the simulator's bulk historical writes (outlet open dates in the past, FK
+  ordering across days, idempotency tokens). Simulator owns insertion order via
+  `DayPersister`.
+- **Trade-off**: business validation (price floors, role permission checks,
+  approval workflows) NOT enforced. Simulator must respect schema constraints +
+  domain invariants on its own. Coverage audited via
+  `tools/data-simulator-app/AUDIT.md`.
+- **Cleanup**: `CleanupRepository.execute(namespace)` removes simulator-owned rows
+  via temp-table scopes derived from `simulator_run.namespace`. CRM rows
+  (`crm.customer`, `crm.points_ledger`, `crm.otp_request`) scoped via
+  orphan-detection rather than namespace; cleanup of one namespace can leave
+  CRM rows orphaned by another active run.
+- **Latest dependency**: simulator targets ≤V73. Re-run cleanup after every
+  schema bump and confirm `flyway validate` passes before reusing a populated
+  namespace.
+
 ## More Detailed Documentation
 
 - [Database Docs Index](/Users/nguyendinhkhiem/Development/Javas/FERN/db/docs/README.md)

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import {
   FileText, Shield, Activity, Loader2, RefreshCw, Search,
 } from 'lucide-react';
+import { reportError } from '@/lib/report-error';
 import { cn } from '@/lib/utils';
 import {
   auditApi,
@@ -181,7 +182,7 @@ export function AuditModule() {
       setLogsTotal(page.total || page.totalCount || 0);
       setLogsHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Audit logs load failed', error);
+      reportError(error, 'audit.logs.load');
       setLogs([]);
       setLogsTotal(0);
       setLogsHasMore(false);
@@ -201,7 +202,7 @@ export function AuditModule() {
       setSecurityTotal(page.total || page.totalCount || 0);
       setSecurityHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Audit security events load failed', error);
+      reportError(error, 'audit.security-events.load');
       setSecurityEvents([]);
       setSecurityTotal(0);
       setSecurityHasMore(false);
@@ -221,7 +222,7 @@ export function AuditModule() {
       setTraceTotal(page.total || page.totalCount || 0);
       setTraceHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Audit traces load failed', error);
+      reportError(error, 'audit.traces.load');
       setTraces([]);
       setTraceTotal(0);
       setTraceHasMore(false);
@@ -405,9 +406,51 @@ export function AuditModule() {
             </div>
 
             {selected ? (
-              <div className="surface-elevated p-4">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Selected Log</p>
-                <pre className="text-xs whitespace-pre-wrap break-words text-foreground">{JSON.stringify(selected, null, 2)}</pre>
+              <div className="surface-elevated p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Selected Log</p>
+                  <button
+                    onClick={() => {
+                      void navigator.clipboard.writeText(JSON.stringify(selected, null, 2));
+                    }}
+                    className="text-[11px] underline text-primary hover:text-primary/80"
+                  >
+                    Copy JSON
+                  </button>
+                </div>
+                <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1.5 text-xs">
+                  {[
+                    ['ID', selected.id],
+                    ['Module', selected.module],
+                    ['Entity', `${selected.entityName ?? '—'} #${selected.entityId ?? '—'}`],
+                    ['Action', selected.action],
+                    ['Actor', selected.actorUserId ?? '—'],
+                    ['Created', selected.createdAt],
+                    ['Reason', selected.reason ?? '—'],
+                    ['Correlation', selected.correlationId ?? '—'],
+                  ].map(([k, v]) => (
+                    <Fragment key={k as string}>
+                      <dt className="text-muted-foreground">{k}</dt>
+                      <dd className="font-mono break-all">{String(v ?? '—')}</dd>
+                    </Fragment>
+                  ))}
+                </dl>
+                {(selected.oldData || selected.newData) && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-2 border-t">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Old</p>
+                      <pre className="text-[11px] bg-muted/40 rounded p-2 whitespace-pre-wrap break-words max-h-60 overflow-auto">
+                        {selected.oldData ? JSON.stringify(selected.oldData, null, 2) : '—'}
+                      </pre>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">New</p>
+                      <pre className="text-[11px] bg-muted/40 rounded p-2 whitespace-pre-wrap break-words max-h-60 overflow-auto">
+                        {selected.newData ? JSON.stringify(selected.newData, null, 2) : '—'}
+                      </pre>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : null}
           </div>
@@ -594,7 +637,7 @@ export function AuditModule() {
                           <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground">{trace.correlationId || '—'}</td>
                           <td className="px-4 py-2.5 text-xs">{trace.method || '—'} {trace.path || ''}</td>
                           <td className="px-4 py-2.5 text-xs text-muted-foreground">{trace.statusCode ?? '—'}</td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{trace.durationMs ?? '—'} ms</td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{trace.durationMs == null ? '—' : `${trace.durationMs} ms`}</td>
                           <td className="px-4 py-2.5 text-xs text-muted-foreground">{trace.service || '—'}</td>
                         </tr>
                       ))}
@@ -616,11 +659,6 @@ export function AuditModule() {
           </div>
         )}
 
-        {logsLoading && activeTab === 'events' && logs.length === 0 ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : null}
       </div>
     </div>
   );

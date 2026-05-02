@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildContractDrivenPayrollRoster,
+  collectRegionScopeIds,
   inferPeriodWindowState,
   periodWindowLabel,
 } from '@/components/payroll/payroll-truth';
@@ -149,5 +150,50 @@ describe('payroll truth helpers', () => {
     });
     expect(roster[0].contract.id).toBe('c-newer');
     expect(roster[0].outletLabels).toEqual(['OUT-001 · Downtown']);
+  });
+
+  it('infers region children from code prefixes when parent links are missing', () => {
+    const regions = [
+      { id: 'vn', code: 'VN', name: 'Vietnam' },
+      { id: 'hcm', code: 'VN-HCM', name: 'Ho Chi Minh' },
+      { id: 'hn', code: 'VN-HN', name: 'Ha Noi' },
+      { id: 'us', code: 'US', name: 'United States' },
+    ];
+
+    expect(collectRegionScopeIds(regions, 'vn')).toEqual(['vn', 'hcm', 'hn']);
+  });
+
+  it('infers multi-level hierarchy from code prefixes (no explicit parent links)', () => {
+    const regions = [
+      { id: 'vn', code: 'VN', name: 'Vietnam' },
+      { id: 'hcm', code: 'VN-HCM', name: 'Ho Chi Minh City' },
+      { id: 'hn', code: 'VN-HN', name: 'Ha Noi' },
+      { id: 'd1', code: 'VN-HCM-D1', name: 'District 1' },
+      { id: 'd3', code: 'VN-HCM-D3', name: 'District 3' },
+      { id: 'us', code: 'US', name: 'United States' },
+    ];
+
+    // From VN root: should include HCM, HN, and all districts under HCM
+    expect(collectRegionScopeIds(regions, 'vn')).toEqual(['vn', 'hcm', 'hn', 'd1', 'd3']);
+    // From HCM: should include only HCM and its districts
+    expect(collectRegionScopeIds(regions, 'hcm')).toEqual(['hcm', 'd1', 'd3']);
+  });
+
+  it('explicit parent links take priority over code-prefix inference', () => {
+    const regions = [
+      { id: 'vn', code: 'VN', name: 'Vietnam', parentRegionId: null },
+      { id: 'hcm', code: 'VN-HCM', name: 'Ho Chi Minh City', parentRegionId: 'vn' },
+      { id: 'hn', code: 'VN-HN', name: 'Ha Noi', parentRegionId: 'vn' },
+      // This region would infer parent=hcm by prefix, but explicit link overrides
+      { id: 'special', code: 'VN-HCM-SPECIAL', name: 'Special Zone', parentRegionId: 'vn' },
+    ];
+
+    const result = collectRegionScopeIds(regions, 'vn');
+    expect(result).toContain('vn');
+    expect(result).toContain('hcm');
+    expect(result).toContain('hn');
+    expect(result).toContain('special');
+    // From HCM scope: 'special' should NOT appear because it is explicitly parented to VN
+    expect(collectRegionScopeIds(regions, 'hcm')).toEqual(['hcm']);
   });
 });

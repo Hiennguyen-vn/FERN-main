@@ -1194,4 +1194,319 @@ public final class SimulatorRepository {
             ps.executeUpdate();
         }
     }
+
+    // ==================== CRM (schema crm) ====================
+
+    public static void insertCrmCustomer(Connection conn, SimCustomer c) throws SQLException {
+        String sql = """
+            INSERT INTO crm.customer (id, phone, phone_verified_at, full_name, birthday,
+                consent_marketing, consent_data_processing, points_balance,
+                created_at, updated_at, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?, TRUE, ?, ?, ?, ?)
+            ON CONFLICT (id) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            OffsetDateTime created = c.getRegisteredOn().atStartOfDay().atOffset(java.time.ZoneOffset.UTC);
+            ps.setLong(1, c.getId());
+            ps.setString(2, c.getPhone());
+            ps.setObject(3, c.getPhoneVerifiedOn() == null ? null
+                    : c.getPhoneVerifiedOn().atStartOfDay().atOffset(java.time.ZoneOffset.UTC));
+            ps.setString(4, c.getFullName());
+            ps.setObject(5, c.getBirthday());
+            ps.setBoolean(6, c.isConsentMarketing());
+            ps.setInt(7, c.getPointsBalance());
+            ps.setObject(8, created);
+            ps.setObject(9, created);
+            ps.setObject(10, c.getDeletedOn() == null ? null
+                    : c.getDeletedOn().atStartOfDay().atOffset(java.time.ZoneOffset.UTC));
+            ps.executeUpdate();
+        }
+    }
+
+    public static void updateCrmCustomer(Connection conn, SimCustomer c) throws SQLException {
+        String sql = """
+            UPDATE crm.customer
+               SET points_balance = ?, deleted_at = ?, phone_verified_at = ?, updated_at = NOW()
+             WHERE id = ?
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, c.getPointsBalance());
+            ps.setObject(2, c.getDeletedOn() == null ? null
+                    : c.getDeletedOn().atStartOfDay().atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(3, c.getPhoneVerifiedOn() == null ? null
+                    : c.getPhoneVerifiedOn().atStartOfDay().atOffset(java.time.ZoneOffset.UTC));
+            ps.setLong(4, c.getId());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertPointsLedger(Connection conn,
+                                           com.fern.simulator.engine.SimulationContext.PointsLedgerEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO crm.points_ledger (id, customer_id, sale_id, delta, reason,
+                balance_after, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.id());
+            ps.setLong(2, e.customerId());
+            if (e.saleId() == null) ps.setNull(3, Types.BIGINT); else ps.setLong(3, e.saleId());
+            ps.setInt(4, e.delta());
+            ps.setString(5, e.reason());
+            ps.setInt(6, e.balanceAfter());
+            ps.setObject(7, e.createdAt());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertCashMovement(Connection conn,
+                                           com.fern.simulator.engine.SimulationContext.CashMovementEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO core.cash_movement (id, session_id, outlet_id, type, amount,
+                reason, reference_sale_id, created_by_user_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.id());
+            ps.setLong(2, e.sessionId());
+            ps.setLong(3, e.outletId());
+            ps.setString(4, e.type());
+            ps.setBigDecimal(5, java.math.BigDecimal.valueOf(e.amount()));
+            ps.setString(6, e.reason());
+            if (e.referenceSaleId() == null) ps.setNull(7, Types.BIGINT);
+            else ps.setLong(7, e.referenceSaleId());
+            if (e.createdByUserId() == null) ps.setNull(8, Types.BIGINT);
+            else ps.setLong(8, e.createdByUserId());
+            ps.setObject(9, e.createdAt());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertSaleOversellLine(Connection conn,
+                                               com.fern.simulator.engine.SimulationContext.SaleOversellLineEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO core.sale_oversell_line (sale_id, sale_created_at, item_id, product_id,
+                required_qty, available_qty, short_qty, detected_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (sale_id, item_id, product_id) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.saleId());
+            ps.setObject(2, e.saleCreatedAt());
+            ps.setLong(3, e.itemId());
+            if (e.productId() == null) ps.setNull(4, Types.BIGINT);
+            else ps.setLong(4, e.productId());
+            ps.setBigDecimal(5, java.math.BigDecimal.valueOf(e.requiredQty()));
+            ps.setBigDecimal(6, java.math.BigDecimal.valueOf(e.availableQty()));
+            ps.setBigDecimal(7, java.math.BigDecimal.valueOf(e.shortQty()));
+            ps.setObject(8, e.detectedAt());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertTaxRule(Connection conn,
+                                      com.fern.simulator.engine.SimulationContext.TaxRuleEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO core.tax_rule (outlet_id, product_category_code, rate_pct,
+                inclusive, effective_from)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (outlet_id, COALESCE(product_category_code, ''), effective_from) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.outletId());
+            if (e.productCategoryCode() == null) ps.setNull(2, Types.VARCHAR);
+            else ps.setString(2, e.productCategoryCode());
+            ps.setBigDecimal(3, e.ratePct());
+            ps.setBoolean(4, e.inclusive());
+            ps.setObject(5, e.effectiveFrom());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertExpenseDocument(Connection conn,
+                                              com.fern.simulator.engine.SimulationContext.ExpenseDocumentEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO core.expense_document (id, expense_record_id, document_type,
+                file_name, content_type, object_key, storage_url, created_by_user_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.id());
+            ps.setLong(2, e.expenseRecordId());
+            ps.setString(3, e.documentType());
+            ps.setString(4, e.fileName());
+            ps.setString(5, e.contentType());
+            ps.setString(6, e.objectKey());
+            if (e.storageUrl() == null) ps.setNull(7, Types.VARCHAR);
+            else ps.setString(7, e.storageUrl());
+            if (e.createdByUserId() == null) ps.setNull(8, Types.BIGINT);
+            else ps.setLong(8, e.createdByUserId());
+            ps.setObject(9, e.createdAt());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertModifierGroup(Connection conn,
+                                            com.fern.simulator.engine.SimulationContext.ModifierGroupEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO core.modifier_group (id, code, name, selection_type,
+                min_selections, max_selections, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, TRUE)
+            ON CONFLICT (code) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.id());
+            ps.setString(2, e.code());
+            ps.setString(3, e.name());
+            ps.setString(4, e.selectionType());
+            ps.setInt(5, e.minSelections());
+            ps.setInt(6, e.maxSelections());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertModifierOption(Connection conn,
+                                             com.fern.simulator.engine.SimulationContext.ModifierOptionEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO core.modifier_option (id, modifier_group_id, code, name,
+                price_adjustment, display_order, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, TRUE)
+            ON CONFLICT (modifier_group_id, code) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.id());
+            ps.setLong(2, e.groupId());
+            ps.setString(3, e.code());
+            ps.setString(4, e.name());
+            ps.setBigDecimal(5, e.priceAdjustment());
+            ps.setInt(6, e.displayOrder());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertProductModifierGroup(Connection conn,
+                                                   com.fern.simulator.engine.SimulationContext.ProductModifierGroupEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO core.product_modifier_group (product_id, modifier_group_id,
+                is_required, display_order)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (product_id, modifier_group_id) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.productId());
+            ps.setLong(2, e.modifierGroupId());
+            ps.setBoolean(3, e.required());
+            ps.setInt(4, e.displayOrder());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertProductVariant(Connection conn,
+                                              com.fern.simulator.engine.SimulationContext.ProductVariantEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO core.product_variant (id, product_id, code, name,
+                price_modifier_type, price_modifier_value, display_order, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)
+            ON CONFLICT (product_id, code) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.id());
+            ps.setLong(2, e.productId());
+            ps.setString(3, e.code());
+            ps.setString(4, e.name());
+            ps.setString(5, e.priceModifierType());
+            ps.setBigDecimal(6, e.priceModifierValue());
+            ps.setInt(7, e.displayOrder());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertProductAllergen(Connection conn,
+                                               com.fern.simulator.engine.SimulationContext.ProductAllergenEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO core.product_allergen (product_id, allergen_code, is_traces)
+            VALUES (?, ?, ?)
+            ON CONFLICT (product_id, allergen_code) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.productId());
+            ps.setString(2, e.allergenCode());
+            ps.setBoolean(3, e.isTraces());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertStockReservation(Connection conn,
+                                                com.fern.simulator.engine.SimulationContext.StockReservationEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO core.stock_reservation (id, location_id, item_id, qty, sale_id,
+                reserved_at, settled_at, expires_at, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.id());
+            ps.setLong(2, e.locationId());
+            ps.setLong(3, e.itemId());
+            ps.setBigDecimal(4, java.math.BigDecimal.valueOf(e.qty()));
+            if (e.saleId() == null) ps.setNull(5, Types.BIGINT); else ps.setLong(5, e.saleId());
+            ps.setObject(6, e.reservedAt());
+            ps.setObject(7, e.settledAt());
+            ps.setObject(8, e.expiresAt());
+            ps.setString(9, e.source());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertShiftRoleRequirement(Connection conn,
+                                                    com.fern.simulator.engine.SimulationContext.ShiftRoleRequirementEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO core.shift_role_requirement (id, shift_id, work_role,
+                required_count, is_optional)
+            VALUES (?, ?, ?::core.work_role_enum, ?, ?)
+            ON CONFLICT (shift_id, work_role) DO NOTHING
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.id());
+            ps.setLong(2, e.shiftId());
+            ps.setString(3, e.workRole());
+            ps.setInt(4, e.requiredCount());
+            ps.setBoolean(5, e.isOptional());
+            ps.executeUpdate();
+        }
+    }
+
+    public static void insertOtpRequest(Connection conn,
+                                         com.fern.simulator.engine.SimulationContext.OtpRequestEvent e)
+            throws SQLException {
+        String sql = """
+            INSERT INTO crm.otp_request (id, phone, code_hash, attempts, consumed_at,
+                expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, e.id());
+            ps.setString(2, e.phone());
+            ps.setString(3, e.codeHash());
+            ps.setInt(4, e.attempts());
+            ps.setObject(5, e.consumedAt());
+            ps.setObject(6, e.expiresAt());
+            ps.setObject(7, e.createdAt());
+            ps.executeUpdate();
+        }
+    }
 }

@@ -12,7 +12,6 @@ import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.BusinessUserProfile;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.services.payroll.api.PayrollDtos;
 import com.fern.services.payroll.infrastructure.HrServiceClient;
@@ -42,8 +41,6 @@ class PayrollServiceTest {
   @Mock
   private SnowflakeIdGenerator idGenerator;
   @Mock
-  private TypedKafkaEventPublisher eventPublisher;
-  @Mock
   private AuthorizationPolicyService authorizationPolicyService;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
@@ -60,7 +57,6 @@ class PayrollServiceTest {
         hrServiceClient,
         salaryCalculator,
         idGenerator,
-        eventPublisher,
         clock,
         authorizationPolicyService
     );
@@ -83,7 +79,7 @@ class PayrollServiceTest {
             0, BigDecimal.ZERO, null, Instant.now(), Instant.now()
         )
     ));
-    when(hrServiceClient.fetchLatestContract(3012L)).thenReturn(Optional.of(
+    when(payrollRepository.findEffectiveContractForTimesheet(70L)).thenReturn(Optional.of(
         new PayrollDtos.EmployeeContractSummary(3012L, "part_time", "hourly", new BigDecimal("50000"), "VND")
     ));
 
@@ -110,7 +106,7 @@ class PayrollServiceTest {
             0, BigDecimal.ZERO, null, Instant.now(), Instant.now()
         )
     ));
-    when(hrServiceClient.fetchLatestContract(3013L)).thenReturn(Optional.of(
+    when(payrollRepository.findEffectiveContractForTimesheet(71L)).thenReturn(Optional.of(
         new PayrollDtos.EmployeeContractSummary(3013L, "full_time", "monthly", new BigDecimal("16000000"), "VND")
     ));
 
@@ -118,8 +114,11 @@ class PayrollServiceTest {
         new PayrollDtos.CalculateSalaryRequest(71L, "VND")
     );
 
-    // overtimePay = 8 × (16000000/160) × 1.5 = 8 × 100000 × 1.5 = 1200000
-    assertEquals(new BigDecimal("17200000.00"), result.netSalary());
+    // gross 17,200,000 = 16M base + 1.2M OT; full_time deductions:
+    // BHXH 1,376,000 + BHYT 258,000 + BHTN 172,000 = 1,806,000
+    // taxable 4,394,000 → PIT 5% = 219,700
+    // net = 17,200,000 − 1,806,000 − 219,700 = 15,174,300.00
+    assertEquals(new BigDecimal("15174300.00"), result.netSalary());
     assertEquals("monthly_with_overtime", result.breakdown().calculationMethod());
   }
 
@@ -138,7 +137,7 @@ class PayrollServiceTest {
             0, BigDecimal.ZERO, null, Instant.now(), Instant.now()
         )
     ));
-    when(hrServiceClient.fetchLatestContract(3014L)).thenReturn(Optional.empty());
+    when(payrollRepository.findEffectiveContractForTimesheet(72L)).thenReturn(Optional.empty());
 
     ServiceException ex = assertThrows(ServiceException.class, () ->
         service().calculateSalary(new PayrollDtos.CalculateSalaryRequest(72L, "VND"))
@@ -162,13 +161,13 @@ class PayrollServiceTest {
             0, BigDecimal.ZERO, null, Instant.now(), Instant.now()
         )
     ));
-    when(hrServiceClient.fetchLatestContract(3015L)).thenReturn(Optional.of(
+    when(payrollRepository.findEffectiveContractForTimesheet(80L)).thenReturn(Optional.of(
         new PayrollDtos.EmployeeContractSummary(3015L, "part_time", "hourly", new BigDecimal("50000"), "VND")
     ));
     when(idGenerator.generateId()).thenReturn(999L);
-    when(payrollRepository.insertPayroll(eq(999L), eq(80L), eq("VND"), eq(new BigDecimal("50000")), eq(new BigDecimal("4000000.00")), any()))
+    when(payrollRepository.insertPayroll(eq(999L), eq(80L), eq("VND"), eq(new BigDecimal("4000000.00")), eq(new BigDecimal("4000000.00")), any()))
         .thenReturn(new PayrollRepository.PayrollRecord(
-            999L, 80L, "VND", new BigDecimal("50000"), new BigDecimal("4000000.00"),
+            999L, 80L, "VND", new BigDecimal("4000000.00"), new BigDecimal("4000000.00"),
             "draft", null, null, null, null, Instant.now(), Instant.now()
         ));
 
@@ -396,19 +395,13 @@ class PayrollServiceTest {
     when(payrollRepository.findPayrollScope(99L)).thenReturn(Optional.of(
         new PayrollRepository.PayrollScopeRecord(99L, 88L, 11L, 1002L, "US", 12L, 13L)
     ));
-    when(payrollRepository.approvePayroll(99L, null)).thenReturn(
-        new PayrollRepository.PayrollApprovalProjection(payroll, 11L, 12L, 13L)
-    );
+    when(payrollRepository.approvePayroll(eq(99L), org.mockito.ArgumentMatchers.<Long>isNull(), any()))
+        .thenReturn(new PayrollRepository.PayrollApprovalProjection(payroll, 11L, 12L, 13L));
 
     PayrollService service = service();
     service.approvePayroll(99L);
 
-    verify(eventPublisher).publish(
-        eq("fern.payroll.payroll-approved"),
-        eq("99"),
-        eq("payroll.payroll-approved"),
-        any()
-    );
+    verify(payrollRepository).approvePayroll(eq(99L), org.mockito.ArgumentMatchers.<Long>isNull(), any());
   }
 
   @Test

@@ -308,7 +308,8 @@ public class SimulatorWebServer {
                 baseConfig.expansion(),
                 baseConfig.regions(),
                 baseConfig.probability(),
-                baseConfig.realism()
+                baseConfig.realism(),
+                baseConfig.crm()
         );
     }
 

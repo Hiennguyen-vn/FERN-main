@@ -49,6 +49,24 @@ public class SalesService {
   private final ObjectMapper objectMapper;
   private final TieredCache<List<SalesDtos.MonthlyRevenueRow>> monthlyRevenueCache;
   private final PosMetrics posMetrics;
+  private com.fern.services.sales.infrastructure.InventoryReservationClient reservationClient;
+  private boolean reservationEnabled;
+  private long reservationTtlSeconds = 1800L;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setReservationClient(com.fern.services.sales.infrastructure.InventoryReservationClient client) {
+    this.reservationClient = client;
+  }
+
+  @org.springframework.beans.factory.annotation.Value("${sales.reservation.enabled:false}")
+  public void setReservationEnabled(boolean enabled) {
+    this.reservationEnabled = enabled;
+  }
+
+  @org.springframework.beans.factory.annotation.Value("${sales.reservation.ttl-seconds:1800}")
+  public void setReservationTtlSeconds(long ttl) {
+    this.reservationTtlSeconds = ttl;
+  }
 
   // Optional — wired only in production-context. Tests/legacy ctors leave it null.
   @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -93,6 +111,15 @@ public class SalesService {
       Clock clock
   ) {
     this(salesRepository, authorizationPolicyService, clock, null, new ObjectMapper(), null, null, null);
+  }
+
+  public SalesService(
+      SalesRepository salesRepository,
+      AuthorizationPolicyService authorizationPolicyService,
+      Clock clock,
+      SalesPromotionRepository promotionRepository
+  ) {
+    this(salesRepository, authorizationPolicyService, clock, null, new ObjectMapper(), null, null, promotionRepository);
   }
 
   public SalesService(
@@ -144,23 +171,45 @@ public class SalesService {
     if (request.payment() != null) {
       throw ServiceException.badRequest("Payment is captured with mark-payment-done after order approval");
     }
+    SalesDtos.SaleView view;
     if (idempotencyKey == null || idempotencyKey.isBlank()) {
-      return salesRepository.submitSale(request);
+      view = salesRepository.submitSale(request);
+    } else {
+      String normalizedKey = normalizeIdempotencyKey(idempotencyKey);
+      String namespace = buildIdempotencyNamespace(context.deviceId(), request.outletId());
+      String requestBody = serializeForHash(request);
+      IdempotencyResult result = idempotencyGuard.execute(
+          namespace,
+          normalizedKey,
+          requestBody,
+          TtlPolicy.BET,
+          () -> {
+            SalesDtos.SaleView created = salesRepository.submitSale(request);
+            return IdempotencyResult.created(serializeResponse(created), created.id());
+          }
+      );
+      view = deserializeResponse(result.responseBody());
     }
-    String normalizedKey = normalizeIdempotencyKey(idempotencyKey);
-    String namespace = buildIdempotencyNamespace(context.deviceId(), request.outletId());
-    String requestBody = serializeForHash(request);
-    IdempotencyResult result = idempotencyGuard.execute(
-        namespace,
-        normalizedKey,
-        requestBody,
-        TtlPolicy.BET,
-        () -> {
-          SalesDtos.SaleView view = salesRepository.submitSale(request);
-          return IdempotencyResult.created(serializeResponse(view), view.id());
+    reserveStockIfEnabled(view, request);
+    return view;
+  }
+
+  private void reserveStockIfEnabled(SalesDtos.SaleView view, SalesDtos.SubmitSaleRequest request) {
+    if (!reservationEnabled || reservationClient == null) return;
+    try {
+      long saleId = Long.parseLong(view.id());
+      java.util.List<com.fern.services.sales.infrastructure.InventoryReservationClient.ReserveLine> lines =
+          new java.util.ArrayList<>();
+      if (request.items() != null) {
+        for (SalesDtos.SaleLineRequest line : request.items()) {
+          lines.add(new com.fern.services.sales.infrastructure.InventoryReservationClient.ReserveLine(
+              line.productId(), line.quantity()));
         }
-    );
-    return deserializeResponse(result.responseBody());
+      }
+      reservationClient.reserve(request.outletId(), saleId, lines, reservationTtlSeconds);
+    } catch (RuntimeException e) {
+      // Fail open — reservation is advisory, sale-approved consumer still source-of-truth.
+    }
   }
 
   private static String buildIdempotencyNamespace(Long deviceId, long outletId) {
@@ -322,6 +371,14 @@ public class SalesService {
     salesRepository.linkCustomerToSale(saleId, customerId);
   }
 
+  public void attachOrderingTable(long saleId, Long tableId) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    SalesDtos.SaleView existing = salesRepository.findSale(saleId)
+        .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
+    requireSalesWriteForOutlet(context, existing.outletId());
+    salesRepository.linkOrderingTableToSale(saleId, tableId);
+  }
+
   public SalesDtos.SaleView approveSale(long saleId) {
     RequestUserContext context = RequestUserContextHolder.get();
     SalesDtos.SaleView existing = salesRepository.findSale(saleId)
@@ -362,9 +419,18 @@ public class SalesService {
     SalesDtos.SaleView existing = salesRepository.findSale(saleId)
         .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
     requireSalesWriteForOutlet(context, existing.outletId());
-    SalesDtos.SaleView cancelled = salesRepository.cancelSale(saleId, request == null ? null : request.reason(), context.userId());
+    String reason       = request == null ? null : request.reason();
+    String reasonCode   = request == null ? null : request.reasonCode();
+    Long managerUserId  = request == null ? null : request.managerUserId();
+    String voidNote     = request == null ? null : request.voidNote();
+    SalesDtos.SaleView cancelled = salesRepository.cancelSale(
+        saleId, reason, reasonCode, managerUserId, voidNote, context.userId());
     evictMonthlyRevenueCache();
     return cancelled;
+  }
+
+  public java.util.List<SalesDtos.VoidReasonView> listVoidReasons() {
+    return salesRepository.listVoidReasons();
   }
 
   // Alias used by sync push handler — voids an offline-submitted sale.
@@ -868,41 +934,26 @@ public class SalesService {
       int limit,
       int offset
   ) {
-    if (promotionRepository != null) {
-      return promotionRepository.listPromotions(outletIds, status, effectiveAt, q, sortBy, sortDir, limit, offset);
-    }
-    return salesRepository.listPromotions(outletIds, status, effectiveAt, q, sortBy, sortDir, limit, offset);
+    return promotionRepository.listPromotions(outletIds, status, effectiveAt, q, sortBy, sortDir, limit, offset);
   }
 
   private Optional<SalesDtos.PromotionView> findPromotionRecord(long promotionId) {
-    if (promotionRepository != null) {
-      return promotionRepository.findPromotion(promotionId);
-    }
-    return salesRepository.findPromotion(promotionId);
+    return promotionRepository.findPromotion(promotionId);
   }
 
   private SalesDtos.PromotionView createPromotionRecord(SalesDtos.CreatePromotionRequest request) {
-    if (promotionRepository != null) {
-      return promotionRepository.createPromotion(request);
-    }
-    return salesRepository.createPromotion(request);
+    return promotionRepository.createPromotion(request);
   }
 
   private SalesDtos.PromotionView updatePromotionRecord(
       long promotionId,
       SalesDtos.UpdatePromotionRequest request
   ) {
-    if (promotionRepository != null) {
-      return promotionRepository.updatePromotion(promotionId, request);
-    }
-    return salesRepository.updatePromotion(promotionId, request);
+    return promotionRepository.updatePromotion(promotionId, request);
   }
 
   private SalesDtos.PromotionView updatePromotionStatusRecord(long promotionId, String status) {
-    if (promotionRepository != null) {
-      return promotionRepository.updatePromotionStatus(promotionId, status);
-    }
-    return salesRepository.updatePromotionStatus(promotionId, status);
+    return promotionRepository.updatePromotionStatus(promotionId, status);
   }
 
   private void requireSalesWrite(RequestUserContext context) {

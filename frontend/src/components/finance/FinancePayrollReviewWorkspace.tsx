@@ -218,7 +218,7 @@ export function FinancePayrollReviewWorkspace({
 
   const summary = useMemo(() => {
     const draftRuns = reviewRows.filter((row) => row.runStatus === 'draft').length;
-    const approvedRuns = reviewRows.filter((row) => row.runStatus === 'approved').length;
+    const approvedRuns = reviewRows.filter((row) => row.runStatus === 'approved' || row.runStatus === 'paid').length;
     const waitingOnHr = reviewRows.filter((row) => !row.run).length;
     return {
       draftRuns,

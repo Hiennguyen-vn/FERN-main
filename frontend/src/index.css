@@ -243,3 +243,21 @@
     text-wrap: balance;
   }
 }
+
+/* Print isolation for thermal-printer flows (KOT, Receipt, Z-report).
+ * The active print element MUST add the `pos-print-area` class. Everything
+ * else is hidden — fixes the Safari issue where Dialog overlays leak into
+ * the print page.
+ */
+@media print {
+  body * { visibility: hidden !important; }
+  .pos-print-area, .pos-print-area * { visibility: visible !important; }
+  .pos-print-area {
+    position: absolute !important;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    background: white !important;
+    box-shadow: none !important;
+  }
+}

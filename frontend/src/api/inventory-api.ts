@@ -230,4 +230,39 @@ export const inventoryApi = {
     decodeStockCountSession(await apiRequest(`/api/v1/inventory/stock-count-sessions/${sessionId}`, { token })),
   postStockCountSession: async (token: string, sessionId: string): Promise<unknown> =>
     apiRequest(`/api/v1/inventory/stock-count-sessions/${sessionId}/post`, { method: 'POST', token }),
+  listStockLots: (token: string, params: { itemId?: number | string; locationId?: number | string; status?: string; limit?: number; offset?: number }): Promise<StockLotView[]> =>
+    apiRequest('/api/v1/inventory/stock-lots', { token, query: params }) as Promise<StockLotView[]>,
+  createStockLotRecord: (token: string, body: CreateStockLotPayload): Promise<StockLotView> =>
+    apiRequest('/api/v1/inventory/stock-lots', { method: 'POST', token, body }) as Promise<StockLotView>,
 };
+
+export interface StockLotView {
+  id: string;
+  itemId: string;
+  locationId: string;
+  batchNo: string | null;
+  lotCode: string | null;
+  receivedAt: string;
+  expiresAt: string | null;
+  qtyReceived: number;
+  qtyRemaining: number;
+  unitCost: number;
+  supplierId: string | null;
+  goodsReceiptId: string | null;
+  status: 'ACTIVE' | 'DEPLETED' | 'EXPIRED' | 'RECALLED';
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface CreateStockLotPayload {
+  itemId: number | string;
+  locationId: number | string;
+  batchNo?: string | null;
+  lotCode?: string | null;
+  expiresAt?: string | null;
+  qtyReceived: number;
+  unitCost?: number;
+  supplierId?: number | string | null;
+  goodsReceiptId?: number | string | null;
+  notes?: string | null;
+}

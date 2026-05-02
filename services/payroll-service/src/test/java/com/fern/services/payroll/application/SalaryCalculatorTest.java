@@ -83,50 +83,61 @@ class SalaryCalculatorTest {
   // ── Full-time monthly ───────────────────────────────────────────────────────
 
   @Test
-  void fullTimeMonthly_noOvertime_netSalaryEqualsBaseSalary() {
+  void fullTimeMonthly_noOvertime_netSalaryAfterStatutoryDeductions() {
+    // gross 16,000,000; BHXH 8% = 1,280,000; BHYT 1.5% = 240,000; BHTN 1% = 160,000
+    // taxable = 16,000,000 − 1,680,000 − 11,000,000 = 3,320,000; PIT 5% = 166,000
+    // net = 16,000,000 − 1,680,000 − 166,000 = 14,154,000.00
     PayrollDtos.CalculateSalaryResult result = calculator.calculate(
         contract("full_time", "monthly", new BigDecimal("16000000")),
         timesheet(new BigDecimal("22"), new BigDecimal("176"), BigDecimal.ZERO, new BigDecimal("1.5")),
         "VND"
     );
-    assertEquals(new BigDecimal("16000000.00"), result.netSalary());
+    assertEquals(new BigDecimal("14154000.00"), result.netSalary());
     assertEquals(0, result.breakdown().overtimePay().compareTo(BigDecimal.ZERO));
     assertEquals("monthly_with_overtime", result.breakdown().calculationMethod());
+    assertEquals(new BigDecimal("16000000.00"), result.breakdown().grossPay());
+    assertEquals(true, result.breakdown().deductionsApplied());
   }
 
   @Test
-  void fullTimeMonthly_withOvertime_addsOvertimePay() {
-    // overtimePay = 8 × (16000000/160) × 1.5 = 8 × 100000 × 1.5 = 1200000
+  void fullTimeMonthly_withOvertime_addsOvertimePayThenDeducts() {
+    // gross 17,200,000; insurance 10.5% = 1,806,000; taxable = 4,394,000; PIT 5% = 219,700
+    // net = 17,200,000 − 1,806,000 − 219,700 = 15,174,300.00
     PayrollDtos.CalculateSalaryResult result = calculator.calculate(
         contract("full_time", "monthly", new BigDecimal("16000000")),
         timesheet(new BigDecimal("22"), new BigDecimal("176"), new BigDecimal("8"), new BigDecimal("1.5")),
         "VND"
     );
-    assertEquals(new BigDecimal("17200000.00"), result.netSalary());
+    assertEquals(new BigDecimal("15174300.00"), result.netSalary());
     assertEquals(new BigDecimal("1200000.00"), result.breakdown().overtimePay());
   }
 
   @Test
-  void fullTimeMonthly_fractionalOvertime_roundsHalfUp() {
-    // overtimePay = 1 × (10000000/160) × 1.5 = 1 × 62500 × 1.5 = 93750.00
+  void fullTimeMonthly_belowPersonalAllowance_noPit() {
+    // gross 10,093,750; insurance: 807,500 + 151,406.25 + 100,937.50 = 1,059,843.75
+    // taxable = 10,093,750 − 1,059,843.75 − 11,000,000 < 0 → PIT 0
+    // net = 10,093,750 − 1,059,843.75 = 9,033,906.25
     PayrollDtos.CalculateSalaryResult result = calculator.calculate(
         contract("full_time", "monthly", new BigDecimal("10000000")),
         timesheet(new BigDecimal("22"), new BigDecimal("176"), BigDecimal.ONE, new BigDecimal("1.5")),
         "VND"
     );
-    assertEquals(new BigDecimal("10093750.00"), result.netSalary());
+    assertEquals(new BigDecimal("9033906.25"), result.netSalary());
+    assertEquals(0, result.breakdown().personalIncomeTax().compareTo(BigDecimal.ZERO));
   }
 
   // ── Full-time with non-monthly salary type ──────────────────────────────────
 
   @Test
-  void fullTimeHourly_treatedAsHourlyCalculation() {
+  void fullTimeHourly_treatedAsHourlyCalculation_thenDeducts() {
+    // gross 9,600,000; insurance = 1,008,000; taxable < 0 → PIT 0
+    // net = 9,600,000 − 1,008,000 = 8,592,000.00
     PayrollDtos.CalculateSalaryResult result = calculator.calculate(
         contract("full_time", "hourly", new BigDecimal("60000")),
         timesheet(BigDecimal.ZERO, new BigDecimal("160"), BigDecimal.ZERO, new BigDecimal("1.5")),
         "VND"
     );
-    assertEquals(new BigDecimal("9600000.00"), result.netSalary());
+    assertEquals(new BigDecimal("8592000.00"), result.netSalary());
     assertEquals("hourly", result.breakdown().calculationMethod());
   }
 
@@ -156,6 +167,6 @@ class SalaryCalculatorTest {
     assertEquals("part_time", result.employmentType());
     assertEquals("hourly", result.salaryType());
     assertEquals("VND", result.currencyCode());
-    assertEquals(new BigDecimal("50000"), result.baseSalaryAmount());
+    assertEquals(new BigDecimal("2000000.00"), result.baseSalaryAmount());
   }
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -204,7 +205,7 @@ export function OrgModule() {
   const [exchangeForm, setExchangeForm] = useState({
     fromCurrencyCode: 'USD',
     toCurrencyCode: 'VND',
-    effectiveFrom: new Date().toISOString().slice(0, 10),
+    effectiveFrom: todayLocalISO(),
     effectiveTo: '',
     rate: '',
   });

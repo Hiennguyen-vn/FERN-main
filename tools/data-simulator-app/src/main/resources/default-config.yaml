@@ -215,3 +215,13 @@ realism:
       prepWasteWeight: 0.10
       damageRiskWeight: 0.06
       incidentWasteChance: 0.006
+
+crm:
+  enabled: true
+  saleCustomerAttachRate: 0.30
+  newEnrolPerSaleChance: 0.05
+  otpVerifyRate: 0.85
+  pointsPerVnd: 10000
+  redeemChance: 0.08
+  maxRedeemPercent: 30
+  softDeleteChancePerYear: 0.01

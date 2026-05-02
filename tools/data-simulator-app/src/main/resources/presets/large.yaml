@@ -5,3 +5,13 @@ simulation:
   endDate: "2024-12-31"
   seed: 42
   startingRegion: "VN-HCM"
+
+crm:
+  enabled: true
+  saleCustomerAttachRate: 0.40
+  newEnrolPerSaleChance: 0.06
+  otpVerifyRate: 0.85
+  pointsPerVnd: 10000
+  redeemChance: 0.12
+  maxRedeemPercent: 30
+  softDeleteChancePerYear: 0.01

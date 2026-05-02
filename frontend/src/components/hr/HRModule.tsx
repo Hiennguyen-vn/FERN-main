@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import {
   Search,
   Clock,
@@ -20,6 +21,7 @@ import {
   type HrEmployeeView,
   type HrEmployeesQuery,
   type ShiftsQuery,
+  type WorkShiftsQuery,
   type ScopeOutlet,
   type ScopeRegion,
   type ShiftView,
@@ -48,6 +50,7 @@ import { ContractsWorkspace } from '@/components/hr/ContractsWorkspace';
 import { EmployeeProfileWorkspace } from '@/components/hr/EmployeeProfileWorkspace';
 import { collectPagedItems } from '@/lib/collect-paged-items';
 import { HR_TAB_ITEMS, type HrTab } from '@/components/hr/hr-workspace-config';
+import { AttendanceWorkspace } from '@/components/hr/AttendanceWorkspace';
 
 const TAB_ICONS: Record<HrTab, React.ElementType> = {
   attendance: Clock,
@@ -94,7 +97,7 @@ export function HRModule() {
   const canAccessCompensation = hasHrCompensationAccess(session);
 
   const [activeTab, setActiveTab] = useState<HrTab>('attendance');
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayLocalISO();
   const [startDateFilter, setStartDateFilter] = useState(today);
   const [endDateFilter, setEndDateFilter] = useState(today);
   const [busyKey, setBusyKey] = useState('');
@@ -148,17 +151,22 @@ export function HRModule() {
     setAttendanceLoading(true);
     setAttendanceError('');
     try {
-      const page = await hrApi.workShiftsPaged(token, {
-        ...attendanceQuery.query,
-        outletId: outletId || undefined,
-        startDate: startDateFilter,
-        endDate: endDateFilter,
-        attendanceStatus: attendanceQuery.filters.attendanceStatus,
-        approvalStatus: attendanceQuery.filters.approvalStatus,
-      });
-      setWorkShifts(page.items || []);
-      setAttendanceTotal(page.total || page.totalCount || 0);
-      setAttendanceHasMore(page.hasMore || page.hasNextPage || false);
+      const all = await collectPagedItems<WorkShiftView, WorkShiftsQuery>(
+        (q) => hrApi.workShiftsPaged(token, q),
+        {
+          outletId: outletId || undefined,
+          startDate: startDateFilter,
+          endDate: endDateFilter,
+          attendanceStatus: attendanceQuery.filters.attendanceStatus,
+          approvalStatus: attendanceQuery.filters.approvalStatus,
+          sortBy: attendanceQuery.sortBy,
+          sortDir: attendanceQuery.sortDir,
+        } as WorkShiftsQuery,
+        500,
+      );
+      setWorkShifts(all);
+      setAttendanceTotal(all.length);
+      setAttendanceHasMore(false);
     } catch (error: unknown) {
       console.error('HR attendance load failed', error);
       setWorkShifts([]);
@@ -171,7 +179,8 @@ export function HRModule() {
   }, [
     attendanceQuery.filters.approvalStatus,
     attendanceQuery.filters.attendanceStatus,
-    attendanceQuery.query,
+    attendanceQuery.sortBy,
+    attendanceQuery.sortDir,
     startDateFilter,
     endDateFilter,
     outletId,
@@ -327,6 +336,16 @@ export function HRModule() {
     await loadAttendance();
   };
 
+  const bulkApproveByIds = async (ids: string[]) => {
+    if (ids.length === 0 || !token) return;
+    const results = await Promise.allSettled(ids.map((id) => hrApi.approveWorkShift(token, id)));
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - succeeded;
+    if (succeeded > 0) toast.success(`${succeeded} record(s) approved`);
+    if (failed > 0) toast.error(`${failed} record(s) failed`);
+    await loadAttendance();
+  };
+
   if (!token) {
     return <ServiceUnavailablePage state="service_unavailable" moduleName="HR" />;
   }
@@ -374,165 +393,28 @@ export function HRModule() {
         ) : null}
 
         {activeTab === 'attendance' ? (
-          <div className="space-y-4">
-            {/* Filter bar — 2 rows */}
-            <div className="surface-elevated p-4 flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-muted-foreground">From</span>
-                <input type="date" value={startDateFilter} max={endDateFilter} onChange={(e) => setStartDateFilter(e.target.value)} className="h-8 rounded-md border border-input bg-background px-3 text-xs" />
-                <span className="text-xs text-muted-foreground">To</span>
-                <input type="date" value={endDateFilter} min={startDateFilter} onChange={(e) => setEndDateFilter(e.target.value)} className="h-8 rounded-md border border-input bg-background px-3 text-xs" />
-                <button onClick={() => { setStartDateFilter(today); setEndDateFilter(today); }} className="h-8 px-2 rounded border text-[10px] text-muted-foreground hover:bg-accent" title="Reset to today">Today</button>
-                <button onClick={() => { const d = new Date(); const day = d.getDay(); const mon = new Date(d); mon.setDate(d.getDate() - (day === 0 ? 6 : day - 1)); const sun = new Date(mon); sun.setDate(mon.getDate() + 6); setStartDateFilter(mon.toISOString().slice(0, 10)); setEndDateFilter(sun.toISOString().slice(0, 10)); }} className="h-8 px-2 rounded border text-[10px] text-muted-foreground hover:bg-accent" title="This week">This week</button>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="relative max-w-sm flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <input value={attendanceQuery.searchInput} onChange={(e) => attendanceQuery.setSearchInput(e.target.value)} placeholder="Search employee, shift, note" className="h-8 w-full rounded-md border border-input bg-background pl-9 pr-3 text-xs" />
-                </div>
-                <select value={attendanceQuery.filters.attendanceStatus || 'all'} onChange={(e) => attendanceQuery.setFilter('attendanceStatus', e.target.value === 'all' ? undefined : e.target.value)} className="h-8 rounded-md border border-input bg-background px-3 text-xs">
-                  <option value="all">All attendance</option>
-                  <option value="pending">Pending</option>
-                  <option value="present">Present</option>
-                  <option value="late">Late</option>
-                  <option value="absent">Absent</option>
-                  <option value="leave">Leave</option>
-                </select>
-                <select value={attendanceQuery.filters.approvalStatus || 'all'} onChange={(e) => attendanceQuery.setFilter('approvalStatus', e.target.value === 'all' ? undefined : e.target.value)} className="h-8 rounded-md border border-input bg-background px-3 text-xs">
-                  <option value="all">All review states</option>
-                  <option value="pending">Pending review</option>
-                  <option value="approved">Approved</option>
-                  <option value="rejected">Rejected</option>
-                </select>
-                <select value={`${attendanceQuery.sortBy || 'workDate'}:${attendanceQuery.sortDir}`} onChange={(e) => { const [f, d] = e.target.value.split(':'); attendanceQuery.applySort(f, d === 'asc' ? 'asc' : 'desc'); }} className="h-8 rounded-md border border-input bg-background px-3 text-xs">
-                  <option value="workDate:desc">Latest work date</option>
-                  <option value="approvalStatus:asc">Pending first</option>
-                  <option value="userId:asc">Employee A-Z</option>
-                  <option value="createdAt:desc">Last updated</option>
-                </select>
-                <button onClick={() => void loadAttendance()} disabled={attendanceLoading} className="h-8 px-2.5 rounded border text-xs flex items-center gap-1 hover:bg-accent disabled:opacity-60">
-                  <RefreshCw className={cn('h-3.5 w-3.5', attendanceLoading ? 'animate-spin' : '')} /> Refresh
-                </button>
-              </div>
-            </div>
-
-            <div className="surface-elevated p-4 space-y-3">
-              {attendanceError ? <p className="text-xs text-destructive">{attendanceError}</p> : null}
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold">Attendance Review ({attendanceTotal})</h3>
-                  <p className="text-xs text-muted-foreground">Review shift records by attendance outcome and approval state for the selected date range.</p>
-                </div>
-              </div>
-
-              {/* Bulk action bar */}
-              {selectedAttendanceIds.size > 0 ? (
-                <div className="flex items-center gap-3 p-3 rounded-md bg-primary/5 border border-primary/20">
-                  <span className="text-xs font-medium">{selectedAttendanceIds.size} selected</span>
-                  <button
-                    onClick={() => void bulkApproveAttendance()}
-                    disabled={bulkAttendanceBusy}
-                    className="h-7 px-2.5 rounded bg-primary text-[10px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
-                  >
-                    <CheckCircle2 className="h-3 w-3" /> Approve selected
-                  </button>
-                  <button onClick={() => setSelectedAttendanceIds(new Set())} className="text-[10px] text-muted-foreground hover:text-foreground ml-auto">Clear</button>
-                </div>
-              ) : null}
-
-              <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
-                <table className="w-full">
-                  <thead className="sticky top-0 z-10">
-                    <tr className="border-b bg-card">
-                      <th className="px-2 py-2.5 w-8">
-                        <input type="checkbox" checked={selectedAttendanceIds.size === pendingWorkShifts.length && pendingWorkShifts.length > 0} onChange={toggleAttendanceSelectAll} className="rounded border-input" />
-                      </th>
-                      {['Shift Record', 'Employee', 'Shift', 'Attendance', 'Review', 'Clock', 'Duration', 'Note', 'Actions'].map((header) => (
-                        <th key={header} className="text-left text-xs px-4 py-2.5">{header}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {attendanceLoading && workShifts.length === 0 ? (
-                      <ListTableSkeleton columns={10} rows={6} />
-                    ) : workShifts.length === 0 ? (
-                      <tr><td colSpan={10} className="px-4 py-8 text-center text-sm text-muted-foreground">No attendance records found</td></tr>
-                    ) : workShifts.map((row) => {
-                      const attendanceStatus = String(row.attendanceStatus || 'unknown').toLowerCase();
-                      const approvalStatus = String(row.approvalStatus || 'unknown').toLowerCase();
-                      const workShiftId = String(row.id);
-                      const canReview = approvalStatus === 'pending';
-                      const userDisplay = getHrUserDisplay(usersById, row.userId);
-                      const shiftDisplay = getHrShiftDisplay(shiftsById, row.shiftId);
-                      const outletDisplay = getHrOutletDisplay(outletsById, row.outletId);
-                      return (
-                        <tr key={workShiftId} className={cn('border-b last:border-0', selectedAttendanceIds.has(workShiftId) ? 'bg-primary/5' : '')}>
-                          <td className="px-2 py-2.5">
-                            {canReview ? (
-                              <input type="checkbox" checked={selectedAttendanceIds.has(workShiftId)} onChange={() => toggleAttendanceSelect(workShiftId)} className="rounded border-input" />
-                            ) : <span className="block w-4" />}
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-medium">{shortHrRef(workShiftId)}</span>
-                              <span className="text-[11px] text-muted-foreground">{formatDate(row.workDate)}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-medium">{userDisplay.primary}</span>
-                              {userDisplay.secondary ? <span className="text-[11px] text-muted-foreground">{userDisplay.secondary}</span> : null}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-medium">{shiftDisplay.primary}</span>
-                              {shiftDisplay.secondary ? <span className="text-[11px] text-muted-foreground">{shiftDisplay.secondary}</span> : null}
-                              <span className="text-[11px] text-muted-foreground">{outletDisplay.primary}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium', attendanceBadgeClass(attendanceStatus))}>{formatHrEnumLabel(attendanceStatus)}</span>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium', approvalBadgeClass(approvalStatus))}>{formatHrEnumLabel(approvalStatus)}</span>
-                          </td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                            <div className="flex flex-col">
-                              <span>In {formatTime(row.actualStartTime)}</span>
-                              <span>Out {formatTime(row.actualEndTime)}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground">{formatDuration(row.actualStartTime, row.actualEndTime)}</td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground max-w-[120px] truncate">{String(row.note || '—')}</td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex flex-wrap gap-1.5">
-                              <button onClick={() => void approveAttendance(workShiftId)} disabled={!canReview || busyKey === `attendance:approve:${workShiftId}`} className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent disabled:opacity-50">
-                                {busyKey === `attendance:approve:${workShiftId}` ? 'Approving...' : 'Approve'}
-                              </button>
-                              <button onClick={() => openRejectDialog(workShiftId)} disabled={!canReview || busyKey === `attendance:reject:${workShiftId}`} className="h-7 px-2.5 rounded border text-[10px] hover:bg-accent disabled:opacity-50">
-                                {busyKey === `attendance:reject:${workShiftId}` ? 'Rejecting...' : 'Reject'}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <ListPaginationControls
-                total={attendanceTotal}
-                limit={attendanceQuery.limit}
-                offset={attendanceQuery.offset}
-                hasMore={attendanceHasMore}
-                disabled={attendanceLoading}
-                onPageChange={attendanceQuery.setPage}
-                onLimitChange={attendanceQuery.setPageSize}
-              />
-            </div>
-          </div>
+          <AttendanceWorkspace
+            workShifts={workShifts}
+            attendanceTotal={attendanceTotal}
+            attendanceLoading={attendanceLoading}
+            attendanceError={attendanceError}
+            attendanceHasMore={attendanceHasMore}
+            attendanceQuery={attendanceQuery}
+            startDateFilter={startDateFilter}
+            endDateFilter={endDateFilter}
+            setStartDateFilter={setStartDateFilter}
+            setEndDateFilter={setEndDateFilter}
+            usersById={usersById}
+            outletsById={outletsById}
+            shiftsById={shiftsById}
+            loadAttendance={loadAttendance}
+            approveAttendance={approveAttendance}
+            bulkApprove={bulkApproveByIds}
+            openRejectDialog={openRejectDialog}
+            busyKey={busyKey}
+          />
         ) : null}
+
 
         {activeTab === 'employees' ? (
           <EmployeeProfileWorkspace
@@ -552,6 +434,7 @@ export function HRModule() {
             users={users}
             outlets={outlets}
             scopeRegionId={normalizeNumeric(scope.regionId)}
+            scopeOutletId={outletId || undefined}
           />
         ) : null}
 

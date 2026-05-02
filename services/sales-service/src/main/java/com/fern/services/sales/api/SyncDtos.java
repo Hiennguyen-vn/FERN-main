@@ -74,7 +74,23 @@ public class SyncDtos {
       String yieldUomCode,
       String status,
       long updatedAt,
-      List<RecipeComponentRow> components
+      List<RecipeComponentRow> components,
+      List<ModifierEffectRow> modifierEffects
+  ) {
+    /** Backward-compat ctor: omit modifierEffects (old callers / tests). */
+    public RecipeRow(long productId, String version, String yieldQty, String yieldUomCode,
+                     String status, long updatedAt, List<RecipeComponentRow> components) {
+      this(productId, version, yieldQty, yieldUomCode, status, updatedAt, components, List.of());
+    }
+  }
+
+  public record ModifierEffectRow(
+      long modifierOptionId,
+      String effectType,
+      Long ingredientId,
+      Long substituteIngredientId,
+      String multiplier,
+      String qtyDelta
   ) {}
 
   // ── Pull / Menu snapshot (Cloud → Edge hub) ───────────────────────────────

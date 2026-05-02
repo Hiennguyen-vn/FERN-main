@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import { ArrowLeft, ExternalLink, Eye, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -169,7 +170,7 @@ export function FinanceOperatingExpensesWorkspace({
     amount: '',
     currencyCode: 'USD',
     description: '',
-    businessDate: new Date().toISOString().slice(0, 10),
+    businessDate: todayLocalISO(),
     selectedOutletId: '',
   });
 

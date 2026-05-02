@@ -4,7 +4,7 @@ import type { AuthSession } from '@/api/fern-api';
 export interface AuthContextValue {
   session: AuthSession | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<AuthSession>;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
 }

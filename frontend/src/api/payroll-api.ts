@@ -246,7 +246,7 @@ export const payrollApi = {
         method: 'POST',
         token,
         body: {
-          regionId: Number(payload.regionId),
+          regionId: asString(payload.regionId),
           name: payload.name,
           startDate: payload.startDate,
           endDate: payload.endDate,

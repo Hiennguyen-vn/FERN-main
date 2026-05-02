@@ -7,14 +7,12 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.events.procurement.GoodsReceiptPostedEvent;
 import com.fern.services.procurement.api.ProcurementDtos;
@@ -42,8 +40,6 @@ class GoodsReceiptServiceTest {
   private SnowflakeIdGenerator idGenerator;
   @Mock
   private AuthorizationPolicyService authorizationPolicyService;
-  @Mock
-  private TypedKafkaEventPublisher eventPublisher;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
 
@@ -53,7 +49,7 @@ class GoodsReceiptServiceTest {
   }
 
   @Test
-  void postGoodsReceiptPublishesInventoryEvent() {
+  void postGoodsReceiptWritesOutboxViaRepository() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"
     , null, null));
@@ -82,6 +78,7 @@ class GoodsReceiptServiceTest {
             new BigDecimal("10.00"),
             null,
             null,
+            null,
             null
         ))
     );
@@ -104,23 +101,16 @@ class GoodsReceiptServiceTest {
     );
     when(procurementRepository.findGoodsReceipt(500L)).thenReturn(java.util.Optional.of(receipt));
     when(procurementRepository.findPurchaseOrder(600L)).thenReturn(java.util.Optional.of(po));
-    when(procurementRepository.postGoodsReceipt(500L)).thenReturn(receipt);
 
     GoodsReceiptService service = new GoodsReceiptService(
         procurementRepository,
         idGenerator,
         authorizationPolicyService,
-        eventPublisher,
         clock
     );
     GoodsReceiptPostedEvent event = service.postGoodsReceipt(500L);
 
-    verify(eventPublisher).publish(
-        eq("fern.procurement.goods-receipt-posted"),
-        eq("500"),
-        eq("procurement.goods-receipt-posted"),
-        any(GoodsReceiptPostedEvent.class)
-    );
+    verify(procurementRepository).postGoodsReceipt(eq(500L), any(GoodsReceiptPostedEvent.class));
     assertEquals(500L, event.goodsReceiptId());
     assertEquals(700L, event.outletId());
   }
@@ -180,7 +170,6 @@ class GoodsReceiptServiceTest {
         procurementRepository,
         idGenerator,
         authorizationPolicyService,
-        eventPublisher,
         clock
     );
 
@@ -189,8 +178,7 @@ class GoodsReceiptServiceTest {
     assertEquals(403, exception.getStatusCode());
     verify(procurementRepository).findGoodsReceipt(500L);
     verify(procurementRepository).findPurchaseOrder(600L);
-    verify(procurementRepository, never()).postGoodsReceipt(500L);
-    verifyNoInteractions(eventPublisher);
+    verify(procurementRepository, never()).postGoodsReceipt(anyLong(), any());
   }
 
   @Test
@@ -211,7 +199,6 @@ class GoodsReceiptServiceTest {
         procurementRepository,
         idGenerator,
         authorizationPolicyService,
-        eventPublisher,
         clock
     );
 
@@ -262,7 +249,6 @@ class GoodsReceiptServiceTest {
         procurementRepository,
         idGenerator,
         authorizationPolicyService,
-        eventPublisher,
         clock
     );
     service.listGoodsReceipts(

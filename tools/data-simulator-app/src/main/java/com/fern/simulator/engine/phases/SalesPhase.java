@@ -422,6 +422,9 @@ public class SalesPhase implements PhaseHandler {
         String paymentStatus = "paid";
         long recognizedRevenue = totalAmount;
         long paymentAmount = totalAmount;
+        String voidReasonCode = null;
+        Long voidedByUserId = null;
+        OffsetDateTime voidedAt = null;
 
         if (rng.chance(prob.saleCancelChance())) {
             saleStatus = "cancelled";
@@ -430,6 +433,10 @@ public class SalesPhase implements PhaseHandler {
             recognizedRevenue = 0;
             restoreStock(ctx, outlet, saleProducts);
             ctx.getCurrentMonth().addSaleCancelled();
+            voidReasonCode = "CUSTOMER_REFUSED";
+            voidedByUserId = ctx.getActiveEmployeesAtOutlet(outlet.getId()).stream()
+                    .map(SimEmployee::getUserId).findFirst().orElse(null);
+            voidedAt = paymentTime;
         } else if (rng.chance(prob.saleVoidChance())) {
             saleStatus = "voided";
             paymentStatus = "unpaid";
@@ -437,6 +444,11 @@ public class SalesPhase implements PhaseHandler {
             recognizedRevenue = 0;
             restoreStock(ctx, outlet, saleProducts);
             ctx.getCurrentMonth().addSaleVoided();
+            voidReasonCode = "ORDER_MISTAKE";
+            voidedByUserId = ctx.getActiveEmployeesAtOutlet(outlet.getId()).stream()
+                    .filter(e -> "outlet_manager".equals(e.getRoleCode()))
+                    .map(SimEmployee::getUserId).findFirst().orElse(null);
+            voidedAt = paymentTime;
         } else if (rng.chance(prob.saleRefundChance())) {
             saleStatus = "refunded";
             paymentStatus = "refunded";
@@ -497,6 +509,63 @@ public class SalesPhase implements PhaseHandler {
                     inventoryTransactions.add(new SimulationContext.SaleTxnEvent(txnId, ri.itemId(), product.id(), ri.quantity()));
                     ctx.incrementRowCount("inventory_transaction", 1);
                     ctx.incrementRowCount("sale_item_transaction", 1);
+
+                    // Oversell detection: stock insufficient at sale time → log line.
+                    var stock = ctx.getOutletStock(outlet.getId(), ri.itemId());
+                    int available = stock == null ? 0 : stock.getCurrentStock();
+                    if (available < ri.quantity()) {
+                        int shortQty = ri.quantity() - available;
+                        ctx.addOversellLineEvent(new SimulationContext.SaleOversellLineEvent(
+                                saleId, paymentTime, ri.itemId(), product.id(),
+                                ri.quantity(), available, shortQty, paymentTime));
+                        ctx.incrementRowCount("sale_oversell_line", 1);
+                    }
+
+                    // Stock reservation: reserve at sale entry, settle at payment capture.
+                    long resId = ctx.getIdGen().nextId();
+                    OffsetDateTime reservedAt = paymentTime.minusMinutes(2);
+                    ctx.addStockReservationEvent(new SimulationContext.StockReservationEvent(
+                            resId, outlet.getId(), ri.itemId(), ri.quantity(), saleId,
+                            reservedAt, paymentTime, paymentTime.plusHours(1), "sale"));
+                    ctx.incrementRowCount("stock_reservation", 1);
+                }
+            }
+        }
+
+        // Loyalty: maybe attach customer; redeem if balance ≥ threshold; earn on completed sales.
+        Long customerId = null;
+        int pointsEarned = 0;
+        int pointsRedeemed = 0;
+        com.fern.simulator.config.SimulationConfig.CrmConfig crmCfg = ctx.getConfig().crmOrDefault();
+        boolean saleCompleted = !"cancelled".equals(saleStatus) && !"voided".equals(saleStatus);
+        if (crmCfg.enabled() && saleCompleted && totalAmount > 0
+                && rng.chance(crmCfg.saleCustomerAttachRate())) {
+            com.fern.simulator.model.SimCustomer cust = pickOrEnrollCustomer(ctx, rng, day, crmCfg);
+            if (cust != null) {
+                customerId = cust.getId();
+                if (cust.getPointsBalance() > 0 && rng.chance(crmCfg.redeemChance())) {
+                    int maxRedeemPts = (int) Math.round(totalAmount * (crmCfg.maxRedeemPercent() / 100.0)
+                            / Math.max(1, crmCfg.pointsPerVnd()));
+                    pointsRedeemed = Math.min(cust.getPointsBalance(), maxRedeemPts);
+                    if (pointsRedeemed > 0) {
+                        cust.debit(pointsRedeemed);
+                        long pleId = ctx.getIdGen().nextId();
+                        ctx.addPointsLedgerEvent(new SimulationContext.PointsLedgerEvent(
+                                pleId, cust.getId(), saleId, -pointsRedeemed, "redeem",
+                                cust.getPointsBalance(), paymentTime));
+                        ctx.markCustomerUpdated(cust);
+                        ctx.incrementRowCount("crm_points_ledger", 1);
+                    }
+                }
+                pointsEarned = (int) (totalAmount / Math.max(1, crmCfg.pointsPerVnd()));
+                if (pointsEarned > 0) {
+                    cust.credit(pointsEarned);
+                    long pleId = ctx.getIdGen().nextId();
+                    ctx.addPointsLedgerEvent(new SimulationContext.PointsLedgerEvent(
+                            pleId, cust.getId(), saleId, pointsEarned, "earn",
+                            cust.getPointsBalance(), paymentTime));
+                    ctx.markCustomerUpdated(cust);
+                    ctx.incrementRowCount("crm_points_ledger", 1);
                 }
             }
         }
@@ -507,7 +576,17 @@ public class SalesPhase implements PhaseHandler {
                 orderType, saleStatus, paymentStatus,
                 subtotal, discount, taxAmount, totalAmount,
                 saleItems, paymentAmount, paymentMethod, paymentTime, inventoryTransactions,
-                transactionRef, orderingTableId));
+                transactionRef, orderingTableId,
+                customerId, pointsEarned, pointsRedeemed,
+                voidReasonCode, voidedByUserId, voidedAt));
+
+        // Cash drawer: SALE_CASH per cash sale.
+        if (saleCompleted && "cash".equals(paymentMethod) && paymentAmount > 0 && posSessionId > 0) {
+            ctx.addCashMovementEvent(new SimulationContext.CashMovementEvent(
+                    ctx.getIdGen().nextId(), posSessionId, outlet.getId(), "SALE_CASH",
+                    paymentAmount, null, saleId, null, paymentTime));
+            ctx.incrementRowCount("cash_movement", 1);
+        }
 
         if (recognizedRevenue > 0) {
             long reportingRevenue = RegionalEconomics.convertToReportingCurrency(
@@ -763,6 +842,13 @@ public class SalesPhase implements PhaseHandler {
                 RegionalEconomics.currencyFor(marketCode),
                 sessionManager.getUserId(), openedAt, closedAt, day, "closed"));
         ctx.incrementRowCount("pos_session", 1);
+
+        // Cash drawer: OPEN_FLOAT when session opens.
+        long openFloat = 500_000L + rng.intBetween(0, 5) * 100_000L;
+        ctx.addCashMovementEvent(new SimulationContext.CashMovementEvent(
+                ctx.getIdGen().nextId(), sessionId, outlet.getId(), "OPEN_FLOAT",
+                openFloat, "Opening float", null, sessionManager.getUserId(), openedAt));
+        ctx.incrementRowCount("cash_movement", 1);
         return sessionId;
     }
 
@@ -790,6 +876,9 @@ public class SalesPhase implements PhaseHandler {
         int idx = 0;
         for (var entry : amountsByMethod.entrySet()) {
             long lineDiscrepancy = idx == amountsByMethod.size() - 1 ? remainingDiscrepancy : 0;
+            // Clamp so actual stays non-negative (DB CHECK constraint).
+            long minDiscrepancy = -entry.getValue();
+            if (lineDiscrepancy < minDiscrepancy) lineDiscrepancy = minDiscrepancy;
             remainingDiscrepancy -= lineDiscrepancy;
             lines.add(new SimulationContext.PosReconciliationLineEvent(
                     entry.getKey(), entry.getValue(), entry.getValue() + lineDiscrepancy, lineDiscrepancy));
@@ -808,6 +897,18 @@ public class SalesPhase implements PhaseHandler {
                 posSessionId, managerId, reconciledAt, expectedTotal, actualTotal, discrepancyTotal, note, lines));
         ctx.incrementRowCount("pos_session_reconciliation", 1);
         ctx.incrementRowCount("pos_session_reconciliation_line", lines.size());
+
+        // CLOSE_COUNT cash movement: actual cash counted at session close.
+        Long cashActual = amountsByMethod.containsKey("cash")
+                ? amountsByMethod.get("cash") + (discrepancyTotal != 0 && amountsByMethod.size() == 1
+                        ? discrepancyTotal : 0)
+                : null;
+        if (cashActual != null) {
+            ctx.addCashMovementEvent(new SimulationContext.CashMovementEvent(
+                    ctx.getIdGen().nextId(), posSessionId, outlet.getId(), "CLOSE_COUNT",
+                    cashActual, "End-of-shift count", null, managerId, reconciledAt));
+            ctx.incrementRowCount("cash_movement", 1);
+        }
     }
 
     private void emitWorkdayEvents(SimulationContext ctx, SimOutlet outlet, LocalDate day,
@@ -1479,4 +1580,16 @@ public class SalesPhase implements PhaseHandler {
     private record BlockWindow(String code, int startHour, int endHour) {}
 
     private record BlockAssignment(String blockCode, OffsetDateTime start, OffsetDateTime end) {}
+
+    private static com.fern.simulator.model.SimCustomer pickOrEnrollCustomer(
+            SimulationContext ctx, SimulationRandom rng, LocalDate day,
+            com.fern.simulator.config.SimulationConfig.CrmConfig cfg) {
+        var active = ctx.getActiveCustomers();
+        if (!active.isEmpty() && !rng.chance(cfg.newEnrolPerSaleChance())) {
+            int idx = rng.intBetween(0, active.size() - 1);
+            int i = 0;
+            for (var c : active) { if (i++ == idx) return c; }
+        }
+        return CrmPhase.createCustomer(ctx, rng, day, cfg);
+    }
 }

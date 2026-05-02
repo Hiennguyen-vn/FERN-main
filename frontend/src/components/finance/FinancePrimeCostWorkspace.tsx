@@ -39,6 +39,7 @@ import {
 } from '@/components/finance/finance-phase2-utils';
 import { formatMoney } from '@/components/finance/finance-utils';
 import { useFinanceSalesOrders } from '@/components/finance/use-finance-sales-orders';
+import { productApi, type FoodCostView } from '@/api/fern-api';
 
 interface Props {
   token: string;
@@ -77,6 +78,8 @@ export function FinancePrimeCostWorkspace({
   const [periods, setPeriods] = useState<PayrollPeriodView[]>([]);
   const [selectedPeriodKey, setSelectedPeriodKey] = useState('');
   const [primeCostTarget, setPrimeCostTarget] = useState(60);
+  const [foodCosts, setFoodCosts] = useState<FoodCostView[]>([]);
+  const [foodCostLoading, setFoodCostLoading] = useState(false);
   const {
     orders,
     visibleOutlets,
@@ -111,10 +114,12 @@ export function FinancePrimeCostWorkspace({
     if (!selectedPeriodKey) return { startDate: undefined as string | undefined, endDate: undefined as string | undefined };
     const [y, m] = selectedPeriodKey.split('-').map(Number);
     if (!y || !m) return { startDate: undefined, endDate: undefined };
-    const start = new Date(Date.UTC(y, m - 1, 1));
-    const end = new Date(Date.UTC(y, m, 0));
-    const toISO = (d: Date) => d.toISOString().slice(0, 10);
-    return { startDate: toISO(start), endDate: toISO(end) };
+    // Local-date strings to match `getPeriodKey` which derives from order createdAt local time.
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const startDate = `${y}-${pad(m)}-01`;
+    const endDay = new Date(y, m, 0).getDate();
+    const endDate = `${y}-${pad(m)}-${pad(endDay)}`;
+    return { startDate, endDate };
   }, [selectedPeriodKey]);
 
   const load = useCallback(async () => {
@@ -169,6 +174,17 @@ export function FinancePrimeCostWorkspace({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    setFoodCostLoading(true);
+    productApi.listFoodCosts(token)
+      .then((rows) => { if (active) setFoodCosts(rows); })
+      .catch(() => { if (active) setFoodCosts([]); })
+      .finally(() => { if (active) setFoodCostLoading(false); });
+    return () => { active = false; };
+  }, [token]);
 
   const periodOptions = useMemo(
     () => buildFinancePeriodOptions(orders),
@@ -238,10 +254,12 @@ export function FinancePrimeCostWorkspace({
 
     return relevantOutlets.map((outlet): OutletCostRow => {
       const outletRuns = runs.filter(
-        (run) =>
-          String(run.outletId) === outlet.id
-          && String(run.status || '').toLowerCase() === 'approved'
-          && resolveRunPeriodKey(run) === activePeriodKey,
+        (run) => {
+          const status = String(run.status || '').toLowerCase();
+          return String(run.outletId) === outlet.id
+            && (status === 'approved' || status === 'paid')
+            && resolveRunPeriodKey(run) === activePeriodKey;
+        },
       );
       const outletExpenses = expenses.filter(
         (expense) =>
@@ -304,11 +322,13 @@ export function FinancePrimeCostWorkspace({
       const priorNetSalesValue = priorRevenueByOutlet.get(row.outletId) || 0;
       const priorPayroll = runs
         .filter(
-          (run) =>
-            String(run.outletId) === row.outletId
-            && String(run.status || '').toLowerCase() === 'approved'
-            && priorPeriod
-            && resolveRunPeriodKey(run) === priorPeriod.key,
+          (run) => {
+            const status = String(run.status || '').toLowerCase();
+            return String(run.outletId) === row.outletId
+              && (status === 'approved' || status === 'paid')
+              && priorPeriod
+              && resolveRunPeriodKey(run) === priorPeriod.key;
+          },
         )
         .reduce((sum, run) => sum + toNumber(run.netSalary), 0);
       const priorLaborPct = priorNetSalesValue > 0 ? (priorPayroll / priorNetSalesValue) * 100 : null;
@@ -409,6 +429,64 @@ export function FinancePrimeCostWorkspace({
         </span>
       </div>
 
+      {/* Food Cost % by product — from v_food_cost view */}
+      <section className="surface-elevated overflow-hidden">
+        <div className="border-b px-5 py-4 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Food Cost % by Product</h3>
+            <p className="text-xs text-muted-foreground">Theoretical cost / sell price from recipe BOM + latest ingredient costs</p>
+          </div>
+          {foodCostLoading && <span className="text-[10px] text-muted-foreground">Đang tải...</span>}
+        </div>
+        {foodCosts.length === 0 && !foodCostLoading ? (
+          <div className="px-5 py-6 text-center text-xs text-muted-foreground">
+            Chưa có dữ liệu — configure recipes và ingredient costs trong Catalog.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b bg-muted/30">
+                  <th className="text-left px-4 py-2">Product ID</th>
+                  <th className="text-right px-4 py-2">COGS/unit ({currency})</th>
+                  <th className="text-right px-4 py-2">Sell Price ({currency})</th>
+                  <th className="text-right px-4 py-2">Food Cost %</th>
+                  <th className="text-left px-4 py-2">Mức độ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {foodCosts.map((row) => {
+                  const rawPct = row.foodCostPercent != null ? Number(row.foodCostPercent) : null;
+                  const pct = rawPct != null && Number.isFinite(rawPct) ? rawPct : null;
+                  const level = pct == null ? null : pct < 25 ? 'good' : pct < 35 ? 'ok' : 'high';
+                  const cost = row.costPerYieldUnit != null ? Number(row.costPerYieldUnit) : null;
+                  const sell = row.sellPrice != null ? Number(row.sellPrice) : null;
+                  return (
+                    <tr key={`${row.productId}-${row.version}`} className="border-b last:border-0 hover:bg-muted/10">
+                      <td className="px-4 py-2 font-mono">{row.productId}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {cost != null && Number.isFinite(cost) ? formatMoney(cost, currency) : '—'}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {sell != null && Number.isFinite(sell) ? formatMoney(sell, currency) : '—'}
+                      </td>
+                      <td className={cn('px-4 py-2 text-right font-semibold tabular-nums', level === 'high' && 'text-destructive', level === 'ok' && 'text-warning', level === 'good' && 'text-success')}>
+                        {pct != null ? `${pct.toFixed(1)}%` : '—'}
+                      </td>
+                      <td className="px-4 py-2">
+                        {level === 'high' && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-destructive/10 border border-destructive/20 text-destructive">High</span>}
+                        {level === 'ok' && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-warning/10 border border-warning/30 text-warning">Medium</span>}
+                        {level === 'good' && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-success/10 border border-success/20 text-success">Good</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       {error ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           {error}
@@ -471,7 +549,7 @@ export function FinancePrimeCostWorkspace({
           </div>
           <div className="space-y-3 px-5 py-4">
             {totalCogs == null ? (
-              <div className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 text-sm text-sky-900">
+              <div className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/10 px-4 py-3 text-sm text-foreground">
                 <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
                 <p className="text-xs">Prime Cost unavailable — Procurement/Inventory not connected. Labor alerts still shown below.</p>
               </div>
@@ -485,17 +563,17 @@ export function FinancePrimeCostWorkspace({
                 <div
                   key={alert.key}
                   className={cn(
-                    'rounded-xl border px-4 py-3 text-sm transition-colors',
+                    'rounded-lg border px-4 py-3 text-sm transition-colors',
                     alert.tone === 'critical'
-                      ? 'border-rose-200 bg-rose-50/70 text-rose-900'
-                      : 'border-amber-200 bg-amber-50/70 text-amber-900',
+                      ? 'border-destructive/30 bg-destructive/10 text-foreground'
+                      : 'border-warning/30 bg-warning/10 text-foreground',
                   )}
                 >
                   <div className="flex items-start gap-2">
                     <AlertTriangle
                       className={cn(
                         'mt-0.5 h-4 w-4 shrink-0',
-                        alert.tone === 'critical' ? 'text-rose-600' : 'text-amber-600',
+                        alert.tone === 'critical' ? 'text-destructive' : 'text-warning',
                       )}
                     />
                     <div>

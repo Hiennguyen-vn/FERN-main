@@ -47,6 +47,7 @@ public class SimulationEngine {
         this.phases = List.of(
                 new ExpansionPhase(),
                 new CatalogPhase(),
+                new CrmPhase(),
                 new WorkforcePhase(),
                 new ProcurementPhase(),
                 new ManufacturingPhase(),
@@ -202,6 +203,18 @@ public class SimulationEngine {
                         }
                     } catch (Exception e) {
                         log.error("Persistence failed on day {}: {}", day, e.getMessage(), e);
+                        // Walk SQLException chain via getNextException to surface original cause.
+                        Throwable cur = e;
+                        while (cur != null) {
+                            if (cur instanceof java.sql.SQLException sqle) {
+                                java.sql.SQLException next = sqle.getNextException();
+                                while (next != null) {
+                                    log.error("  next SQLException: {}", next.getMessage());
+                                    next = next.getNextException();
+                                }
+                            }
+                            cur = cur.getCause();
+                        }
                         String detail = e.getMessage();
                         if (detail != null && detail.contains("relation \"core.") && detail.contains("does not exist")) {
                             throw new RuntimeException("Persistence failed on " + day

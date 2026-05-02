@@ -621,8 +621,47 @@ public class AuthService {
         user.fullName(),
         user.employeeCode(),
         user.email(),
+        user.phone(),
         user.status()
     );
+  }
+
+  public AuthDtos.UserSummary updateMyProfile(AuthDtos.UpdateProfileRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    long userId = context.requireUserId();
+    authSessionService.requireActiveSession(context.sessionId(), userId);
+    String fullName = request.fullName().trim();
+    String email = request.email() == null || request.email().isBlank() ? null : request.email().trim();
+    String phone = request.phone() == null || request.phone().isBlank() ? null : request.phone().trim();
+    AuthUserRecord updated = authUserRepository.updateProfile(userId, fullName, email, phone);
+    return toUserSummary(updated);
+  }
+
+  public void changeMyPassword(AuthDtos.ChangePasswordRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    long userId = context.requireUserId();
+    authSessionService.requireActiveSession(context.sessionId(), userId);
+    AuthUserRecord user = authUserRepository.findById(userId)
+        .orElseThrow(() -> ServiceException.notFound("User not found: " + userId));
+    try {
+      if (!PasswordUtil.verifyPassword(request.currentPassword(), user.passwordHash())) {
+        throw ServiceException.unauthorized("Current password is incorrect");
+      }
+    } catch (ServiceException e) {
+      throw e;
+    } catch (Exception e) {
+      throw ServiceException.unauthorized("Current password is incorrect");
+    }
+    if (request.newPassword().equals(request.currentPassword())) {
+      throw ServiceException.badRequest("New password must differ from current password");
+    }
+    String newHash;
+    try {
+      newHash = PasswordUtil.hash(request.newPassword());
+    } catch (Exception e) {
+      throw new IllegalStateException("Unable to hash password", e);
+    }
+    authUserRepository.updatePassword(userId, newHash);
   }
 
   private AuthDtos.LoginResponse toLoginResponse(

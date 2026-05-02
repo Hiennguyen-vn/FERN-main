@@ -132,12 +132,15 @@ public final class SimulatorBatchWriter implements AutoCloseable {
                                  String orderType, String status, String paymentStatus,
                                  long subtotal, long discount, long taxAmount,
                                  long totalAmount, Long orderingTableId,
-                                 OffsetDateTime createdAt) throws SQLException {
+                                 OffsetDateTime createdAt,
+                                 Long customerId, int pointsEarned, int pointsRedeemed,
+                                 String voidReasonCode, Long voidedBy, OffsetDateTime voidedAt) throws SQLException {
         batch("sale_record", """
             INSERT INTO core.sale_record (id, outlet_id, pos_session_id, currency_code,
                 order_type, status, payment_status, subtotal, discount, tax_amount, total_amount,
-                ordering_table_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ordering_table_id, created_at, updated_at, customer_id, points_earned, points_redeemed,
+                void_reason_code, voided_by, voided_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> {
             ps.setLong(1, id);
             ps.setLong(2, outletId);
@@ -155,6 +158,15 @@ public final class SimulatorBatchWriter implements AutoCloseable {
             else ps.setNull(12, Types.BIGINT);
             ps.setObject(13, createdAt);
             ps.setObject(14, createdAt);
+            if (customerId != null) ps.setLong(15, customerId);
+            else ps.setNull(15, Types.BIGINT);
+            ps.setInt(16, pointsEarned);
+            ps.setInt(17, pointsRedeemed);
+            if (voidReasonCode != null) ps.setString(18, voidReasonCode);
+            else ps.setNull(18, Types.VARCHAR);
+            if (voidedBy != null) ps.setLong(19, voidedBy);
+            else ps.setNull(19, Types.BIGINT);
+            ps.setObject(20, voidedAt);
         });
     }
 

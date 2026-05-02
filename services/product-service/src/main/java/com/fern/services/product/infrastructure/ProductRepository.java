@@ -1038,6 +1038,34 @@ public class ProductRepository extends BaseRepository {
     });
   }
 
+  public java.util.List<ProductDtos.FoodCostView> listFoodCosts(Long productId) {
+    if (productId != null) {
+      return queryList(
+          "SELECT product_id, version, theoretical_cost, cost_per_yield_unit, sell_price, food_cost_percent " +
+          "FROM core.v_food_cost WHERE product_id = ? ORDER BY version DESC",
+          rs -> {
+            try {
+              return new ProductDtos.FoodCostView(
+                  rs.getLong("product_id"), rs.getInt("version"),
+                  rs.getBigDecimal("theoretical_cost"), rs.getBigDecimal("cost_per_yield_unit"),
+                  rs.getBigDecimal("sell_price"), rs.getBigDecimal("food_cost_percent"));
+            } catch (java.sql.SQLException e) { throw new RuntimeException(e); }
+          }, productId);
+    } else {
+      return queryList(
+          "SELECT product_id, version, theoretical_cost, cost_per_yield_unit, sell_price, food_cost_percent " +
+          "FROM core.v_food_cost ORDER BY product_id, version DESC",
+          rs -> {
+            try {
+              return new ProductDtos.FoodCostView(
+                  rs.getLong("product_id"), rs.getInt("version"),
+                  rs.getBigDecimal("theoretical_cost"), rs.getBigDecimal("cost_per_yield_unit"),
+                  rs.getBigDecimal("sell_price"), rs.getBigDecimal("food_cost_percent"));
+            } catch (java.sql.SQLException e) { throw new RuntimeException(e); }
+          });
+    }
+  }
+
   private static String trimToNull(String value) {
     if (value == null) {
       return null;

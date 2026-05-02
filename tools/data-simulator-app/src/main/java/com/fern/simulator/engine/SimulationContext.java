@@ -37,6 +37,8 @@ public class SimulationContext {
     private final Map<Long, Integer> supplierLateDeliveries = new HashMap<>();
     private final List<SimPromotion> promotions = new ArrayList<>();
     private final Map<Long, Set<Long>> promotionOutletScopes = new HashMap<>(); // promoId -> outletIds
+    private final Map<Long, com.fern.simulator.model.SimCustomer> customers = new LinkedHashMap<>();
+    private final Map<String, Long> customerByPhone = new HashMap<>();
     private final Map<Long, long[]> unmetDemandCarryover = new HashMap<>(); // outletId -> units scheduled for future days
     private final Map<Long, List<WorkedShiftRecord>> workedShiftHistory = new HashMap<>(); // userId -> actual attendance records
 
@@ -121,6 +123,23 @@ public class SimulationContext {
     private final List<AuditLogEvent> dirtyAuditLogs = new ArrayList<>();
     private final List<InventoryAdjustmentEvent> dirtyInventoryAdjustments = new ArrayList<>();
     private final List<PosReconciliationEvent> dirtyReconciliations = new ArrayList<>();
+    private final List<com.fern.simulator.model.SimCustomer> dirtyCustomers = new ArrayList<>();
+    private final List<com.fern.simulator.model.SimCustomer> dirtyCustomerUpdates = new ArrayList<>();
+    private final List<PointsLedgerEvent> dirtyPointsLedgers = new ArrayList<>();
+    private final List<OtpRequestEvent> dirtyOtpRequests = new ArrayList<>();
+    private final List<CashMovementEvent> dirtyCashMovements = new ArrayList<>();
+    private final List<SaleOversellLineEvent> dirtyOversellLines = new ArrayList<>();
+    private final List<TaxRuleEvent> dirtyTaxRules = new ArrayList<>();
+    private final List<ExpenseDocumentEvent> dirtyExpenseDocuments = new ArrayList<>();
+    private final List<ModifierGroupEvent> dirtyModifierGroups = new ArrayList<>();
+    private final List<ModifierOptionEvent> dirtyModifierOptions = new ArrayList<>();
+    private final List<ProductModifierGroupEvent> dirtyProductModifierGroups = new ArrayList<>();
+    private final List<ProductVariantEvent> dirtyProductVariants = new ArrayList<>();
+    private final List<ProductAllergenEvent> dirtyProductAllergens = new ArrayList<>();
+    private final List<StockReservationEvent> dirtyStockReservations = new ArrayList<>();
+    private final List<ShiftRoleRequirementEvent> dirtyShiftRoleRequirements = new ArrayList<>();
+    private boolean modifierGroupsSeeded = false;
+    private final Map<String, Long> modifierGroupIdsByCode = new HashMap<>();
 
     // --- Ordering table tracking (for dine-in sale linking) ---
     private final Map<Long, List<Long>> outletOrderingTableIds = new HashMap<>();
@@ -941,6 +960,21 @@ public class SimulationContext {
         dirtyAuditLogs.clear();
         dirtyInventoryAdjustments.clear();
         dirtyReconciliations.clear();
+        dirtyCustomers.clear();
+        dirtyCustomerUpdates.clear();
+        dirtyPointsLedgers.clear();
+        dirtyOtpRequests.clear();
+        dirtyCashMovements.clear();
+        dirtyOversellLines.clear();
+        dirtyTaxRules.clear();
+        dirtyExpenseDocuments.clear();
+        dirtyModifierGroups.clear();
+        dirtyModifierOptions.clear();
+        dirtyProductModifierGroups.clear();
+        dirtyProductVariants.clear();
+        dirtyProductAllergens.clear();
+        dirtyStockReservations.clear();
+        dirtyShiftRoleRequirements.clear();
     }
 
     // ========== EVENT RECORDS (for DayPersister) ==========
@@ -1041,7 +1075,9 @@ public class SimulationContext {
             long paymentAmount, String paymentMethod,
             java.time.OffsetDateTime paymentTime,
             List<SaleTxnEvent> inventoryTransactions,
-            String transactionRef, Long orderingTableId
+            String transactionRef, Long orderingTableId,
+            Long customerId, int pointsEarned, int pointsRedeemed,
+            String voidReasonCode, Long voidedBy, java.time.OffsetDateTime voidedAt
     ) {}
 
     public record SaleItemEvent(
@@ -1154,6 +1190,40 @@ public class SimulationContext {
     public record AuditLogEvent(long id, Long actorUserId, String action, String entityName, String entityId, String reason) {}
     public record InventoryAdjustmentEvent(long txnId, long outletId, long itemId, int quantity,
                                             Long stockCountLineId, String reason, Long approvedByUserId) {}
+    public record PointsLedgerEvent(long id, long customerId, Long saleId, int delta, String reason,
+                                     int balanceAfter, OffsetDateTime createdAt) {}
+    public record OtpRequestEvent(long id, String phone, String codeHash, int attempts,
+                                   OffsetDateTime expiresAt, OffsetDateTime consumedAt,
+                                   OffsetDateTime createdAt) {}
+    public record CashMovementEvent(long id, long sessionId, long outletId, String type,
+                                     long amount, String reason, Long referenceSaleId,
+                                     Long createdByUserId, OffsetDateTime createdAt) {}
+    public record SaleOversellLineEvent(long saleId, OffsetDateTime saleCreatedAt, long itemId,
+                                         Long productId, int requiredQty, int availableQty,
+                                         int shortQty, OffsetDateTime detectedAt) {}
+    public record TaxRuleEvent(long outletId, String productCategoryCode,
+                                java.math.BigDecimal ratePct, boolean inclusive,
+                                LocalDate effectiveFrom) {}
+    public record ExpenseDocumentEvent(long id, long expenseRecordId, String documentType,
+                                        String fileName, String contentType, String objectKey,
+                                        String storageUrl, Long createdByUserId,
+                                        OffsetDateTime createdAt) {}
+    public record ModifierGroupEvent(long id, String code, String name, String selectionType,
+                                      int minSelections, int maxSelections) {}
+    public record ModifierOptionEvent(long id, long groupId, String code, String name,
+                                       java.math.BigDecimal priceAdjustment, int displayOrder) {}
+    public record ProductModifierGroupEvent(long productId, long modifierGroupId,
+                                             boolean required, int displayOrder) {}
+    public record ProductVariantEvent(long id, long productId, String code, String name,
+                                       String priceModifierType,
+                                       java.math.BigDecimal priceModifierValue, int displayOrder) {}
+    public record ProductAllergenEvent(long productId, String allergenCode, boolean isTraces) {}
+    public record StockReservationEvent(long id, long locationId, long itemId, int qty,
+                                          Long saleId, OffsetDateTime reservedAt,
+                                          OffsetDateTime settledAt, OffsetDateTime expiresAt,
+                                          String source) {}
+    public record ShiftRoleRequirementEvent(long id, long shiftId, String workRole,
+                                              int requiredCount, boolean isOptional) {}
     public record PosReconciliationEvent(
             long sessionId, Long reconciledByUserId, OffsetDateTime reconciledAt,
             long expectedTotal, long actualTotal, long discrepancyTotal, String note,
@@ -1218,4 +1288,53 @@ public class SimulationContext {
     public List<InventoryAdjustmentEvent> getDirtyInventoryAdjustments() { return dirtyInventoryAdjustments; }
     public void addReconciliationEvent(PosReconciliationEvent e) { dirtyReconciliations.add(e); }
     public List<PosReconciliationEvent> getDirtyReconciliations() { return dirtyReconciliations; }
+
+    // --- CRM ---
+    public Map<Long, com.fern.simulator.model.SimCustomer> getCustomers() { return customers; }
+    public java.util.Collection<com.fern.simulator.model.SimCustomer> getActiveCustomers() {
+        return customers.values().stream().filter(com.fern.simulator.model.SimCustomer::isActive).toList();
+    }
+    public com.fern.simulator.model.SimCustomer findCustomerByPhone(String phone) {
+        Long id = customerByPhone.get(phone);
+        return id == null ? null : customers.get(id);
+    }
+    public void addCustomer(com.fern.simulator.model.SimCustomer c) {
+        customers.put(c.getId(), c);
+        customerByPhone.put(c.getPhone(), c.getId());
+        dirtyCustomers.add(c);
+    }
+    public void markCustomerUpdated(com.fern.simulator.model.SimCustomer c) { dirtyCustomerUpdates.add(c); }
+    public List<com.fern.simulator.model.SimCustomer> getDirtyCustomers() { return dirtyCustomers; }
+    public List<com.fern.simulator.model.SimCustomer> getDirtyCustomerUpdates() { return dirtyCustomerUpdates; }
+    public void addPointsLedgerEvent(PointsLedgerEvent e) { dirtyPointsLedgers.add(e); }
+    public List<PointsLedgerEvent> getDirtyPointsLedgers() { return dirtyPointsLedgers; }
+    public void addOtpRequestEvent(OtpRequestEvent e) { dirtyOtpRequests.add(e); }
+    public List<OtpRequestEvent> getDirtyOtpRequests() { return dirtyOtpRequests; }
+    public void addCashMovementEvent(CashMovementEvent e) { dirtyCashMovements.add(e); }
+    public List<CashMovementEvent> getDirtyCashMovements() { return dirtyCashMovements; }
+    public void addOversellLineEvent(SaleOversellLineEvent e) { dirtyOversellLines.add(e); }
+    public List<SaleOversellLineEvent> getDirtyOversellLines() { return dirtyOversellLines; }
+    public void addTaxRuleEvent(TaxRuleEvent e) { dirtyTaxRules.add(e); }
+    public List<TaxRuleEvent> getDirtyTaxRules() { return dirtyTaxRules; }
+    public void addExpenseDocumentEvent(ExpenseDocumentEvent e) { dirtyExpenseDocuments.add(e); }
+    public List<ExpenseDocumentEvent> getDirtyExpenseDocuments() { return dirtyExpenseDocuments; }
+
+    // --- Catalog depth ---
+    public boolean isModifierGroupsSeeded() { return modifierGroupsSeeded; }
+    public void markModifierGroupsSeeded() { this.modifierGroupsSeeded = true; }
+    public Map<String, Long> modifierGroupIdsByCode() { return modifierGroupIdsByCode; }
+    public void addModifierGroupEvent(ModifierGroupEvent e) { dirtyModifierGroups.add(e); }
+    public List<ModifierGroupEvent> getDirtyModifierGroups() { return dirtyModifierGroups; }
+    public void addModifierOptionEvent(ModifierOptionEvent e) { dirtyModifierOptions.add(e); }
+    public List<ModifierOptionEvent> getDirtyModifierOptions() { return dirtyModifierOptions; }
+    public void addProductModifierGroupEvent(ProductModifierGroupEvent e) { dirtyProductModifierGroups.add(e); }
+    public List<ProductModifierGroupEvent> getDirtyProductModifierGroups() { return dirtyProductModifierGroups; }
+    public void addProductVariantEvent(ProductVariantEvent e) { dirtyProductVariants.add(e); }
+    public List<ProductVariantEvent> getDirtyProductVariants() { return dirtyProductVariants; }
+    public void addProductAllergenEvent(ProductAllergenEvent e) { dirtyProductAllergens.add(e); }
+    public List<ProductAllergenEvent> getDirtyProductAllergens() { return dirtyProductAllergens; }
+    public void addStockReservationEvent(StockReservationEvent e) { dirtyStockReservations.add(e); }
+    public List<StockReservationEvent> getDirtyStockReservations() { return dirtyStockReservations; }
+    public void addShiftRoleRequirementEvent(ShiftRoleRequirementEvent e) { dirtyShiftRoleRequirements.add(e); }
+    public List<ShiftRoleRequirementEvent> getDirtyShiftRoleRequirements() { return dirtyShiftRoleRequirements; }
 }

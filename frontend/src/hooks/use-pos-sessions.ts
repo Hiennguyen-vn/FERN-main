@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import { toast } from 'sonner';
 import { getErrorMessage } from '@/api/decoders';
 import { orgApi, salesApi, type PosSessionView } from '@/api/fern-api';
@@ -116,7 +117,7 @@ export function usePOSSessions() {
       return null;
     }
 
-    const businessDate = new Date().toISOString().slice(0, 10);
+    const businessDate = todayLocalISO();
     const sessionCode = `POS-${businessDate.replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`;
 
     try {

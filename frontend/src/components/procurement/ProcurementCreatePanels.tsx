@@ -46,6 +46,7 @@ type GoodsReceiptDraftLine = {
   unitCost: string;
   manufactureDate: string;
   expiryDate: string;
+  batchNo: string;
   note: string;
 };
 
@@ -63,6 +64,16 @@ type InvoiceDraftLine = {
   taxPercent: string;
   note: string;
 };
+
+/**
+ * Local-timezone today (`YYYY-MM-DD`). Avoids `toISOString()` UTC drift
+ * that pre-fills tomorrow's date when user is in UTC+7 evening.
+ */
+function todayLocalISO(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 function createDraftKey(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -165,12 +176,13 @@ function createGoodsReceiptLine(items: ItemView[]): GoodsReceiptDraftLine {
     unitCost: '0',
     manufactureDate: '',
     expiryDate: '',
+    batchNo: '',
     note: '',
   };
 }
 
 function createInvoiceNumber() {
-  return `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Date.now().toString().slice(-6)}`;
+  return `INV-${todayLocalISO().replace(/-/g, '')}-${Date.now().toString().slice(-6)}`;
 }
 
 function SectionLabel({ children }: { children: string }) {
@@ -221,7 +233,7 @@ export function PurchaseOrderCreatePanel({
   const [form, setForm] = useState({
     supplierId: '',
     currencyCode: normalizeCurrencyCode(scopeCurrencyCode),
-    orderDate: new Date().toISOString().slice(0, 10),
+    orderDate: todayLocalISO(),
     expectedDeliveryDate: '',
     note: '',
   });
@@ -291,7 +303,7 @@ export function PurchaseOrderCreatePanel({
       setForm({
         supplierId: '',
         currencyCode: normalizeCurrencyCode(scopeCurrencyCode),
-        orderDate: new Date().toISOString().slice(0, 10),
+        orderDate: todayLocalISO(),
         expectedDeliveryDate: '',
         note: '',
       });
@@ -486,7 +498,7 @@ export function GoodsReceiptCreatePanel({
   const [form, setForm] = useState({
     poId: '',
     currencyCode: normalizeCurrencyCode(scopeCurrencyCode),
-    businessDate: new Date().toISOString().slice(0, 10),
+    businessDate: todayLocalISO(),
     supplierLotNumber: '',
     note: '',
   });
@@ -566,6 +578,7 @@ export function GoodsReceiptCreatePanel({
               unitCost: toInputNumber(line.expectedUnitPrice, '0'),
               manufactureDate: '',
               expiryDate: '',
+              batchNo: '',
               note: String(line.note || ''),
             } satisfies GoodsReceiptDraftLine;
           })
@@ -639,6 +652,7 @@ export function GoodsReceiptCreatePanel({
           unitCost: parseNonNegativeNumber(line.unitCost),
           manufactureDate: line.manufactureDate || null,
           expiryDate: line.expiryDate || null,
+          batchNo: line.batchNo.trim() || null,
           note: line.note.trim() || null,
         })),
       });
@@ -648,7 +662,7 @@ export function GoodsReceiptCreatePanel({
         currencyCode: resolveGoodsReceiptCurrency({
           scopeCurrencyCode,
         }),
-        businessDate: new Date().toISOString().slice(0, 10),
+        businessDate: todayLocalISO(),
         supplierLotNumber: '',
         note: '',
       });
@@ -755,6 +769,7 @@ export function GoodsReceiptCreatePanel({
               <th className="px-3 py-2 text-right text-[11px]">Received</th>
               <th className="px-3 py-2 text-right text-[11px]">Receiving</th>
               <th className="px-3 py-2 text-right text-[11px]">Unit Cost</th>
+              <th className="px-3 py-2 text-left text-[11px]">Batch No</th>
               <th className="px-3 py-2 text-left text-[11px]">Mfg</th>
               <th className="px-3 py-2 text-left text-[11px]">Expiry</th>
               <th className="px-3 py-2 text-left text-[11px]">Note</th>
@@ -766,8 +781,8 @@ export function GoodsReceiptCreatePanel({
                 <td colSpan={8} className="px-3 py-6 text-center text-xs text-muted-foreground">Loading purchase order detail...</td>
               </tr>
             ) : lines.map((line) => (
-              <tr key={line.key} className="border-b last:border-0">
-                <td className="px-3 py-2">
+              <tr key={line.key} className="border-b last:border-0 even:bg-muted/10">
+                <td className="px-3 py-2.5">
                   <div className="min-w-[220px]">
                     <p className="text-sm font-medium">{line.itemName || `Item ${line.itemId || '—'}`}</p>
                     <p className="text-[11px] text-muted-foreground">{line.uomCode} · {shortRef('ITEM', line.itemId)}</p>
@@ -793,6 +808,15 @@ export function GoodsReceiptCreatePanel({
                     className="h-8 w-28 rounded-md border border-input bg-background px-2 text-right text-xs"
                     value={line.unitCost}
                     onChange={(event) => updateLine(line.key, { unitCost: event.target.value })}
+                  />
+                </td>
+                <td className="px-3 py-2">
+                  <input
+                    className="h-8 w-36 min-w-[9rem] rounded-md border border-input bg-background px-2 text-xs font-mono"
+                    value={line.batchNo}
+                    onChange={(event) => updateLine(line.key, { batchNo: event.target.value })}
+                    placeholder="LOT-2026-04-A1"
+                    maxLength={32}
                   />
                 </td>
                 <td className="px-3 py-2">
@@ -861,7 +885,7 @@ export function InvoiceCreatePanel({
   const [form, setForm] = useState({
     linkedReceiptId: '',
     invoiceNumber: createInvoiceNumber(),
-    invoiceDate: new Date().toISOString().slice(0, 10),
+    invoiceDate: todayLocalISO(),
     dueDate: '',
     note: '',
   });
@@ -999,7 +1023,7 @@ export function InvoiceCreatePanel({
       setForm({
         linkedReceiptId: '',
         invoiceNumber: createInvoiceNumber(),
-        invoiceDate: new Date().toISOString().slice(0, 10),
+        invoiceDate: todayLocalISO(),
         dueDate: '',
         note: '',
       });

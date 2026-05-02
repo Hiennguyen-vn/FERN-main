@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { todayLocalISO } from '@/lib/date-format';
 import {
-  Package, ScrollText, ClipboardCheck, Trash2, Loader2, RefreshCw, Search,
+  Package, ScrollText, ClipboardCheck, Trash2, Loader2, RefreshCw, Search, Layers,
 } from 'lucide-react';
+import { reportError } from '@/lib/report-error';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
@@ -42,14 +44,17 @@ import {
 } from '@/components/ui/dialog';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
+import { StockLotPanel } from '@/components/inventory/StockLotPanel';
+import type { StockLotView } from '@/api/inventory-api';
 
-type InventoryTab = 'balances' | 'ledger' | 'counts' | 'waste';
+type InventoryTab = 'balances' | 'ledger' | 'counts' | 'waste' | 'lots';
 
 const TABS: { key: InventoryTab; label: string; icon: React.ElementType }[] = [
   { key: 'balances', label: 'Stock Balances', icon: Package },
   { key: 'ledger', label: 'Ledger', icon: ScrollText },
   { key: 'counts', label: 'Stock Counts', icon: ClipboardCheck },
   { key: 'waste', label: 'Waste', icon: Trash2 },
+  { key: 'lots', label: 'Lot Tracking', icon: Layers },
 ];
 
 function normalizeNumeric(value: string | undefined) {
@@ -136,6 +141,7 @@ function summarizeCountSession(
 export function InventoryModule() {
   const { token, scope } = useShellRuntime();
   const [activeTab, setActiveTab] = useState<InventoryTab>('balances');
+  const [expiringLots, setExpiringLots] = useState<StockLotView[]>([]);
   const [itemsLoading, setItemsLoading] = useState(true);
   const [items, setItems] = useState<ItemView[]>([]);
 
@@ -173,10 +179,10 @@ export function InventoryModule() {
     quantity: '0',
     reason: '',
     note: '',
-    businessDate: new Date().toISOString().slice(0, 10),
+    businessDate: todayLocalISO(),
   });
   const [countForm, setCountForm] = useState({
-    countDate: new Date().toISOString().slice(0, 10),
+    countDate: todayLocalISO(),
     note: '',
   });
   const [countLines, setCountLines] = useState<StockCountDraftLine[]>(() => [createStockCountDraftLine()]);
@@ -248,7 +254,7 @@ export function InventoryModule() {
       const nextItems = await productApi.items(token);
       setItems(Array.isArray(nextItems) ? nextItems : []);
     } catch (error) {
-      console.error('Inventory item catalog load failed', error);
+      reportError(error, 'inventory.items.load');
       setItems([]);
     } finally {
       setItemsLoading(false);
@@ -275,7 +281,7 @@ export function InventoryModule() {
       setBalancesTotal(page.total || page.totalCount || 0);
       setBalancesHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Inventory balances load failed', error);
+      reportError(error, 'inventory.balances.load');
       setBalances([]);
       setBalancesTotal(0);
       setBalancesHasMore(false);
@@ -305,7 +311,7 @@ export function InventoryModule() {
       setLedgerTotal(page.total || page.totalCount || 0);
       setLedgerHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Inventory ledger load failed', error);
+      reportError(error, 'inventory.ledger.load');
       setTransactions([]);
       setLedgerTotal(0);
       setLedgerHasMore(false);
@@ -335,7 +341,7 @@ export function InventoryModule() {
       setCountsTotal(page.total || page.totalCount || 0);
       setCountsHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Inventory count sessions load failed', error);
+      reportError(error, 'inventory.counts.load');
       setCounts([]);
       setCountsTotal(0);
       setCountsHasMore(false);
@@ -365,7 +371,7 @@ export function InventoryModule() {
       setWasteTotal(page.total || page.totalCount || 0);
       setWasteHasMore(page.hasMore || page.hasNextPage || false);
     } catch (error: unknown) {
-      console.error('Waste records load failed', error);
+      reportError(error, 'inventory.waste.load');
       setWasteRecords([]);
       setWasteTotal(0);
       setWasteHasMore(false);
@@ -385,6 +391,25 @@ export function InventoryModule() {
   useEffect(() => {
     void loadItems();
   }, [loadItems]);
+
+  useEffect(() => {
+    if (!token) return;
+    inventoryApi.listStockLots(token, { locationId: outletId || undefined, status: 'ACTIVE', limit: 200 })
+      .then((rows) => {
+        // Local-midnight comparison to avoid TZ off-by-one on date-only strings.
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const cutoffMs = today.getTime() + 7 * 86400000;
+        setExpiringLots(rows.filter((l) => {
+          if (!l.expiresAt) return false;
+          const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(l.expiresAt);
+          if (!m) return false;
+          const ms = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+          return ms <= cutoffMs;
+        }));
+      })
+      .catch(() => setExpiringLots([]));
+  }, [outletId, token]);
 
   useEffect(() => {
     if (activeTab !== 'balances') return;
@@ -545,6 +570,22 @@ export function InventoryModule() {
 
   return (
     <div className="flex flex-col h-full animate-fade-in">
+      {expiringLots.length > 0 && (
+        <button
+          onClick={() => setActiveTab('lots')}
+          className="flex items-center gap-2 px-6 py-2 border-b bg-warning/10 hover:bg-warning/15 text-warning transition-colors text-left"
+        >
+          <Trash2 className="h-3.5 w-3.5 text-warning" />
+          <span className="text-xs font-medium">
+            {expiringLots.length} lô sắp hết hạn trong 7 ngày
+          </span>
+          <span className="text-[10px] text-warning">
+            {expiringLots.slice(0, 3).map((l) => l.batchNo ?? `#${l.id}`).join(', ')}
+            {expiringLots.length > 3 ? ` +${expiringLots.length - 3}` : ''}
+          </span>
+          <span className="ml-auto text-[10px] underline">Xem chi tiết →</span>
+        </button>
+      )}
       <div className="border-b bg-card px-6 flex items-center gap-0 flex-shrink-0">
         {TABS.map((tab) => (
           <button
@@ -1201,6 +1242,12 @@ export function InventoryModule() {
             <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading item catalog...
           </div>
         ) : null}
+
+        {activeTab === 'lots' && (
+          <div className="p-4">
+            <StockLotPanel outletId={outletId || undefined} canEdit />
+          </div>
+        )}
       </div>
 
       <Dialog open={Boolean(selectedCountSessionId)} onOpenChange={(open) => {

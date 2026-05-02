@@ -11,7 +11,6 @@ import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.events.finance.ExpenseRecordCreatedEvent;
 import com.fern.services.finance.api.FinanceDtos;
@@ -40,8 +39,6 @@ class FinanceServiceTest {
   @Mock
   private SnowflakeIdGenerator idGenerator;
   @Mock
-  private TypedKafkaEventPublisher eventPublisher;
-  @Mock
   private AuthorizationPolicyService authorizationPolicyService;
   @Mock
   private ExpenseDocumentStorage expenseDocumentStorage;
@@ -63,14 +60,15 @@ class FinanceServiceTest {
     when(authorizationPolicyService.canWriteFinanceForOutlet(any(), eq(7L))).thenReturn(true);
     when(idGenerator.generateId()).thenReturn(501L);
     when(financeRepository.createOperatingExpense(
-        501L,
-        7L,
-        LocalDate.parse("2026-03-27"),
-        "USD",
-        new BigDecimal("12.50"),
-        "supplies",
-        9L,
-        "Cleaning supplies"
+        eq(501L),
+        eq(7L),
+        eq(LocalDate.parse("2026-03-27")),
+        eq("USD"),
+        eq(new BigDecimal("12.50")),
+        eq("supplies"),
+        eq(9L),
+        eq("Cleaning supplies"),
+        any(ExpenseRecordCreatedEvent.class)
     )).thenReturn(new FinanceRepository.ExpenseRecord(
         501L,
         7L,
@@ -86,7 +84,7 @@ class FinanceServiceTest {
         "Cleaning supplies"
     ));
 
-    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
+    FinanceService service = new FinanceService(financeRepository, idGenerator, authorizationPolicyService, clock);
     FinanceDtos.ExpenseView result = service.createOperatingExpense(new FinanceDtos.CreateOperatingExpenseRequest(
         7L,
         LocalDate.parse("2026-03-27"),
@@ -96,12 +94,9 @@ class FinanceServiceTest {
         "supplies"
     ));
 
-    verify(eventPublisher).publish(
-        eq("fern.finance.expense-record-created"),
-        eq("501"),
-        eq("finance.expense-record-created"),
-        any(ExpenseRecordCreatedEvent.class),
-        any()
+    verify(financeRepository).createOperatingExpense(
+        eq(501L), eq(7L), any(), any(), any(), any(), any(), any(),
+        any(ExpenseRecordCreatedEvent.class)
     );
     assertEquals(501L, result.id());
     assertEquals("operating_expense", result.sourceType());
@@ -115,14 +110,15 @@ class FinanceServiceTest {
     , null, null));
     when(idGenerator.generateId()).thenReturn(502L);
     when(financeRepository.createOtherExpense(
-        502L,
-        7L,
-        LocalDate.parse("2026-03-27"),
-        "USD",
-        new BigDecimal("20.00"),
-        "misc",
-        null,
-        "Bank fee"
+        eq(502L),
+        eq(7L),
+        eq(LocalDate.parse("2026-03-27")),
+        eq("USD"),
+        eq(new BigDecimal("20.00")),
+        eq("misc"),
+        org.mockito.ArgumentMatchers.<Long>isNull(),
+        eq("Bank fee"),
+        any(ExpenseRecordCreatedEvent.class)
     )).thenReturn(new FinanceRepository.ExpenseRecord(
         502L,
         7L,
@@ -138,7 +134,7 @@ class FinanceServiceTest {
         "Bank fee"
     ));
 
-    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
+    FinanceService service = new FinanceService(financeRepository, idGenerator, authorizationPolicyService, clock);
     FinanceDtos.ExpenseView result = service.createOtherExpense(new FinanceDtos.CreateOtherExpenseRequest(
         7L,
         LocalDate.parse("2026-03-27"),
@@ -148,12 +144,9 @@ class FinanceServiceTest {
         "misc"
     ));
 
-    verify(eventPublisher).publish(
-        eq("fern.finance.expense-record-created"),
-        eq("502"),
-        eq("finance.expense-record-created"),
-        any(ExpenseRecordCreatedEvent.class),
-        any()
+    verify(financeRepository).createOtherExpense(
+        eq(502L), eq(7L), any(), any(), any(), any(), any(), any(),
+        any(ExpenseRecordCreatedEvent.class)
     );
     assertEquals("other", result.sourceType());
     assertEquals("other", result.subtype());
@@ -165,7 +158,7 @@ class FinanceServiceTest {
         11L, "workflow.hcm.manager", "sess-11", Set.of("outlet_manager"), Set.of(), Set.of(2000L), true, false, null
     , null, null));
     when(authorizationPolicyService.canReadFinance(any())).thenReturn(false);
-    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
+    FinanceService service = new FinanceService(financeRepository, idGenerator, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.listExpenses(
         2000L,
@@ -201,7 +194,7 @@ class FinanceServiceTest {
         15
     )).thenReturn(PagedResult.of(java.util.List.of(), 500, 15, 0));
 
-    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
+    FinanceService service = new FinanceService(financeRepository, idGenerator, authorizationPolicyService, clock);
     service.listExpenses(
         7L,
         LocalDate.parse("2026-03-01"),
@@ -247,7 +240,7 @@ class FinanceServiceTest {
         "VND"
     )));
 
-    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
+    FinanceService service = new FinanceService(financeRepository, idGenerator, authorizationPolicyService, clock);
     List<FinanceDtos.ExpenseSummaryRow> rows = service.expenseSummary(
         7L,
         LocalDate.parse("2026-03-01"),
@@ -340,7 +333,7 @@ class FinanceServiceTest {
     when(financeRepository.listSupplierInvoiceExpenseDetails(501L)).thenReturn(List.of(invoice));
     when(financeRepository.findInventoryReceiptExpenseDetail(501L)).thenReturn(Optional.empty());
 
-    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
+    FinanceService service = new FinanceService(financeRepository, idGenerator, authorizationPolicyService, clock);
     FinanceDtos.ExpenseDetailView detail = service.getExpenseDetail(501L);
 
     assertEquals(501L, detail.expense().id());
@@ -412,7 +405,6 @@ class FinanceServiceTest {
     FinanceService service = new FinanceService(
         financeRepository,
         idGenerator,
-        eventPublisher,
         authorizationPolicyService,
         clock,
         expenseDocumentStorage,
@@ -449,7 +441,7 @@ class FinanceServiceTest {
         "Cleaning supplies"
     )));
 
-    FinanceService service = new FinanceService(financeRepository, idGenerator, eventPublisher, authorizationPolicyService, clock);
+    FinanceService service = new FinanceService(financeRepository, idGenerator, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.exportExpensePdf(501L));
 

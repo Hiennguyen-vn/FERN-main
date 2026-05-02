@@ -19,12 +19,10 @@ import {
   defaultScope,
   FAMILY_TO_PATH,
   filterAccessibleModules,
-  filterActionHub,
 } from '@/layouts/shell-layout-helpers';
 
-import { ScopeBar } from '@/components/shell/ScopeBar';
+import { ScopeSelector } from '@/components/shell/ScopeSelector';
 
-const QuickActionsPanel = lazy(() => import('@/components/shell/QuickActionsPanel').then((module) => ({ default: module.QuickActionsPanel })));
 const NotificationPanel = lazy(() => import('@/components/shell/NotificationPanel').then((module) => ({ default: module.NotificationPanel })));
 
 const attemptedScopeRecoverySessions = new Set<string>();
@@ -84,6 +82,7 @@ const ROUTE_META: Record<string, { title: string; breadcrumbs: string[] }> = {
   '/promotions': { title: 'Promotions', breadcrumbs: ['Sales', 'Promotions'] },
   '/scheduling': { title: 'Scheduling', breadcrumbs: ['People', 'Scheduling'] },
   '/workforce': { title: 'Workforce', breadcrumbs: ['People', 'Workforce'] },
+  '/profile': { title: 'My Account', breadcrumbs: ['Account', 'Profile'] },
 };
 
 export default function ShellLayout() {
@@ -95,8 +94,8 @@ export default function ShellLayout() {
   const [customScope, setCustomScope] = useState<ShellScope | null>(null);
   const scopeHydratedRef = useRef(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [scopeSelectorOpen, setScopeSelectorOpen] = useState(false);
   const attemptedScopeRecovery = useRef(false);
 
   const hierarchyQuery = useQuery({
@@ -168,8 +167,6 @@ export default function ShellLayout() {
     () => collectAccessibleFamilies(session),
     [session],
   );
-
-  const filteredActionHub = useMemo(() => filterActionHub(session), [session]);
 
   const scopeTree = useMemo<ScopeOption[]>(() => {
     const data = hierarchyQuery.data;
@@ -272,11 +269,24 @@ export default function ShellLayout() {
 
   const shellUser = useMemo(() => buildShellUser(session), [session]);
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        const target = e.target as HTMLElement | null;
+        const tag = target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+        e.preventDefault();
+        setScopeSelectorOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
   const basePath = '/' + location.pathname.split('/')[1];
   const meta = ROUTE_META[basePath] || { title: 'FERN', breadcrumbs: [] };
   const activeFamily = PATH_TO_FAMILY[basePath] as ModuleFamily | undefined;
   const defaultPath = visibleModules[0]?.path || '/dashboard';
-  const showScopeBar = activeFamily !== 'org';
 
   useEffect(() => {
     if (!activeFamily) return;
@@ -346,13 +356,11 @@ export default function ShellLayout() {
       <div className="flex-1 flex flex-col min-w-0">
         <TopBar
           pageTitle={meta.title}
-          breadcrumbs={meta.breadcrumbs}
           scope={currentScope}
           user={shellUser}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-          onOpenScope={() => {}}
-          onOpenQuickActions={() => setQuickActionsOpen(true)}
+          onOpenScope={() => setScopeSelectorOpen(true)}
           onOpenNotifications={() => setNotificationsOpen(true)}
           onLogout={() => {
             void logout().finally(() => navigate('/login'));
@@ -360,29 +368,11 @@ export default function ShellLayout() {
           notificationCount={hierarchyQuery.isError ? 1 : 0}
         />
 
-        {showScopeBar ? (
-          <ScopeBar
-            currentScope={currentScope}
-            scopeTree={scopeTree}
-            onScopeChange={handleScopeChange}
-          />
-        ) : null}
-
         <main className="flex-1 overflow-y-auto flex flex-col">
           <Outlet context={{ scope: currentScope, user: shellUser }} />
         </main>
       </div>
 
-      {quickActionsOpen ? (
-        <Suspense fallback={null}>
-          <QuickActionsPanel
-            open={quickActionsOpen}
-            onClose={() => setQuickActionsOpen(false)}
-            actionHub={filteredActionHub}
-            scope={currentScope}
-          />
-        </Suspense>
-      ) : null}
       {notificationsOpen ? (
         <Suspense fallback={null}>
           <NotificationPanel
@@ -391,6 +381,13 @@ export default function ShellLayout() {
           />
         </Suspense>
       ) : null}
+      <ScopeSelector
+        open={scopeSelectorOpen}
+        onClose={() => setScopeSelectorOpen(false)}
+        currentScope={currentScope}
+        scopeTree={scopeTree}
+        onScopeChange={(newScope) => { handleScopeChange(newScope); setScopeSelectorOpen(false); }}
+      />
     </div>
   );
 }

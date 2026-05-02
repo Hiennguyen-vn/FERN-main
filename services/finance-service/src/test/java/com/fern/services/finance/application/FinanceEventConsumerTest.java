@@ -7,9 +7,9 @@ import static org.mockito.Mockito.when;
 
 import com.fern.common.idempotency.IdempotencyGuard;
 import com.fern.common.idempotency.model.IdempotencyResult;
-import com.fern.common.spring.events.TypedKafkaEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.core.EventEnvelope;
+import com.fern.events.finance.ExpenseRecordCreatedEvent;
 import com.fern.events.payroll.PayrollApprovedEvent;
 import com.fern.events.procurement.InvoiceApprovedEvent;
 import com.fern.services.finance.infrastructure.FinanceRepository;
@@ -33,19 +33,16 @@ class FinanceEventConsumerTest {
   private IdempotencyGuard idempotencyGuard;
   @Mock
   private SnowflakeIdGenerator idGenerator;
-  @Mock
-  private TypedKafkaEventPublisher eventPublisher;
 
   private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
   private final Clock clock = Clock.fixed(Instant.parse("2026-03-27T00:00:00Z"), ZoneOffset.UTC);
 
   @Test
-  void handlePayrollApprovedCreatesExpenseAndPublishesEvent() throws Exception {
+  void handlePayrollApprovedCreatesExpenseViaOutbox() throws Exception {
     FinanceEventConsumer consumer = new FinanceEventConsumer(
         financeRepository,
         idempotencyGuard,
         idGenerator,
-        eventPublisher,
         objectMapper,
         clock
     );
@@ -87,30 +84,24 @@ class FinanceEventConsumerTest {
 
     when(idGenerator.generateId()).thenReturn(501L);
     when(financeRepository.findPayrollExpenseCandidate(77L)).thenReturn(java.util.Optional.of(candidate));
-    when(financeRepository.createPayrollExpense(501L, candidate, null, "Auto-created from approved payroll 77"))
+    when(financeRepository.createPayrollExpense(eq(501L), eq(candidate), org.mockito.ArgumentMatchers.<Long>isNull(),
+        eq("Auto-created from approved payroll 77"), any(ExpenseRecordCreatedEvent.class)))
         .thenReturn(createdExpense);
     when(idempotencyGuard.execute(eq("finance-service"), any(), eq(rawMessage), any(), any()))
         .thenAnswer(invocation -> ((Supplier<IdempotencyResult>) invocation.getArgument(4)).get());
 
     consumer.handlePayrollApproved(rawMessage);
 
-    verify(financeRepository).createPayrollExpense(501L, candidate, null, "Auto-created from approved payroll 77");
-    verify(eventPublisher).publish(
-        eq("fern.finance.expense-record-created"),
-        eq("501"),
-        eq("finance.expense-record-created"),
-        any(),
-        any()
-    );
+    verify(financeRepository).createPayrollExpense(eq(501L), eq(candidate), org.mockito.ArgumentMatchers.<Long>isNull(),
+        eq("Auto-created from approved payroll 77"), any(ExpenseRecordCreatedEvent.class));
   }
 
   @Test
-  void handleInvoiceApprovedCreatesInventoryExpenseAndPublishesEvent() throws Exception {
+  void handleInvoiceApprovedCreatesInventoryExpenseViaOutbox() throws Exception {
     FinanceEventConsumer consumer = new FinanceEventConsumer(
         financeRepository,
         idempotencyGuard,
         idGenerator,
-        eventPublisher,
         objectMapper,
         clock
     );
@@ -152,20 +143,17 @@ class FinanceEventConsumerTest {
 
     when(idGenerator.generateId()).thenReturn(601L);
     when(financeRepository.findGoodsReceiptExpenseCandidate(501L)).thenReturn(java.util.Optional.of(candidate));
-    when(financeRepository.createInventoryPurchaseExpense(601L, candidate, null, "Auto-created from supplier invoice 301"))
+    when(financeRepository.createInventoryPurchaseExpense(eq(601L), eq(candidate),
+        org.mockito.ArgumentMatchers.<Long>isNull(), eq("Auto-created from supplier invoice 301"),
+        any(ExpenseRecordCreatedEvent.class)))
         .thenReturn(createdExpense);
     when(idempotencyGuard.execute(eq("finance-service"), any(), eq(rawMessage), any(), any()))
         .thenAnswer(invocation -> ((Supplier<IdempotencyResult>) invocation.getArgument(4)).get());
 
     consumer.handleInvoiceApproved(rawMessage);
 
-    verify(financeRepository).createInventoryPurchaseExpense(601L, candidate, null, "Auto-created from supplier invoice 301");
-    verify(eventPublisher).publish(
-        eq("fern.finance.expense-record-created"),
-        eq("601"),
-        eq("finance.expense-record-created"),
-        any(),
-        any()
-    );
+    verify(financeRepository).createInventoryPurchaseExpense(eq(601L), eq(candidate),
+        org.mockito.ArgumentMatchers.<Long>isNull(), eq("Auto-created from supplier invoice 301"),
+        any(ExpenseRecordCreatedEvent.class));
   }
 }

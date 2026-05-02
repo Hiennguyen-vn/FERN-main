@@ -75,7 +75,7 @@ class AuthMiddlewareTest {
                 token -> {
                     throw new AssertionError("Token verifier should not be invoked for this request");
                 },
-                "dorabets_session",
+                "fern_session",
                 new InternalServiceAuth(INTERNAL_TOKEN)
         );
     }

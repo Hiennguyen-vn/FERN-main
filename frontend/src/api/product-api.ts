@@ -289,6 +289,16 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+/**
+ * Safe-coerce raw API response into a typed view. Throws if response is not an object.
+ * Use only for types that mirror backend DTOs 1:1 and don't need field decoding.
+ */
+function coerceObject<T>(value: unknown, label: string): T {
+  const record = asRecord(value);
+  if (!record) throw new Error(`Expected object response for ${label}`);
+  return record as unknown as T;
+}
+
 function decodeProduct(value: unknown): ProductView {
   const record = asRecord(value) ?? {};
   return {
@@ -616,36 +626,36 @@ export const productApi = {
   },
 
   menu: async (token: string, menuId: string): Promise<MenuView> =>
-    asRecord(await apiRequest(`/api/v1/product/menus/${menuId}`, { token })) as unknown as MenuView,
+    coerceObject<MenuView>(await apiRequest(`/api/v1/product/menus/${menuId}`, { token }), "menu"),
 
   createMenu: async (
     token: string,
     payload: { code: string; name: string; description?: string; scopeType?: string; scopeId?: string },
   ): Promise<MenuView> =>
-    asRecord(await apiRequest('/api/v1/product/menus', { method: 'POST', token, body: payload })) as unknown as MenuView,
+    coerceObject<MenuView>(await apiRequest("/api/v1/product/menus", { method: "POST", token, body: payload }), "createMenu"),
 
   updateMenu: async (
     token: string,
     menuId: string,
     payload: { name?: string; description?: string; status?: string },
   ): Promise<MenuView> =>
-    asRecord(await apiRequest(`/api/v1/product/menus/${menuId}`, { method: 'PUT', token, body: payload })) as unknown as MenuView,
+    coerceObject<MenuView>(await apiRequest(`/api/v1/product/menus/${menuId}`, { method: 'PUT', token, body: payload }), 'updateMenu'),
 
   addMenuCategory: async (
     token: string,
     menuId: string,
     payload: { code: string; name: string; displayOrder?: number },
   ): Promise<MenuCategoryView> =>
-    asRecord(await apiRequest(`/api/v1/product/menus/${menuId}/categories`, { method: 'POST', token, body: { ...payload, displayOrder: payload.displayOrder ?? 0 } })) as unknown as MenuCategoryView,
+    coerceObject<MenuCategoryView>(await apiRequest(`/api/v1/product/menus/${menuId}/categories`, { method: 'POST', token, body: { ...payload, displayOrder: payload.displayOrder ?? 0 } }), 'addMenuCategory'),
 
   addMenuItem: async (
     token: string,
     categoryId: string,
     payload: { productId: string; displayOrder?: number },
   ): Promise<MenuItemView> =>
-    asRecord(await apiRequest(`/api/v1/product/menus/categories/${categoryId}/items`, {
+    coerceObject<MenuItemView>(await apiRequest(`/api/v1/product/menus/categories/${categoryId}/items`, {
       method: 'POST', token, body: { productId: toLongValue(payload.productId), displayOrder: payload.displayOrder ?? 0 },
-    })) as unknown as MenuItemView,
+    }), 'addMenuItem'),
 
   removeMenuItem: async (token: string, itemId: string): Promise<void> => {
     await apiRequest(`/api/v1/product/menus/items/${itemId}`, { method: 'DELETE', token });
@@ -671,10 +681,10 @@ export const productApi = {
   },
 
   publishVersion: async (token: string, versionId: string): Promise<PublishVersionView> =>
-    asRecord(await apiRequest(`/api/v1/product/publish/versions/${versionId}`, { token })) as unknown as PublishVersionView,
+    coerceObject<PublishVersionView>(await apiRequest(`/api/v1/product/publish/versions/${versionId}`, { token }), 'publishVersion'),
 
   createPublishVersion: async (token: string, payload: { name: string; description?: string }): Promise<PublishVersionView> =>
-    asRecord(await apiRequest('/api/v1/product/publish/versions', { method: 'POST', token, body: payload })) as unknown as PublishVersionView,
+    coerceObject<PublishVersionView>(await apiRequest('/api/v1/product/publish/versions', { method: 'POST', token, body: payload }), 'createPublishVersion'),
 
   publishItems: async (token: string, versionId: string): Promise<PublishItemView[]> => {
     const result = await apiRequest(`/api/v1/product/publish/versions/${versionId}/items`, { token });
@@ -685,33 +695,33 @@ export const productApi = {
     token: string, versionId: string,
     payload: { entityType: string; entityId: string; changeType: string; scopeType?: string; scopeId?: string; summary: string; beforeSnapshot?: string; afterSnapshot?: string },
   ): Promise<PublishItemView> =>
-    asRecord(await apiRequest(`/api/v1/product/publish/versions/${versionId}/items`, {
+    coerceObject<PublishItemView>(await apiRequest(`/api/v1/product/publish/versions/${versionId}/items`, {
       method: 'POST', token, body: { ...payload, entityId: toLongValue(payload.entityId) },
-    })) as unknown as PublishItemView,
+    }), 'addPublishItem'),
 
   removePublishItem: async (token: string, itemId: string): Promise<void> => {
     await apiRequest(`/api/v1/product/publish/items/${itemId}`, { method: 'DELETE', token });
   },
 
   submitForReview: async (token: string, versionId: string, note?: string): Promise<PublishVersionView> =>
-    asRecord(await apiRequest(`/api/v1/product/publish/versions/${versionId}/submit`, {
+    coerceObject<PublishVersionView>(await apiRequest(`/api/v1/product/publish/versions/${versionId}/submit`, {
       method: 'POST', token, body: { note },
-    })) as unknown as PublishVersionView,
+    }), 'submitForReview'),
 
   reviewDecision: async (token: string, versionId: string, decision: string, note?: string): Promise<PublishVersionView> =>
-    asRecord(await apiRequest(`/api/v1/product/publish/versions/${versionId}/review`, {
+    coerceObject<PublishVersionView>(await apiRequest(`/api/v1/product/publish/versions/${versionId}/review`, {
       method: 'POST', token, body: { decision, note },
-    })) as unknown as PublishVersionView,
+    }), 'reviewDecision'),
 
   publishVersion_publish: async (token: string, versionId: string): Promise<PublishVersionView> =>
-    asRecord(await apiRequest(`/api/v1/product/publish/versions/${versionId}/publish`, {
+    coerceObject<PublishVersionView>(await apiRequest(`/api/v1/product/publish/versions/${versionId}/publish`, {
       method: 'POST', token,
-    })) as unknown as PublishVersionView,
+    }), 'publishVersion_publish'),
 
   rollbackVersion: async (token: string, versionId: string, reason?: string): Promise<PublishVersionView> =>
-    asRecord(await apiRequest(`/api/v1/product/publish/versions/${versionId}/rollback`, {
+    coerceObject<PublishVersionView>(await apiRequest(`/api/v1/product/publish/versions/${versionId}/rollback`, {
       method: 'POST', token, body: { reason },
-    })) as unknown as PublishVersionView,
+    }), 'rollbackVersion'),
 
   // ── Audit Log ───────────────────────────────────────────
 
@@ -723,7 +733,7 @@ export const productApi = {
   },
 
   createVariant: async (token: string, payload: { productId: string; code: string; name: string; priceModifierType?: string; priceModifierValue?: number; displayOrder?: number }): Promise<VariantView> =>
-    asRecord(await apiRequest('/api/v1/product/variants', { method: 'POST', token, body: { ...payload, productId: toLongValue(payload.productId), displayOrder: payload.displayOrder ?? 0 } })) as unknown as VariantView,
+    coerceObject<VariantView>(await apiRequest('/api/v1/product/variants', { method: 'POST', token, body: { ...payload, productId: toLongValue(payload.productId), displayOrder: payload.displayOrder ?? 0 } }), 'createVariant'),
 
   deleteVariant: async (token: string, variantId: string): Promise<void> => {
     await apiRequest(`/api/v1/product/variants/${variantId}`, { method: 'DELETE', token });
@@ -735,10 +745,10 @@ export const productApi = {
   },
 
   createModifierGroup: async (token: string, payload: { code: string; name: string; selectionType?: string; minSelections?: number; maxSelections?: number }): Promise<ModifierGroupView> =>
-    asRecord(await apiRequest('/api/v1/product/modifier-groups', { method: 'POST', token, body: { ...payload, minSelections: payload.minSelections ?? 0, maxSelections: payload.maxSelections ?? 1 } })) as unknown as ModifierGroupView,
+    coerceObject<ModifierGroupView>(await apiRequest('/api/v1/product/modifier-groups', { method: 'POST', token, body: { ...payload, minSelections: payload.minSelections ?? 0, maxSelections: payload.maxSelections ?? 1 } }), 'createModifierGroup'),
 
   addModifierOption: async (token: string, groupId: string, payload: { code: string; name: string; priceAdjustment?: number; displayOrder?: number }): Promise<ModifierOptionView> =>
-    asRecord(await apiRequest(`/api/v1/product/modifier-groups/${groupId}/options`, { method: 'POST', token, body: { ...payload, priceAdjustment: payload.priceAdjustment ?? 0, displayOrder: payload.displayOrder ?? 0 } })) as unknown as ModifierOptionView,
+    coerceObject<ModifierOptionView>(await apiRequest(`/api/v1/product/modifier-groups/${groupId}/options`, { method: 'POST', token, body: { ...payload, priceAdjustment: payload.priceAdjustment ?? 0, displayOrder: payload.displayOrder ?? 0 } }), 'addModifierOption'),
 
   deleteModifierOption: async (token: string, optionId: string): Promise<void> => {
     await apiRequest(`/api/v1/product/modifier-options/${optionId}`, { method: 'DELETE', token });
@@ -748,4 +758,18 @@ export const productApi = {
     const result = await apiRequest('/api/v1/product/audit-log', { token, query });
     return Array.isArray(result) ? result.map(decodeCatalogAuditLog) : [];
   },
+
+  listFoodCosts: async (token: string, productId?: string | number): Promise<FoodCostView[]> => {
+    const result = await apiRequest('/api/v1/product/food-costs', { token, query: productId ? { productId } : undefined });
+    return Array.isArray(result) ? result as FoodCostView[] : [];
+  },
 };
+
+export interface FoodCostView {
+  productId: number;
+  version: number;
+  theoreticalCost: number | null;
+  costPerYieldUnit: number | null;
+  sellPrice: number | null;
+  foodCostPercent: number | null;
+}

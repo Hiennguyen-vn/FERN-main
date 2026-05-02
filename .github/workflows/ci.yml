@@ -27,6 +27,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: SQL migration and regression tests
         run: ./db/scripts/run_sql_tests.sh
+      - name: Migration safety lint
+        run: ./db/scripts/migrate-safe.sh --lint
 
   frontend:
     runs-on: ubuntu-latest

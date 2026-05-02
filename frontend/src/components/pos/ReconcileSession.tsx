@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import type { PaymentMethod, POSSession } from '@/types/pos';
 import { PAYMENT_METHOD_LABELS } from '@/constants/pos';
 import { cn } from '@/lib/utils';
+import { formatPosCurrency } from '@/components/pos/sale-order-utils';
 
 interface Props {
   session: POSSession;
@@ -96,10 +97,10 @@ export function ReconcileSession({
             <AlertTriangle className="h-4 w-4 text-warning flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-xs font-medium text-foreground">
-                Outstanding revenue: ${session.outstandingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                Outstanding revenue: {formatPosCurrency(session.outstandingAmount, session.currencyCode)}
               </p>
               <p className="text-[11px] text-muted-foreground mt-0.5">
-                Billed ${session.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} but only ${session.totalCollected.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} collected via payments. Reconcile only records collected amounts — resolve unpaid orders before closing.
+                Billed {formatPosCurrency(session.totalRevenue, session.currencyCode)} but only {formatPosCurrency(session.totalCollected, session.currencyCode)} collected via payments. Reconcile only records collected amounts — resolve unpaid orders before closing.
               </p>
             </div>
           </div>
@@ -136,7 +137,7 @@ export function ReconcileSession({
                       <td className="px-5 py-3 text-sm font-medium text-foreground capitalize">
                         {PAYMENT_METHOD_LABELS[row.method] || row.method}
                       </td>
-                      <td className="px-5 py-3 text-sm text-muted-foreground text-right">${row.expected.toFixed(2)}</td>
+                      <td className="px-5 py-3 text-sm text-muted-foreground text-right">{formatPosCurrency(row.expected, session.currencyCode)}</td>
                       <td className="px-5 py-3 text-right">
                         <Input
                           type="number"
@@ -159,8 +160,8 @@ export function ReconcileSession({
               <tfoot>
                 <tr className="border-t bg-muted/20">
                   <td className="px-5 py-3 text-sm font-semibold text-foreground">Total</td>
-                  <td className="px-5 py-3 text-sm font-semibold text-foreground text-right">${totalExpected.toFixed(2)}</td>
-                  <td className="px-5 py-3 text-sm font-semibold text-foreground text-right">${totalActual.toFixed(2)}</td>
+                  <td className="px-5 py-3 text-sm font-semibold text-foreground text-right">{formatPosCurrency(totalExpected, session.currencyCode)}</td>
+                  <td className="px-5 py-3 text-sm font-semibold text-foreground text-right">{formatPosCurrency(totalActual, session.currencyCode)}</td>
                   <td className={cn(
                     'px-5 py-3 text-sm font-semibold text-right',
                     !hasDiscrepancy ? 'text-muted-foreground' : discrepancy > 0 ? 'text-success' : 'text-destructive'
@@ -178,7 +179,7 @@ export function ReconcileSession({
           <div className="flex items-start gap-2.5 px-3 py-3 rounded-lg bg-warning/8 border border-warning/15">
             <AlertTriangle className="h-4 w-4 text-warning flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-medium text-foreground">Discrepancy detected: ${Math.abs(discrepancy).toFixed(2)}</p>
+              <p className="text-xs font-medium text-foreground">Discrepancy detected: {formatPosCurrency(Math.abs(discrepancy), session.currencyCode)}</p>
               <p className="text-[11px] text-muted-foreground mt-0.5">
                 {discrepancy < 0 ? 'Actual collection is less than expected.' : 'Actual collection exceeds expected.'} Add a note for audit purposes.
               </p>

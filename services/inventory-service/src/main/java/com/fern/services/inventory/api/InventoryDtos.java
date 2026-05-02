@@ -126,4 +126,37 @@ public final class InventoryDtos {
       BigDecimal varianceValue
   ) {
   }
+
+  public record StockLotView(
+      long id,
+      long itemId,
+      long locationId,
+      String batchNo,
+      String lotCode,
+      Instant receivedAt,
+      java.time.LocalDate expiresAt,
+      BigDecimal qtyReceived,
+      BigDecimal qtyRemaining,
+      BigDecimal unitCost,
+      Long supplierId,
+      Long goodsReceiptId,
+      String status,
+      String notes,
+      Instant createdAt
+  ) {
+  }
+
+  public record CreateStockLotRequest(
+      @NotNull long itemId,
+      @NotNull long locationId,
+      String batchNo,
+      String lotCode,
+      java.time.LocalDate expiresAt,
+      @NotNull BigDecimal qtyReceived,
+      BigDecimal unitCost,
+      Long supplierId,
+      Long goodsReceiptId,
+      String notes
+  ) {
+  }
 }

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import type { ShellScope } from '@/types/shell';
 import { cn } from '@/lib/utils';
 import { useDashboardData } from '@/hooks/use-dashboard-data';
+import { formatPosCurrency } from '@/components/pos/sale-order-utils';
 
 const BUSINESS_DATE = new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -178,8 +179,8 @@ export function OutletDashboard({ scope }: OutletDashboardProps) {
           badge={kpis.activeSessions > 0 ? 'Live' : undefined}
         />
         <KpiCard label="Total Orders" value={String(kpis.totalOrders)} icon={ShoppingBag} />
-        <KpiCard label="Revenue" value={`$${kpis.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={DollarSign} accent="success" />
-        <KpiCard label="Avg Order Value" value={`$${kpis.avgOrderValue.toFixed(2)}`} icon={TrendingUp} />
+        <KpiCard label="Revenue" value={formatPosCurrency(kpis.totalRevenue, kpis.currencyCode)} icon={DollarSign} accent="success" />
+        <KpiCard label="Avg Order Value" value={formatPosCurrency(kpis.avgOrderValue, kpis.currencyCode)} icon={TrendingUp} />
         <KpiCard
           label="Low Stock Alerts"
           value={String(kpis.lowStockCount)}
@@ -281,7 +282,7 @@ export function OutletDashboard({ scope }: OutletDashboardProps) {
                       <td className="px-4 py-2.5 text-sm font-medium text-foreground">{o.order_number}</td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground capitalize">{o.order_type || '—'}</td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground">{o.table_number || '—'}</td>
-                      <td className="px-4 py-2.5 text-sm text-right font-medium text-foreground">${o.total.toFixed(2)}</td>
+                      <td className="px-4 py-2.5 text-sm text-right font-medium text-foreground">{formatPosCurrency(o.total, kpis.currencyCode)}</td>
                       <td className="px-4 py-2.5">
                         <span className={cn(
                           'text-[10px] font-medium px-2 py-0.5 rounded-full',
@@ -308,11 +309,11 @@ export function OutletDashboard({ scope }: OutletDashboardProps) {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">Total Revenue</span>
-                <span className="text-sm font-semibold text-foreground">${kpis.totalRevenue.toFixed(2)}</span>
+                <span className="text-sm font-semibold text-foreground">{formatPosCurrency(kpis.totalRevenue, kpis.currencyCode)}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">Avg Order Value</span>
-                <span className="text-sm font-medium text-foreground">${kpis.avgOrderValue.toFixed(2)}</span>
+                <span className="text-sm font-medium text-foreground">{formatPosCurrency(kpis.avgOrderValue, kpis.currencyCode)}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">Completed Orders</span>

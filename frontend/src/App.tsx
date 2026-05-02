@@ -33,6 +33,7 @@ const PromotionsModule = lazy(() => import("@/components/promotions/PromotionsMo
 // SchedulingModule absorbed into WorkforceModule — redirect kept for backward compat
 const WorkforceModule = lazy(() => import("@/components/workforce/WorkforceModule").then((m) => ({ default: m.WorkforceModule })));
 const PosOrderGate = lazy(() => import("./routes/pos-order/guards/PosOrderGate"));
+const ProfilePage = lazy(() => import("@/components/profile/ProfilePage").then((m) => ({ default: m.ProfilePage })));
 
 const PERSISTED_QUERY_PREFIXES = [
   ['sales', 'monthlyRevenue'],
@@ -159,9 +160,38 @@ function LoginRoute() {
   const { session, loading } = useAuth();
   if (loading) return null;
   if (session?.accessToken) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={resolveLandingPath(session)} replace />;
   }
   return <Login />;
+}
+
+function RootRedirect() {
+  const { session, loading } = useAuth();
+  if (loading) return null;
+  if (!session?.accessToken) return <Navigate to="/login" replace />;
+  return <Navigate to={resolveLandingPath(session)} replace />;
+}
+
+function resolveLandingPath(session: { rolesByOutlet?: Record<string, string[]> }): string {
+  const rbo = session.rolesByOutlet ?? {};
+  const ALIASES: Record<string, string> = {
+    cashier: 'staff', staff_pos: 'staff', procurement_officer: 'procurement',
+    hr_manager: 'hr', finance_manager: 'finance', finance_approver: 'finance',
+    regional_finance: 'finance', accountant: 'finance', regional_manager: 'region_manager',
+    system_admin: 'admin', technical_admin: 'admin',
+  };
+  const canonical = new Set<string>();
+  for (const list of Object.values(rbo)) {
+    for (const r of (list ?? [])) canonical.add(ALIASES[r] ?? r);
+  }
+  const isManager = canonical.has('superadmin') || canonical.has('admin')
+    || canonical.has('region_manager') || canonical.has('outlet_manager');
+  const isStaffOnly = !isManager && canonical.has('staff');
+  if (isStaffOnly) {
+    const outletIds = Object.keys(rbo);
+    return outletIds.length === 1 ? `/posorder?outlet=${outletIds[0]}` : '/posorder';
+  }
+  return '/dashboard';
 }
 
 const App = () => (
@@ -176,7 +206,7 @@ const App = () => (
             <Route path="/order/:tableToken" element={<LazyRoute><PublicOrderPage /></LazyRoute>} />
             <Route path="/posorder" element={<LazyRoute><PosOrderGate /></LazyRoute>} />
 
-            <Route element={<ProtectedShell />}>
+            <Route element={<ModuleErrorBoundary><ProtectedShell /></ModuleErrorBoundary>}>
               <Route path="/dashboard" element={<LazyRoute><DashboardPage /></LazyRoute>} />
               <Route path="/pos" element={<LazyRoute><PosRoleRedirect><POSPage /></PosRoleRedirect></LazyRoute>} />
               <Route path="/inventory" element={<LazyRoute><InventoryModule /></LazyRoute>} />
@@ -196,10 +226,11 @@ const App = () => (
               <Route path="/promotions" element={<LazyRoute><PromotionsModule /></LazyRoute>} />
               <Route path="/scheduling" element={<Navigate to="/workforce" replace />} />
               <Route path="/workforce" element={<LazyRoute><WorkforceModule /></LazyRoute>} />
+              <Route path="/profile" element={<LazyRoute><ProfilePage /></LazyRoute>} />
             </Route>
 
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/shell" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<RootRedirect />} />
+            <Route path="/shell" element={<RootRedirect />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

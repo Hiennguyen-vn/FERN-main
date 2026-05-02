@@ -13,20 +13,35 @@ import org.springframework.stereotype.Component;
 /**
  * Stateless salary calculation engine.
  *
- * <p>Formula:
+ * <p>Gross formula:
  * <ul>
- *   <li><b>part_time / seasonal / contractor — hourly:</b> netSalary = workHours × baseSalary</li>
- *   <li><b>part_time / seasonal / contractor — daily:</b>  netSalary = workDays × baseSalary</li>
- *   <li><b>full_time — monthly:</b> basePay = baseSalary;
- *       overtimePay = overtimeHours × (baseSalary / standardHoursPerMonth) × overtimeRate</li>
- *   <li><b>full_time — hourly/daily:</b> same as part_time logic</li>
+ *   <li>part_time / seasonal / contractor — hourly: basePay = workHours × baseSalary</li>
+ *   <li>part_time / seasonal / contractor — daily:  basePay = workDays × baseSalary</li>
+ *   <li>full_time — monthly: basePay = baseSalary; overtimePay = overtimeHours × (baseSalary / standardHoursPerMonth) × overtimeRate</li>
+ *   <li>full_time — hourly/daily: same as part_time logic</li>
  * </ul>
- * All calculations use {@link RoundingMode#HALF_UP} with scale 2.
+ *
+ * <p>Statutory deductions (Vietnam, applied for {@code full_time} only):
+ * <ul>
+ *   <li>Social insurance (BHXH): 8% of gross</li>
+ *   <li>Health insurance (BHYT): 1.5% of gross</li>
+ *   <li>Unemployment insurance (BHTN): 1% of gross</li>
+ *   <li>Personal income tax (TNCN): progressive on (gross − insurance − personal allowance 11M VND).
+ *       Dependents not modeled — personal allowance only.</li>
+ * </ul>
+ * Non-{@code full_time} employees (part_time / seasonal / contractor) are exempt:
+ * net = gross. This matches Vietnamese practice where insurance is mandatory only for
+ * indefinite or fixed-term {@code >=} 3-month full-time labor contracts.
  */
 @Component
 public class SalaryCalculator {
 
   private static final Logger log = LoggerFactory.getLogger(SalaryCalculator.class);
+
+  private static final BigDecimal SOCIAL_INSURANCE_RATE = new BigDecimal("0.08");
+  private static final BigDecimal HEALTH_INSURANCE_RATE = new BigDecimal("0.015");
+  private static final BigDecimal UNEMPLOYMENT_INSURANCE_RATE = new BigDecimal("0.01");
+  private static final BigDecimal PERSONAL_ALLOWANCE = new BigDecimal("11000000");
 
   private final BigDecimal standardHoursPerMonth;
 
@@ -36,15 +51,6 @@ public class SalaryCalculator {
     this.standardHoursPerMonth = BigDecimal.valueOf(standardHoursPerMonthConfig);
   }
 
-  /**
-   * Calculates gross salary for the given timesheet using the employee's active contract.
-   *
-   * @param contract          the employee's latest active contract from hr-service
-   * @param timesheet         the payroll timesheet record with aggregated work data
-   * @param requestCurrencyCode the currency requested by the caller (must match contract currency)
-   * @return a {@link PayrollDtos.CalculateSalaryResult} with netSalary and itemised breakdown
-   * @throws com.fern.common.spring.error.ServiceException if currencies mismatch
-   */
   public PayrollDtos.CalculateSalaryResult calculate(
       PayrollDtos.EmployeeContractSummary contract,
       PayrollRepository.PayrollTimesheetRecord timesheet,
@@ -85,7 +91,6 @@ public class SalaryCalculator {
     String method;
 
     if ("full_time".equals(employmentType) && "monthly".equals(salaryType)) {
-      // Full-time monthly: receive full base salary + overtime premium
       basePay = baseSalary.setScale(2, RoundingMode.HALF_UP);
       if (overtimeHours.compareTo(BigDecimal.ZERO) > 0) {
         BigDecimal hourlyRate = baseSalary.divide(standardHoursPerMonth, 10, RoundingMode.HALF_UP);
@@ -95,11 +100,9 @@ public class SalaryCalculator {
       stdHoursUsed = standardHoursPerMonth;
       method = "monthly_with_overtime";
     } else if ("daily".equals(salaryType)) {
-      // Daily rate workers (any employment type)
       basePay = workDays.multiply(baseSalary).setScale(2, RoundingMode.HALF_UP);
       method = "daily";
     } else {
-      // Hourly rate workers (part_time, seasonal, contractor, or full_time-hourly)
       if (!"hourly".equals(salaryType)) {
         log.warn("Unknown salaryType '{}' for userId={}, falling back to hourly calculation",
             salaryType, contract.userId());
@@ -108,7 +111,31 @@ public class SalaryCalculator {
       method = "hourly";
     }
 
-    BigDecimal netSalary = basePay.add(overtimePay).setScale(2, RoundingMode.HALF_UP);
+    BigDecimal grossPay = basePay.add(overtimePay).setScale(2, RoundingMode.HALF_UP);
+
+    boolean applyDeductions = "full_time".equals(employmentType);
+    BigDecimal social = BigDecimal.ZERO;
+    BigDecimal health = BigDecimal.ZERO;
+    BigDecimal unemployment = BigDecimal.ZERO;
+    BigDecimal pit = BigDecimal.ZERO;
+
+    if (applyDeductions) {
+      social = grossPay.multiply(SOCIAL_INSURANCE_RATE).setScale(2, RoundingMode.HALF_UP);
+      health = grossPay.multiply(HEALTH_INSURANCE_RATE).setScale(2, RoundingMode.HALF_UP);
+      unemployment = grossPay.multiply(UNEMPLOYMENT_INSURANCE_RATE).setScale(2, RoundingMode.HALF_UP);
+      BigDecimal afterInsurance = grossPay.subtract(social).subtract(health).subtract(unemployment);
+      BigDecimal taxable = afterInsurance.subtract(PERSONAL_ALLOWANCE);
+      if (taxable.compareTo(BigDecimal.ZERO) > 0) {
+        pit = computeProgressivePit(taxable).setScale(2, RoundingMode.HALF_UP);
+      }
+    }
+
+    BigDecimal totalDeductions = social.add(health).add(unemployment).add(pit)
+        .setScale(2, RoundingMode.HALF_UP);
+    BigDecimal netSalary = grossPay.subtract(totalDeductions).setScale(2, RoundingMode.HALF_UP);
+    if (netSalary.compareTo(BigDecimal.ZERO) < 0) {
+      netSalary = BigDecimal.ZERO;
+    }
 
     PayrollDtos.SalaryBreakdown breakdown = new PayrollDtos.SalaryBreakdown(
         basePay,
@@ -116,16 +143,58 @@ public class SalaryCalculator {
         overtimeHours,
         overtimeRate,
         stdHoursUsed,
-        method
+        method,
+        grossPay,
+        social,
+        health,
+        unemployment,
+        pit,
+        totalDeductions,
+        applyDeductions
     );
 
     return new PayrollDtos.CalculateSalaryResult(
-        baseSalary,
+        basePay,
         netSalary,
         contract.salaryType(),
         contract.employmentType(),
         contract.currencyCode(),
         breakdown
     );
+  }
+
+  /**
+   * Vietnamese personal income tax progressive brackets (monthly taxable income, VND).
+   * Up to 5M: 5%, 5–10M: 10%, 10–18M: 15%, 18–32M: 20%, 32–52M: 25%, 52–80M: 30%, &gt;80M: 35%.
+   */
+  static BigDecimal computeProgressivePit(BigDecimal taxable) {
+    if (taxable == null || taxable.compareTo(BigDecimal.ZERO) <= 0) {
+      return BigDecimal.ZERO;
+    }
+    BigDecimal[][] brackets = {
+        { new BigDecimal("5000000"), new BigDecimal("0.05") },
+        { new BigDecimal("10000000"), new BigDecimal("0.10") },
+        { new BigDecimal("18000000"), new BigDecimal("0.15") },
+        { new BigDecimal("32000000"), new BigDecimal("0.20") },
+        { new BigDecimal("52000000"), new BigDecimal("0.25") },
+        { new BigDecimal("80000000"), new BigDecimal("0.30") },
+    };
+    BigDecimal tax = BigDecimal.ZERO;
+    BigDecimal previousCap = BigDecimal.ZERO;
+    BigDecimal remaining = taxable;
+    for (BigDecimal[] bracket : brackets) {
+      BigDecimal cap = bracket[0];
+      BigDecimal rate = bracket[1];
+      BigDecimal width = cap.subtract(previousCap);
+      if (remaining.compareTo(width) <= 0) {
+        tax = tax.add(remaining.multiply(rate));
+        return tax;
+      }
+      tax = tax.add(width.multiply(rate));
+      remaining = remaining.subtract(width);
+      previousCap = cap;
+    }
+    tax = tax.add(remaining.multiply(new BigDecimal("0.35")));
+    return tax;
   }
 }

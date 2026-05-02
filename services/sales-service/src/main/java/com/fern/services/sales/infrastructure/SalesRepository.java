@@ -53,9 +53,20 @@ public class SalesRepository extends BaseRepository {
   private final SnowflakeIdGenerator snowflakeIdGenerator;
   private final Clock clock;
   private final OutboxWriter outboxWriter;
-  private final SalesPromotionRepository promotionRepository;
   private final SalesPaymentRepository paymentRepository;
   private final SalesSessionRepository sessionRepository;
+  private InventoryAvailabilityClient availabilityClient;
+  private boolean readModeService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setInventoryAvailabilityClient(InventoryAvailabilityClient client) {
+    this.availabilityClient = client;
+  }
+
+  @org.springframework.beans.factory.annotation.Value("${sales.inventory.read-mode:direct}")
+  public void setReadMode(String mode) {
+    this.readModeService = "service".equalsIgnoreCase(mode);
+  }
 
   @Autowired
   public SalesRepository(
@@ -63,7 +74,6 @@ public class SalesRepository extends BaseRepository {
       SnowflakeIdGenerator snowflakeIdGenerator,
       Clock clock,
       OutboxWriter outboxWriter,
-      SalesPromotionRepository promotionRepository,
       SalesPaymentRepository paymentRepository,
       SalesSessionRepository sessionRepository
   ) {
@@ -71,7 +81,6 @@ public class SalesRepository extends BaseRepository {
     this.snowflakeIdGenerator = snowflakeIdGenerator;
     this.clock = clock;
     this.outboxWriter = outboxWriter;
-    this.promotionRepository = promotionRepository;
     this.paymentRepository = paymentRepository;
     this.sessionRepository = sessionRepository == null
         ? new SalesSessionRepository(dataSource, snowflakeIdGenerator, clock, paymentRepository)
@@ -85,7 +94,6 @@ public class SalesRepository extends BaseRepository {
       OutboxWriter outboxWriter
   ) {
     this(dataSource, snowflakeIdGenerator, clock, outboxWriter,
-        new SalesPromotionRepository(dataSource, snowflakeIdGenerator, clock),
         new SalesPaymentRepository(dataSource, clock),
         null);
   }
@@ -630,6 +638,13 @@ public class SalesRepository extends BaseRepository {
     execute(
         "UPDATE core.sale_record SET customer_id = ?, updated_at = NOW() WHERE id = ?",
         customerId, saleId
+    );
+  }
+
+  public void linkOrderingTableToSale(long saleId, Long tableId) {
+    execute(
+        "UPDATE core.sale_record SET ordering_table_id = ?, updated_at = NOW() WHERE id = ?",
+        tableId, saleId
     );
   }
 
@@ -1251,6 +1266,17 @@ public class SalesRepository extends BaseRepository {
   }
 
   public SalesDtos.SaleView cancelSale(long saleId, String reason, Long actorUserId) {
+    return cancelSale(saleId, reason, null, null, null, actorUserId);
+  }
+
+  public SalesDtos.SaleView cancelSale(
+      long saleId,
+      String reason,
+      String reasonCode,
+      Long managerUserId,
+      String voidNote,
+      Long actorUserId
+  ) {
     return executeInTransaction(conn -> {
       LockedSaleRecord lockedSale = lockSale(conn, saleId)
           .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
@@ -1273,29 +1299,105 @@ public class SalesRepository extends BaseRepository {
         }
       }
 
+      // Resolve reason metadata if a structured code is supplied; enforce manager approval.
+      VoidReasonRecord reasonRecord = null;
+      String resolvedReasonCode = reasonCode;
+      if (resolvedReasonCode != null && !resolvedReasonCode.isBlank()) {
+        reasonRecord = loadVoidReason(conn, resolvedReasonCode)
+            .orElseThrow(() -> ServiceException.badRequest("Unknown void reason: " + resolvedReasonCode));
+        if (reasonRecord.requiresManagerApproval && managerUserId == null) {
+          throw ServiceException.badRequest("Manager approval required for reason: " + resolvedReasonCode);
+        }
+        if (reasonRecord.requiresManagerApproval
+            && actorUserId != null
+            && managerUserId != null
+            && managerUserId.equals(actorUserId)) {
+          throw ServiceException.badRequest("Manager approver must differ from cashier");
+        }
+      }
+
       String cancellationNote = buildCancellationNote(lockedSale.note(), reason, actorUserId);
       try (PreparedStatement ps = conn.prepareStatement(
           """
           UPDATE core.sale_record
-          SET status = 'cancelled'::sale_order_status_enum,
-              payment_status = 'unpaid'::payment_status_enum,
-              note = COALESCE(?, note),
-              updated_at = NOW()
+          SET status            = 'cancelled'::sale_order_status_enum,
+              payment_status    = 'unpaid'::payment_status_enum,
+              note              = COALESCE(?, note),
+              void_reason_code  = COALESCE(?, void_reason_code),
+              voided_by         = COALESCE(?, voided_by),
+              voided_at         = COALESCE(voided_at, NOW()),
+              void_approved_by  = COALESCE(?, void_approved_by),
+              void_approved_at  = CASE WHEN ? IS NOT NULL THEN NOW() ELSE void_approved_at END,
+              void_note         = COALESCE(?, void_note),
+              updated_at        = NOW()
           WHERE id = ?
           """
       )) {
         ps.setString(1, cancellationNote);
-        ps.setLong(2, saleId);
+        if (resolvedReasonCode != null) ps.setString(2, resolvedReasonCode); else ps.setNull(2, java.sql.Types.VARCHAR);
+        if (actorUserId != null) ps.setLong(3, actorUserId); else ps.setNull(3, java.sql.Types.BIGINT);
+        if (managerUserId != null) ps.setLong(4, managerUserId); else ps.setNull(4, java.sql.Types.BIGINT);
+        if (managerUserId != null) ps.setLong(5, managerUserId); else ps.setNull(5, java.sql.Types.BIGINT);
+        if (voidNote != null) ps.setString(6, voidNote); else ps.setNull(6, java.sql.Types.VARCHAR);
+        ps.setLong(7, saleId);
         ps.executeUpdate();
       }
       SalesDtos.SaleView cancelled = findSale(conn, saleId)
           .orElseThrow(() -> new IllegalStateException("Cancelled sale not found"));
-      if (inventoryApplied) {
+      if (inventoryApplied && (reasonRecord == null || reasonRecord.reversesInventory)) {
         appendSaleCancelledOutbox(conn, lockedSale, actorUserId, reason);
       }
       return cancelled;
     });
   }
+
+  public java.util.List<SalesDtos.VoidReasonView> listVoidReasons() {
+    return executeInTransaction(conn -> {
+      java.util.List<SalesDtos.VoidReasonView> out = new java.util.ArrayList<>();
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          SELECT code, label, description, requires_manager_approval, reverses_inventory, category, sort_order
+          FROM core.void_reason
+          WHERE active = true
+          ORDER BY sort_order, code
+          """
+      )) {
+        try (ResultSet rs = ps.executeQuery()) {
+          while (rs.next()) {
+            out.add(new SalesDtos.VoidReasonView(
+                rs.getString("code"),
+                rs.getString("label"),
+                rs.getString("description"),
+                rs.getBoolean("requires_manager_approval"),
+                rs.getBoolean("reverses_inventory"),
+                rs.getString("category"),
+                rs.getInt("sort_order")
+            ));
+          }
+        }
+      }
+      return out;
+    });
+  }
+
+  private java.util.Optional<VoidReasonRecord> loadVoidReason(Connection conn, String code) throws SQLException {
+    try (PreparedStatement ps = conn.prepareStatement(
+        "SELECT requires_manager_approval, reverses_inventory FROM core.void_reason WHERE code = ? AND active = true"
+    )) {
+      ps.setString(1, code);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) {
+          return java.util.Optional.of(new VoidReasonRecord(
+              rs.getBoolean("requires_manager_approval"),
+              rs.getBoolean("reverses_inventory")
+          ));
+        }
+        return java.util.Optional.empty();
+      }
+    }
+  }
+
+  private record VoidReasonRecord(boolean requiresManagerApproval, boolean reversesInventory) {}
 
   private void appendSaleCancelledOutbox(
       Connection conn,
@@ -1602,23 +1704,6 @@ public class SalesRepository extends BaseRepository {
     });
   }
 
-  public PagedResult<SalesDtos.PromotionView> listPromotions(
-      Set<Long> outletIds,
-      String status,
-      Instant effectiveAt,
-      String q,
-      String sortBy,
-      String sortDir,
-      int limit,
-      int offset
-  ) {
-    return promotionRepository.listPromotions(outletIds, status, effectiveAt, q, sortBy, sortDir, limit, offset);
-  }
-
-  public Optional<SalesDtos.PromotionView> findPromotion(long promotionId) {
-    return promotionRepository.findPromotion(promotionId);
-  }
-
   private String resolveSaleListSortClause(String sortBy, String sortDir) {
     String key = QueryConventions.normalizeSortBy(sortBy, SALE_LIST_SORT_KEYS, "createdAt");
     String direction = QueryConventions.normalizeSortDir(sortDir);
@@ -1630,18 +1715,6 @@ public class SalesRepository extends BaseRepository {
       case "createdAt" -> "sr.created_at " + direction + ", sr.id " + direction;
       default -> throw new IllegalArgumentException("Unsupported sales sort key");
     };
-  }
-
-  public SalesDtos.PromotionView createPromotion(SalesDtos.CreatePromotionRequest request) {
-    return promotionRepository.createPromotion(request);
-  }
-
-  public SalesDtos.PromotionView updatePromotionStatus(long promotionId, String status) {
-    return promotionRepository.updatePromotionStatus(promotionId, status);
-  }
-
-  public SalesDtos.PromotionView updatePromotion(long promotionId, SalesDtos.UpdatePromotionRequest request) {
-    return promotionRepository.updatePromotion(promotionId, request);
   }
 
   private void validatePublicOrderItems(
@@ -1745,6 +1818,15 @@ public class SalesRepository extends BaseRepository {
       Set<Long> itemIds,
       boolean lockRows
   ) throws Exception {
+    // Feature flag: when sales.inventory.read-mode=service AND not locking, delegate
+    // to inventory-service so we don't hold row locks on core.stock_balance.
+    if (readModeService && !lockRows && availabilityClient != null && !itemIds.isEmpty()) {
+      try {
+        return availabilityClient.available(outletId, new java.util.ArrayList<>(itemIds));
+      } catch (Exception e) {
+        // Fail open to direct DB read; alert via metric in caller's path.
+      }
+    }
     StringBuilder sql = new StringBuilder(
         """
         SELECT item_id, qty_on_hand

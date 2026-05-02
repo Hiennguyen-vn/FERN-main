@@ -18,8 +18,14 @@ public record SimulationConfig(
         ExpansionConfig expansion,
         List<RegionConfig> regions,
         ProbabilityConfig probability,
-        RealismConfig realism
+        RealismConfig realism,
+        CrmConfig crm
 ) {
+    public CrmConfig crmOrDefault() {
+        return crm != null ? crm : CrmConfig.defaults();
+    }
+
+
     public long totalDays() {
         return ChronoUnit.DAYS.between(startDate, endDate) + 1;
     }
@@ -94,6 +100,21 @@ public record SimulationConfig(
             double salePartialRefundChance,
             double saleVoidChance
     ) {}
+
+    public record CrmConfig(
+            boolean enabled,
+            double saleCustomerAttachRate,
+            double newEnrolPerSaleChance,
+            double otpVerifyRate,
+            int pointsPerVnd,
+            double redeemChance,
+            int maxRedeemPercent,
+            double softDeleteChancePerYear
+    ) {
+        public static CrmConfig defaults() {
+            return new CrmConfig(true, 0.30, 0.05, 0.85, 10000, 0.08, 30, 0.01);
+        }
+    }
 
     public record RealismConfig(
             int stockoutCarryoverDays,

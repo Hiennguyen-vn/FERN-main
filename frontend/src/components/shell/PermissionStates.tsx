@@ -164,7 +164,15 @@ export function ScopeRequiredGate({
 }
 
 /** Empty state — no data (distinct from no permission) */
-export function EmptyState({ title, description }: { title: string; description: string }) {
+export function EmptyState({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: { label: string; onClick: () => void };
+}) {
   return (
     <div className="flex-1 flex items-center justify-center p-8">
       <div className="text-center max-w-sm animate-fade-in">
@@ -173,6 +181,14 @@ export function EmptyState({ title, description }: { title: string; description:
         </div>
         <h3 className="text-sm font-semibold text-foreground mb-1">{title}</h3>
         <p className="text-sm text-muted-foreground">{description}</p>
+        {action && (
+          <button
+            onClick={action.onClick}
+            className="mt-4 inline-flex items-center justify-center h-8 px-4 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+          >
+            {action.label}
+          </button>
+        )}
       </div>
     </div>
   );
