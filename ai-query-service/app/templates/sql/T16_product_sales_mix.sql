@@ -1,6 +1,6 @@
 SELECT
     product_id,
-    any(product_name) AS product_name,
+    min(product_name) AS product_name,
     sum(revenue) AS revenue,
     sum(qty)     AS qty,
     sum(revenue) / sum(sum(revenue)) OVER () AS revenue_share

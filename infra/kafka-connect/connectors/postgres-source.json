@@ -2,6 +2,7 @@
   "name": "fern-postgres-source",
   "config": {
     "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "tasks.max": "1",
     "database.hostname": "postgres",
     "database.port": "5432",
     "database.user": "fern",
@@ -11,11 +12,20 @@
     "plugin.name": "pgoutput",
     "slot.name": "debezium_slot",
     "publication.name": "debezium_pub",
+    "publication.autocreate.mode": "filtered",
     "table.include.list": "core.sale_record,core.sale_item,core.payment,core.inventory_transaction,core.product,core.outlet",
     "topic.prefix": "fern.cdc",
-    "transforms": "route",
-    "transforms.route.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+    "snapshot.mode": "initial",
     "key.converter": "org.apache.kafka.connect.json.JsonConverter",
-    "value.converter": "org.apache.kafka.connect.json.JsonConverter"
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter.schemas.enable": "false",
+    "decimal.handling.mode": "double",
+    "time.precision.mode": "connect",
+    "transforms": "unwrap",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.drop.tombstones": "false",
+    "transforms.unwrap.delete.handling.mode": "rewrite",
+    "transforms.unwrap.add.fields": "op,ts_ms,lsn"
   }
 }

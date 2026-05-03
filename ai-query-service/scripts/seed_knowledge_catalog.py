@@ -70,9 +70,12 @@ async def seed_aliases(client: OpenSearch, index: str):
                 },
             })
 
-    # Dynamic outlets from ClickHouse
+    # Dynamic outlets from ClickHouse — use cdc.outlet (current CDC schema) instead of
+    # the legacy fern.dim_outlet dimension table which may contain stale or missing rows.
     ch = get_ch_client()
-    rows = ch.query("SELECT outlet_id, name FROM fern.dim_outlet FINAL").result_rows
+    rows = ch.query(
+        "SELECT id AS outlet_id, name FROM cdc.outlet FINAL WHERE __deleted != 'true'"
+    ).result_rows
     for outlet_id, name in rows:
         aliases = generate_outlet_aliases(name)
         text = " ".join(aliases)

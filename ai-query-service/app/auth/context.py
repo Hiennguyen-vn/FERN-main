@@ -21,11 +21,12 @@ class AuthContext:
 
     @property
     def is_admin(self) -> bool:
-        return "ADMIN" in self.roles
+        return "admin" in self.roles
 
     @property
-    def is_cfo_or_admin(self) -> bool:
-        return bool(self.roles & {"CFO", "ADMIN"})
+    def is_finance_or_admin(self) -> bool:
+        """True for roles with cross-outlet financial read access (finance or admin)."""
+        return bool(self.roles & {"finance", "admin"})
 
 
 def _parse_csv_ints(value: str) -> list[int]:
@@ -49,11 +50,22 @@ def _parse_csv_strings(value: str) -> list[str]:
     return [p.strip() for p in value.split(",") if p.strip()]
 
 
+_TRUSTED_CALLER = "gateway"
+
+
 def parse_auth_headers(
     headers: Mapping[str, str],
     expected_token: str,
 ) -> AuthContext:
-    """Parse X-Internal-* headers từ Gateway. Verify shared secret token."""
+    """
+    Parse X-Internal-* headers injected by the Gateway.
+
+    Security contract:
+    - X-Internal-Token must match the configured shared secret.
+    - X-Internal-Service must equal "gateway". Any other caller (even with a valid token)
+      cannot be trusted to have correctly scoped the user/outlet context, so we reject it
+      to prevent a compromised internal service from forging user identity.
+    """
 
     def _get(name: str) -> str:
         for k, v in headers.items():
@@ -66,6 +78,9 @@ def parse_auth_headers(
 
     if not token or token != expected_token:
         raise AuthError(401, "Invalid or missing X-Internal-Token")
+
+    if service_name.lower() != _TRUSTED_CALLER:
+        raise AuthError(403, "Request must originate from gateway (X-Internal-Service mismatch)")
 
     user_id_raw = _get("X-Internal-User-Id")
     if not user_id_raw:

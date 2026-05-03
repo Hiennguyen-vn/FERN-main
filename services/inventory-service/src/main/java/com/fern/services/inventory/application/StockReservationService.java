@@ -17,6 +17,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -28,6 +30,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class StockReservationService {
+
+  private static final Logger log = LoggerFactory.getLogger(StockReservationService.class);
 
   private final DataSource dataSource;
   private final SnowflakeIdGenerator idGenerator;
@@ -121,12 +125,20 @@ public class StockReservationService {
 
   /** Confirm reservation when sale-approved consumer applies movements. Terminal state. */
   public int confirmForSale(long saleId) {
-    return settleForSale(saleId);
+    int settled = settleForSale(saleId);
+    if (settled == 0) {
+      log.info("reservation already settled on confirm saleId={}", saleId);
+    }
+    return settled;
   }
 
   /** Release reservation when sale-cancelled. Terminal state, no movement applied. */
   public int releaseForSale(long saleId) {
-    return settleForSale(saleId);
+    int settled = settleForSale(saleId);
+    if (settled == 0) {
+      log.info("reservation already settled on release saleId={}", saleId);
+    }
+    return settled;
   }
 
   /** Periodic compaction: settle reservations that are clearly stale (expired or older than 24h with sale advanced). */

@@ -34,6 +34,7 @@ const PromotionsModule = lazy(() => import("@/components/promotions/PromotionsMo
 const WorkforceModule = lazy(() => import("@/components/workforce/WorkforceModule").then((m) => ({ default: m.WorkforceModule })));
 const PosOrderGate = lazy(() => import("./routes/pos-order/guards/PosOrderGate"));
 const ProfilePage = lazy(() => import("@/components/profile/ProfilePage").then((m) => ({ default: m.ProfilePage })));
+const AiQueryModule = lazy(() => import("@/components/ai-query/AiQueryModule").then((m) => ({ default: m.AiQueryModule })));
 
 const PERSISTED_QUERY_PREFIXES = [
   ['sales', 'monthlyRevenue'],
@@ -227,6 +228,7 @@ const App = () => (
               <Route path="/scheduling" element={<Navigate to="/workforce" replace />} />
               <Route path="/workforce" element={<LazyRoute><WorkforceModule /></LazyRoute>} />
               <Route path="/profile" element={<LazyRoute><ProfilePage /></LazyRoute>} />
+              <Route path="/ai-query" element={<LazyRoute><AiQueryModule /></LazyRoute>} />
             </Route>
 
             <Route path="/" element={<RootRedirect />} />

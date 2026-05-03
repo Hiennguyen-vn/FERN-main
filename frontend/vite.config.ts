@@ -37,6 +37,7 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: true,
           secure: false,
+          proxyTimeout: 180_000,
           configure: stripOriginOnProxyReq,
         },
         "/health": {

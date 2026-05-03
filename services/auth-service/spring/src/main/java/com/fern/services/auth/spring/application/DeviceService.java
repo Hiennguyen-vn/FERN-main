@@ -1,6 +1,7 @@
 package com.fern.services.auth.spring.application;
 
 import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.JwtTokenService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
@@ -25,17 +26,20 @@ public class DeviceService {
 
   private final DeviceRepository deviceRepository;
   private final JwtTokenService jwtTokenService;
+  private final AuthorizationPolicyService authorizationPolicyService;
   private final Clock clock;
   private final long deviceTokenTtlSeconds;
 
   public DeviceService(
       DeviceRepository deviceRepository,
       JwtTokenService jwtTokenService,
+      AuthorizationPolicyService authorizationPolicyService,
       Clock clock,
       @Value("${security.device-token.ttl-seconds:7776000}") long deviceTokenTtlSeconds
   ) {
     this.deviceRepository = deviceRepository;
     this.jwtTokenService = jwtTokenService;
+    this.authorizationPolicyService = authorizationPolicyService;
     this.clock = clock;
     this.deviceTokenTtlSeconds = deviceTokenTtlSeconds;
   }
@@ -43,6 +47,10 @@ public class DeviceService {
   /** Manager (user-JWT) creates a short-lived pair token for one device. */
   public AuthDtos.DevicePairTokenResponse issuePairToken(AuthDtos.DevicePairTokenRequest request) {
     RequestUserContext ctx = RequestUserContextHolder.get();
+    if (!authorizationPolicyService.canWriteSalesForOutlet(ctx, request.outletId())) {
+      throw ServiceException.forbidden(
+          "Device pair token issuance denied: no write-sales access for outlet " + request.outletId());
+    }
     long issuedBy = ctx.requireUserId();
 
     String rawToken = TokenUtil.generateRandomToken(32);

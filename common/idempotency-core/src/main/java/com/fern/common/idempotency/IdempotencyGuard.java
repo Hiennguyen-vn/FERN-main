@@ -69,10 +69,22 @@ public class IdempotencyGuard {
                 conn.commit();
             } catch (SQLException e) {
                 conn.rollback();
-                // Unique constraint violation = concurrent insert, retry check
+                // Unique constraint violation = concurrent insert. Poll for the winner's
+                // result so the loser returns the cached response instead of double-executing.
                 if ("23505".equals(e.getSQLState())) {
                     conn.setAutoCommit(true);
-                    IdempotencyResult existing = checkL2(conn, serviceName, idempotencyKey, requestHash);
+                    IdempotencyResult existing = null;
+                    long backoffMs = 25;
+                    for (int attempt = 0; attempt < 6 && existing == null; attempt++) {
+                        existing = checkL2(conn, serviceName, idempotencyKey, requestHash);
+                        if (existing == null) {
+                            try { Thread.sleep(backoffMs); } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                throw new IdempotencyException("Interrupted while resolving idempotency race", ie);
+                            }
+                            backoffMs = Math.min(backoffMs * 2, 400);
+                        }
+                    }
                     if (existing != null) return existing;
                 }
                 throw e;

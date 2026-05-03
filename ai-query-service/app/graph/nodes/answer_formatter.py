@@ -43,8 +43,11 @@ async def answer_formatter(state: GraphState) -> GraphState:
     if state.get("validation_errors") or not state.get("guard_passed", True) or state.get("execution_error"):
         if state.get("execution_error") and state.get("correction_attempts", 0) >= 2:
             state["answer_text"] = "Có lỗi khi truy xuất dữ liệu. Vui lòng thử lại sau."
+            state["response_kind"] = "answer"
         else:
             state["answer_text"] = _refusal(state)
+            if not state.get("response_kind"):
+                state["response_kind"] = "clarification"
         state["citations"] = []
         return state
 
@@ -52,6 +55,7 @@ async def answer_formatter(state: GraphState) -> GraphState:
     if not rows:
         state["answer_text"] = f"Không có dữ liệu phù hợp.\n\n_Dữ liệu tính đến: {now}_"
         state["citations"] = []
+        state["response_kind"] = "answer"
         return state
 
     # Limit rows in prompt to avoid token blow-up
@@ -70,7 +74,14 @@ Viết câu trả lời tiếng Việt theo yêu cầu hệ thống. Thời gian
         user_prompt=user_prompt,
         temperature=0.3,
     )
-    state["answer_text"] = text
+    out = text.rstrip()
+    if state.get("intent") == "export_request":
+        out += (
+            "\n\n_Lưu ý: Có thể tải CSV từ bảng preview dưới câu trả lời (giới hạn số dòng preview). "
+            "Xuất báo cáo đầy đủ / Excel song song chưa được bật._"
+        )
+    state["answer_text"] = out
     state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+    state["response_kind"] = "answer"
     state.setdefault("trace", []).append({"node": "answer_formatter", **usage})
     return state

@@ -24,6 +24,7 @@ class RequestAuthenticationFilterTest {
 
   private static final String JWT_SECRET = "test-jwt-secret-should-be-at-least-32-bytes";
   private static final String INTERNAL_TOKEN = "test-internal-token-should-be-at-least-32";
+  private static final ObjectMapper TEST_OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();
 
   @AfterEach
   void clearRuntimeEnvironment() {
@@ -38,7 +39,8 @@ class RequestAuthenticationFilterTest {
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         mock(AuthSessionService.class),
-        mock(DeviceTokenRegistry.class)
+        mock(DeviceTokenRegistry.class),
+        TEST_OBJECT_MAPPER
     );
 
     HttpServletRequest pairRequest = mock(HttpServletRequest.class);
@@ -70,7 +72,8 @@ class RequestAuthenticationFilterTest {
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         authSessionService,
-        mock(DeviceTokenRegistry.class)
+        mock(DeviceTokenRegistry.class),
+        TEST_OBJECT_MAPPER
     );
 
     HttpServletRequest request = mock(HttpServletRequest.class);
@@ -105,7 +108,8 @@ class RequestAuthenticationFilterTest {
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         mock(AuthSessionService.class),
-        mock(DeviceTokenRegistry.class)
+        mock(DeviceTokenRegistry.class),
+        TEST_OBJECT_MAPPER
     );
 
     HttpServletRequest request = mock(HttpServletRequest.class);
@@ -137,7 +141,8 @@ class RequestAuthenticationFilterTest {
         jwtTokenService,
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         authSessionService,
-        mock(DeviceTokenRegistry.class)
+        mock(DeviceTokenRegistry.class),
+        TEST_OBJECT_MAPPER
     );
 
     String token = jwtTokenService.issueAccessToken(
@@ -174,7 +179,8 @@ class RequestAuthenticationFilterTest {
         jwtTokenService,
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         authSessionService,
-        mock(DeviceTokenRegistry.class)
+        mock(DeviceTokenRegistry.class),
+        TEST_OBJECT_MAPPER
     );
 
     String token = jwtTokenService.issueAccessToken(
@@ -210,7 +216,8 @@ class RequestAuthenticationFilterTest {
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         mock(AuthSessionService.class),
-        mock(DeviceTokenRegistry.class)
+        mock(DeviceTokenRegistry.class),
+        TEST_OBJECT_MAPPER
     );
 
     HttpServletRequest request = mock(HttpServletRequest.class);
@@ -243,7 +250,8 @@ class RequestAuthenticationFilterTest {
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),
         mock(AuthSessionService.class),
-        mock(DeviceTokenRegistry.class)
+        mock(DeviceTokenRegistry.class),
+        TEST_OBJECT_MAPPER
     );
 
     HttpServletRequest request = mock(HttpServletRequest.class);

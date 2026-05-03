@@ -57,10 +57,12 @@ public class MenuService {
   }
 
   public void setExclusion(ProductDtos.SetMenuItemExclusionRequest request) {
+    requireCatalogMutation();
     menuRepository.setExclusion(request);
   }
 
   public void removeExclusion(long menuItemId, long outletId) {
+    requireCatalogMutation();
     menuRepository.removeExclusion(menuItemId, outletId);
   }
 

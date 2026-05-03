@@ -51,7 +51,6 @@ public class SalesService {
   private final PosMetrics posMetrics;
   private com.fern.services.sales.infrastructure.InventoryReservationClient reservationClient;
   private boolean reservationEnabled;
-  private long reservationTtlSeconds = 1800L;
 
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   public void setReservationClient(com.fern.services.sales.infrastructure.InventoryReservationClient client) {
@@ -63,14 +62,15 @@ public class SalesService {
     this.reservationEnabled = enabled;
   }
 
-  @org.springframework.beans.factory.annotation.Value("${sales.reservation.ttl-seconds:1800}")
-  public void setReservationTtlSeconds(long ttl) {
-    this.reservationTtlSeconds = ttl;
-  }
-
   // Optional — wired only in production-context. Tests/legacy ctors leave it null.
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   private LoyaltyService loyaltyService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private PromotionEngine promotionEngine;
+
+  @org.springframework.beans.factory.annotation.Value("${promotion.engine.enabled:true}")
+  private boolean promotionEngineEnabled;
 
   @Autowired
   public SalesService(
@@ -171,12 +171,15 @@ public class SalesService {
     if (request.payment() != null) {
       throw ServiceException.badRequest("Payment is captured with mark-payment-done after order approval");
     }
+    SalesDtos.SubmitSaleRequest enrichedRequest = applyPromotions(request);
     SalesDtos.SaleView view;
     if (idempotencyKey == null || idempotencyKey.isBlank()) {
-      view = salesRepository.submitSale(request);
+      view = salesRepository.submitSale(enrichedRequest);
     } else {
       String normalizedKey = normalizeIdempotencyKey(idempotencyKey);
       String namespace = buildIdempotencyNamespace(context.deviceId(), request.outletId());
+      // Hash from the original client request (pre-promotion enrichment) so that promotion
+      // changes between retries do not alter the hash and silently bypass idempotency.
       String requestBody = serializeForHash(request);
       IdempotencyResult result = idempotencyGuard.execute(
           namespace,
@@ -184,32 +187,81 @@ public class SalesService {
           requestBody,
           TtlPolicy.BET,
           () -> {
-            SalesDtos.SaleView created = salesRepository.submitSale(request);
+            SalesDtos.SaleView created = salesRepository.submitSale(enrichedRequest);
             return IdempotencyResult.created(serializeResponse(created), created.id());
           }
       );
       view = deserializeResponse(result.responseBody());
     }
-    reserveStockIfEnabled(view, request);
+    reserveStockIfEnabled(view, enrichedRequest);
     return view;
+  }
+
+  private SalesDtos.SubmitSaleRequest applyPromotions(SalesDtos.SubmitSaleRequest request) {
+    if (!promotionEngineEnabled || promotionEngine == null) return request;
+    if (request.items() == null || request.items().isEmpty()) return request;
+    java.util.Set<Long> productIds = request.items().stream()
+        .map(SalesDtos.SaleLineRequest::productId)
+        .collect(java.util.stream.Collectors.toSet());
+    java.time.LocalDate businessDate = clock.instant().atZone(java.time.ZoneOffset.UTC).toLocalDate();
+    java.util.Map<Long, java.math.BigDecimal> priceByProduct;
+    try {
+      priceByProduct = salesRepository.resolveUnitPrices(productIds, request.outletId(), businessDate);
+    } catch (RuntimeException e) {
+      log.warn("promotion price lookup failed: {}", e.getMessage());
+      return request;
+    }
+    java.util.List<PromotionEngine.CartLine> cart = new java.util.ArrayList<>();
+    for (SalesDtos.SaleLineRequest line : request.items()) {
+      java.math.BigDecimal price = priceByProduct.get(line.productId());
+      if (price == null) return request;
+      cart.add(new PromotionEngine.CartLine(line.productId(), line.quantity(), price));
+    }
+    PromotionEngine.Allocation allocation;
+    try {
+      allocation = promotionEngine.evaluateForCart(request.outletId(), cart);
+    } catch (RuntimeException e) {
+      log.warn("promotion engine evaluation failed for outlet {}: {}", request.outletId(), e.getMessage());
+      return request;
+    }
+    if (allocation == null || allocation.promotionId() == null
+        || allocation.totalDiscount().signum() <= 0) {
+      return request;
+    }
+    java.util.Map<Long, java.math.BigDecimal> discountByProduct = new java.util.HashMap<>();
+    for (PromotionEngine.LineDiscount ld : allocation.lineDiscounts()) {
+      discountByProduct.merge(ld.productId(), ld.discountAmount(), java.math.BigDecimal::add);
+    }
+    java.util.List<SalesDtos.SaleLineRequest> enriched = new java.util.ArrayList<>(request.items().size());
+    for (SalesDtos.SaleLineRequest line : request.items()) {
+      java.math.BigDecimal extraDiscount = discountByProduct.getOrDefault(line.productId(), java.math.BigDecimal.ZERO);
+      java.math.BigDecimal merged = (line.discountAmount() == null
+          ? java.math.BigDecimal.ZERO
+          : line.discountAmount()).add(extraDiscount);
+      java.util.Set<Long> mergedPromos = new java.util.LinkedHashSet<>();
+      if (line.promotionIds() != null) mergedPromos.addAll(line.promotionIds());
+      mergedPromos.add(allocation.promotionId());
+      enriched.add(new SalesDtos.SaleLineRequest(
+          line.productId(), line.quantity(), merged, line.taxAmount(), line.note(),
+          mergedPromos, line.variantId(), line.variantName(), line.modifierOptionIds()
+      ));
+    }
+    return new SalesDtos.SubmitSaleRequest(
+        request.outletId(), request.posSessionId(), request.currencyCode(),
+        request.orderType(), request.note(), enriched, request.payment()
+    );
   }
 
   private void reserveStockIfEnabled(SalesDtos.SaleView view, SalesDtos.SubmitSaleRequest request) {
     if (!reservationEnabled || reservationClient == null) return;
-    try {
-      long saleId = Long.parseLong(view.id());
-      java.util.List<com.fern.services.sales.infrastructure.InventoryReservationClient.ReserveLine> lines =
-          new java.util.ArrayList<>();
-      if (request.items() != null) {
-        for (SalesDtos.SaleLineRequest line : request.items()) {
-          lines.add(new com.fern.services.sales.infrastructure.InventoryReservationClient.ReserveLine(
-              line.productId(), line.quantity()));
-        }
-      }
-      reservationClient.reserve(request.outletId(), saleId, lines, reservationTtlSeconds);
-    } catch (RuntimeException e) {
-      // Fail open — reservation is advisory, sale-approved consumer still source-of-truth.
-    }
+    // W0.3: BOM resolver not yet implemented. ReserveLine.itemId() must reference core.item,
+    // NOT core.product. Sending productId as itemId corrupts inventory reservations.
+    // Keep sales.reservation.enabled=false until a BomResolver bean is wired in.
+    log.error(
+        "stock-reservation: BOM resolution is required before enabling inventory reservation. "
+        + "productId cannot be used as itemId. sale={} outlet={} — reservation SKIPPED. "
+        + "Set sales.reservation.enabled=false until W0.3 BomResolver is implemented.",
+        view.id(), request.outletId());
   }
 
   private static String buildIdempotencyNamespace(Long deviceId, long outletId) {
@@ -1075,7 +1127,16 @@ public class SalesService {
     java.math.BigDecimal total = salesRepository.findSaleTotal(saleId);
     int points = LoyaltyService.pointsFor(total);
     if (points == 0) return;
-    loyaltyService.earn(customerId, saleId, total);
-    salesRepository.recordPointsEarned(saleId, points);
+    if (!salesRepository.tryClaimLoyaltyEarn(saleId, points)) {
+      // Retry of an already-credited sale: ledger entry already written.
+      return;
+    }
+    try {
+      loyaltyService.earn(customerId, saleId, total);
+    } catch (RuntimeException e) {
+      // Roll back the claim so a subsequent retry can re-attempt the ledger write.
+      salesRepository.recordPointsEarned(saleId, 0);
+      throw e;
+    }
   }
 }

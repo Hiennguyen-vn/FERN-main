@@ -24,9 +24,9 @@ public class DeviceController {
     public ResponseEntity<DeviceDtos.ProvisionResponse> provision(
             @RequestBody DeviceDtos.ProvisionRequest request) {
         var ctx = RequestUserContextHolder.get();
-        // Require manager or admin role
-        if (!authorizationPolicyService.canWriteSales(ctx)) {
-            throw ServiceException.forbidden("Manager role required to provision a device");
+        if (!authorizationPolicyService.canWriteSalesForOutlet(ctx, request.outletId())) {
+            throw ServiceException.forbidden(
+                    "Device provisioning denied: no write-sales access for outlet " + request.outletId());
         }
         return ResponseEntity.ok(deviceService.provision(request));
     }

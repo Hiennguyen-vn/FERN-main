@@ -293,6 +293,21 @@ public class LoyaltyService {
 
   @Transactional
   public boolean verifyOtp(String phone, String code) {
+    // Pad to a fixed floor to flatten timing differences between
+    // hit/miss code paths. OTP usability is unaffected (~120ms is sub-perceptual).
+    long startNanos = System.nanoTime();
+    boolean valid = verifyOtpInternal(phone, code);
+    long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+    long padMs = 120L - elapsedMs;
+    if (padMs > 0) {
+      try { Thread.sleep(padMs); } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+      }
+    }
+    return valid;
+  }
+
+  private boolean verifyOtpInternal(String phone, String code) {
     String hash = sha256(code);
     Instant now = clock.instant();
     String sql = """

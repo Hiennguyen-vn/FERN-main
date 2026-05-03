@@ -1,17 +1,30 @@
 """Role-based access control policies for ai-query-service.
 
-Templates restricted to higher roles. Default = no restriction (any authenticated user).
+Roles use the same lowercase canonical names as the backend (Spring AuthorizationPolicyService).
+Mapping from previous uppercase aliases:
+  CFO          → finance
+  ADMIN        → admin
+  AREA_MANAGER → region_manager
+  OUTLET_MANAGER → outlet_manager
+
+Templates with no entry here are accessible by any authenticated user.
 """
 
+# Canonical role names — kept in sync with backend AuthorizationPolicyService.
+_FINANCE = "finance"
+_ADMIN = "admin"
+_REGION_MANAGER = "region_manager"
+_OUTLET_MANAGER = "outlet_manager"
+
 TEMPLATE_ROLE_RESTRICTIONS: dict[str, frozenset[str]] = {
-    "T24_daily_pnl_summary":      frozenset({"CFO", "ADMIN", "AREA_MANAGER"}),
-    "T25_expense_breakdown":      frozenset({"CFO", "ADMIN", "AREA_MANAGER"}),
-    "T26_goods_receipt_summary":  frozenset({"CFO", "ADMIN", "AREA_MANAGER"}),
-    "T27_payroll_cost_by_outlet": frozenset({"CFO", "ADMIN"}),
+    "T24_daily_pnl_summary":      frozenset({_FINANCE, _ADMIN, _REGION_MANAGER}),
+    "T25_expense_breakdown":      frozenset({_FINANCE, _ADMIN, _REGION_MANAGER}),
+    "T26_goods_receipt_summary":  frozenset({_FINANCE, _ADMIN, _REGION_MANAGER}),
+    "T27_payroll_cost_by_outlet": frozenset({_FINANCE, _ADMIN}),
 }
 
-# Roles that can see ALL outlets (bypass auth.outlet_ids scoping when no specific outlet requested)
-GLOBAL_SCOPE_ROLES: frozenset[str] = frozenset({"CFO", "ADMIN"})
+# Roles that can see ALL outlets (bypass auth.outlet_ids scoping when no specific outlet requested).
+GLOBAL_SCOPE_ROLES: frozenset[str] = frozenset({_FINANCE, _ADMIN})
 
 
 def check_template_access(template_key: str, roles: frozenset[str] | set[str]) -> bool:

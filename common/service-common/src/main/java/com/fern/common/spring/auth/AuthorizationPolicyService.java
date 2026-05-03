@@ -648,7 +648,50 @@ public class AuthorizationPolicyService {
 
   // --- Audit domain ---
 
+  /**
+   * Audit log access is unrestricted by outlet because the table lacks an outlet_id column.
+   * Only SUPERADMIN and users with a global-level ADMIN grant may read audit logs.
+   * REGION_MANAGER and outlet-scoped ADMIN must NOT see cross-outlet audit data;
+   * they are denied here until a future actor_outlet_id column enables row-level filtering.
+   */
   public boolean canReadAudit(RequestUserContext context) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    return profile.hasGlobalRole(CanonicalRole.SUPERADMIN)
+        || profile.hasGlobalRole(CanonicalRole.ADMIN);
+  }
+
+  /**
+   * Returns the set of outlet IDs visible to this user for audit purposes,
+   * or null if the user may see all outlets.  Reserved for when audit_log gains
+   * an actor_outlet_id column and SQL-level filtering becomes possible.
+   */
+  public Set<Long> resolveAuditReadableOutletIds(RequestUserContext context) {
+    if (context.internalService()) {
+      return null;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)
+        || profile.hasGlobalRole(CanonicalRole.ADMIN)) {
+      return null;
+    }
+    LinkedHashSet<Long> result = new LinkedHashSet<>();
+    result.addAll(profile.outletsForRole(CanonicalRole.ADMIN));
+    result.addAll(profile.outletsForRole(CanonicalRole.REGION_MANAGER));
+    return Set.copyOf(result);
+  }
+
+  // --- Report domain ---
+
+  /**
+   * Region-scoped cross-outlet report access. Only SUPERADMIN, REGION_MANAGER with the
+   * matching region assignment, or global FINANCE may view cross-region aggregates.
+   */
+  public boolean canReadReportForRegion(RequestUserContext context, long regionId) {
     if (context.internalService()) {
       return true;
     }
@@ -657,11 +700,12 @@ public class AuthorizationPolicyService {
     if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
       return true;
     }
-    return profile.canonicalRoles().contains(CanonicalRole.ADMIN)
-        || profile.canonicalRoles().contains(CanonicalRole.REGION_MANAGER);
+    if (profile.hasGlobalRole(CanonicalRole.FINANCE)) {
+      return true;
+    }
+    return profile.hasRoleForRegion(regionId, CanonicalRole.REGION_MANAGER)
+        || profile.hasRoleForRegion(regionId, CanonicalRole.FINANCE);
   }
-
-  // --- Report domain ---
 
   public boolean canReadReport(RequestUserContext context, long outletId) {
     if (context.internalService()) {

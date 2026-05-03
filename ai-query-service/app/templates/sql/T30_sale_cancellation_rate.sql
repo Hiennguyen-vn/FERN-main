@@ -1,9 +1,9 @@
 SELECT
     business_date,
-    countIf(sale_status = 'CANCELLED') AS cancelled_count,
-    count() AS total_count,
-    countIf(sale_status = 'CANCELLED') / nullIf(count(), 0) AS cancellation_rate
-FROM fern.fact_sale
+    countIf(status = 'cancelled')                                                AS cancelled_count,
+    countIf(status NOT IN ('open'))                                              AS total_count,
+    countIf(status = 'cancelled') / nullIf(countIf(status NOT IN ('open')), 0)  AS cancellation_rate
+FROM cdc.sale_record FINAL
 WHERE outlet_id IN ({{ outlet_ids | join(',') }})
   AND business_date BETWEEN '{{ from_date }}' AND '{{ to_date }}'
 GROUP BY business_date

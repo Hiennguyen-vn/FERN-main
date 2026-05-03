@@ -25,6 +25,15 @@ export { financeApi } from '@/api/finance-api';
 export { auditApi } from '@/api/audit-api';
 export { crmApi } from '@/api/crm-api';
 export { hrApi } from '@/api/hr-api';
+export { aiQueryApi } from '@/api/ai-query-api';
+export type {
+  AiConversationTurn,
+  AiQueryRequest,
+  AiQueryResponse,
+  AiCitation,
+  AiServiceReadiness,
+  AiMessage,
+} from '@/api/ai-query-api';
 
 import type { OrgHierarchy } from '@/api/org-api';
 

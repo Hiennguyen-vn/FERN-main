@@ -166,8 +166,8 @@ public class ReportService {
 
   public List<ReportDtos.CrossOutletCompare> crossOutletCompare(long regionId, LocalDate startDate, LocalDate endDate) {
     RequestUserContext context = RequestUserContextHolder.get();
-    if (context == null || !context.authenticated()) {
-      throw ServiceException.forbidden("Cross-outlet report requires authentication");
+    if (!authorizationPolicyService.canReadReportForRegion(context, regionId)) {
+      throw ServiceException.forbidden("Cross-outlet report access denied for region " + regionId);
     }
     LocalDate s = defaultStart(startDate);
     LocalDate e = defaultEnd(endDate);

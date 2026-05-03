@@ -102,6 +102,9 @@ resilience4j:
         baseConfig: default
       report-service:
         baseConfig: default
+      ai-query-service:
+        baseConfig: default
+        slowCallDurationThreshold: ${GATEWAY_AI_QUERY_SLOW_CALL_THRESHOLD:45s}
   timelimiter:
     configs:
       default:
@@ -132,6 +135,9 @@ resilience4j:
         baseConfig: default
       report-service:
         baseConfig: default
+      ai-query-service:
+        baseConfig: default
+        timeoutDuration: ${GATEWAY_AI_QUERY_TIMEOUT:120s}
 
 sync:
   ws:

@@ -21,6 +21,23 @@ class PreprocessError(Exception):
     pass
 
 
+def _format_conversation_context(turns: list[dict[str, str]] | None) -> str:
+    if not turns:
+        return ""
+    lines: list[str] = []
+    for t in turns[-6:]:
+        role = (t.get("role") or "").strip().lower()
+        content = (t.get("content") or "").strip()
+        if not content:
+            continue
+        content = content[:4000]
+        if role == "user":
+            lines.append(f"User: {content}")
+        elif role == "assistant":
+            lines.append(f"Assistant: {content}")
+    return "\n".join(lines)
+
+
 def preprocess(state: GraphState) -> GraphState:
     s = get_settings()
     raw = state["raw_question"]
@@ -40,4 +57,6 @@ def preprocess(state: GraphState) -> GraphState:
 
     state["normalized_question"] = text
     state["detected_language"] = "vi" if VIETNAMESE_DIACRITICS.search(text) else "en"
+    turns = state.get("conversation_turns") or []
+    state["conversation_context"] = _format_conversation_context(turns)
     return state

@@ -73,6 +73,7 @@ const ROUTE_META: Record<string, { title: string; breadcrumbs: string[] }> = {
   '/catalog': { title: 'Catalog', breadcrumbs: ['Operations', 'Catalog'] },
   '/reports': { title: 'Regional Ops', breadcrumbs: ['Organization', 'Regional Ops'] },
   '/audit': { title: 'Audit Trail', breadcrumbs: ['Insights', 'Audit'] },
+  '/ai-query': { title: 'AI Analyst', breadcrumbs: ['Insights', 'AI Analyst'] },
   '/iam': { title: 'Access Management', breadcrumbs: ['Administration', 'IAM'] },
   '/finance': { title: 'Finance', breadcrumbs: ['Finance & People', 'Finance'] },
   '/hr': { title: 'Human Resources', breadcrumbs: ['Finance & People', 'HR'] },

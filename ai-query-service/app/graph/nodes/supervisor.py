@@ -13,7 +13,18 @@ SUPERVISOR_SCHEMA = {
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["revenue", "inventory", "product_mix", "pnl", "outlet_compare", "trend", "lookup", "unknown"],
+                "enum": [
+                    "revenue",
+                    "inventory",
+                    "product_mix",
+                    "pnl",
+                    "outlet_compare",
+                    "trend",
+                    "lookup",
+                    "hr_staff",
+                    "export_request",
+                    "unknown",
+                ],
             },
             "confidence": {"type": "number"},
             "time_range": {
@@ -48,14 +59,16 @@ def _system_prompt() -> str:
 
 Hôm nay là {today}. Phân tích câu hỏi và trả về JSON với:
 
-1. intent (1 trong 8):
+1. intent (1 trong các giá trị sau):
    - revenue: hỏi doanh thu, doanh số
    - inventory: hỏi tồn kho, nguyên liệu
    - product_mix: hỏi top sản phẩm, sản phẩm bán chạy/chậm
    - pnl: hỏi lãi/lỗ, P&L, chi phí
    - outlet_compare: so sánh giữa các outlet
    - trend: hỏi xu hướng theo thời gian
-   - lookup: tra cứu thông tin (giá, địa chỉ)
+   - lookup: tra cứu thông tin (giá, địa chỉ outlet, thông tin đơn giản không phải nhân sự)
+   - hr_staff: nhân viên, ca làm, hồ sơ staff, payroll người, headcount…
+   - export_request: xuất excel, CSV, file, tải về báo cáo, đính kèm bảng
    - unknown: không rõ ý định
 
 2. time_range: ISO date YYYY-MM-DD
@@ -73,9 +86,17 @@ confidence: 0..1.
 
 
 async def supervisor(state: GraphState) -> GraphState:
+    ctx = (state.get("conversation_context") or "").strip()
+    if ctx:
+        user_prompt = (
+            "Ngữ cảnh hội thoại gần đây (chỉ để hiểu câu hỏi tiếp nối, không coi là dữ liệu thật):\n"
+            f"{ctx}\n\n---\nCâu hỏi hiện tại: {state['normalized_question']}"
+        )
+    else:
+        user_prompt = state["normalized_question"]
     parsed, usage = await llm_call_json(
         system_prompt=_system_prompt(),
-        user_prompt=state["normalized_question"],
+        user_prompt=user_prompt,
         json_schema=SUPERVISOR_SCHEMA,
         temperature=0.1,
     )

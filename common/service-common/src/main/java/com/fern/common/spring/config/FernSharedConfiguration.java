@@ -180,13 +180,19 @@ public class FernSharedConfiguration {
       javax.sql.DataSource dataSource,
       TypedKafkaEventPublisher typedKafkaEventPublisher,
       ObjectMapper objectMapper,
-      ObjectProvider<MeterRegistry> meterRegistryProvider
+      ObjectProvider<MeterRegistry> meterRegistryProvider,
+      @Value("${outbox.batch-limit:25}") int batchLimit,
+      @Value("${outbox.max-attempts:10}") int maxAttempts,
+      @Value("${outbox.reclaim-seconds:300}") int reclaimSeconds
   ) {
     return new OutboxRelay(
         dataSource,
         typedKafkaEventPublisher,
         objectMapper,
-        java.util.Optional.ofNullable(meterRegistryProvider.getIfAvailable())
+        java.util.Optional.ofNullable(meterRegistryProvider.getIfAvailable()),
+        batchLimit,
+        maxAttempts,
+        reclaimSeconds
     );
   }
 

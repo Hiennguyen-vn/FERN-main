@@ -677,6 +677,24 @@ public class SalesRepository extends BaseRepository {
     );
   }
 
+  /**
+   * Atomic claim of the loyalty-earn slot. Returns true exactly once per sale: only the caller
+   * that flips points_earned from 0 to {@code points} via the conditional UPDATE proceeds. All
+   * subsequent retries see points_earned already set and skip the ledger write.
+   */
+  public boolean tryClaimLoyaltyEarn(long saleId, int points) {
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          "UPDATE core.sale_record SET points_earned = ?, updated_at = NOW() "
+              + "WHERE id = ? AND COALESCE(points_earned, 0) = 0"
+      )) {
+        ps.setInt(1, points);
+        ps.setLong(2, saleId);
+        return ps.executeUpdate() > 0;
+      }
+    });
+  }
+
   public boolean isSaleOversell(long saleId) {
     return queryOne(
         "SELECT oversell_flag FROM core.sale_record WHERE id = ?",
@@ -2485,6 +2503,31 @@ public class SalesRepository extends BaseRepository {
       }
     }
     return Set.copyOf(promotionIds);
+  }
+
+  public java.util.Map<Long, BigDecimal> resolveUnitPrices(java.util.Set<Long> productIds, long outletId, LocalDate businessDate) {
+    if (productIds == null || productIds.isEmpty()) return java.util.Map.of();
+    return executeInTransaction(conn -> {
+      java.util.Map<Long, BigDecimal> out = new java.util.HashMap<>();
+      String placeholders = productIds.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(","));
+      String sql = "SELECT DISTINCT ON (product_id) product_id, price_value FROM core.product_price"
+          + " WHERE product_id IN (" + placeholders + ") AND outlet_id = ?"
+          + " AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)"
+          + " ORDER BY product_id, effective_from DESC";
+      try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        int idx = 1;
+        for (Long id : productIds) ps.setLong(idx++, id);
+        ps.setLong(idx++, outletId);
+        ps.setObject(idx++, businessDate);
+        ps.setObject(idx, businessDate);
+        try (ResultSet rs = ps.executeQuery()) {
+          while (rs.next()) {
+            out.put(rs.getLong("product_id"), rs.getBigDecimal("price_value"));
+          }
+        }
+      }
+      return out;
+    });
   }
 
   private BigDecimal resolveUnitPrice(Connection conn, long productId, long outletId, LocalDate businessDate)

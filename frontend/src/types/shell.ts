@@ -26,7 +26,8 @@ export type ModuleFamily =
   | 'org' | 'regional-ops' | 'hr' | 'finance'
   | 'procurement' | 'inventory' | 'workforce' | 'reports'
   | 'settings'
-  | 'crm' | 'promotions' | 'scheduling';
+  | 'crm' | 'promotions' | 'scheduling'
+  | 'ai-query';
 
 export interface ModuleEntry {
   family: ModuleFamily;

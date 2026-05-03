@@ -7,10 +7,12 @@ class GraphState(TypedDict, total=False):
     # Input
     raw_question: str
     auth: AuthContext
+    conversation_turns: list[dict[str, str]]
 
     # Preprocess
     normalized_question: str
     detected_language: str
+    conversation_context: str
 
     # Supervisor
     intent: str
@@ -25,6 +27,9 @@ class GraphState(TypedDict, total=False):
     template_params: dict[str, Any]
     template_confidence: float
     clarification_question: str | None
+    matcher_missing_info: list[str]
+    response_kind: str
+    response_hints: list[str]
 
     # Validator
     validation_errors: list[str]

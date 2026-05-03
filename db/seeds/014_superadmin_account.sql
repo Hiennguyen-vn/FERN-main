@@ -19,7 +19,6 @@ VALUES (
     'canon.superadmin@example.com',
     'active'
 )
-ON CONFLICT (id) DO NOTHING
 ON CONFLICT (username) DO NOTHING;
 
 -- Fan-out to all active outlets (works for both id=9001 and any existing user with same username)

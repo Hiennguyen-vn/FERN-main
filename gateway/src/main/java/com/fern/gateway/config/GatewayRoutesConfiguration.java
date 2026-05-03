@@ -87,11 +87,19 @@ public class GatewayRoutesConfiguration {
           reportRateLimiter,
           aiQueryRateLimiter
       );
+      // Capture as effectively-final for lambda capture
+      final RedisRateLimiter routeRateLimiter = policy.rateLimiter();
       routes.route(routeId, spec -> spec
           .path(route.pathPrefix(), route.pathPrefix() + "/**")
           .filters(filters -> {
             filters.addResponseHeader("X-Gateway-Upstream-Service", route.serviceName());
             filters.addResponseHeader("X-Gateway-Route-Id", routeId);
+            filters.requestRateLimiter(rl -> {
+              rl.setRateLimiter(routeRateLimiter);
+              rl.setKeyResolver(gatewayRateLimitKeyResolver);
+              rl.setDenyEmptyKey(false);
+              rl.setEmptyKeyStatus(HttpStatus.TOO_MANY_REQUESTS.name());
+            });
             filters.circuitBreaker(config -> {
               config.setRouteId(routeId);
               config.setName(circuitBreakerName(route));
@@ -137,20 +145,26 @@ public class GatewayRoutesConfiguration {
   }
 
   private static String resolveRateLimitKey(HttpHeaders headers, InetSocketAddress remoteAddress) {
-    String internalService = trim(headers.getFirst(InternalServiceAuth.HEADER_SERVICE_NAME));
-    if (internalService != null) {
-      String outletScope = trim(headers.getFirst("X-Internal-Outlet-Ids"));
-      return "svc:" + internalService + ":" + (outletScope == null ? "all" : outletScope);
+    // User traffic (most common): bucket by authenticated user id injected by GatewayAuthenticationFilter.
+    // This check must come before X-Internal-Service to prevent post-auth user traffic from being
+    // bucketed as svc:gateway (which would share quota across all users).
+    String internalUserId = trim(headers.getFirst(InternalServiceAuth.HEADER_USER_ID));
+    if (internalUserId != null) {
+      return "user:" + internalUserId;
     }
+    // Device traffic: bucket per device so one misbehaving terminal cannot exhaust outlet quota.
     String deviceId = trim(headers.getFirst("X-Internal-Device-Id"));
     if (deviceId != null) {
       String deviceOutlet = trim(headers.getFirst("X-Internal-Device-Outlet-Id"));
       return "device:" + deviceId + ":" + (deviceOutlet == null ? "?" : deviceOutlet);
     }
-    String internalUserId = trim(headers.getFirst(InternalServiceAuth.HEADER_USER_ID));
-    if (internalUserId != null) {
-      return "user:" + internalUserId;
+    // Direct internal service calls (service-to-service, not via user session).
+    String internalService = trim(headers.getFirst(InternalServiceAuth.HEADER_SERVICE_NAME));
+    if (internalService != null) {
+      String outletScope = trim(headers.getFirst("X-Internal-Outlet-Ids"));
+      return "svc:" + internalService + ":" + (outletScope == null ? "all" : outletScope);
     }
+    // Unauthenticated / public paths: fall back to IP.
     String forwardedFor = trim(headers.getFirst("X-Forwarded-For"));
     if (forwardedFor != null) {
       return "ip:" + forwardedFor.split(",")[0].trim();

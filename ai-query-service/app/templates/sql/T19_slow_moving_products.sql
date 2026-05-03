@@ -1,6 +1,6 @@
 SELECT
     product_id,
-    any(product_name) AS product_name,
+    min(product_name) AS product_name,
     sum(qty)     AS total_qty,
     sum(revenue) AS revenue
 FROM analytics.fct_sales_by_product

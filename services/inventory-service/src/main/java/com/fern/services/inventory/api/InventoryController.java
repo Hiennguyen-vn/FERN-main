@@ -1,5 +1,8 @@
 package com.fern.services.inventory.api;
 
+import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.AuthorizationPolicyService;
+import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.services.inventory.application.InventoryService;
 import jakarta.validation.Valid;
@@ -22,13 +25,16 @@ public class InventoryController {
 
   private final InventoryService inventoryService;
   private final com.fern.services.inventory.application.StockReservationService reservationService;
+  private final AuthorizationPolicyService authorizationPolicyService;
 
   public InventoryController(
       InventoryService inventoryService,
-      com.fern.services.inventory.application.StockReservationService reservationService
+      com.fern.services.inventory.application.StockReservationService reservationService,
+      AuthorizationPolicyService authorizationPolicyService
   ) {
     this.inventoryService = inventoryService;
     this.reservationService = reservationService;
+    this.authorizationPolicyService = authorizationPolicyService;
   }
 
   @PostMapping("/reservations")
@@ -37,6 +43,10 @@ public class InventoryController {
       @RequestBody java.util.Map<String, Object> body
   ) {
     long locationId = ((Number) body.get("locationId")).longValue();
+    var ctx = RequestUserContextHolder.get();
+    if (!authorizationPolicyService.canWriteInventory(ctx, locationId)) {
+      throw ServiceException.forbidden("Inventory write access denied for location " + locationId);
+    }
     Long saleId = body.get("saleId") == null ? null : ((Number) body.get("saleId")).longValue();
     Number ttl = (Number) body.get("ttlSeconds");
     java.time.Duration ttlDuration = ttl == null ? java.time.Duration.ofMinutes(15)
@@ -62,6 +72,10 @@ public class InventoryController {
       @RequestParam long locationId,
       @RequestParam("itemId") java.util.List<Long> itemIds
   ) {
+    var ctx = RequestUserContextHolder.get();
+    if (!authorizationPolicyService.canWriteInventory(ctx, locationId)) {
+      throw ServiceException.forbidden("Inventory read access denied for location " + locationId);
+    }
     return java.util.Map.of("locationId", locationId,
         "available", reservationService.available(locationId, itemIds));
   }

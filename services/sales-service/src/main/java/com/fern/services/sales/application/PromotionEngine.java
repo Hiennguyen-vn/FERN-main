@@ -83,6 +83,7 @@ public class PromotionEngine {
       List<CartLine> lines,
       BigDecimal subtotal
   ) {
+    if (promo.promoType() == null) return Allocation.EMPTY;
     return switch (promo.promoType()) {
       case "percentage", "fixed_amount" -> evaluateSimpleDiscount(promo, lines, subtotal);
       case "buy_x_get_y" -> evaluateBxgyDiscount(promo, lines);

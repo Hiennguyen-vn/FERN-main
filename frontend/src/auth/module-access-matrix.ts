@@ -167,6 +167,14 @@ export const MODULE_ACCESS_MATRIX: Record<ModuleFamily, ModuleAccessRule> = {
     permissions: ['sales.order.write'],
     outletMembership: false,
   },
+
+  // ── AI Analytics ─────────────────────────────────────────────────
+  // AI natural-language query: finance analysts, region managers, admins
+  'ai-query': {
+    roles: ['admin', 'region_manager', 'finance', 'outlet_manager'],
+    permissions: ['report.read'],
+    outletMembership: false,
+  },
 };
 
 /**

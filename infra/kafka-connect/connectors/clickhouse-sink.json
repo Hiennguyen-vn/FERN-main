@@ -2,11 +2,11 @@
   "name": "fern-clickhouse-sink",
   "config": {
     "connector.class": "com.clickhouse.kafka.connect.ClickHouseSinkConnector",
-    "tasks.max": "2",
+    "tasks.max": "3",
     "topics": "fern.cdc.core.sale_record,fern.cdc.core.sale_item,fern.cdc.core.payment,fern.cdc.core.inventory_transaction,fern.cdc.core.product,fern.cdc.core.outlet",
     "hostname": "clickhouse",
     "port": "8123",
-    "database": "fern",
+    "database": "cdc",
     "username": "default",
     "password": "",
     "ssl": "false",
@@ -15,10 +15,10 @@
     "key.converter.schemas.enable": "false",
     "value.converter.schemas.enable": "false",
     "exactlyOnce": "false",
-    "tableMapping.fern.cdc.core.sale_record": "fact_sale",
-    "tableMapping.fern.cdc.core.sale_item": "fact_sale",
-    "tableMapping.fern.cdc.core.inventory_transaction": "fact_inventory_movement",
-    "tableMapping.fern.cdc.core.product": "dim_product",
-    "tableMapping.fern.cdc.core.outlet": "dim_outlet"
+    "errors.tolerance": "all",
+    "errors.deadletterqueue.topic.name": "fern.outbox.dlq",
+    "errors.deadletterqueue.context.headers.enable": "true",
+    "errors.deadletterqueue.topic.replication.factor": "3",
+    "topic2TableMap": "fern.cdc.core.sale_record=sale_record,fern.cdc.core.sale_item=fact_sale,fern.cdc.core.payment=payment,fern.cdc.core.inventory_transaction=inventory_transaction,fern.cdc.core.product=product,fern.cdc.core.outlet=outlet"
   }
 }

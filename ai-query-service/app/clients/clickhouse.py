@@ -37,7 +37,7 @@ def execute_query(sql: str) -> list[dict[str, Any]]:
 
 def fetch_all_outlet_ids() -> list[int]:
     """Used by RBAC injector for CFO/ADMIN global scope."""
-    rows = execute_query("SELECT outlet_id FROM fern.dim_outlet FINAL ORDER BY outlet_id")
+    rows = execute_query("SELECT id AS outlet_id FROM cdc.outlet FINAL ORDER BY id")
     return [int(r["outlet_id"]) for r in rows]
 
 
@@ -45,7 +45,7 @@ def fetch_outlet_id_by_name_like(term: str, limit: int = 5) -> list[dict[str, An
     """Fallback for entity_resolver when OpenSearch score is low."""
     safe = term.replace("'", "''").replace("%", "")
     sql = (
-        f"SELECT outlet_id, name FROM fern.dim_outlet FINAL "
+        f"SELECT id AS outlet_id, name FROM cdc.outlet FINAL "
         f"WHERE lower(name) LIKE lower('%{safe}%') LIMIT {int(limit)}"
     )
     return execute_query(sql)

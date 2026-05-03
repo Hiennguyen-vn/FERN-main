@@ -95,6 +95,10 @@ fern:
     mock-otp: ${FERN_LOYALTY_MOCK_OTP:true}
     mock-otp-code: ${FERN_LOYALTY_MOCK_OTP_CODE:123456}
 
+promotion:
+  engine:
+    enabled: ${PROMOTION_ENGINE_ENABLED:true}
+
 springdoc:
   api-docs:
     enabled: ${SPRINGDOC_ENABLED:true}

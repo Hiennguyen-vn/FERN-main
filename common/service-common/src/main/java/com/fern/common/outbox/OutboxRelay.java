@@ -15,21 +15,35 @@ import java.sql.*;
  * Polls core.outbox_event for PENDING rows and publishes to Kafka.
  * Uses SELECT FOR UPDATE SKIP LOCKED — safe for multiple concurrent instances.
  * Call drain() on a fixed schedule (e.g. every 1s via @Scheduled).
+ *
+ * <p>Tunable parameters (override via constructor or Spring @Value bindings):
+ * <ul>
+ *   <li>{@code outbox.batch-limit} — rows claimed per drain cycle (default 25).
+ *       Keep small when Kafka publish is synchronous to prevent reclaim storms.</li>
+ *   <li>{@code outbox.reclaim-seconds} — seconds before a stuck PROCESSING row
+ *       is reclaimed (default 300). Must be &gt; worst-case p99 Kafka publish time.</li>
+ *   <li>{@code outbox.max-attempts} — attempts before moving row to FAILED DLQ (default 10).</li>
+ * </ul>
  */
 public class OutboxRelay {
 
-    private static final int BATCH_LIMIT = 100;
-    private static final int MAX_ATTEMPTS = 10;
-    private static final int PROCESSING_RECLAIM_SECONDS = 120;
+    public static final int DEFAULT_BATCH_LIMIT = 25;
+    public static final int DEFAULT_MAX_ATTEMPTS = 10;
+    public static final int DEFAULT_PROCESSING_RECLAIM_SECONDS = 300;
+
     private static final long[] BACKOFF_SECONDS = {1, 2, 4, 8, 16, 30, 60, 120, 300, 600};
 
     private final DataSource dataSource;
     private final TypedKafkaEventPublisher publisher;
     private final ObjectMapper objectMapper;
     private final Optional<MeterRegistry> meterRegistry;
+    private final int batchLimit;
+    private final int maxAttempts;
+    private final int processingReclaimSeconds;
 
     public OutboxRelay(DataSource dataSource, TypedKafkaEventPublisher publisher, ObjectMapper objectMapper) {
-        this(dataSource, publisher, objectMapper, Optional.empty());
+        this(dataSource, publisher, objectMapper, Optional.empty(),
+            DEFAULT_BATCH_LIMIT, DEFAULT_MAX_ATTEMPTS, DEFAULT_PROCESSING_RECLAIM_SECONDS);
     }
 
     public OutboxRelay(
@@ -38,10 +52,27 @@ public class OutboxRelay {
         ObjectMapper objectMapper,
         Optional<MeterRegistry> meterRegistry
     ) {
+        this(dataSource, publisher, objectMapper, meterRegistry,
+            DEFAULT_BATCH_LIMIT, DEFAULT_MAX_ATTEMPTS, DEFAULT_PROCESSING_RECLAIM_SECONDS);
+    }
+
+    public OutboxRelay(
+        DataSource dataSource,
+        TypedKafkaEventPublisher publisher,
+        ObjectMapper objectMapper,
+        Optional<MeterRegistry> meterRegistry,
+        int batchLimit,
+        int maxAttempts,
+        int processingReclaimSeconds
+    ) {
         this.dataSource = dataSource;
         this.publisher = publisher;
         this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
+        this.batchLimit = batchLimit > 0 ? batchLimit : DEFAULT_BATCH_LIMIT;
+        this.maxAttempts = maxAttempts > 0 ? maxAttempts : DEFAULT_MAX_ATTEMPTS;
+        this.processingReclaimSeconds = processingReclaimSeconds > 0
+            ? processingReclaimSeconds : DEFAULT_PROCESSING_RECLAIM_SECONDS;
     }
 
     /**
@@ -106,8 +137,8 @@ public class OutboxRelay {
                       oe.retry_after, oe.last_error
             """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, PROCESSING_RECLAIM_SECONDS);
-            ps.setInt(2, BATCH_LIMIT);
+            ps.setInt(1, processingReclaimSeconds);
+            ps.setInt(2, batchLimit);
             ps.setString(3, owner);
             try (ResultSet rs = ps.executeQuery()) {
                 return mapEvents(rs);
@@ -168,7 +199,7 @@ public class OutboxRelay {
         String error
     ) {
         int newAttempt = attemptCount + 1;
-        String newStatus = newAttempt >= MAX_ATTEMPTS ? "FAILED" : "PENDING";
+        String newStatus = newAttempt >= maxAttempts ? "FAILED" : "PENDING";
         long backoffSec = newAttempt < BACKOFF_SECONDS.length
             ? BACKOFF_SECONDS[newAttempt]
             : BACKOFF_SECONDS[BACKOFF_SECONDS.length - 1];

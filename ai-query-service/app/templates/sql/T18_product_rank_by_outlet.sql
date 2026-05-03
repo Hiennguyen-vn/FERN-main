@@ -1,7 +1,7 @@
 SELECT
     outlet_id,
     product_id,
-    any(product_name) AS product_name,
+    min(product_name) AS product_name,
     sum(revenue) AS revenue,
     sum(qty)     AS qty
 FROM analytics.fct_sales_by_product

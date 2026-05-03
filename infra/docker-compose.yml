@@ -12,6 +12,9 @@ x-kafka-common-env: &kafka-common-env
   KAFKA_MIN_INSYNC_REPLICAS: 2
   KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
   KAFKA_NUM_PARTITIONS: 12
+  KAFKA_LOG_RETENTION_HOURS: 24
+  KAFKA_LOG_RETENTION_BYTES: 1073741824
+  KAFKA_LOG_SEGMENT_BYTES: 536870912
   CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
 
 services:
@@ -290,9 +293,10 @@ services:
     restart: unless-stopped
     mem_limit: 384m
     environment: &service-env
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss256k"
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=50 -XX:+UseSerialGC -Xss256k"
       DB_URL: ${DB_URL:-jdbc:postgresql://postgres:5432/${POSTGRES_DB:-fern}}
       DB_REPLICA_URL: jdbc:postgresql://postgres-replica:5432/${POSTGRES_DB:-fern}
+      DEPENDENCIES_POSTGRES_POOL_SIZE: ${DEPENDENCIES_POSTGRES_POOL_SIZE:-2}
       POSTGRES_USER: ${POSTGRES_USER:-fern}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fern}
       POSTGRES_APP_USER: ${POSTGRES_APP_USER:-fern_app}
@@ -334,6 +338,7 @@ services:
       dockerfile: infra/docker/Dockerfile.gateway
     restart: unless-stopped
     environment: &gateway-env
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=50 -XX:+UseSerialGC -Xss256k"
       DB_URL: ${DB_URL:-jdbc:postgresql://postgres:5432/${POSTGRES_DB:-fern}}
       DB_REPLICA_URL: jdbc:postgresql://postgres-replica:5432/${POSTGRES_DB:-fern}
       POSTGRES_USER: ${POSTGRES_USER:-fern}
@@ -356,6 +361,7 @@ services:
       FINANCE_SERVICE_URL: http://finance-service:8090
       AUDIT_SERVICE_URL: http://audit-service:8091
       REPORT_SERVICE_URL: http://report-service:8092
+      AI_QUERY_SERVICE_URL: http://ai-query-service:8093
       KAFKA_BOOTSTRAP: kafka:29092,kafka-2:29092,kafka-3:29092
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       SYNC_WS_OUTLET_IDS: ${SYNC_WS_OUTLET_IDS:-1,2,3,4,5}
@@ -365,6 +371,7 @@ services:
       PORT: 8080
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318/v1/traces}
       OTEL_SAMPLE_RATIO: ${OTEL_SAMPLE_RATIO:-0.0}
+      GATEWAY_HTTPCLIENT_RESPONSE_TIMEOUT: ${GATEWAY_HTTPCLIENT_RESPONSE_TIMEOUT:-120s}
     depends_on:
       master-node:
         condition: service_healthy
@@ -727,12 +734,14 @@ services:
   kafka-connect:
     image: confluentinc/cp-kafka-connect:7.6.0
     profiles: ["cdc"]
+    mem_limit: 2g
     depends_on:
       kafka:
         condition: service_healthy
       postgres:
         condition: service_healthy
     environment:
+      KAFKA_HEAP_OPTS: "-Xms512M -Xmx1024M"
       CONNECT_BOOTSTRAP_SERVERS: kafka:29092,kafka-2:29092,kafka-3:29092
       CONNECT_REST_PORT: 8083
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
@@ -748,7 +757,7 @@ services:
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
       CONNECT_LOG4J_LOGGERS: org.apache.kafka.connect.runtime.rest=WARN,org.reflections=ERROR
     ports:
-      - "127.0.0.1:${KAFKA_CONNECT_PORT:-8093}:8083"
+      - "127.0.0.1:${KAFKA_CONNECT_PORT:-8094}:8083"
     volumes:
       - ./kafka-connect/connectors:/connectors:ro
       - ./kafka-connect/register-connectors.sh:/register-connectors.sh:ro
@@ -774,7 +783,7 @@ services:
     mem_limit: 1g
     environment:
       discovery.type: single-node
-      OPENSEARCH_JAVA_OPTS: "-Xms384m -Xmx384m"
+      OPENSEARCH_JAVA_OPTS: "-Xms256m -Xmx256m"
       DISABLE_SECURITY_PLUGIN: "true"
       bootstrap.memory_lock: "false"
       knn.plugin.enabled: "true"
@@ -1002,8 +1011,12 @@ services:
       - "127.0.0.1:${AI_QUERY_SERVICE_PORT:-8093}:8093"
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_MODEL: gpt-4.1
-      OPENAI_EMBEDDING_MODEL: text-embedding-3-small
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_MODE: ${OPENAI_API_MODE:-chat}
+      OPENAI_USER_AGENT: ${OPENAI_USER_AGENT:-FERN-ai-query-service/0.1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      OPENAI_EMBEDDINGS_ENABLED: ${OPENAI_EMBEDDINGS_ENABLED:-true}
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: 8123
       CLICKHOUSE_DB: fern
@@ -1015,6 +1028,15 @@ services:
       KAFKA_BOOTSTRAP: kafka:29092,kafka-2:29092,kafka-3:29092
       KAFKA_AUDIT_TOPIC: fern.audit.ai-query
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-change-me}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis-sentinel-1:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8093/api/v1/ai-query/health"]
       interval: 15s

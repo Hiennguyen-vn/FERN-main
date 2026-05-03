@@ -27,10 +27,14 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class PayrollService {
+
+  private static final Logger log = LoggerFactory.getLogger(PayrollService.class);
 
   private final PayrollRepository payrollRepository;
   private final HrServiceClient hrServiceClient;
@@ -295,8 +299,9 @@ public class PayrollService {
           if (hours > 0) {
             workHoursSum += hours;
           }
-        } catch (Exception ignored) {
-          // malformed timestamp — skip hours for this shift, count the day
+        } catch (Exception e) {
+          log.warn("malformed shift timestamp shiftId={} start={} end={}: {}",
+              shift.id(), shift.actualStartTime(), shift.actualEndTime(), e.getMessage());
         }
       }
     }
@@ -404,6 +409,14 @@ public class PayrollService {
           contract, timesheet, request.currencyCode().trim());
       resolvedBase = resolvedBase != null ? resolvedBase : calc.baseSalaryAmount();
       resolvedNet = resolvedNet != null ? resolvedNet : calc.netSalary();
+    }
+    // Clamp net to zero — manual overrides or stale calculations may go negative when
+    // deductions exceed gross. Negative payroll rows break GL postings and bank-file export.
+    if (resolvedNet != null && resolvedNet.signum() < 0) {
+      resolvedNet = BigDecimal.ZERO;
+    }
+    if (resolvedBase != null && resolvedBase.signum() < 0) {
+      resolvedBase = BigDecimal.ZERO;
     }
 
     long payrollId = idGenerator.generateId();

@@ -12,6 +12,20 @@ from app.graph.state import GraphState
 _LITERAL_NUMERIC = re.compile(r"\b\d+\b")
 _LITERAL_QUOTED = re.compile(r"'[^']*'")
 
+# PII patterns — mask before logging raw question text.
+# Intentionally conservative: phone numbers, emails, and national ID (CCCD) only.
+_PII_PHONE = re.compile(r"(?<!\d)(0[3-9]\d{8}|\+84[3-9]\d{8})(?!\d)")
+_PII_EMAIL = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+_PII_CCCD = re.compile(r"(?<!\d)\d{12}(?!\d)")
+
+
+def _redact_pii(text: str) -> str:
+    """Replace PII literals with placeholder tokens."""
+    text = _PII_PHONE.sub("[PHONE]", text)
+    text = _PII_EMAIL.sub("[EMAIL]", text)
+    text = _PII_CCCD.sub("[CCCD]", text)
+    return text
+
 
 def _sanitize_sql(sql: str) -> str:
     """Strip literal values; keep structure."""
@@ -56,7 +70,7 @@ def build_event(state: GraphState) -> dict[str, Any]:
         "correlation_id": auth.correlation_id,
         "outlet_ids": sorted(auth.outlet_ids),
         "roles": sorted(auth.roles),
-        "raw_question": _truncate(state.get("raw_question", "")),
+        "raw_question": _truncate(_redact_pii(state.get("raw_question", ""))),
         "intent": state.get("intent"),
         "template_key": state.get("template_key"),
         "sql_sanitized": _sanitize_sql(sql) if sql else "",

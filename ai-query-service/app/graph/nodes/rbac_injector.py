@@ -41,7 +41,7 @@ def make_rbac_injector(all_outlet_ids_provider: Callable[[], list[int]] | None =
         assert all(isinstance(x, int) for x in allowed), "outlet_ids must be list[int]"
         assert len(allowed) > 0
 
-        params = dict(state.get("template_params", {}) or {})
+        params = {k: v for k, v in (state.get("template_params", {}) or {}).items() if v is not None}
         sql = render(template_key, outlet_ids=allowed, **params)
 
         state["allowed_outlet_ids"] = allowed

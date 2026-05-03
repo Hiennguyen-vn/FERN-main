@@ -4,7 +4,7 @@ import sqlglot
 from sqlglot import expressions as exp
 
 
-ALLOWED_SCHEMAS: frozenset[str] = frozenset({"analytics", "fern"})
+ALLOWED_SCHEMAS: frozenset[str] = frozenset({"analytics", "fern", "cdc"})
 
 BLOCKED_FUNCTIONS: frozenset[str] = frozenset({
     "system", "file", "url", "remote", "remotesecure", "cluster", "clusterallreplicas",
@@ -63,9 +63,14 @@ def validate_sql(sql: str) -> GuardResult:
         if name in BLOCKED_FUNCTIONS:
             violations.append(f"Blocked function: {name}")
 
-    # Rule 4: outlet filter must exist
-    if not _has_outlet_filter(ast):
+    # Rule 4a: the outermost query must have an outlet_id predicate.
+    if not _outer_has_outlet_filter(ast):
         violations.append("Missing outlet_id IN (...) filter")
+
+    # Rule 4b: every nested SELECT that directly reads a scoped schema must also have its own
+    # outlet_id predicate. This blocks unfiltered scalar subqueries / derived tables that would
+    # leak global aggregates even when the outer WHERE has outlet_id IN (...).
+    violations.extend(_validate_subquery_scoping(ast))
 
     # Rule 5: no DDL/DML
     for bad_type in (exp.Insert, exp.Update, exp.Delete, exp.Drop, exp.Create, exp.Alter, exp.TruncateTable):
@@ -75,18 +80,78 @@ def validate_sql(sql: str) -> GuardResult:
     return GuardResult(len(violations) == 0, tuple(violations))
 
 
-def _has_outlet_filter(ast: exp.Expression) -> bool:
-    """Verify any WHERE clause contains outlet_id IN (...) hoặc outletId IN (...)"""
+# ── Tenant isolation helpers ──────────────────────────────────────────────────
+
+def _outer_has_outlet_filter(ast: exp.Expression) -> bool:
+    """
+    Check the outermost WHERE clause (anywhere in the top-level expression tree)
+    contains outlet_id IN (...) or outlet_id = <literal>.
+    """
     for where in ast.find_all(exp.Where):
-        for in_expr in where.find_all(exp.In):
-            col = in_expr.this
-            if isinstance(col, exp.Column):
-                col_name = col.name.lower()
-                if col_name in OUTLET_COLUMNS:
-                    return True
-        # Also accept outlet_id = literal (degenerate single-outlet case)
-        for eq in where.find_all(exp.EQ):
-            left = eq.left
-            if isinstance(left, exp.Column) and left.name.lower() in OUTLET_COLUMNS:
-                return True
+        if _where_has_outlet_filter(where):
+            return True
+    return False
+
+
+def _validate_subquery_scoping(ast: exp.Expression) -> list[str]:
+    """
+    Walk every Subquery node in the AST. Any subquery whose SELECT directly reads
+    from a scoped schema (analytics.*, fern.*, cdc.*) and lacks its own outlet_id
+    WHERE predicate is a tenant isolation violation — it can aggregate global data
+    and surface it through the outer query even when the outer WHERE is scoped.
+    """
+    violations: list[str] = []
+    for subquery in ast.find_all(exp.Subquery):
+        inner = subquery.find(exp.Select)
+        if inner is None:
+            continue
+        scoped = _direct_scoped_tables_via_walk(inner)
+        if not scoped:
+            continue
+        where = inner.find(exp.Where)
+        if where is None or not _where_has_outlet_filter(where):
+            violations.append(
+                f"Unscoped subquery reads {scoped} without outlet_id filter"
+            )
+    return violations
+
+
+def _direct_scoped_tables_via_walk(select: exp.Select) -> list[str]:
+    """
+    Collect scoped table names directly referenced in this SELECT's FROM/JOIN.
+    Uses iter_expressions() to avoid args-dict coupling with sqlglot internals,
+    and stops descent at any nested Subquery boundary.
+    """
+    result: list[str] = []
+
+    def _walk(node: exp.Expression) -> None:
+        if isinstance(node, exp.Subquery):
+            return
+        if isinstance(node, exp.Table):
+            db = (node.db or "").lower()
+            if db in ALLOWED_SCHEMAS:
+                result.append(f"{db}.{node.name}")
+            return
+        for child in node.iter_expressions():
+            _walk(child)
+
+    from_node = select.args.get("from")
+    if from_node:
+        _walk(from_node)
+    for join in (select.args.get("joins") or []):
+        _walk(join)
+
+    return result
+
+
+def _where_has_outlet_filter(where: exp.Where) -> bool:
+    """Return True if this WHERE contains outlet_id IN (...) or outlet_id = <literal>."""
+    for in_expr in where.find_all(exp.In):
+        col = in_expr.this
+        if isinstance(col, exp.Column) and col.name.lower() in OUTLET_COLUMNS:
+            return True
+    for eq in where.find_all(exp.EQ):
+        left = eq.left
+        if isinstance(left, exp.Column) and left.name.lower() in OUTLET_COLUMNS:
+            return True
     return False

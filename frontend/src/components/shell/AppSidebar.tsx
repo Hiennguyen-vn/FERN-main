@@ -2,7 +2,7 @@ import { useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Monitor, Package, Warehouse, ShoppingCart,
   Landmark, Users, CalendarClock, Building2, Map, BarChart3,
-  ScrollText, Shield,
+  ScrollText, Shield, BrainCircuit,
 } from 'lucide-react';
 import type { ModuleEntry, ModuleFamily } from '@/types/shell';
 import { cn } from '@/lib/utils';
@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 const ICON_MAP: Record<string, React.ElementType> = {
   LayoutDashboard, Monitor, Package, Warehouse, ShoppingCart,
   Landmark, Users, CalendarClock, Building2, Map, BarChart3,
-  ScrollText, Shield,
+  ScrollText, Shield, BrainCircuit,
 };
 
 const MODULE_GROUPS: { label: string; families: ModuleFamily[] }[] = [
@@ -18,7 +18,7 @@ const MODULE_GROUPS: { label: string; families: ModuleFamily[] }[] = [
   { label: 'Operations', families: ['catalog', 'inventory', 'procurement'] },
   { label: 'Finance & People', families: ['finance', 'hr', 'workforce'] },
   { label: 'Organization', families: ['org', 'regional-ops'] },
-  { label: 'Insights', families: ['reports', 'audit'] },
+  { label: 'Insights', families: ['reports', 'audit', 'ai-query'] },
   { label: 'Administration', families: ['iam'] },
 ];
 

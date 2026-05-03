@@ -1,5 +1,6 @@
 package com.fern.common.spring.auth;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.common.auth.InternalServiceAuth;
 import com.fern.common.middleware.ServiceException;
 import jakarta.servlet.FilterChain;
@@ -7,6 +8,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.util.Map;
 import java.util.Set;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
@@ -37,6 +39,7 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
   private final SpringInternalServiceAuth internalServiceAuth;
   private final AuthSessionService authSessionService;
   private final DeviceTokenRegistry deviceTokenRegistry;
+  private final ObjectMapper objectMapper;
   private SpringInternalJwtAuth internalJwtAuth;
   private io.micrometer.core.instrument.MeterRegistry meterRegistry;
 
@@ -44,12 +47,14 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
       JwtTokenService jwtTokenService,
       SpringInternalServiceAuth internalServiceAuth,
       AuthSessionService authSessionService,
-      DeviceTokenRegistry deviceTokenRegistry
+      DeviceTokenRegistry deviceTokenRegistry,
+      ObjectMapper objectMapper
   ) {
     this.jwtTokenService = jwtTokenService;
     this.internalServiceAuth = internalServiceAuth;
     this.authSessionService = authSessionService;
     this.deviceTokenRegistry = deviceTokenRegistry;
+    this.objectMapper = objectMapper;
   }
 
   @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -80,13 +85,9 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
       applyOutletScope(ctx, request);
       filterChain.doFilter(request, response);
     } catch (ServiceException exception) {
-      response.setStatus(exception.getStatusCode());
-      response.setContentType("application/json");
-      response.getWriter().write("{\"error\":\"" + exception.getErrorCode() + "\",\"message\":\"" + exception.getMessage() + "\"}");
+      writeErrorResponse(response, exception.getStatusCode(), exception.getErrorCode(), exception.getMessage());
     } catch (IllegalArgumentException exception) {
-      response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-      response.setContentType("application/json");
-      response.getWriter().write("{\"error\":\"unauthorized\",\"message\":\"" + exception.getMessage() + "\"}");
+      writeErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "unauthorized", exception.getMessage());
     } finally {
       RequestUserContextHolder.clear();
       OutletScopeContext.clear();
@@ -255,11 +256,24 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
     return headers;
   }
 
+  private void writeErrorResponse(HttpServletResponse response, int status, String errorCode, String message) {
+    try {
+      response.setStatus(status);
+      response.setContentType("application/json");
+      response.setCharacterEncoding("UTF-8");
+      String body = objectMapper.writeValueAsString(Map.of("error", errorCode, "message", message));
+      response.getWriter().write(body);
+    } catch (IOException ioe) {
+      response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+    }
+  }
+
   private static boolean isDevicePath(HttpServletRequest request) {
     String path = request.getRequestURI();
     return path != null
         && (path.startsWith("/api/v1/sync/")
-            || path.startsWith("/api/v1/devices/refresh"));
+            || path.startsWith("/api/v1/devices/refresh")
+            || path.startsWith("/api/v1/telemetry"));
   }
 
   private static boolean isTerminalOrderWrite(HttpServletRequest request, String path) {
