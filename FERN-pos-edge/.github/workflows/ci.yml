@@ -1,0 +1,62 @@
+name: POS Edge CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres-edge:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: pos_edge_test
+          POSTGRES_USER: pos
+          POSTGRES_PASSWORD: pos_dev
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U pos -d pos_edge_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            agent/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Lint frontend
+        run: npm run lint
+      - name: Build frontend
+        run: npm run build
+      - name: Audit frontend dependencies
+        run: npm audit --audit-level=high
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: E2E
+        run: CI=1 E2E_PORT=5176 E2E_HUB_PORT=18100 npm run test:e2e
+      - name: Install agent dependencies
+        working-directory: agent
+        run: npm ci
+      - name: Lint agent
+        working-directory: agent
+        run: npm run lint
+      - name: Typecheck agent
+        working-directory: agent
+        run: npm run typecheck
+      - name: Build agent
+        working-directory: agent
+        run: npm run build
+      - name: Test agent
+        working-directory: agent
+        run: npm test
+      - name: Audit agent dependencies
+        working-directory: agent
+        run: npm audit --audit-level=high

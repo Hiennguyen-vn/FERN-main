@@ -1,0 +1,37 @@
+{
+  "name": "@fern-pos-edge/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "lint": "eslint .",
+    "start": "node dist/index.js",
+    "migrate": "node-pg-migrate -d LOCAL_DB_URL -m src/db/migrations up",
+    "typecheck": "tsc --noEmit",
+    "test": "LOCAL_DB_URL=${LOCAL_DB_URL:-postgresql://pos:pos_dev@localhost:5434/pos_edge_test} node --import tsx --test --test-concurrency=1 test/**/*.test.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.0.0",
+    "json-bigint": "^1.0.0",
+    "node-pg-migrate": "^8.0.4",
+    "pg": "^8.13.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.2.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.7.5",
+    "@types/pg": "^8.11.10",
+    "eslint": "^10.2.1",
+    "globals": "^17.5.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.58.2"
+  }
+}

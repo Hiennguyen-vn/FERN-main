@@ -1,0 +1,46 @@
+services:
+  postgres-edge:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pos_edge
+      POSTGRES_USER: pos
+      POSTGRES_PASSWORD: pos_dev
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - pos-edge-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pos -d pos_edge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  agent:
+    build:
+      context: ../agent
+      dockerfile: Dockerfile
+    environment:
+      LOCAL_DB_URL: postgresql://pos:pos_dev@postgres-edge:5432/pos_edge
+      FERN_GATEWAY_URL: ${FERN_GATEWAY_URL:-http://host.docker.internal:8080}
+      OUTLET_ID: ${OUTLET_ID:-1}
+      DEVICE_ID: ${DEVICE_ID:-}
+      DEVICE_TOKEN_FILE: ${DEVICE_TOKEN_FILE:-/data/device-token.json}
+      EDGE_SESSION_SECRET: ${EDGE_SESSION_SECRET:?EDGE_SESSION_SECRET is required for LAN agent}
+      AGENT_PORT: 8099
+      AGENT_HOST: ${AGENT_HOST:-0.0.0.0}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${AGENT_BIND_ADDR:-0.0.0.0}:8099:8099"
+    volumes:
+      - pos-edge-agent-data:/data
+    depends_on:
+      postgres-edge:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  pos-edge-data:
+  pos-edge-agent-data:
