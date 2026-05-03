@@ -713,11 +713,14 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.1
     profiles: ["analytics"]
+    mem_limit: ${CLICKHOUSE_MEM_LIMIT:-1536m}
+    restart: unless-stopped
     ports:
       - "127.0.0.1:${CLICKHOUSE_HTTP_PORT:-8123}:8123"
       - "127.0.0.1:${CLICKHOUSE_NATIVE_PORT:-9100}:9000"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/config.d/low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
       - ./clickhouse/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
       - ./clickhouse/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
       - ./clickhouse/migrations:/docker-entrypoint-initdb.d/migrations:ro

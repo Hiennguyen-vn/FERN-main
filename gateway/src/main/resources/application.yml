@@ -108,7 +108,7 @@ resilience4j:
   timelimiter:
     configs:
       default:
-        timeoutDuration: ${GATEWAY_CIRCUIT_TIMEOUT:8s}
+        timeoutDuration: ${GATEWAY_CIRCUIT_TIMEOUT:30s}
         cancelRunningFuture: true
     instances:
       auth-service:
@@ -136,6 +136,9 @@ resilience4j:
       report-service:
         baseConfig: default
       ai-query-service:
+        baseConfig: default
+        timeoutDuration: ${GATEWAY_AI_QUERY_TIMEOUT:120s}
+      ai-query-service-api-v1-ai-query:
         baseConfig: default
         timeoutDuration: ${GATEWAY_AI_QUERY_TIMEOUT:120s}
 

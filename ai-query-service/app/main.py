@@ -144,16 +144,18 @@ async def health():
 @app.get("/api/v1/ai-query/ready")
 async def ready(request: Request):
     """
-    Readiness probe — checks all critical dependencies.
-    Returns 200 only when the service can actually serve queries.
+    Readiness probe — checks critical dependencies.
+    OpenSearch and Redis are degraded-but-ready: query execution has
+    template/ClickHouse fallbacks, and app rate limiting fails open.
     """
     issues: list[str] = []
+    warnings: list[str] = []
 
     if request.app.state.graph is None:
         issues.append("graph not initialized")
 
     if request.app.state.redis is None:
-        issues.append("redis unavailable (app-level rate limiting disabled)")
+        warnings.append("redis unavailable (app-level rate limiting disabled)")
 
     try:
         from app.clients.clickhouse import get_ch_client
@@ -166,14 +168,14 @@ async def ready(request: Request):
         from app.clients.opensearch import get_os_client
         get_os_client().info()
     except Exception as e:  # noqa: BLE001
-        issues.append(f"opensearch: {e}")
+        warnings.append(f"opensearch: {e}")
 
     if issues:
         return JSONResponse(
             status_code=503,
-            content={"status": "degraded", "issues": issues},
+            content={"status": "degraded", "issues": issues, "warnings": warnings},
         )
-    return {"status": "ready"}
+    return {"status": "ready", "warnings": warnings}
 
 
 @app.post("/api/v1/ai-query/query", response_model=QueryResponse)

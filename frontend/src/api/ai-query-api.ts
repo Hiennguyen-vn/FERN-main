@@ -45,6 +45,7 @@ export interface AiServiceReadiness {
   /** Healthy: FastAPI returns `"ready"` (200). Legacy / probes may use `"ok"`. */
   status: 'ok' | 'ready' | 'degraded';
   issues?: string[];
+  warnings?: string[];
 }
 
 export interface AiErrorResponse {
