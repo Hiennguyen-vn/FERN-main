@@ -87,6 +87,19 @@ _DOMAIN_KEYWORDS_RE = re.compile(
     r"thâm\s*niên|tham\s*nien|lương|luong|payroll|salary|p&l|lãi\s*lỗ|lai\s*lo)",
     re.IGNORECASE,
 )
+# UI suggestions like "Yếu tố nào đóng góp… kết quả này?" — need prior user question merged.
+_ANAPHORA_FOLLOWUP_RE = re.compile(
+    r"(kết\s*quả\s*này|ket\s*qua\s*nay|kết\s*quả\s*đó|ket\s*qua\s*do|"
+    r"kết\s*quả\s*trên|ket\s*qua\s*tren|"
+    r"báo\s*cáo\s*này|bao\s*cao\s*nay|"
+    r"số\s*liệu\s*này|so\s*lieu\s*nay|dữ\s*liệu\s*này|du\s*lieu\s*nay|"
+    r"như\s*vậy|nhu\s*vay|điều\s*này|dieu\s*nay|cái\s*này|cai\s*nay|"
+    r"phân\s*tích\s*này|phan\s*tich\s*nay|"
+    r"(?:revenue|doanh\s*thu|doanh\s*so)\s+này|(?:revenue|doanh\s*thu|doanh\s*so)\s+nay|"
+    r"this\s+result|these\s+numbers)",
+    re.IGNORECASE,
+)
+_MAX_PRIOR_FOR_ANAPHORA = 1200
 _CONTEXT_TIME_EXPR_RE = re.compile(
     r"\b("
     r"hôm\s*nay|hom\s*nay|hôm\s*qua|hom\s*qua|today|yesterday|"
@@ -180,6 +193,13 @@ def _should_contextualize(current: str, previous: str) -> tuple[bool, str]:
         and _NAME_ONLY_RE.match(current)
     ):
         return True, "rule_product_entity_followup"
+    if (
+        previous
+        and _DOMAIN_KEYWORDS_RE.search(previous)
+        and not _OUTLET_DIRECTORY_RE.search(current)
+        and _ANAPHORA_FOLLOWUP_RE.search(current)
+    ):
+        return True, "rule_anaphora_followup"
     return False, ""
 
 
@@ -224,7 +244,12 @@ def contextualizer(state: GraphState) -> GraphState:
         if replacement:
             state["contextualized_question"] = replacement
         else:
-            base = _strip_prior_time_context(previous) if source == "rule_time_followup" else previous.rstrip(" ?.!,;:")
+            if source == "rule_anaphora_followup":
+                base = previous.rstrip(" ?.!,;:")
+                if len(base) > _MAX_PRIOR_FOR_ANAPHORA:
+                    base = base[: _MAX_PRIOR_FOR_ANAPHORA].rstrip() + "…"
+            else:
+                base = _strip_prior_time_context(previous) if source == "rule_time_followup" else previous.rstrip(" ?.!,;:")
             state["contextualized_question"] = f"{base} {current}".strip()
         state["contextualization_source"] = source
         state.setdefault("trace", []).append({"node": "contextualizer", "outcome": "rewritten", "reason": source})

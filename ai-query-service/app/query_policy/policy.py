@@ -85,7 +85,10 @@ TABLE_POLICIES: dict[str, TablePolicy] = {
         "business_date",
         "outlet_id + business_date + product_id",
         ("revenue", "qty", "txn_count"),
-        description_vi="Bảng metric phẳng ưu tiên cho sản phẩm bán chạy, doanh thu/qty theo sản phẩm và ngày.",
+        description_vi=(
+            "Metric phẳng theo sản phẩm×ngày×outlet: revenue và **qty là tổng số lượng bán** (đơn vị POS), "
+            "không phải số SKU hay số món trong catalog khi đã cộng dồn theo nhóm/ngày."
+        ),
     ),
     "analytics.ai_pnl_daily": TablePolicy(
         "analytics.ai_pnl_daily",
@@ -329,7 +332,7 @@ QUERY_DOMAINS: dict[str, QueryDomain] = {
         ),
         notes_vi=(
             "Ưu tiên analytics.ai_sales_daily; chỉ dùng CDC/raw sale khi metric view không đủ cột.",
-            "Câu hỏi theo giờ/sub-day cần raw/event sales vì analytics.ai_sales_daily có grain ngày.",
+            "Câu hỏi theo giờ/sub-day: giờ cao điểm (T23) dùng cdc.sale_record (header đơn); chi tiết dòng/giá/discount cần cdc.fact_sale.",
             "Cấp giá/price band và tỷ lệ giảm giá cần cdc.fact_sale; fern.fact_sale chỉ là legacy fallback.",
             "Không join nhiều bảng sale thô nếu câu hỏi có thể trả lời từ metric view.",
         ),
@@ -539,7 +542,7 @@ DATA_SOURCE_POLICIES: dict[str, DataSourcePolicy] = {
         domain="sales",
         source_system="POS CDC sale record",
         storage="clickhouse",
-        preferred_for_metrics=("sale_record_detail",),
+        preferred_for_metrics=("sale_record_detail", "peak_hour_txn_by_hour"),
         time_column="business_date",
         time_semantics_vi="ngày kinh doanh từ sale record thô",
         available_range_strategy="minmax_time_column",
@@ -821,7 +824,7 @@ TEMPLATE_DATASETS: dict[str, str] = {
     "T05_revenue_trend_7d": "analytics.ai_sales_daily",
     "T06_revenue_trend_30d": "analytics.ai_sales_daily",
     "T07_revenue_comparison_yoy": "analytics.ai_sales_daily",
-    "T09_avg_basket_size": "fern.fact_sale",
+    "T09_avg_basket_size": "analytics.ai_sales_daily",
     "T10_transaction_count": "analytics.ai_sales_daily",
     "T21_sales_heatmap": "analytics.ai_sales_daily",
     "T22_outlet_rank": "analytics.ai_sales_daily",
@@ -846,7 +849,7 @@ TEMPLATE_DATASETS: dict[str, str] = {
     "T26_goods_receipt_summary": "fern.events_goods_receipt_posted",
     "T27_payroll_cost_by_outlet": "fern.events_payroll_approved",
     "T28_payment_capture_analysis": "fern.events_payment_captured",
-    "T23_peak_hour_analysis": "cdc.fact_sale",
+    "T23_peak_hour_analysis": "cdc.sale_record",
     "T11_inventory_current_stock": "analytics.fct_inventory_snapshot",
     "T12_inventory_low_stock": "analytics.fct_inventory_snapshot",
     "T13_inventory_movement_summary": "cdc.inventory_transaction",

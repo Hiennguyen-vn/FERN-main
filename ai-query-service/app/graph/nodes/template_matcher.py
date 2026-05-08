@@ -2,6 +2,7 @@
 import logging
 import re
 import unicodedata
+from datetime import date, timedelta
 
 from app.clients.opensearch import hybrid_search_templates
 from app.config import get_settings
@@ -83,6 +84,43 @@ def _params_from_time_range(time_range: dict) -> dict[str, str]:
     fd = str(time_range.get("from_date") or "").strip()
     td = str(time_range.get("to_date") or "").strip()
     return {"from_date": fd, "to_date": td} if fd and td else {}
+
+
+def _split_time_range_for_period_bridge(from_date: str, to_date: str) -> dict[str, str] | None:
+    """Split inclusive [from_date, to_date] into earlier half (B) and later half (A) for T36.
+
+    Period A is the more recent segment (driver-bridge prose compares B → A).
+    A single-day window compares that day (A) vs the previous calendar day (B).
+    """
+    try:
+        fd = date.fromisoformat(from_date[:10])
+        td = date.fromisoformat(to_date[:10])
+    except ValueError:
+        return None
+    if td < fd:
+        return None
+    total_days = (td - fd).days + 1
+    if total_days < 1:
+        return None
+    if total_days == 1:
+        prev_day = fd - timedelta(days=1)
+        return {
+            "from_date_a": fd.isoformat(),
+            "to_date_a": fd.isoformat(),
+            "from_date_b": prev_day.isoformat(),
+            "to_date_b": prev_day.isoformat(),
+        }
+    half = total_days // 2
+    if half < 1:
+        return None
+    to_b = fd + timedelta(days=half - 1)
+    from_a = fd + timedelta(days=half)
+    return {
+        "from_date_b": fd.isoformat(),
+        "to_date_b": to_b.isoformat(),
+        "from_date_a": from_a.isoformat(),
+        "to_date_a": td.isoformat(),
+    }
 
 
 def _limit_from_question(question_folded: str, *, default: int = 10, cap: int = 100) -> int:
@@ -272,6 +310,20 @@ def _fast_template_match(question: str, intent: str | None, time_range: dict) ->
         return peak_hour_fast
 
     revenueish = any(x in q for x in ("doanh thu", "doanh so", "revenue", "sales", "gmv"))
+    txn_or_aovish = any(
+        x in q
+        for x in (
+            "aov",
+            "basket",
+            "gia tri don hang trung binh",
+            "trung binh don",
+            "giao dich",
+            "transaction",
+            "so don",
+            "so luong don",
+        )
+    )
+    revenueish = revenueish or txn_or_aovish
     rankish = any(
         x in q
         for x in (
@@ -336,6 +388,19 @@ def _fast_template_match(question: str, intent: str | None, time_range: dict) ->
             return "T30_sale_cancellation_rate", params, 0.9
         if _has_payment_context(q):
             return "T08_revenue_by_payment_method", params, 0.9
+        changeish = any(x in q for x in ("thay doi", "bien dong", "chenh lech"))
+        driver_metricish = txn_or_aovish or any(
+            x in q for x in ("doanh thu", "doanh so", "revenue", "tang truong", "suy giam", "giam manh")
+        )
+        if (
+            changeish
+            and driver_metricish
+            and params.get("from_date")
+            and params.get("to_date")
+        ):
+            bridge_params = _split_time_range_for_period_bridge(params["from_date"], params["to_date"])
+            if bridge_params:
+                return "T36_revenue_period_driver_bridge", bridge_params, 0.93
         if any(x in q for x in ("aov", "basket", "gia tri don hang trung binh", "trung binh don")):
             return "T09_avg_basket_size", params, 0.9
         if any(x in q for x in ("so don", "so luong don", "transaction", "giao dich")):
@@ -709,6 +774,20 @@ async def template_matcher(state: GraphState) -> GraphState:
         return state
 
     pre_verified_fast = _fast_template_match(question, intent, time_range if isinstance(time_range, dict) else {})
+    if pre_verified_fast and pre_verified_fast[0] == "T36_revenue_period_driver_bridge":
+        key, params, confidence = pre_verified_fast
+        state["template_key"] = key
+        state["template_params"] = params
+        state["template_confidence"] = confidence
+        state["matcher_missing_info"] = []
+        state["response_kind"] = "answer"
+        state["response_hints"] = []
+        state["clarification_question"] = None
+        state.setdefault("trace", []).append(
+            {"node": "template_matcher", "source": "deterministic_period_bridge", "shortcut": key}
+        )
+        return state
+
     verified = select_verified_query(question=question, intent=intent, time_range=time_range)
     pre_verified_overrides_broad_verified = (
         verified is not None

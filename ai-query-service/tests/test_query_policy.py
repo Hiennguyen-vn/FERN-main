@@ -69,10 +69,11 @@ def test_data_source_policy_registry_matches_allowlist_or_static_lanes():
 
 
 def test_template_dataset_mapping_covers_time_source_templates():
+    assert dataset_for_template("T09_avg_basket_size") == "analytics.ai_sales_daily"
     assert dataset_for_template("T08_revenue_by_payment_method") == "analytics.ai_payment_daily"
     assert dataset_for_template("T33_zero_revenue_outlets") == "analytics.ai_sales_daily"
     assert dataset_for_template("T34_sales_detail_by_day") == "cdc.sale_record"
-    assert dataset_for_template("T23_peak_hour_analysis") == "cdc.fact_sale"
+    assert dataset_for_template("T23_peak_hour_analysis") == "cdc.sale_record"
     assert dataset_for_template("T29_stock_low_events") == "fern.events_stock_low"
     assert dataset_for_template("HR_payroll_total") == "core.payroll_period"
     assert dataset_for_template("HR_new_contracts_list") == "core.employee_contract"

@@ -683,7 +683,7 @@ async def test_answer_formatter_uses_deterministic_peak_hour(monkeypatch):
             "datasets": [
                 {
                     "source": "clickhouse",
-                    "dataset": "cdc.fact_sale",
+                    "dataset": "cdc.sale_record",
                     "min_date": "2025-07-02",
                     "max_date": "2026-05-02",
                     "row_count": 1000,
@@ -699,7 +699,7 @@ async def test_answer_formatter_uses_deterministic_peak_hour(monkeypatch):
     assert "12:00-12:59" in out["answer_text"]
     assert "25 giao dịch" in out["answer_text"]
     assert "8.000.000 đ" in out["answer_text"]
-    assert "Nguồn thời gian: business_date trong cdc.fact_sale" in out["answer_text"]
+    assert "Nguồn thời gian: business_date trong cdc.sale_record" in out["answer_text"]
     assert out["trace"][-1]["source"] == "deterministic_peak_hour"
 
 

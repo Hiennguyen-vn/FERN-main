@@ -222,3 +222,38 @@ def test_contextualizer_rewrites_product_name_after_inventory_question():
     cq = out["contextualized_question"]
     assert "Com Chay" in cq
     assert prev.rstrip("?.!")[0:12] in cq or "bán chậm" in cq
+
+
+def test_contextualizer_merges_ui_suggestion_with_anaphora_to_prior_question():
+    prev = "Xếp hạng nhóm sản phẩm theo doanh thu trong ngày 2026-05-02 tại outlet VN-HCM-3"
+    state = {
+        "normalized_question": "Yếu tố nào đóng góp nhiều nhất vào kết quả này?",
+        "conversation_turns": [
+            {"role": "user", "content": prev},
+            {"role": "assistant", "content": "DRINK dẫn đầu với 2.965.600 đ…"},
+        ],
+        "trace": [],
+    }
+
+    out = contextualizer(state)
+
+    assert out["contextualization_source"] == "rule_anaphora_followup"
+    assert "VN-HCM-3" in out["contextualized_question"]
+    assert "kết quả này" in out["contextualized_question"]
+
+
+def test_contextualizer_merges_revenue_này_followup():
+    state = {
+        "normalized_question": "revenue này tách theo outlet thế nào?",
+        "conversation_turns": [
+            {"role": "user", "content": "Doanh thu 7 ngày qua theo ngày cho toàn region?"},
+            {"role": "assistant", "content": "Tổng 7 ngày là 12 tỷ…"},
+        ],
+        "trace": [],
+    }
+
+    out = contextualizer(state)
+
+    assert out["contextualization_source"] == "rule_anaphora_followup"
+    assert "Doanh thu 7 ngày" in out["contextualized_question"]
+    assert "revenue này" in out["contextualized_question"].lower() or "tách theo outlet" in out["contextualized_question"]

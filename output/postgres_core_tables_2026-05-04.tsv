@@ -1,0 +1,269 @@
+table_schema	table_name	table_kind	partition_parent
+core	audit_log	partitioned_table	
+core	inventory_transaction	partitioned_table	
+core	outbox_event	partitioned_table	
+core	payment	partitioned_table	
+core	processed_events	partitioned_table	
+core	sale_item	partitioned_table	
+core	sale_record	partitioned_table	
+core	allergen	ordinary_table	
+core	app_user	ordinary_table	
+core	auth_session	ordinary_table	
+core	cash_movement	ordinary_table	
+core	catalog_audit_log	ordinary_table	
+core	catalog_override	ordinary_table	
+core	channel	ordinary_table	
+core	currency	ordinary_table	
+core	customer_allergy	ordinary_table	
+core	daypart	ordinary_table	
+core	device_pair_token	ordinary_table	
+core	device_registry	ordinary_table	
+core	employee_contract	ordinary_table	
+core	exchange_rate	ordinary_table	
+core	expense_document	ordinary_table	
+core	expense_inventory_purchase	ordinary_table	
+core	expense_operating	ordinary_table	
+core	expense_other	ordinary_table	
+core	expense_payroll	ordinary_table	
+core	expense_record	ordinary_table	
+core	feature_flag	ordinary_table	
+core	flyway_schema_history	ordinary_table	
+core	goods_receipt	ordinary_table	
+core	goods_receipt_item	ordinary_table	
+core	goods_receipt_transaction	ordinary_table	
+core	idempotency_keys	ordinary_table	
+core	inventory_adjustment	ordinary_table	
+core	item	ordinary_table	
+core	item_category	ordinary_table	
+core	manager_override_audit	ordinary_table	
+core	manufacturing_batch	ordinary_table	
+core	manufacturing_transaction	ordinary_table	
+core	menu	ordinary_table	
+core	menu_category	ordinary_table	
+core	menu_item	ordinary_table	
+core	menu_item_exclusion	ordinary_table	
+core	modifier_group	ordinary_table	
+core	modifier_option	ordinary_table	
+core	modifier_recipe_effect	ordinary_table	
+core	offline_inventory_movement	ordinary_table	
+core	ordering_table	ordinary_table	
+core	outlet	ordinary_table	
+core	payroll	ordinary_table	
+core	payroll_period	ordinary_table	
+core	payroll_timesheet	ordinary_table	
+core	permission	ordinary_table	
+core	pos_session	ordinary_table	
+core	pos_session_reconciliation	ordinary_table	
+core	pos_session_reconciliation_line	ordinary_table	
+core	product	ordinary_table	
+core	product_allergen	ordinary_table	
+core	product_category	ordinary_table	
+core	product_modifier_group	ordinary_table	
+core	product_outlet_availability	ordinary_table	
+core	product_price	ordinary_table	
+core	product_variant	ordinary_table	
+core	promotion	ordinary_table	
+core	promotion_bxgy_rule	ordinary_table	
+core	promotion_combo_rule	ordinary_table	
+core	promotion_combo_rule_item	ordinary_table	
+core	promotion_scope	ordinary_table	
+core	promotion_subsidy_rule	ordinary_table	
+core	publish_item	ordinary_table	
+core	publish_version	ordinary_table	
+core	purchase_order	ordinary_table	
+core	purchase_order_item	ordinary_table	
+core	recipe	ordinary_table	
+core	recipe_item	ordinary_table	
+core	region	ordinary_table	
+core	replication_probe	ordinary_table	
+core	role	ordinary_table	
+core	role_permission	ordinary_table	
+core	sale_inventory_reversal	ordinary_table	
+core	sale_item_modifier	ordinary_table	
+core	sale_item_promotion	ordinary_table	
+core	sale_item_transaction	ordinary_table	
+core	sale_oversell_line	ordinary_table	
+core	service_assignment	ordinary_table	
+core	service_config_profile	ordinary_table	
+core	service_instance	ordinary_table	
+core	service_release	ordinary_table	
+core	service_rollout	ordinary_table	
+core	shedlock	ordinary_table	
+core	shift	ordinary_table	
+core	shift_role_requirement	ordinary_table	
+core	simulator_run	ordinary_table	
+core	stock_balance	ordinary_table	
+core	stock_count_line	ordinary_table	
+core	stock_count_session	ordinary_table	
+core	stock_lot	ordinary_table	
+core	stock_reservation	ordinary_table	
+core	supplier_invoice	ordinary_table	
+core	supplier_invoice_item	ordinary_table	
+core	supplier_invoice_receipt	ordinary_table	
+core	supplier_payment	ordinary_table	
+core	supplier_payment_allocation	ordinary_table	
+core	supplier_procurement	ordinary_table	
+core	tax_rate	ordinary_table	
+core	tax_rule	ordinary_table	
+core	unit_of_measure	ordinary_table	
+core	uom_conversion	ordinary_table	
+core	user_permission	ordinary_table	
+core	user_role	ordinary_table	
+core	void_reason	ordinary_table	
+core	waste_record	ordinary_table	
+core	work_shift	ordinary_table	
+core	audit_log_2025_01	partition_child	audit_log
+core	audit_log_2025_02	partition_child	audit_log
+core	audit_log_2025_03	partition_child	audit_log
+core	audit_log_2025_04	partition_child	audit_log
+core	audit_log_2025_05	partition_child	audit_log
+core	audit_log_2025_06	partition_child	audit_log
+core	audit_log_2025_07	partition_child	audit_log
+core	audit_log_2025_08	partition_child	audit_log
+core	audit_log_2025_09	partition_child	audit_log
+core	audit_log_2025_10	partition_child	audit_log
+core	audit_log_2025_11	partition_child	audit_log
+core	audit_log_2025_12	partition_child	audit_log
+core	audit_log_2026_01	partition_child	audit_log
+core	audit_log_2026_02	partition_child	audit_log
+core	audit_log_2026_03	partition_child	audit_log
+core	audit_log_2026_04	partition_child	audit_log
+core	audit_log_2026_05	partition_child	audit_log
+core	audit_log_2026_06	partition_child	audit_log
+core	audit_log_2026_07	partition_child	audit_log
+core	audit_log_2026_08	partition_child	audit_log
+core	audit_log_2026_09	partition_child	audit_log
+core	audit_log_2026_10	partition_child	audit_log
+core	audit_log_2026_11	partition_child	audit_log
+core	audit_log_2026_12	partition_child	audit_log
+core	audit_log_default	partition_child	audit_log
+core	audit_log_p20270101	partition_child	audit_log
+core	inventory_transaction_2025_01	partition_child	inventory_transaction
+core	inventory_transaction_2025_02	partition_child	inventory_transaction
+core	inventory_transaction_2025_03	partition_child	inventory_transaction
+core	inventory_transaction_2025_04	partition_child	inventory_transaction
+core	inventory_transaction_2025_05	partition_child	inventory_transaction
+core	inventory_transaction_2025_06	partition_child	inventory_transaction
+core	inventory_transaction_2025_07	partition_child	inventory_transaction
+core	inventory_transaction_2025_08	partition_child	inventory_transaction
+core	inventory_transaction_2025_09	partition_child	inventory_transaction
+core	inventory_transaction_2025_10	partition_child	inventory_transaction
+core	inventory_transaction_2025_11	partition_child	inventory_transaction
+core	inventory_transaction_2025_12	partition_child	inventory_transaction
+core	inventory_transaction_2026_01	partition_child	inventory_transaction
+core	inventory_transaction_2026_02	partition_child	inventory_transaction
+core	inventory_transaction_2026_03	partition_child	inventory_transaction
+core	inventory_transaction_2026_04	partition_child	inventory_transaction
+core	inventory_transaction_2026_05	partition_child	inventory_transaction
+core	inventory_transaction_2026_06	partition_child	inventory_transaction
+core	inventory_transaction_2026_07	partition_child	inventory_transaction
+core	inventory_transaction_2026_08	partition_child	inventory_transaction
+core	inventory_transaction_2026_09	partition_child	inventory_transaction
+core	inventory_transaction_2026_10	partition_child	inventory_transaction
+core	inventory_transaction_2026_11	partition_child	inventory_transaction
+core	inventory_transaction_2026_12	partition_child	inventory_transaction
+core	inventory_transaction_default	partition_child	inventory_transaction
+core	inventory_transaction_p20270101	partition_child	inventory_transaction
+core	outbox_event_2026_04	partition_child	outbox_event
+core	outbox_event_2026_05	partition_child	outbox_event
+core	outbox_event_2026_06	partition_child	outbox_event
+core	outbox_event_2026_07	partition_child	outbox_event
+core	outbox_event_2026_08	partition_child	outbox_event
+core	outbox_event_2026_09	partition_child	outbox_event
+core	outbox_event_2026_10	partition_child	outbox_event
+core	outbox_event_2026_11	partition_child	outbox_event
+core	outbox_event_2026_12	partition_child	outbox_event
+core	outbox_event_p20270101	partition_child	outbox_event
+core	payment_2025_01	partition_child	payment
+core	payment_2025_02	partition_child	payment
+core	payment_2025_03	partition_child	payment
+core	payment_2025_04	partition_child	payment
+core	payment_2025_05	partition_child	payment
+core	payment_2025_06	partition_child	payment
+core	payment_2025_07	partition_child	payment
+core	payment_2025_08	partition_child	payment
+core	payment_2025_09	partition_child	payment
+core	payment_2025_10	partition_child	payment
+core	payment_2025_11	partition_child	payment
+core	payment_2025_12	partition_child	payment
+core	payment_2026_01	partition_child	payment
+core	payment_2026_02	partition_child	payment
+core	payment_2026_03	partition_child	payment
+core	payment_2026_04	partition_child	payment
+core	payment_2026_05	partition_child	payment
+core	payment_2026_06	partition_child	payment
+core	payment_2026_07	partition_child	payment
+core	payment_2026_08	partition_child	payment
+core	payment_2026_09	partition_child	payment
+core	payment_2026_10	partition_child	payment
+core	payment_2026_11	partition_child	payment
+core	payment_2026_12	partition_child	payment
+core	payment_default	partition_child	payment
+core	payment_p20270101	partition_child	payment
+core	processed_events_2026_04	partition_child	processed_events
+core	processed_events_2026_05	partition_child	processed_events
+core	processed_events_2026_06	partition_child	processed_events
+core	processed_events_2026_07	partition_child	processed_events
+core	processed_events_2026_08	partition_child	processed_events
+core	processed_events_2026_09	partition_child	processed_events
+core	processed_events_2026_10	partition_child	processed_events
+core	processed_events_2026_11	partition_child	processed_events
+core	processed_events_2026_12	partition_child	processed_events
+core	processed_events_2027_01	partition_child	processed_events
+core	processed_events_2027_02	partition_child	processed_events
+core	processed_events_2027_03	partition_child	processed_events
+core	processed_events_2027_04	partition_child	processed_events
+core	processed_events_default	partition_child	processed_events
+core	processed_events_p20270501	partition_child	processed_events
+core	sale_item_2025_01	partition_child	sale_item
+core	sale_item_2025_02	partition_child	sale_item
+core	sale_item_2025_03	partition_child	sale_item
+core	sale_item_2025_04	partition_child	sale_item
+core	sale_item_2025_05	partition_child	sale_item
+core	sale_item_2025_06	partition_child	sale_item
+core	sale_item_2025_07	partition_child	sale_item
+core	sale_item_2025_08	partition_child	sale_item
+core	sale_item_2025_09	partition_child	sale_item
+core	sale_item_2025_10	partition_child	sale_item
+core	sale_item_2025_11	partition_child	sale_item
+core	sale_item_2025_12	partition_child	sale_item
+core	sale_item_2026_01	partition_child	sale_item
+core	sale_item_2026_02	partition_child	sale_item
+core	sale_item_2026_03	partition_child	sale_item
+core	sale_item_2026_04	partition_child	sale_item
+core	sale_item_2026_05	partition_child	sale_item
+core	sale_item_2026_06	partition_child	sale_item
+core	sale_item_2026_07	partition_child	sale_item
+core	sale_item_2026_08	partition_child	sale_item
+core	sale_item_2026_09	partition_child	sale_item
+core	sale_item_2026_10	partition_child	sale_item
+core	sale_item_2026_11	partition_child	sale_item
+core	sale_item_2026_12	partition_child	sale_item
+core	sale_item_default	partition_child	sale_item
+core	sale_item_p20270101	partition_child	sale_item
+core	sale_record_2025_01	partition_child	sale_record
+core	sale_record_2025_02	partition_child	sale_record
+core	sale_record_2025_03	partition_child	sale_record
+core	sale_record_2025_04	partition_child	sale_record
+core	sale_record_2025_05	partition_child	sale_record
+core	sale_record_2025_06	partition_child	sale_record
+core	sale_record_2025_07	partition_child	sale_record
+core	sale_record_2025_08	partition_child	sale_record
+core	sale_record_2025_09	partition_child	sale_record
+core	sale_record_2025_10	partition_child	sale_record
+core	sale_record_2025_11	partition_child	sale_record
+core	sale_record_2025_12	partition_child	sale_record
+core	sale_record_2026_01	partition_child	sale_record
+core	sale_record_2026_02	partition_child	sale_record
+core	sale_record_2026_03	partition_child	sale_record
+core	sale_record_2026_04	partition_child	sale_record
+core	sale_record_2026_05	partition_child	sale_record
+core	sale_record_2026_06	partition_child	sale_record
+core	sale_record_2026_07	partition_child	sale_record
+core	sale_record_2026_08	partition_child	sale_record
+core	sale_record_2026_09	partition_child	sale_record
+core	sale_record_2026_10	partition_child	sale_record
+core	sale_record_2026_11	partition_child	sale_record
+core	sale_record_2026_12	partition_child	sale_record
+core	sale_record_default	partition_child	sale_record
+core	sale_record_p20270101	partition_child	sale_record

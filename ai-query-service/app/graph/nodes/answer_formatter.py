@@ -42,7 +42,7 @@ _SYSTEM_BASE = """Bạn là FERN Analytics Analyst — chuyên gia phân tích d
 - cancellation_rate / tỷ lệ hủy: đơn hủy / tổng đơn. Cao hơn 5% cần chú ý vận hành.
 - operating_profit / lợi nhuận vận hành: revenue − cogs − payroll_cost.
 - operating_margin: lợi nhuận vận hành / doanh thu. F&B thường 10–25%.
-- qty: số lượng sản phẩm bán ra (đơn vị).
+- qty / số lượng bán (đơn vị): **tổng khối lượng bán** trong grain của dòng (theo ngày + outlet + product_id, hoặc sau GROUP BY theo category). Là SUM của lượng bán POS (cốc/phần/cái…), **không** phải số SKU khác nhau và **không** phải cỡ catalog (~60 món). Khi diễn đạt cho user: dùng **"số lượng bán"**, **"đơn vị bán"**, **"tổng qty"** — **tránh** "món" nếu dễ hiểu nhầm là số món trong menu; chỉ dùng "món" nếu bạn nói rõ là đơn vị lượng bán.
 - outlet / cửa hàng: một chi nhánh trong chuỗi.
 - slow_moving: sản phẩm có doanh số thấp so với trung bình — nguy cơ tồn kho cao.
 
@@ -752,20 +752,23 @@ def _format_weekly_revenue_answer(state: GraphState, rows: list[dict[str, Any]],
     return "\n".join(lines) + _sql_verdict_footnote(state)
 
 
-def _quarter_short_label(iso_d: str) -> str:
-    try:
-        d = date.fromisoformat(iso_d[:10])
-    except ValueError:
-        return str(iso_d)[:10]
-    q = (d.month - 1) // 3 + 1
-    return f"Q{q}/{d.year}"
+def _period_bridge_span_label(tp: dict[str, Any], suffix: str) -> str:
+    """Human label for T36 period A/B (date span), fallback-friendly."""
+    f_raw = str(tp.get(f"from_date_{suffix}") or "").strip()
+    t_raw = str(tp.get(f"to_date_{suffix}") or "").strip()
+    f_d, t_d = f_raw[:10], t_raw[:10]
+    if not f_d:
+        return "—"
+    if not t_d or f_d == t_d:
+        return f_d
+    return f"{f_d}–{t_d}"
 
 
 def _format_revenue_driver_bridge_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
     recap = _scope_recap_vi(state)
     tp = state.get("template_params") or {}
-    la = _quarter_short_label(str(tp.get("from_date_a") or ""))
-    lb = _quarter_short_label(str(tp.get("from_date_b") or ""))
+    la = _period_bridge_span_label(tp if isinstance(tp, dict) else {}, "a")
+    lb = _period_bridge_span_label(tp if isinstance(tp, dict) else {}, "b")
     if not rows or not isinstance(rows[0], dict):
         lines = [
             "Không có đủ dữ liệu để phân tích thành phần tăng trưởng giữa hai kỳ.",
