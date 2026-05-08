@@ -29,7 +29,7 @@ import { FinanceOperatingExpensesWorkspace } from '@/components/finance/FinanceO
 import { FinancePLWorkspace } from '@/components/finance/FinancePLWorkspace';
 import { FinancePrimeCostWorkspace } from '@/components/finance/FinancePrimeCostWorkspace';
 import { FinancePeriodCloseWorkspace } from '@/components/finance/FinancePeriodCloseWorkspace';
-import { resolveCanonicalRoles } from '@/components/finance/finance-utils';
+import { sessionRolesSet } from '@/auth/authorization';
 
 function normalizeNumeric(value: string | undefined) {
   const trimmed = String(value ?? '').trim();
@@ -60,10 +60,7 @@ export function FinanceModule() {
   const [regions, setRegions] = useState<ScopeRegion[]>([]);
   const [outlets, setOutlets] = useState<ScopeOutlet[]>([]);
 
-  const roles = useMemo(
-    () => resolveCanonicalRoles(session?.rolesByOutlet),
-    [session?.rolesByOutlet],
-  );
+  const roles = useMemo(() => sessionRolesSet(session ?? null), [session]);
 
   const isSuperadmin = roles.has('superadmin');
   const isFinance = roles.has('finance');

@@ -100,30 +100,23 @@ export function formatMonthYear(value?: string | null): string {
 // Role resolution
 // ---------------------------------------------------------------------------
 
-const ROLE_ALIASES: Record<string, string> = {
-  cashier: 'staff',
-  staff_pos: 'staff',
-  procurement_officer: 'procurement',
-  hr_manager: 'hr',
-  finance_manager: 'finance',
-  finance_approver: 'finance',
-  regional_finance: 'finance',
-  accountant: 'finance',
-  regional_manager: 'region_manager',
-  system_admin: 'admin',
-  technical_admin: 'admin',
-};
-
+/**
+ * Flattens a roles-by-outlet map into a single set of canonical role codes.
+ *
+ * For session-derived roles, call `sessionRolesSet` / `effectiveRolesByOutletRecord`
+ * from `@/auth/authorization` first so an empty `canonicalRolesByOutlet` object
+ * still falls back to `rolesByOutlet` (same as sidebar matrix checks).
+ */
 export function resolveCanonicalRoles(
-  rolesByOutlet: Record<string, string[]> | undefined,
+  canonicalRolesByOutlet: Record<string, string[]> | undefined,
 ): Set<string> {
-  const canonical = new Set<string>();
-  for (const list of Object.values(rolesByOutlet ?? {})) {
+  const result = new Set<string>();
+  for (const list of Object.values(canonicalRolesByOutlet ?? {})) {
     for (const r of list ?? []) {
-      if (r) canonical.add(ROLE_ALIASES[r] ?? r);
+      if (r) result.add(r);
     }
   }
-  return canonical;
+  return result;
 }
 
 // ---------------------------------------------------------------------------

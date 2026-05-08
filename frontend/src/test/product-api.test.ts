@@ -103,6 +103,62 @@ describe('productApi', () => {
     });
   });
 
+  it('loads all price pages for an outlet instead of stopping at the first page', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          items: [{
+            productId: 5000,
+            outletId: 2001,
+            currencyCode: 'VND',
+            priceValue: 45000,
+          }, {
+            productId: 5001,
+            outletId: 2001,
+            currencyCode: 'VND',
+            priceValue: 55000,
+          }],
+          limit: 2,
+          offset: 0,
+          total: 3,
+          hasMore: true,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          items: [{
+            productId: 5002,
+            outletId: 2001,
+            currencyCode: 'VND',
+            priceValue: 5000,
+          }],
+          limit: 2,
+          offset: 2,
+          total: 3,
+          hasMore: false,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const prices = await productApi.prices('token', '2001');
+
+    expect(prices).toHaveLength(3);
+    expect(prices.map((price) => price.productId)).toEqual(['5000', '5001', '5002']);
+
+    const firstUrl = new URL(String(fetchMock.mock.calls[0][0]), 'http://localhost');
+    const secondUrl = new URL(String(fetchMock.mock.calls[1][0]), 'http://localhost');
+    expect(firstUrl.searchParams.get('outletId')).toBe('2001');
+    expect(firstUrl.searchParams.get('limit')).toBe('200');
+    expect(firstUrl.searchParams.get('offset')).toBe('0');
+    expect(secondUrl.searchParams.get('offset')).toBe('2');
+  });
+
   it('uploads product images through the backend multipart endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({

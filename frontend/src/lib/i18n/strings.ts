@@ -78,7 +78,8 @@ export const STRINGS: Record<string, Record<Locale, string>> = {
 
 let currentLocale: Locale = (() => {
   if (typeof window === 'undefined') return 'vi';
-  const fromStorage = window.localStorage.getItem('fern.locale');
+  const storage = window.localStorage;
+  const fromStorage = typeof storage?.getItem === 'function' ? storage.getItem('fern.locale') : null;
   if (fromStorage === 'vi' || fromStorage === 'en') return fromStorage;
   const fromUrl = new URLSearchParams(window.location.search).get('lang');
   if (fromUrl === 'vi' || fromUrl === 'en') return fromUrl;
@@ -92,7 +93,10 @@ export function getLocale(): Locale {
 export function setLocale(locale: Locale) {
   currentLocale = locale;
   if (typeof window !== 'undefined') {
-    window.localStorage.setItem('fern.locale', locale);
+    const storage = window.localStorage;
+    if (typeof storage?.setItem === 'function') {
+      storage.setItem('fern.locale', locale);
+    }
   }
 }
 

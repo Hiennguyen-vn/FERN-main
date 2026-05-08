@@ -31,6 +31,22 @@ def test_missing_outlet_filter_rejected():
     assert any("outlet_id" in v for v in result.violations)
 
 
+def test_nested_outlet_filter_does_not_scope_outer_query():
+    sql = """
+    SELECT sum(net_revenue)
+    FROM analytics.fct_sales_daily
+    WHERE business_date = today()
+      AND EXISTS (
+        SELECT 1
+        FROM analytics.fct_sales_daily
+        WHERE outlet_id IN (1)
+      )
+    """
+    result = validate_sql(sql)
+    assert not result.passed
+    assert any("Missing outlet_id" in v for v in result.violations)
+
+
 def test_insert_rejected():
     sql = "INSERT INTO analytics.fct_sales_daily VALUES (1, 100)"
     result = validate_sql(sql)

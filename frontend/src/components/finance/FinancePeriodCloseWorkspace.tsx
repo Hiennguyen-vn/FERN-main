@@ -300,7 +300,7 @@ export function FinancePeriodCloseWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [scopeOutletId, selectedPeriod, selectedPeriod?.endDate, selectedPeriod?.startDate, selectedPeriodId, token]);
+  }, [scopeOutletId, selectedPeriod, selectedPeriodId, token]);
 
   useEffect(() => {
     void loadPeriods();

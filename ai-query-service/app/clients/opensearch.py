@@ -68,3 +68,52 @@ def hybrid_search_templates(
     resp = client.search(index=s.opensearch_templates_index, body=query)
     hits = resp.get("hits", {}).get("hits", [])
     return [{"_score": h["_score"], **h["_source"]} for h in hits]
+
+
+def hybrid_search_catalog_snapshots(
+    *,
+    text: str,
+    embedding: list[float] | None = None,
+    size: int = 3,
+) -> list[dict[str, Any]]:
+    """Hybrid BM25 + KNN over exported catalog summaries (`ai_catalog` index)."""
+    s = get_settings()
+    client = get_os_client()
+
+    should: list[dict] = [
+        {"match": {"summary_vi": {"query": text, "boost": 2.0}}},
+    ]
+    if embedding is not None:
+        should.append({
+            "knn": {"embedding": {"vector": embedding, "k": size, "boost": 1.0}}
+        })
+
+    query: dict[str, Any] = {"size": size, "query": {"bool": {"should": should}}}
+    resp = client.search(index=s.opensearch_catalog_index, body=query)
+    hits = resp.get("hits", {}).get("hits", [])
+    return [{"_score": h["_score"], **h["_source"]} for h in hits]
+
+
+def hybrid_search_metadata(
+    *,
+    text: str,
+    embedding: list[float] | None = None,
+    size: int = 5,
+) -> list[dict[str, Any]]:
+    """Hybrid BM25 + KNN over semantic metadata (`ai_metadata`)."""
+    s = get_settings()
+    client = get_os_client()
+
+    should: list[dict] = [
+        {"match": {"search_text": {"query": text, "boost": 2.0}}},
+        {"match": {"aliases": {"query": text, "boost": 2.5}}},
+    ]
+    if embedding is not None:
+        should.append({
+            "knn": {"embedding": {"vector": embedding, "k": size, "boost": 1.0}}
+        })
+
+    query: dict[str, Any] = {"size": size, "query": {"bool": {"should": should}}}
+    resp = client.search(index=s.opensearch_metadata_index, body=query)
+    hits = resp.get("hits", {}).get("hits", [])
+    return [{"_score": h["_score"], **h["_source"]} for h in hits]

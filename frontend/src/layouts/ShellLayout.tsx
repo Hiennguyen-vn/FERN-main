@@ -337,7 +337,7 @@ export default function ShellLayout() {
     } catch {
       /* ignore */
     }
-  }, [currentScope, searchParams, setSearchParams]);
+  }, [currentScope, scopeTree, searchParams, setSearchParams]);
 
   const handleNavigate = (family: ModuleFamily) => {
     const path = FAMILY_TO_PATH[family];

@@ -73,6 +73,7 @@ def build_event(state: GraphState) -> dict[str, Any]:
         "raw_question": _truncate(_redact_pii(state.get("raw_question", ""))),
         "intent": state.get("intent"),
         "template_key": state.get("template_key"),
+        "sql_source": state.get("executed_sql_source") or state.get("sql_source") or ("template" if sql else None),
         "sql_sanitized": _sanitize_sql(sql) if sql else "",
         "sql_hash": _hash_sql(sql) if sql else "",
         "row_count": len(rows),
@@ -84,6 +85,16 @@ def build_event(state: GraphState) -> dict[str, Any]:
     }
 
 
+def graph_outcome(state: GraphState) -> str:
+    """Stable outcome label for audit, learning pipeline, and metrics."""
+    return _outcome(state)
+
+
 async def emit(state: GraphState) -> None:
     event = build_event(state)
+    await publish_audit(event)
+
+
+async def emit_review_request(event: dict[str, Any]) -> None:
+    """Publish a human-review request to the audit stream."""
     await publish_audit(event)

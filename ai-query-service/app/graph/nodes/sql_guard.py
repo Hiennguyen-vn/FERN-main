@@ -8,9 +8,13 @@ def sql_guard(state: GraphState) -> GraphState:
     if not sql:
         state["guard_passed"] = False
         state["guard_violations"] = ["No SQL to validate"]
+        state.setdefault("trace", []).append({"node": "sql_guard", "passed": False})
         return state
 
-    result = validate_sql(sql)
+    allowed = state.get("guard_allowed_tables")
+    allowed_tables = frozenset(allowed) if isinstance(allowed, list) else None
+    result = validate_sql(sql, allowed_tables=allowed_tables)
     state["guard_passed"] = result.passed
     state["guard_violations"] = list(result.violations)
+    state.setdefault("trace", []).append({"node": "sql_guard", "passed": result.passed})
     return state

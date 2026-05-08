@@ -21,10 +21,19 @@ class Settings(BaseSettings):
     openai_api_key: str = "sk-test"
     openai_base_url: str = ""
     openai_api_mode: str = "chat"
+    openai_responses_previous_response_id_enabled: bool = True
     openai_user_agent: str = "FERN-ai-query-service/0.1"
     openai_model: str = "gpt-4.1"
+    openai_model_supervisor: str = ""
+    openai_model_sql_planner: str = ""
+    openai_model_sql_generator: str = ""
+    openai_model_reviewer: str = ""
+    openai_model_formatter: str = ""
+    openai_model_doc_reader: str = ""
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embeddings_enabled: bool = True
+    openai_timeout_seconds: float = 120.0
+    openai_max_retries: int = 2
 
     # ClickHouse
     clickhouse_host: str = "clickhouse"
@@ -33,10 +42,22 @@ class Settings(BaseSettings):
     clickhouse_user: str = "default"
     clickhouse_password: str = ""
 
+    # Postgres read replica — used only by controlled HR query lane, never by GenSQL.
+    postgres_host: str = "postgres-replica"
+    postgres_port: int = 5432
+    postgres_db: str = "fern"
+    postgres_user: str = "fern"
+    postgres_password: str = "fern"
+    postgres_statement_timeout_seconds: int = 10
+
     # OpenSearch
     opensearch_url: str = "http://opensearch:9200"
     opensearch_aliases_index: str = "ai_aliases"
     opensearch_templates_index: str = "ai_templates"
+    """Embeddings over exported ClickHouse catalog summaries (see scripts/export_catalog_snapshot.py)."""
+    opensearch_catalog_index: str = "ai_catalog"
+    """Semantic metadata docs: metric definitions, table policy, value aliases."""
+    opensearch_metadata_index: str = "ai_metadata"
 
     # Redis Sentinel
     redis_sentinel_hosts: str = "redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379"
@@ -45,6 +66,9 @@ class Settings(BaseSettings):
     # Kafka
     kafka_bootstrap: str = "kafka:29092,kafka-2:29092,kafka-3:29092"
     kafka_audit_topic: str = "fern.audit.ai-query"
+    """Staging topic for successful-query fingerprints (promotion rules live in downstream consumers)."""
+    kafka_learning_topic: str = "fern.ai-query.learning.staging"
+    learning_staging_emit_enabled: bool = False
 
     # Internal auth — no default; must be supplied via env / Vault
     internal_service_token: str = "change-me"
@@ -60,9 +84,97 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = 20
     rate_limit_per_hour: int = 200
 
-    # Service
+    # LangGraph — optional reasoning / SQL coherence LLM hops (latency vs quality)
+    query_reasoning_enabled: bool = True
+    sql_logical_check_enabled: bool = True
+    deterministic_supervisor_enabled: bool = True
+    template_fast_path_enabled: bool = True
+
+    # Optional ClickHouse catalog hints for matcher/reasoner (extra latency when enabled)
+    catalog_digest_enabled: bool = False
+    catalog_digest_max_tables: int = 2
+    catalog_digest_max_columns_per_table: int = 40
+    catalog_digest_max_chars: int = 2800
+    metadata_context_enabled: bool = True
+    metadata_context_max_hits: int = 5
+    metadata_context_max_chars: int = 2600
+    """When true, planner/metadata prompts may see fallback facts/event tables for harder scenarios within the allow-list."""
+    agent_extended_dataset_access_enabled: bool = True
+    agent_extended_dataset_max_tables: int = 10
+    learned_scenario_matching_enabled: bool = True
+    learned_scenario_match_min_score: float = 0.78
+
+    # GenSQL orchestrator (experimental): LLM proposes SELECT → AST phase1 → RBAC inject → guard → reviewer → trial → execute
+    codegen_sql_enabled: bool = False
+    """off | low_confidence | no_template_or_low_confidence | always_try — see ARCHI.md §13.1."""
+    codegen_route_mode: str = "off"
+    codegen_confidence_threshold: float = 0.55
+    max_codegen_attempts: int = 2
+    max_codegen_trial_rows: int = 50
+    max_codegen_trial_timeout_seconds: int = 10
+    codegen_review_enabled: bool = True
+    codegen_sql_plan_enabled: bool = True
+    codegen_max_outer_limit: int = 1000
+
+    # Controlled HR lane (static allowlisted Postgres queries + RBAC)
+    hr_query_enabled: bool = True
+    hr_query_max_rows: int = 50
+
+    # Finch-style simplified agent graph (Supervisor + SQL Writer + tools).
+    # When true, /query routes through app.agents.* instead of the legacy
+    # 21-node LangGraph. Allows side-by-side validation against the golden
+    # eval suite before retiring the legacy pipeline.
+    agent_mode_enabled: bool = False
+
+    # SQL Writer Agent: how many parallel candidate runs to vote between.
+    # 1 = single shot (cheapest); 2 = self-consistency (≈2× cost, +EM).
+    # The voter prefers (validated_and_executed > validated_only > raw),
+    # tie-broken by non-empty rows.
+    sql_writer_self_consistency_n: int = 1
+
     service_port: int = 8093
     log_level: str = "INFO"
+    app_timezone: str = "Asia/Ho_Chi_Minh"
+    """Include workflow_summary / workflow_trace on POST /query without requiring a debug header."""
+    workflow_debug_in_response: bool = False
+
+    # CSV exports (data verification artifacts)
+    exports_enabled: bool = True
+    exports_storage_dir: str = "/var/lib/fern/exports"
+    exports_max_rows: int = 50000
+    exports_ttl_hours: int = 24
+    """When true, also write a clean JSON Lines-free export beside CSV (same TTL, separate artifact)."""
+    exports_json_enabled: bool = True
+
+    # Session UX: digest + presentation (markdown preview table, inferred chart_spec)
+    session_enricher_enabled: bool = True
+
+    # Answer formatter: how many result rows to embed verbatim in LLM JSON (rankings must list all of these).
+    answer_facts_max_rows: int = 250
+    # Reviewer sees this many rows to verify numbering; must cover typical top-N product lists.
+    reviewer_answer_facts_max_rows: int = 120
+
+    # Reviewer agent (post-answer quality guard)
+    reviewer_agent_enabled: bool = True
+    reviewer_max_tokens: int = 2800
+
+    # Executive persona / proactive UX
+    executive_persona_enabled: bool = True
+    followup_suggestions_enabled: bool = True
+    followup_max_suggestions: int = 3
+
+    # Investigative mode (multi-step analysis for open-ended exec questions)
+    investigative_mode_enabled: bool = True
+
+    # Long-term agent memory (pgvector). Retriever runs before supervisor;
+    # summarizer writes back after a successful answer. Both fail-open.
+    agent_kb_enabled: bool = False
+    agent_kb_top_k: int = 3
+    agent_kb_min_similarity: float = 0.78
+    agent_kb_max_summary_chars: int = 600
+    agent_kb_max_per_user: int = 200
+    agent_kb_embed_dim: int = 1536
+    agent_kb_table: str = "ai.agent_knowledge_base"
 
     @model_validator(mode="after")
     def _reject_unsafe_secrets_in_production(self) -> "Settings":
@@ -95,6 +207,17 @@ class Settings(BaseSettings):
             raise ValueError("OPENAI_API_MODE must be either 'chat' or 'responses'")
         self.openai_api_mode = mode
         self.openai_base_url = self.openai_base_url.rstrip("/")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_codegen_route_mode(self) -> "Settings":
+        mode = self.codegen_route_mode.lower().strip()
+        if mode not in {"off", "low_confidence", "no_template_or_low_confidence", "always_try"}:
+            raise ValueError(
+                "CODEGEN_ROUTE_MODE must be 'off', 'low_confidence', "
+                "'no_template_or_low_confidence', or 'always_try'"
+            )
+        self.codegen_route_mode = mode
         return self
 
     @property

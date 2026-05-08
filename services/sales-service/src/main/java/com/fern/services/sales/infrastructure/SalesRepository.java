@@ -602,32 +602,10 @@ public class SalesRepository extends BaseRepository {
   }
 
   public Optional<SalesDtos.SaleView> findSale(long saleId) {
-    return queryOne(
-        """
-        SELECT
-          sr.id,
-          sr.outlet_id,
-          sr.pos_session_id,
-          sr.public_token,
-          t.table_code,
-          t.display_name,
-          sr.currency_code,
-          sr.order_type,
-          sr.status,
-          sr.payment_status,
-          sr.subtotal,
-          sr.discount,
-          sr.tax_amount,
-          sr.total_amount,
-          sr.note,
-          sr.created_at
-        FROM core.sale_record sr
-        LEFT JOIN core.ordering_table t ON t.id = sr.ordering_table_id
-        WHERE sr.id = ?
-        """,
-        rs -> mapSaleHeader(rs, loadSaleItems(saleId), paymentRepository.loadPayment(saleId).orElse(null)),
-        saleId
-    );
+    // Read the header, line items, promotions, modifiers, and payment details on one connection.
+    // The previous queryOne-based path opened nested connections while the outer ResultSet was
+    // still active, which can exhaust the small runtime pool during checkout approval.
+    return executeInTransaction(conn -> findSale(conn, saleId));
   }
 
   public Optional<SalesDtos.PosSessionView> findPosSession(long sessionId) {

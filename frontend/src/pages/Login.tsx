@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/use-auth';
 import { ApiError } from '@/api/client';
-import { resolveCanonicalRoles } from '@/components/finance/finance-utils';
+import { effectiveRolesByOutletRecord, sessionRolesSet } from '@/auth/authorization';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -75,9 +75,9 @@ export default function Login() {
       try {
         const session = await login(email.trim(), password);
         // Role-aware landing per business rules.
-        const rolesByOutlet = session?.rolesByOutlet ?? {};
-        const allRoles = resolveCanonicalRoles(rolesByOutlet);
-        const outletIds = Object.keys(rolesByOutlet);
+        const roleByOutlet = effectiveRolesByOutletRecord(session ?? null);
+        const allRoles = sessionRolesSet(session ?? null);
+        const outletIds = Object.keys(roleByOutlet);
         const isManagerTier = allRoles.has('superadmin') || allRoles.has('admin') || allRoles.has('region_manager') || allRoles.has('outlet_manager');
         const isStaffOnly = !isManagerTier && allRoles.has('staff');
         let landing = '/shell';

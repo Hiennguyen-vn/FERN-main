@@ -25,8 +25,8 @@ class AuthContext:
 
     @property
     def is_finance_or_admin(self) -> bool:
-        """True for roles with cross-outlet financial read access (finance or admin)."""
-        return bool(self.roles & {"finance", "admin"})
+        """True for roles with cross-outlet financial read access (finance, admin, superadmin)."""
+        return bool(self.roles & {"finance", "admin", "superadmin"})
 
 
 def _parse_csv_ints(value: str) -> list[int]:
@@ -98,7 +98,7 @@ def parse_auth_headers(
     return AuthContext(
         user_id=user_id,
         session_id=_get("X-Internal-Session-Id"),
-        roles=frozenset(_parse_csv_strings(_get("X-Internal-Roles"))),
+        roles=frozenset(s.strip().lower() for s in _parse_csv_strings(_get("X-Internal-Roles")) if s.strip()),
         permissions=frozenset(_parse_csv_strings(_get("X-Internal-Permissions"))),
         outlet_ids=frozenset(outlet_ids),
         correlation_id=_get("X-Correlation-ID"),

@@ -3,6 +3,8 @@ package com.fern.common.spring.auth;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -276,5 +278,66 @@ class RequestAuthenticationFilterTest {
     assertEquals(55L, context.deviceId());
     assertEquals(7L, context.deviceOutletId());
     assertEquals("7", outletScopeRef.get());
+  }
+
+  @Test
+  void posDeviceInternalContextCanMutateTerminalOrderLifecycle() throws Exception {
+    RuntimeEnvironment.setTestArguments(java.util.List.of(), java.util.List.of("--dev"));
+    RequestAuthenticationFilter filter = new RequestAuthenticationFilter(
+        new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        mock(AuthSessionService.class),
+        mock(DeviceTokenRegistry.class),
+        TEST_OBJECT_MAPPER
+    );
+
+    HttpServletRequest request = mock(HttpServletRequest.class);
+    when(request.getRequestURI()).thenReturn("/api/v1/sales/orders/7001/approve");
+    when(request.getMethod()).thenReturn("POST");
+    when(request.getHeader(InternalServiceAuth.HEADER_SERVICE_NAME)).thenReturn("pos-device");
+    when(request.getHeader(InternalServiceAuth.HEADER_SERVICE_TOKEN)).thenReturn(INTERNAL_TOKEN);
+    when(request.getHeader("X-Internal-Device-Id")).thenReturn("55");
+    when(request.getHeader("X-Internal-Device-Outlet-Id")).thenReturn("7");
+
+    AtomicReference<RequestUserContext> contextRef = new AtomicReference<>();
+    FilterChain chain = (req, res) -> contextRef.set(RequestUserContextHolder.get());
+
+    filter.doFilterInternal(request, mock(HttpServletResponse.class), chain);
+
+    RequestUserContext context = contextRef.get();
+    assertTrue(context.isDeviceContext());
+    assertEquals(55L, context.deviceId());
+    assertEquals(7L, context.deviceOutletId());
+  }
+
+  @Test
+  void deviceJwtCanMutateTerminalOrderLifecycleDirectly() throws Exception {
+    JwtTokenService jwtTokenService = new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET);
+    DeviceTokenRegistry deviceTokenRegistry = mock(DeviceTokenRegistry.class);
+    RequestAuthenticationFilter filter = new RequestAuthenticationFilter(
+        jwtTokenService,
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        mock(AuthSessionService.class),
+        deviceTokenRegistry,
+        TEST_OBJECT_MAPPER
+    );
+
+    String token = jwtTokenService.issueDeviceToken(55L, 7L, 3600);
+
+    HttpServletRequest request = mock(HttpServletRequest.class);
+    when(request.getRequestURI()).thenReturn("/api/v1/sales/orders/7001/mark-payment-done");
+    when(request.getMethod()).thenReturn("POST");
+    when(request.getHeader(HttpHeaders.AUTHORIZATION)).thenReturn("Bearer " + token);
+
+    AtomicReference<RequestUserContext> contextRef = new AtomicReference<>();
+    FilterChain chain = (req, res) -> contextRef.set(RequestUserContextHolder.get());
+
+    filter.doFilterInternal(request, mock(HttpServletResponse.class), chain);
+
+    RequestUserContext context = contextRef.get();
+    assertTrue(context.isDeviceContext());
+    assertEquals(55L, context.deviceId());
+    assertEquals(7L, context.deviceOutletId());
+    verify(deviceTokenRegistry).requireActiveDevice(any(JwtClaims.class), eq(token));
   }
 }

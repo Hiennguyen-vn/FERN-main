@@ -10,12 +10,17 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 @Component
 public class RequestAuthenticationFilter extends OncePerRequestFilter {
+
+  private static final Pattern TERMINAL_ORDER_MUTATION_PATTERN = Pattern.compile(
+      "^/api/v1/sales/orders/[^/]+/(approve|confirm|mark-payment-done|cancel|customer|ordering-table)$"
+  );
 
   private static final Set<String> PUBLIC_PREFIXES = Set.of(
       "/actuator",
@@ -150,12 +155,31 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
     HttpHeaders headers = extractHeaders(request);
     // W1.1: prefer per-service internal JWT when header present.
     if (internalJwtAuth != null && internalJwtAuth.hasJwtHeader(headers)) {
-      JwtTokenService.InternalTokenClaims claims = internalJwtAuth.verify(headers);
+      JwtTokenService.InternalTokenClaims jwtClaims = internalJwtAuth.verify(headers);
       recordInternalAuthMethod("jwt");
-      return new RequestUserContext(
-          null, claims.callerService(), null,
-          java.util.Set.of(), claims.scopes(), java.util.Set.of(),
-          true, true, claims.callerService(), null, null);
+      String caller = jwtClaims.callerService();
+      // When the gateway forwarded a user request it also sends X-Internal-User-Id (and
+      // related headers). Trust those headers because the JWT already proved the sender is
+      // the gateway (not an untrusted client — STRIP_HEADERS cleared them at the edge).
+      String rawUserId = headers.getFirst(InternalServiceAuth.HEADER_USER_ID);
+      if ("gateway".equals(caller) && rawUserId != null && !rawUserId.isBlank()) {
+        Long userId;
+        try {
+          userId = Long.parseLong(rawUserId.trim());
+        } catch (NumberFormatException ex) {
+          throw ServiceException.unauthorized("Invalid X-Internal-User-Id from gateway JWT path");
+        }
+        String sessionId = headers.getFirst(InternalServiceAuth.HEADER_SESSION_ID);
+        Set<String> roles = splitCsv(headers.getFirst(InternalServiceAuth.HEADER_ROLES));
+        Set<String> permissions = splitCsv(headers.getFirst(InternalServiceAuth.HEADER_PERMISSIONS));
+        Set<Long> outletIds = splitLongCsv(headers.getFirst("X-Internal-Outlet-Ids"));
+        authSessionService.requireActiveSession(sessionId, userId);
+        return new RequestUserContext(userId, null, sessionId, roles, permissions, outletIds,
+            true, false, caller, null, null);
+      }
+      return new RequestUserContext(null, caller, null,
+          java.util.Set.of(), jwtClaims.scopes(), java.util.Set.of(),
+          true, true, caller, null, null);
     }
     SpringInternalServiceAuth.AuthenticatedService internal = internalServiceAuth.authenticate(headers);
     if (internal != null) {
@@ -167,7 +191,7 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
         throw ServiceException.forbidden("Sync endpoints require device JWT authentication");
       }
       if ("pos-device".equals(internal.serviceName())) {
-        if (!isDevicePath(request) && !isTerminalOrderWrite(request, request.getRequestURI())) {
+        if (!isDevicePath(request) && !isTerminalOrderMutation(request)) {
           throw ServiceException.forbidden("Device token cannot access this endpoint");
         }
         Long deviceId = parseLongHeader(request, "X-Internal-Device-Id");
@@ -209,7 +233,7 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
     String token = authorization.substring("Bearer ".length()).trim();
     JwtClaims claims = jwtTokenService.verify(token);
     if (claims.isDeviceToken()) {
-      if (!isDevicePath(request) && !isTerminalOrderWrite(request, request.getRequestURI())) {
+      if (!isDevicePath(request) && !isTerminalOrderMutation(request)) {
         throw ServiceException.forbidden("Device token cannot access this endpoint");
       }
       deviceTokenRegistry.requireActiveDevice(claims, token);
@@ -246,7 +270,8 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
         InternalServiceAuth.HEADER_SESSION_ID,
         InternalServiceAuth.HEADER_ROLES,
         InternalServiceAuth.HEADER_PERMISSIONS,
-        "X-Internal-Outlet-Ids"
+        "X-Internal-Outlet-Ids",
+        SpringInternalJwtAuth.HEADER_INTERNAL_JWT  // W1.1: per-service internal JWT
     )) {
       String value = request.getHeader(name);
       if (value != null) {
@@ -281,6 +306,17 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
         && "/api/v1/sales/orders".equals(path);
   }
 
+  private static boolean isTerminalOrderMutation(HttpServletRequest request) {
+    if (!"POST".equalsIgnoreCase(request.getMethod())) {
+      return false;
+    }
+    String path = request.getRequestURI();
+    if (path == null) {
+      return false;
+    }
+    return isTerminalOrderWrite(request, path) || TERMINAL_ORDER_MUTATION_PATTERN.matcher(path).matches();
+  }
+
   private static Long parseLongHeader(HttpServletRequest request, String name) {
     String value = request.getHeader(name);
     if (value == null || value.isBlank()) {
@@ -291,5 +327,37 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
     } catch (NumberFormatException ex) {
       throw ServiceException.unauthorized("Invalid " + name);
     }
+  }
+
+  private static Set<String> splitCsv(String raw) {
+    if (raw == null || raw.isBlank()) {
+      return Set.of();
+    }
+    Set<String> result = new java.util.LinkedHashSet<>();
+    for (String part : raw.split(",")) {
+      String trimmed = part.trim();
+      if (!trimmed.isEmpty()) {
+        result.add(trimmed);
+      }
+    }
+    return java.util.Collections.unmodifiableSet(result);
+  }
+
+  private static Set<Long> splitLongCsv(String raw) {
+    if (raw == null || raw.isBlank()) {
+      return Set.of();
+    }
+    Set<Long> result = new java.util.LinkedHashSet<>();
+    for (String part : raw.split(",")) {
+      String trimmed = part.trim();
+      if (!trimmed.isEmpty()) {
+        try {
+          result.add(Long.parseLong(trimmed));
+        } catch (NumberFormatException ignored) {
+          // skip malformed entries
+        }
+      }
+    }
+    return java.util.Collections.unmodifiableSet(result);
   }
 }

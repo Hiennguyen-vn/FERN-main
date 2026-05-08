@@ -21,6 +21,7 @@ def make_rbac_injector(all_outlet_ids_provider: Callable[[], list[int]] | None =
             state["validation_errors"] = state.get("validation_errors", []) + [
                 "No template selected; cannot inject RBAC"
             ]
+            state.setdefault("trace", []).append({"node": "rbac_injector", "outcome": "missing_template"})
             return state
 
         resolved = state.get("resolved_entities", {}) or {}
@@ -35,6 +36,7 @@ def make_rbac_injector(all_outlet_ids_provider: Callable[[], list[int]] | None =
             )
         except ValueError as e:
             state["validation_errors"] = state.get("validation_errors", []) + [str(e)]
+            state.setdefault("trace", []).append({"node": "rbac_injector", "outcome": "rejected"})
             return state
 
         # Type assertion — defense against Jinja2 injection
@@ -46,6 +48,7 @@ def make_rbac_injector(all_outlet_ids_provider: Callable[[], list[int]] | None =
 
         state["allowed_outlet_ids"] = allowed
         state["final_sql"] = sql
+        state.setdefault("trace", []).append({"node": "rbac_injector", "outlets": len(allowed)})
         return state
 
     return rbac_injector

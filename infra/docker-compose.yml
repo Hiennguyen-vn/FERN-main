@@ -1,17 +1,17 @@
 x-kafka-common-env: &kafka-common-env
-  KAFKA_HEAP_OPTS: "-Xms256M -Xmx384M"
+  KAFKA_HEAP_OPTS: "-Xms128M -Xmx256M"
   KAFKA_PROCESS_ROLES: broker,controller
   KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
   KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
   KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093,2@kafka-2:29093,3@kafka-3:29093
-  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
-  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
-  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
-  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
-  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_CONTROLLER_QUORUM_VOTERS: ${KAFKA_CONTROLLER_QUORUM_VOTERS:-1@kafka:29093}
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR:-1}
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR:-1}
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_TRANSACTION_STATE_LOG_MIN_ISR:-1}
+  KAFKA_DEFAULT_REPLICATION_FACTOR: ${KAFKA_DEFAULT_REPLICATION_FACTOR:-1}
+  KAFKA_MIN_INSYNC_REPLICAS: ${KAFKA_MIN_INSYNC_REPLICAS:-1}
   KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-  KAFKA_NUM_PARTITIONS: 12
+  KAFKA_NUM_PARTITIONS: ${KAFKA_NUM_PARTITIONS:-3}
   KAFKA_LOG_RETENTION_HOURS: 24
   KAFKA_LOG_RETENTION_BYTES: 1073741824
   KAFKA_LOG_SEGMENT_BYTES: 536870912
@@ -230,7 +230,7 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.8.0
     hostname: kafka
-    mem_limit: 700m
+    mem_limit: 2g
     environment:
       <<: *kafka-common-env
       KAFKA_NODE_ID: 1
@@ -239,7 +239,7 @@ services:
     ports:
       - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
     volumes:
-      - kafka-data:/var/lib/kafka/data
+      - kafka-local-data:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "/usr/bin/kafka-broker-api-versions --bootstrap-server kafka:29092 >/dev/null 2>&1"]
       interval: 15s
@@ -248,12 +248,14 @@ services:
 
   kafka-2:
     image: confluentinc/cp-kafka:7.8.0
+    profiles: ["ha"]
     hostname: kafka-2
-    mem_limit: 700m
+    mem_limit: 1g
     environment:
       <<: *kafka-common-env
+      KAFKA_PROCESS_ROLES: broker
       KAFKA_NODE_ID: 2
-      KAFKA_LISTENERS: PLAINTEXT://kafka-2:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://kafka-2:29093
+      KAFKA_LISTENERS: PLAINTEXT://kafka-2:29092,PLAINTEXT_HOST://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT_2:-9094}
     ports:
       - "127.0.0.1:${KAFKA_PORT_2:-9094}:9092"
@@ -267,12 +269,14 @@ services:
 
   kafka-3:
     image: confluentinc/cp-kafka:7.8.0
+    profiles: ["ha"]
     hostname: kafka-3
-    mem_limit: 700m
+    mem_limit: 1g
     environment:
       <<: *kafka-common-env
+      KAFKA_PROCESS_ROLES: broker
       KAFKA_NODE_ID: 3
-      KAFKA_LISTENERS: PLAINTEXT://kafka-3:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://kafka-3:29093
+      KAFKA_LISTENERS: PLAINTEXT://kafka-3:29092,PLAINTEXT_HOST://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT_3:-9095}
     ports:
       - "127.0.0.1:${KAFKA_PORT_3:-9095}:9092"
@@ -293,7 +297,7 @@ services:
     restart: unless-stopped
     mem_limit: 384m
     environment: &service-env
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=50 -XX:+UseSerialGC -Xss256k"
+      JAVA_TOOL_OPTIONS: "${SERVICE_JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=35 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -XX:+UseSerialGC -Xss256k}"
       DB_URL: ${DB_URL:-jdbc:postgresql://postgres:5432/${POSTGRES_DB:-fern}}
       DB_REPLICA_URL: jdbc:postgresql://postgres-replica:5432/${POSTGRES_DB:-fern}
       DEPENDENCIES_POSTGRES_POOL_SIZE: ${DEPENDENCIES_POSTGRES_POOL_SIZE:-2}
@@ -305,8 +309,8 @@ services:
       REDIS_PORT: 6379
       DEPENDENCIES_REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-fern-master}
       DEPENDENCIES_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
-      KAFKA_BOOTSTRAP: kafka:29092,kafka-2:29092,kafka-3:29092
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP:-kafka:29092,kafka-2:29092,kafka-3:29092}
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:29092}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP:-kafka:29092}
       MASTER_NODE_URL: http://master-node:8082
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
@@ -338,7 +342,7 @@ services:
       dockerfile: infra/docker/Dockerfile.gateway
     restart: unless-stopped
     environment: &gateway-env
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=50 -XX:+UseSerialGC -Xss256k"
+      JAVA_TOOL_OPTIONS: "${GATEWAY_JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=35 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -XX:+UseSerialGC -Xss256k}"
       DB_URL: ${DB_URL:-jdbc:postgresql://postgres:5432/${POSTGRES_DB:-fern}}
       DB_REPLICA_URL: jdbc:postgresql://postgres-replica:5432/${POSTGRES_DB:-fern}
       POSTGRES_USER: ${POSTGRES_USER:-fern}
@@ -362,7 +366,7 @@ services:
       AUDIT_SERVICE_URL: http://audit-service:8091
       REPORT_SERVICE_URL: http://report-service:8092
       AI_QUERY_SERVICE_URL: http://ai-query-service:8093
-      KAFKA_BOOTSTRAP: kafka:29092,kafka-2:29092,kafka-3:29092
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:29092}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       SYNC_WS_OUTLET_IDS: ${SYNC_WS_OUTLET_IDS:-1,2,3,4,5}
       AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-dorabets_session}
@@ -387,6 +391,7 @@ services:
     build:
       context: ..
       dockerfile: infra/docker/Dockerfile.gateway
+    profiles: ["ha"]
     restart: unless-stopped
     environment: *gateway-env
     depends_on:
@@ -405,8 +410,6 @@ services:
     restart: unless-stopped
     depends_on:
       gateway:
-        condition: service_healthy
-      gateway-2:
         condition: service_healthy
     ports:
       - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
@@ -712,7 +715,7 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.1
-    profiles: ["analytics"]
+    profiles: ["analytics", "ai"]
     mem_limit: ${CLICKHOUSE_MEM_LIMIT:-1536m}
     restart: unless-stopped
     ports:
@@ -737,28 +740,30 @@ services:
   kafka-connect:
     image: confluentinc/cp-kafka-connect:7.6.0
     profiles: ["cdc"]
-    mem_limit: 2g
+    mem_limit: 1536m
     depends_on:
       kafka:
         condition: service_healthy
       postgres:
         condition: service_healthy
     environment:
-      KAFKA_HEAP_OPTS: "-Xms512M -Xmx1024M"
-      CONNECT_BOOTSTRAP_SERVERS: kafka:29092,kafka-2:29092,kafka-3:29092
+      KAFKA_HEAP_OPTS: "-Xms192M -Xmx384M"
+      CONNECT_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP:-kafka:29092}
       CONNECT_REST_PORT: 8083
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
       CONNECT_GROUP_ID: fern-connect-group
       CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
       CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
       CONNECT_STATUS_STORAGE_TOPIC: _connect-status
-      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 3
-      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 3
-      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: ${KAFKA_CONNECT_REPLICATION_FACTOR:-1}
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: ${KAFKA_CONNECT_REPLICATION_FACTOR:-1}
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: ${KAFKA_CONNECT_REPLICATION_FACTOR:-1}
       CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+      CONNECT_PLUGIN_PATH: /usr/share/confluent-hub-components,/usr/share/java/kafka
+      CONNECT_PLUGIN_DISCOVERY: service_load
       CONNECT_LOG4J_LOGGERS: org.apache.kafka.connect.runtime.rest=WARN,org.reflections=ERROR
+      KAFKA_CONNECT_INSTALL_CLICKHOUSE: ${KAFKA_CONNECT_INSTALL_CLICKHOUSE:-false}
     ports:
       - "127.0.0.1:${KAFKA_CONNECT_PORT:-8094}:8083"
     volumes:
@@ -769,11 +774,16 @@ services:
       - -c
       - |
         confluent-hub install --no-prompt debezium/debezium-connector-postgresql:2.5.4 || true
-        confluent-hub install --no-prompt clickhouse/clickhouse-kafka-connect:0.0.18 || true
+        if [ "$${KAFKA_CONNECT_INSTALL_CLICKHOUSE:-false}" = "true" ]; then
+          confluent-hub install --no-prompt clickhouse/clickhouse-kafka-connect:0.0.18 || true
+        fi
         /etc/confluent/docker/run &
-        sleep 60
-        /bin/sh /register-connectors.sh || true
-        wait
+        connect_pid=$$!
+        (
+          sleep 60
+          /bin/sh /register-connectors.sh || true
+        ) &
+        wait "$${connect_pid}"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8083/connectors >/dev/null || exit 1"]
       interval: 30s
@@ -782,8 +792,8 @@ services:
 
   opensearch:
     image: opensearchproject/opensearch:2.12.0
-    profiles: ["search"]
-    mem_limit: 1g
+    profiles: ["search", "ai"]
+    mem_limit: 2g
     environment:
       discovery.type: single-node
       OPENSEARCH_JAVA_OPTS: "-Xms256m -Xmx256m"
@@ -842,7 +852,7 @@ services:
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
     command: ["server", "-dev"]
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8200/v1/sys/health | grep -q initialized || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8200/v1/sys/health | grep -q initialized || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -940,14 +950,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-      kafka-2:
-        condition: service_healthy
-      kafka-3:
-        condition: service_healthy
     command:
       - "--kafka.server=kafka:29092"
-      - "--kafka.server=kafka-2:29092"
-      - "--kafka.server=kafka-3:29092"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9308/metrics >/dev/null || exit 1"]
       interval: 30s
@@ -1018,20 +1022,77 @@ services:
       OPENAI_API_MODE: ${OPENAI_API_MODE:-chat}
       OPENAI_USER_AGENT: ${OPENAI_USER_AGENT:-FERN-ai-query-service/0.1}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1}
+      OPENAI_MODEL_SUPERVISOR: ${OPENAI_MODEL_SUPERVISOR:-}
+      OPENAI_MODEL_SQL_PLANNER: ${OPENAI_MODEL_SQL_PLANNER:-}
+      OPENAI_MODEL_SQL_GENERATOR: ${OPENAI_MODEL_SQL_GENERATOR:-}
+      OPENAI_MODEL_REVIEWER: ${OPENAI_MODEL_REVIEWER:-}
+      OPENAI_MODEL_FORMATTER: ${OPENAI_MODEL_FORMATTER:-}
+      OPENAI_MODEL_DOC_READER: ${OPENAI_MODEL_DOC_READER:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       OPENAI_EMBEDDINGS_ENABLED: ${OPENAI_EMBEDDINGS_ENABLED:-true}
+      OPENAI_TIMEOUT_SECONDS: ${OPENAI_TIMEOUT_SECONDS:-120}
+      OPENAI_MAX_RETRIES: ${OPENAI_MAX_RETRIES:-2}
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: 8123
       CLICKHOUSE_DB: fern
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      POSTGRES_HOST: ${AI_QUERY_POSTGRES_HOST:-postgres-replica}
+      POSTGRES_PORT: ${AI_QUERY_POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-fern}
+      POSTGRES_USER: ${POSTGRES_USER:-fern}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fern}
+      POSTGRES_STATEMENT_TIMEOUT_SECONDS: ${AI_QUERY_POSTGRES_STATEMENT_TIMEOUT_SECONDS:-10}
       OPENSEARCH_URL: http://opensearch:9200
+      OPENSEARCH_CATALOG_INDEX: ${OPENSEARCH_CATALOG_INDEX:-ai_catalog}
+      OPENSEARCH_METADATA_INDEX: ${OPENSEARCH_METADATA_INDEX:-ai_metadata}
       REDIS_SENTINEL_HOSTS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
       REDIS_SENTINEL_MASTER: fern-master
-      KAFKA_BOOTSTRAP: kafka:29092,kafka-2:29092,kafka-3:29092
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:29092}
       KAFKA_AUDIT_TOPIC: fern.audit.ai-query
+      KAFKA_LEARNING_TOPIC: ${KAFKA_LEARNING_TOPIC:-fern.ai-query.learning.staging}
+      LEARNING_STAGING_EMIT_ENABLED: ${LEARNING_STAGING_EMIT_ENABLED:-false}
+      QUERY_REASONING_ENABLED: ${QUERY_REASONING_ENABLED:-true}
+      SQL_LOGICAL_CHECK_ENABLED: ${SQL_LOGICAL_CHECK_ENABLED:-true}
+      DETERMINISTIC_SUPERVISOR_ENABLED: ${DETERMINISTIC_SUPERVISOR_ENABLED:-true}
+      TEMPLATE_FAST_PATH_ENABLED: ${TEMPLATE_FAST_PATH_ENABLED:-true}
+      CATALOG_DIGEST_ENABLED: ${CATALOG_DIGEST_ENABLED:-false}
+      CATALOG_DIGEST_MAX_TABLES: ${CATALOG_DIGEST_MAX_TABLES:-2}
+      CATALOG_DIGEST_MAX_COLUMNS_PER_TABLE: ${CATALOG_DIGEST_MAX_COLUMNS_PER_TABLE:-40}
+      CATALOG_DIGEST_MAX_CHARS: ${CATALOG_DIGEST_MAX_CHARS:-2800}
+      METADATA_CONTEXT_ENABLED: ${METADATA_CONTEXT_ENABLED:-true}
+      METADATA_CONTEXT_MAX_HITS: ${METADATA_CONTEXT_MAX_HITS:-5}
+      METADATA_CONTEXT_MAX_CHARS: ${METADATA_CONTEXT_MAX_CHARS:-2600}
+      CODEGEN_SQL_ENABLED: ${CODEGEN_SQL_ENABLED:-true}
+      CODEGEN_ROUTE_MODE: ${CODEGEN_ROUTE_MODE:-no_template_or_low_confidence}
+      CODEGEN_CONFIDENCE_THRESHOLD: ${CODEGEN_CONFIDENCE_THRESHOLD:-0.55}
+      CODEGEN_MAX_OUTER_LIMIT: ${CODEGEN_MAX_OUTER_LIMIT:-1000}
+      MAX_CODEGEN_ATTEMPTS: ${MAX_CODEGEN_ATTEMPTS:-2}
+      MAX_CODEGEN_TRIAL_ROWS: ${MAX_CODEGEN_TRIAL_ROWS:-50}
+      MAX_CODEGEN_TRIAL_TIMEOUT_SECONDS: ${MAX_CODEGEN_TRIAL_TIMEOUT_SECONDS:-10}
+      CODEGEN_REVIEW_ENABLED: ${CODEGEN_REVIEW_ENABLED:-true}
+      HR_QUERY_ENABLED: ${HR_QUERY_ENABLED:-true}
+      HR_QUERY_MAX_ROWS: ${HR_QUERY_MAX_ROWS:-50}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Ho_Chi_Minh}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-change-me}
+      AGENT_MODE_ENABLED: ${AGENT_MODE_ENABLED:-true}
+      OPENAI_RESPONSES_PREVIOUS_RESPONSE_ID_ENABLED: ${OPENAI_RESPONSES_PREVIOUS_RESPONSE_ID_ENABLED:-false}
+      SQL_WRITER_SELF_CONSISTENCY_N: ${SQL_WRITER_SELF_CONSISTENCY_N:-1}
+      EXPORTS_ENABLED: ${EXPORTS_ENABLED:-true}
+      EXPORTS_STORAGE_DIR: ${EXPORTS_STORAGE_DIR:-/var/lib/fern/exports}
+      EXPORTS_MAX_ROWS: ${EXPORTS_MAX_ROWS:-50000}
+      EXPORTS_TTL_HOURS: ${EXPORTS_TTL_HOURS:-24}
+      REVIEWER_AGENT_ENABLED: ${REVIEWER_AGENT_ENABLED:-true}
+      REVIEWER_MAX_TOKENS: ${REVIEWER_MAX_TOKENS:-600}
+      EXECUTIVE_PERSONA_ENABLED: ${EXECUTIVE_PERSONA_ENABLED:-true}
+      FOLLOWUP_SUGGESTIONS_ENABLED: ${FOLLOWUP_SUGGESTIONS_ENABLED:-true}
+      FOLLOWUP_MAX_SUGGESTIONS: ${FOLLOWUP_MAX_SUGGESTIONS:-3}
+      INVESTIGATIVE_MODE_ENABLED: ${INVESTIGATIVE_MODE_ENABLED:-true}
+    volumes:
+      - ai-query-exports:/var/lib/fern/exports
     depends_on:
+      postgres-replica:
+        condition: service_healthy
       clickhouse:
         condition: service_healthy
       opensearch:
@@ -1052,9 +1113,11 @@ volumes:
   redis-data:
   redis-replica-1-data:
   redis-replica-2-data:
+  kafka-local-data:
   kafka-data:
   kafka-2-data:
   kafka-3-data:
   minio-data:
   clickhouse-data:
   opensearch-data:
+  ai-query-exports:

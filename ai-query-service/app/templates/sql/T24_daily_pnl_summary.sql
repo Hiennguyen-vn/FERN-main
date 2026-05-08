@@ -5,8 +5,8 @@ SELECT
     cogs,
     payroll_cost,
     operating_profit,
-    operating_profit / nullIf(revenue, 0) AS margin
-FROM analytics.fct_daily_pnl
+    operating_margin AS margin
+FROM analytics.ai_pnl_daily
 WHERE outlet_id IN ({{ outlet_ids | join(',') }})
   AND business_date BETWEEN '{{ from_date }}' AND '{{ to_date }}'
 ORDER BY business_date DESC, outlet_id

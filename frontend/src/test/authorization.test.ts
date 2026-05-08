@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  effectiveRolesByOutletRecord,
   hasCatalogMutationAccess,
   hasCrmReadAccess,
   hasHrCompensationAccess,
@@ -8,6 +9,7 @@ import {
   hasModuleAccess,
   hasPosOrderingTableAccess,
   hasSalesOrderQueueAccess,
+  sessionRolesSet,
 } from '@/auth/authorization';
 import { COOKIE_AUTH_TOKEN_SENTINEL } from '@/auth/session';
 import type { AuthSession } from '@/api/fern-api';
@@ -24,11 +26,51 @@ function buildSession(overrides: Partial<AuthSession> = {}): AuthSession {
     },
     rolesByOutlet: {},
     permissionsByOutlet: {},
+    canonicalRolesByOutlet: {},
     ...overrides,
   };
 }
 
+describe('effectiveRolesByOutletRecord / sessionRolesSet', () => {
+  it('uses rolesByOutlet when canonical map is empty (decoded default)', () => {
+    const session = buildSession({
+      rolesByOutlet: { '101': ['superadmin'] },
+      canonicalRolesByOutlet: {},
+    });
+    expect(sessionRolesSet(session).has('superadmin')).toBe(true);
+    expect(effectiveRolesByOutletRecord(session)['101']).toEqual(['superadmin']);
+  });
+
+  it('normalizes legacy cashier via rolesByOutlet when canonical empty', () => {
+    const session = buildSession({
+      rolesByOutlet: { '101': ['cashier'] },
+      canonicalRolesByOutlet: {},
+    });
+    expect(sessionRolesSet(session).has('staff')).toBe(true);
+  });
+
+  it('prefers canonical when it contains any role string', () => {
+    const session = buildSession({
+      rolesByOutlet: { '101': ['should_ignore'] },
+      canonicalRolesByOutlet: { '102': ['finance'] },
+    });
+    expect(effectiveRolesByOutletRecord(session)['101']).toBeUndefined();
+    expect(sessionRolesSet(session).has('finance')).toBe(true);
+  });
+});
+
 describe('hasModuleAccess', () => {
+  it('falls back to raw roles when canonical roles are absent from older auth responses', () => {
+    const session = buildSession({
+      rolesByOutlet: { '101': ['superadmin'] },
+      canonicalRolesByOutlet: {},
+    });
+
+    expect(hasModuleAccess(session, 'iam')).toBe(true);
+    expect(hasModuleAccess(session, 'ai-query')).toBe(true);
+    expect(hasModuleAccess(session, 'procurement')).toBe(true);
+  });
+
   it('shows finance to finance/outlet_manager/region_manager roles per business rules §5.6', () => {
     const cashierSession = buildSession({
       rolesByOutlet: { '101': ['cashier'] },

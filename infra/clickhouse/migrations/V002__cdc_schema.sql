@@ -136,9 +136,9 @@ GROUP BY s.outlet_id, s.business_date;
 
 CREATE OR REPLACE VIEW analytics.fct_sales_by_product AS
 SELECT
-    fs.outlet_id,
-    fs.business_date,
-    fs.product_id,
+    fs.outlet_id      AS outlet_id,
+    fs.business_date  AS business_date,
+    fs.product_id     AS product_id,
     any(p.name)        AS product_name,
     sum(fs.line_total) AS revenue,
     sum(fs.qty)        AS qty,
@@ -151,8 +151,8 @@ GROUP BY fs.outlet_id, fs.business_date, fs.product_id;
 
 CREATE OR REPLACE VIEW analytics.fct_sales_by_category AS
 SELECT
-    fs.outlet_id,
-    fs.business_date,
+    fs.outlet_id      AS outlet_id,
+    fs.business_date  AS business_date,
     p.category_code    AS category_code,
     any(p.name)        AS category_name,
     sum(fs.line_total) AS revenue,

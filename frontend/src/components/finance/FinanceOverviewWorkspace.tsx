@@ -446,7 +446,7 @@ export function FinanceOverviewWorkspace({
       varianceFlags,
       currency,
     };
-  }, [monthlyPl, revenueSnapshot.currency]);
+  }, [monthlyPl, revenueSnapshot.currency, scopeCurrency]);
 
   const closeStatus = useMemo((): PeriodCloseStatus => {
     const approved = currentPeriodRuns.filter((run) => String(run.status || '').toLowerCase() === 'approved').length;

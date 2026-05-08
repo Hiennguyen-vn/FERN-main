@@ -4,6 +4,7 @@ import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.spring.auth.JwtTokenService;
 import com.fern.common.spring.auth.SpringInternalServiceAuth;
 import com.fern.events.finance.InvoiceIssuedEvent;
 import com.fern.events.sales.PaymentCapturedEvent;
@@ -42,6 +43,7 @@ public class InvoiceService {
   private final Clock clock;
   private final RestClient salesRestClient;
   private final SpringInternalServiceAuth internalServiceAuth;
+  private final JwtTokenService jwtTokenService;
   private final String salesBaseUrl;
 
   @Value("${invoice.vat-percent:8.00}")
@@ -54,6 +56,7 @@ public class InvoiceService {
       Clock clock,
       RestClient.Builder restClientBuilder,
       SpringInternalServiceAuth internalServiceAuth,
+      JwtTokenService jwtTokenService,
       @Value("${sales-service.base-url:http://sales-service:8080}") String salesBaseUrl
   ) {
     this.invoiceRepository = invoiceRepository;
@@ -62,6 +65,7 @@ public class InvoiceService {
     this.clock = clock;
     this.salesRestClient = restClientBuilder.build();
     this.internalServiceAuth = internalServiceAuth;
+    this.jwtTokenService = jwtTokenService;
     this.salesBaseUrl = salesBaseUrl.strip().replaceAll("/$", "");
   }
 
@@ -217,7 +221,7 @@ public class InvoiceService {
   @Retry(name = "sales-service")
   SaleResponse fetchSale(long saleId) {
     HttpHeaders internalHeaders = new HttpHeaders();
-    internalServiceAuth.apply(internalHeaders, "finance-service", null);
+    internalServiceAuth.applyWithJwt(internalHeaders, "finance-service", "sales-service", jwtTokenService, null);
     return salesRestClient.get()
         .uri(salesBaseUrl + "/api/v1/sales/orders/{id}", saleId)
         .headers(headers -> headers.addAll(internalHeaders))

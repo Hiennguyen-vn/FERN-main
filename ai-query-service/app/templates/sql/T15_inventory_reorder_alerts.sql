@@ -1,10 +1,15 @@
 SELECT
     outlet_id,
     item_id,
-    sum(qty_on_hand) AS qty_on_hand
+    business_date AS snapshot_date,
+    qty_on_hand
 FROM analytics.fct_inventory_snapshot
 WHERE outlet_id IN ({{ outlet_ids | join(',') }})
-GROUP BY outlet_id, item_id
-HAVING qty_on_hand <= 0
+  AND business_date = (
+    SELECT max(business_date)
+    FROM analytics.fct_inventory_snapshot
+    WHERE outlet_id IN ({{ outlet_ids | join(',') }})
+  )
+  AND qty_on_hand <= 0
 ORDER BY qty_on_hand ASC
 LIMIT 1000

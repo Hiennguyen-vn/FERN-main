@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import com.fern.common.middleware.ServiceException;
 import com.fern.common.outbox.OutboxWriter;
 import com.fern.common.spring.auth.RequestUserContext;
@@ -283,6 +285,50 @@ class SalesRepositoryOrderLifecycleIT {
 
     Optional<SalesDtos.SaleView> found = repository.findSale(Long.parseLong(created.id()));
     assertEquals("payment_done", found.orElseThrow().status());
+  }
+
+  @Test
+  void findSaleLoadsCompositeSaleUsingSingleConnection() {
+    SalesDtos.PosSessionView session = repository.openPosSession(new SalesDtos.OpenPosSessionRequest(
+        "SHIFT-HCM-FIND",
+        TestFixtures.OUTLET_HCM_1,
+        "USD",
+        null,
+        null,
+        "REGISTER-FIND",
+        "cashier-find",
+        LocalDate.parse("2026-04-27"),
+        null));
+    SalesDtos.SaleView created = repository.submitSale(new SalesDtos.SubmitSaleRequest(
+        TestFixtures.OUTLET_HCM_1,
+        Long.parseLong(session.id()),
+        "USD",
+        "dine_in",
+        "Single connection read",
+        List.of(new SalesDtos.SaleLineRequest(
+            PRODUCT_ID,
+            BigDecimal.ONE,
+            BigDecimal.ZERO,
+            BigDecimal.ZERO,
+            null,
+            Set.of(),
+            null,
+            null,
+            null)),
+        null));
+
+    try (HikariDataSource constrainedDataSource = singleConnectionDataSource()) {
+      SalesRepository constrainedRepository = new SalesRepository(
+          constrainedDataSource,
+          new SnowflakeIdGenerator(9L),
+          Clock.fixed(Instant.parse("2026-04-27T08:00:00Z"), ZoneOffset.UTC));
+
+      Optional<SalesDtos.SaleView> found = constrainedRepository.findSale(Long.parseLong(created.id()));
+
+      assertTrue(found.isPresent());
+      assertEquals(created.id(), found.orElseThrow().id());
+      assertEquals(1, found.orElseThrow().items().size());
+    }
   }
 
   @Test
@@ -639,5 +685,17 @@ class SalesRepositoryOrderLifecycleIT {
     } catch (Exception e) {
       throw new IllegalStateException("Unable to count sale usage rows", e);
     }
+  }
+
+  private HikariDataSource singleConnectionDataSource() {
+    HikariConfig config = new HikariConfig();
+    config.setJdbcUrl(PostgresContainerExtension.jdbcUrl());
+    config.setUsername(PostgresContainerExtension.username());
+    config.setPassword(PostgresContainerExtension.password());
+    config.setMaximumPoolSize(1);
+    config.setMinimumIdle(1);
+    config.setConnectionTimeout(1000);
+    config.setPoolName("fern-find-sale-single-conn");
+    return new HikariDataSource(config);
   }
 }

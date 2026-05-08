@@ -889,6 +889,15 @@ export function PayrollPrepWorkspace({
     { step: 4, label: 'Review & Lock', icon: Sparkles },
   ];
 
+  const selectedWindowState = selectedPeriod ? inferPeriodWindowState(selectedPeriod) : null;
+  const selectedWindowTone = selectedWindowState === 'active'
+    ? 'active'
+    : selectedWindowState === 'ended'
+      ? 'expired'
+      : selectedWindowState === 'upcoming'
+        ? 'draft'
+        : 'neutral';
+
   return (
     <>
       <div className="grid h-full lg:grid-cols-[260px_minmax(0,1fr)]">
@@ -969,13 +978,8 @@ export function PayrollPrepWorkspace({
                   <span className="font-semibold tracking-tight text-foreground truncate max-w-[260px]">
                     {buildPeriodHeadline(selectedPeriod, selectedRegionName)}
                   </span>
-                  <SeverityPill tone={
-                    inferPeriodWindowState(selectedPeriod) === 'locked' ? 'locked'
-                    : inferPeriodWindowState(selectedPeriod) === 'open' ? 'active'
-                    : inferPeriodWindowState(selectedPeriod) === 'upcoming' ? 'draft'
-                    : 'neutral'
-                  }>
-                    {periodWindowLabel(inferPeriodWindowState(selectedPeriod))}
+                  <SeverityPill tone={selectedWindowTone}>
+                    {periodWindowLabel(selectedWindowState ?? 'planned')}
                   </SeverityPill>
                   <span className="inline-flex items-center gap-1 text-muted-foreground">
                     <CalendarDays className="h-3 w-3" />

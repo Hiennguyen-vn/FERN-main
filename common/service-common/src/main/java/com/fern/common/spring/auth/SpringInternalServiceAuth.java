@@ -4,6 +4,7 @@ import com.fern.common.auth.InternalServiceAuth;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Set;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.server.ResponseStatusException;
@@ -58,10 +59,37 @@ public class SpringInternalServiceAuth {
         serviceName,
         parseLong(header(headers, InternalServiceAuth.HEADER_USER_ID)),
         header(headers, InternalServiceAuth.HEADER_SESSION_ID),
-        parseCsv(header(headers, InternalServiceAuth.HEADER_ROLES)),
+        parseRoleCsv(header(headers, InternalServiceAuth.HEADER_ROLES)),
         parseCsv(header(headers, InternalServiceAuth.HEADER_PERMISSIONS)),
         parseLongCsv(header(headers, "X-Internal-Outlet-Ids"))
     );
+  }
+
+  /**
+   * Like {@link #apply(HttpHeaders, String, JwtClaims)} but also emits a short-lived
+   * per-service internal JWT as {@code X-Internal-Auth-Token}. Downstream services
+   * that have {@link SpringInternalJwtAuth} wired will prefer the JWT over the shared
+   * token, making the shared token progressively optional (W1.1 rollout).
+   *
+   * @param jwtService the issuer; when {@code null} the method degrades gracefully to
+   *                   shared-token-only (useful in tests and legacy wiring).
+   * @param calleeService the target service name used as the JWT {@code aud} claim.
+   */
+  public void applyWithJwt(HttpHeaders headers, String serviceName, String calleeService,
+      JwtTokenService jwtService, JwtClaims claims) {
+    apply(headers, serviceName, claims);
+    if (jwtService == null) {
+      return;
+    }
+    try {
+      String jwt = jwtService.issueInternalToken(serviceName, calleeService, java.util.Set.of(), 30L);
+      headers.set(SpringInternalJwtAuth.HEADER_INTERNAL_JWT, jwt);
+    } catch (Exception e) {
+      // Non-fatal during rollout: shared token still authorises the call.
+      org.slf4j.LoggerFactory.getLogger(SpringInternalServiceAuth.class)
+          .warn("applyWithJwt: failed to issue internal JWT caller={} callee={}: {}",
+              serviceName, calleeService, e.getMessage());
+    }
   }
 
   public void apply(HttpHeaders headers, String serviceName, JwtClaims claims) {
@@ -110,6 +138,20 @@ public class SpringInternalServiceAuth {
       String value = token.trim();
       if (!value.isBlank()) {
         values.add(value);
+      }
+    }
+    return Set.copyOf(values);
+  }
+
+  private static Set<String> parseRoleCsv(String raw) {
+    Set<String> values = new LinkedHashSet<>();
+    if (raw == null || raw.isBlank()) {
+      return Set.of();
+    }
+    for (String token : raw.split(",")) {
+      String value = token.trim();
+      if (!value.isBlank()) {
+        values.add(value.toLowerCase(Locale.ROOT));
       }
     }
     return Set.copyOf(values);

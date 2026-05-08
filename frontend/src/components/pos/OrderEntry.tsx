@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import type { ProductItem, OrderLineItem } from '@/types/pos';
 import { cn } from '@/lib/utils';
 import { productApi, salesApi, type PriceView, type ProductView, type PromotionView } from '@/api/fern-api';
-import { fnbApi, type CustomerAllergyView } from '@/api/fnb-api';
+import { fnbApi, type CustomerAllergyView, type ProductAllergenView } from '@/api/fnb-api';
 import { crmApi, type CrmCustomerView } from '@/api/crm-api';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
 import { normalizeNumericId } from '@/constants/pos';
@@ -18,14 +18,18 @@ import { AllergenBadgeRow } from '@/components/fnb/AllergenBadgeRow';
 import { EmptyState } from '@/components/shell/PermissionStates';
 import { AlertTriangle, UserPlus, X } from 'lucide-react';
 import { t } from '@/lib/i18n';
+import { roundMoney } from '@/lib/money';
+import { formatPosCurrency } from '@/components/pos/sale-order-utils';
 import { toast } from 'sonner';
 
 type CartItem = OrderLineItem;
+type ProductAllergenMapEntry = { productId: number; allergens: ProductAllergenView[] };
 
 interface Props {
   sessionCode: string;
   outletName: string;
   cashierName: string;
+  currencyCode?: string;
   onBack: () => void;
   onCheckout: (items: CartItem[], promo: string | null, promoDiscount: number) => void;
 }
@@ -35,7 +39,7 @@ function toNumber(value: unknown) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
-export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onCheckout }: Props) {
+export function OrderEntry({ sessionCode, outletName, cashierName, currencyCode, onBack, onCheckout }: Props) {
   const { token, scope } = useShellRuntime();
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
@@ -62,6 +66,7 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
   const [customerSearching, setCustomerSearching] = useState(false);
 
   const scopedOutletId = normalizeNumericId(scope.outletId);
+  const resolvedCurrencyCode = String(currencyCode ?? 'USD').trim().toUpperCase() || 'USD';
 
   useEffect(() => {
     const loadProducts = async () => {
@@ -76,7 +81,7 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
         const [rawProducts, rawPrices, allergenMap] = await Promise.all([
           productApi.products(token),
           scopedOutletId ? productApi.prices(token, scopedOutletId) : Promise.resolve([]),
-          fnbApi.listAllProductAllergens(token).catch(() => []),
+          fnbApi.listAllProductAllergens(token).catch((): ProductAllergenMapEntry[] => []),
         ]);
 
         const priceByProductId = new Map<string, number>();
@@ -89,17 +94,22 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
           allergensByProductId.set(String(entry.productId), entry.allergens);
         });
 
-        const mapped: ProductItem[] = rawProducts.map((product: ProductView) => {
+        const mapped: ProductItem[] = rawProducts.flatMap((product: ProductView) => {
           const productId = String(product.id);
-          return {
+          const price = priceByProductId.get(productId) ?? 0;
+          const active = String(product.status ?? 'active').toLowerCase() === 'active';
+          if (!active || price <= 0) {
+            return [];
+          }
+          return [{
             id: productId,
             name: String(product.name ?? `Product ${productId}`),
             category: String(product.categoryCode ?? 'Uncategorized'),
-            price: priceByProductId.get(productId) ?? 0,
+            price,
             sku: String(product.code ?? productId),
-            available: String(product.status ?? 'active').toLowerCase() === 'active',
+            available: true,
             allergens: allergensByProductId.get(productId) ?? [],
-          };
+          }];
         });
 
         setProducts(mapped);
@@ -287,8 +297,8 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
   );
   const adjustedSubtotal = Math.max(0, subtotal - promoDiscount);
   const taxRate = 0.08;
-  const taxAmount = +(adjustedSubtotal * taxRate).toFixed(2);
-  const total = +(adjustedSubtotal + taxAmount).toFixed(2);
+  const taxAmount = roundMoney(adjustedSubtotal * taxRate, resolvedCurrencyCode);
+  const total = roundMoney(adjustedSubtotal + taxAmount, resolvedCurrencyCode);
 
   const applyPromo = () => {
     if (!token) {
@@ -524,7 +534,9 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
                       </div>
                     ) : null}
                     <div className="flex items-center justify-between mt-2">
-                      <span className={cn('text-sm font-semibold', product.available ? 'text-foreground' : 'text-muted-foreground line-through')}>${product.price.toFixed(2)}</span>
+                      <span className={cn('text-sm font-semibold', product.available ? 'text-foreground' : 'text-muted-foreground line-through')}>
+                        {formatPosCurrency(product.price, resolvedCurrencyCode)}
+                      </span>
                       {!product.available ? <span className="text-[10px] text-destructive font-semibold uppercase">{t('pos.product.unavailable')}</span> : null}
                     </div>
                   </button>
@@ -565,7 +577,7 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
                   <div key={item.id} className="flex items-start gap-2 p-2.5 rounded-md bg-muted/30">
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-foreground">{item.productName}</p>
-                      <p className="text-[10px] text-muted-foreground">${item.unitPrice.toFixed(2)} each</p>
+                      <p className="text-[10px] text-muted-foreground">{formatPosCurrency(item.unitPrice, resolvedCurrencyCode)} each</p>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <button
@@ -585,7 +597,7 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
                       </button>
                     </div>
                     <div className="text-right min-w-[50px]">
-                      <p className="text-xs font-semibold text-foreground">${item.lineTotal.toFixed(2)}</p>
+                      <p className="text-xs font-semibold text-foreground">{formatPosCurrency(item.lineTotal, resolvedCurrencyCode)}</p>
                       <button
                         aria-label={`Xóa ${item.productName}`}
                         onClick={() => removeItem(item.id)}
@@ -629,28 +641,28 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
           <div className="px-3 py-3 border-t bg-muted/20 space-y-2">
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>{t('pos.cart.subtotal')}</span>
-              <span>${subtotal.toFixed(2)}</span>
+              <span>{formatPosCurrency(subtotal, resolvedCurrencyCode)}</span>
             </div>
             {appliedPromoId ? (
               <div className="flex justify-between text-xs text-success">
                 <span>{t('pos.cart.discount')}</span>
-                <span>-${promoDiscount.toFixed(2)}</span>
+                <span>-{formatPosCurrency(promoDiscount, resolvedCurrencyCode)}</span>
               </div>
             ) : null}
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>{t('pos.cart.tax')} (8%)</span>
-              <span>${taxAmount.toFixed(2)}</span>
+              <span>{formatPosCurrency(taxAmount, resolvedCurrencyCode)}</span>
             </div>
             <div className="flex justify-between text-sm font-semibold text-foreground pt-1 border-t">
               <span>{t('pos.cart.total')}</span>
-              <span>${total > 0 ? total.toFixed(2) : '0.00'}</span>
+              <span>{formatPosCurrency(total, resolvedCurrencyCode)}</span>
             </div>
             <Button
               className="w-full h-9 text-xs mt-2"
               disabled={cart.length === 0 || hasSevereAllergyHit}
               onClick={() => onCheckout(cart, appliedPromoId, promoDiscount)}
             >
-              {hasSevereAllergyHit ? t('pos.cart.checkout.severe') : `${t('pos.cart.checkout')} — $${total > 0 ? total.toFixed(2) : '0.00'}`}
+              {hasSevereAllergyHit ? t('pos.cart.checkout.severe') : `${t('pos.cart.checkout')} — ${formatPosCurrency(total, resolvedCurrencyCode)}`}
             </Button>
           </div>
         </div>
@@ -669,7 +681,7 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
             <div className="flex items-center gap-1.5">
               <ShoppingBag className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
               <span className="text-xs font-medium">{cart.length} món</span>
-              <span className="text-[10px] text-muted-foreground">· ${total > 0 ? total.toFixed(2) : '0.00'}</span>
+              <span className="text-[10px] text-muted-foreground">· {formatPosCurrency(total, resolvedCurrencyCode)}</span>
               {cart.length > 0 && <span className="text-[10px] underline text-primary ml-1">Xem</span>}
             </div>
             {appliedPromoId ? (
@@ -722,7 +734,7 @@ export function OrderEntry({ sessionCode, outletName, cashierName, onBack, onChe
               {cart.map((item) => (
                 <div key={item.id} className="flex items-center justify-between text-xs">
                   <span className="flex-1 truncate">{item.quantity}× {item.productName}</span>
-                  <span className="tabular-nums">${item.lineTotal.toFixed(2)}</span>
+                  <span className="tabular-nums">{formatPosCurrency(item.lineTotal, resolvedCurrencyCode)}</span>
                 </div>
               ))}
             </div>

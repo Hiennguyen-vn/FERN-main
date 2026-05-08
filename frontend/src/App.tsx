@@ -11,6 +11,8 @@ import { useAuth } from "@/auth/use-auth";
 import Login from "./pages/Login";
 import ShellLayout from "./layouts/ShellLayout";
 import NotFound from "./pages/NotFound";
+import { sessionRolesSet, effectiveRolesByOutletRecord } from "@/auth/authorization";
+import type { AuthSession } from "@/api/auth-api";
 import { PosRoleRedirect } from "./routes/pos-order/guards/PosRoleRedirect";
 
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
@@ -173,23 +175,13 @@ function RootRedirect() {
   return <Navigate to={resolveLandingPath(session)} replace />;
 }
 
-function resolveLandingPath(session: { rolesByOutlet?: Record<string, string[]> }): string {
-  const rbo = session.rolesByOutlet ?? {};
-  const ALIASES: Record<string, string> = {
-    cashier: 'staff', staff_pos: 'staff', procurement_officer: 'procurement',
-    hr_manager: 'hr', finance_manager: 'finance', finance_approver: 'finance',
-    regional_finance: 'finance', accountant: 'finance', regional_manager: 'region_manager',
-    system_admin: 'admin', technical_admin: 'admin',
-  };
-  const canonical = new Set<string>();
-  for (const list of Object.values(rbo)) {
-    for (const r of (list ?? [])) canonical.add(ALIASES[r] ?? r);
-  }
-  const isManager = canonical.has('superadmin') || canonical.has('admin')
-    || canonical.has('region_manager') || canonical.has('outlet_manager');
-  const isStaffOnly = !isManager && canonical.has('staff');
+function resolveLandingPath(session: AuthSession): string {
+  const roles = sessionRolesSet(session);
+  const isManager = roles.has('superadmin') || roles.has('admin')
+    || roles.has('region_manager') || roles.has('outlet_manager');
+  const isStaffOnly = !isManager && roles.has('staff');
   if (isStaffOnly) {
-    const outletIds = Object.keys(rbo);
+    const outletIds = Object.keys(effectiveRolesByOutletRecord(session));
     return outletIds.length === 1 ? `/posorder?outlet=${outletIds[0]}` : '/posorder';
   }
   return '/dashboard';

@@ -1,16 +1,21 @@
 import logging
 import time
+import uuid
+from datetime import datetime, UTC
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from app.audit.events import emit as emit_audit
+from app.audit.events import emit as emit_audit, emit_review_request
+from app.audit.learning import emit_learning_candidate
 from app.auth.context import AuthError, parse_auth_headers
 from app.config import get_settings
+from app.exports import get_artifact, prune_expired
 from app.graph.nodes.preprocess import PreprocessError
+from app.graph.workflow_summary import build_workflow_steps, build_workflow_summary, compact_trace_for_client
 from app.middleware.rate_limit import RateLimitExceeded, check_and_increment
 
 logger = logging.getLogger(__name__)
@@ -82,6 +87,76 @@ class QueryResponse(BaseModel):
         default=None,
         description="Echo of client's preview_max_rows when > 0 — row cap applied to rows_preview.",
     )
+    workflow_summary: dict[str, Any] | None = Field(
+        default=None,
+        description="Compact safe pipeline summary for UI/review tickets.",
+    )
+    workflow_trace: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Sanitized trace tail — same debug gate as workflow_summary.",
+    )
+    workflow_steps: list[dict[str, str]] = Field(
+        default_factory=list,
+        description="User-safe stepper for status visibility; never includes SQL or prompts.",
+    )
+    data_source_context: dict[str, Any] | None = Field(
+        default=None,
+        description="User-safe business data source/time coverage context; no SQL or prompts.",
+    )
+    chart_spec: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional client-side visualization spec for visualization requests.",
+    )
+    exports: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Download artifacts (CSV + optional clean JSON). Each item: artifact_id, format, filename, download_url, row_count, size_bytes, expires_at, sha256.",
+    )
+    quality_report: dict[str, Any] | None = Field(
+        default=None,
+        description="Reviewer agent verdict (verdict, issues, confidence, applied_revision).",
+    )
+    suggestions: list[str] | None = Field(
+        default=None,
+        description="Proactive follow-up question suggestions for the UI to render as chips.",
+    )
+    audience: str | None = Field(
+        default=None,
+        description="Audience profile used by the formatter (analyst | executive).",
+    )
+    session_digest: dict[str, Any] | None = Field(
+        default=None,
+        description="Continuity digest: intent summary, timeline bullets, resolved signals.",
+    )
+    presentation: dict[str, Any] | None = Field(
+        default=None,
+        description="Structured UI helpers: markdown_table, chart_spec, truncation flags.",
+    )
+    relevant_memories: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Long-term knowledge nuggets (pgvector) similar to the user's current question.",
+    )
+
+
+class ReviewRequestBody(BaseModel):
+    correlation_id: str | None = None
+    question: str = Field(..., max_length=8000)
+    answer: str = Field(..., max_length=12000)
+    reason: str | None = Field(default=None, max_length=1000)
+    conversation_turns: list[ConversationTurn] | None = Field(default=None, max_length=8)
+    rows_preview: list[dict[str, Any]] | None = Field(default=None, max_length=50)
+    workflow_summary: dict[str, Any] | None = None
+
+
+class ReviewRequestResponse(BaseModel):
+    review_id: str
+    status: Literal["queued"]
+
+
+def _workflow_debug_requested(request: Request, settings) -> bool:
+    if getattr(settings, "workflow_debug_in_response", False):
+        return True
+    h = (request.headers.get("x-fern-ai-workflow-debug") or "").strip().lower()
+    return h in ("1", "true", "yes")
 
 
 @asynccontextmanager
@@ -93,8 +168,16 @@ async def lifespan(app: FastAPI):
     # Build graph (without checkpointer for initial bring-up; add Sentinel saver in prod)
     try:
         from app.clients.clickhouse import fetch_all_outlet_ids
-        from app.graph.builder import build_graph
-        app.state.graph = build_graph(all_outlet_ids_provider=fetch_all_outlet_ids)
+
+        if getattr(s, "agent_mode_enabled", False):
+            from app.agents import build_agent_graph
+
+            app.state.graph = build_agent_graph(all_outlet_ids_provider=fetch_all_outlet_ids)
+            logger.info("Using Finch-style agent graph (AGENT_MODE_ENABLED=true)")
+        else:
+            from app.graph.builder import build_graph
+
+            app.state.graph = build_graph(all_outlet_ids_provider=fetch_all_outlet_ids)
     except Exception as e:  # noqa: BLE001
         logger.warning("Graph build deferred: %s", e)
         app.state.graph = None
@@ -170,6 +253,13 @@ async def ready(request: Request):
     except Exception as e:  # noqa: BLE001
         warnings.append(f"opensearch: {e}")
 
+    if get_settings().hr_query_enabled:
+        try:
+            from app.clients.postgres import execute_readonly
+            execute_readonly("SELECT 1 AS ok")
+        except Exception as e:  # noqa: BLE001
+            warnings.append(f"postgres_hr: {e}")
+
     if issues:
         return JSONResponse(
             status_code=503,
@@ -219,6 +309,11 @@ async def query(request: Request, body: QueryRequest) -> QueryResponse:
     except Exception as e:  # noqa: BLE001
         logger.warning("Audit emit failed: %s", e)
 
+    try:
+        await emit_learning_candidate(result)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Learning staging emit failed: %s", e)
+
     hints = result.get("response_hints")
     if not isinstance(hints, list):
         hints = []
@@ -235,6 +330,35 @@ async def query(request: Request, body: QueryRequest) -> QueryResponse:
     si = result.get("intent")
     si_out = si if isinstance(si, str) and si.strip() else None
 
+    ns = result.get("workflow_perf_start_ns")
+    gcpu = None
+    if isinstance(ns, int) and ns > 0:
+        gcpu = int((time.perf_counter_ns() - ns) / 1_000_000)
+    wf_summary = build_workflow_summary(result, graph_cpu_ms=gcpu)
+    wf_trace = None
+    if _workflow_debug_requested(request, s):
+        wf_trace = compact_trace_for_client(result.get("trace") or [])
+    wf_steps = build_workflow_steps(result)
+
+    raw_exports = result.get("exports") or []
+    exports_out: list[dict[str, Any]] | None = None
+    if isinstance(raw_exports, list) and raw_exports:
+        exports_out = []
+        for art in raw_exports:
+            if not isinstance(art, dict) or not art.get("artifact_id"):
+                continue
+            entry = dict(art)
+            entry["download_url"] = f"/api/v1/ai-query/exports/{art['artifact_id']}"
+            exports_out.append(entry)
+        if not exports_out:
+            exports_out = None
+
+    qr = result.get("quality_report") if isinstance(result.get("quality_report"), dict) else None
+    sugg = result.get("suggestions")
+    if not isinstance(sugg, list) or not sugg:
+        sugg = None
+    audience = result.get("audience") if isinstance(result.get("audience"), str) else None
+
     return QueryResponse(
         answer=result.get("answer_text", ""),
         template_key=result.get("template_key"),
@@ -248,4 +372,90 @@ async def query(request: Request, body: QueryRequest) -> QueryResponse:
         rows_preview=rows_preview,
         supervisor_intent=si_out,
         preview_max_rows=pr_max if pr_max > 0 else None,
+        workflow_summary=wf_summary,
+        workflow_trace=wf_trace,
+        workflow_steps=wf_steps,
+        data_source_context=result.get("data_source_context"),
+        chart_spec=result.get("chart_spec"),
+        exports=exports_out,
+        quality_report=qr,
+        suggestions=sugg,
+        audience=audience,
+        session_digest=result.get("session_digest") if isinstance(result.get("session_digest"), dict) else None,
+        presentation=result.get("presentation") if isinstance(result.get("presentation"), dict) else None,
+        relevant_memories=(
+            result.get("relevant_memories")
+            if isinstance(result.get("relevant_memories"), list) and result.get("relevant_memories")
+            else None
+        ),
     )
+
+
+@app.get("/api/v1/ai-query/exports/{artifact_id}")
+async def download_export(artifact_id: str, request: Request):
+    """Authenticated artifact download — CSV or JSON; verifies caller owns the artifact and TTL is alive."""
+    s = get_settings()
+    auth = parse_auth_headers(dict(request.headers), s.internal_service_token)
+
+    # Best-effort cleanup; cheap and bounded.
+    try:
+        prune_expired()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Export cleanup error (ignored): %s", e)
+
+    artifact = get_artifact(artifact_id)
+    if artifact is None:
+        return JSONResponse(status_code=404, content={"error_code": "NOT_FOUND", "message": "Artifact not found or expired"})
+    if artifact.is_expired():
+        return JSONResponse(status_code=410, content={"error_code": "EXPIRED", "message": "Artifact has expired"})
+    if artifact.user_id != auth.user_id:
+        # No leak — same code as not-found to prevent enumeration.
+        return JSONResponse(status_code=404, content={"error_code": "NOT_FOUND", "message": "Artifact not found or expired"})
+
+    if not artifact.path.exists():
+        return JSONResponse(status_code=410, content={"error_code": "EXPIRED", "message": "Artifact file no longer available"})
+
+    fmt = (artifact.format or "csv").lower()
+    media_type = (
+        "application/json; charset=utf-8"
+        if fmt == "json"
+        else "text/csv; charset=utf-8"
+    )
+
+    return FileResponse(
+        path=str(artifact.path),
+        filename=artifact.filename,
+        media_type=media_type,
+        headers={"X-Artifact-SHA256": artifact.sha256, "X-Artifact-Rows": str(artifact.row_count)},
+    )
+
+
+@app.post("/api/v1/ai-query/review-request", response_model=ReviewRequestResponse)
+async def review_request(request: Request, body: ReviewRequestBody) -> ReviewRequestResponse:
+    s = get_settings()
+    auth = parse_auth_headers(dict(request.headers), s.internal_service_token)
+    review_id = str(uuid.uuid4())
+    rows = body.rows_preview or []
+    sanitized_rows = rows[:50]
+    event = {
+        "event_id": review_id,
+        "event_type": "ai_query_review_requested",
+        "schema_version": 1,
+        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "user_id": auth.user_id,
+        "session_id": auth.session_id,
+        "correlation_id": body.correlation_id or auth.correlation_id,
+        "roles": sorted(auth.roles),
+        "outlet_ids": sorted(auth.outlet_ids),
+        "question": body.question[:8000],
+        "answer": body.answer[:12000],
+        "reason": (body.reason or "")[:1000],
+        "conversation_turns": [t.model_dump() for t in (body.conversation_turns or [])],
+        "rows_preview": [_jsonify_preview_value(r) for r in sanitized_rows],
+        "workflow_summary": body.workflow_summary or {},
+    }
+    try:
+        await emit_review_request(event)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Review request audit emit failed: %s", e)
+    return ReviewRequestResponse(review_id=review_id, status="queued")

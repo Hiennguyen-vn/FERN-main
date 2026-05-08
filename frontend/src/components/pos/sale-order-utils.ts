@@ -82,17 +82,20 @@ export function mapSaleToUi(
   const isPublicOrder = Boolean(publicOrderToken || orderingTableCode || orderingTableName);
   const currencyCode = String(detail?.currencyCode ?? sale?.currencyCode ?? 'USD').toUpperCase();
 
-  const lineItems: OrderLineItem[] = Array.isArray(detail?.items)
-    ? detail.items.map((item, index) => mapLineItem(String(sale.id), item, index, productNameById))
+  const sourceItems = detail?.items ?? sale.items;
+  const sourcePayment = detail?.payment ?? sale.payment;
+
+  const lineItems: OrderLineItem[] = Array.isArray(sourceItems)
+    ? sourceItems.map((item, index) => mapLineItem(String(sale.id), item, index, productNameById))
     : [];
 
-  const payments = detail?.payment
+  const payments = sourcePayment
     ? [{
         id: `${sale.id}-pay-1`,
-        method: String(detail.payment.paymentMethod ?? 'cash') as PaymentMethod,
-        amount: toNumber(detail.payment.amount),
-        capturedAt: String(detail.payment.paymentTime ?? detail.createdAt ?? new Date().toISOString()),
-        reference: detail.payment.transactionRef ? String(detail.payment.transactionRef) : undefined,
+        method: String(sourcePayment.paymentMethod ?? 'cash') as PaymentMethod,
+        amount: toNumber(sourcePayment.amount),
+        capturedAt: String(sourcePayment.paymentTime ?? detail?.createdAt ?? sale.createdAt ?? new Date().toISOString()),
+        reference: sourcePayment.transactionRef ? String(sourcePayment.transactionRef) : undefined,
       }]
     : [];
 

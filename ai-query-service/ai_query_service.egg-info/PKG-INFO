@@ -11,6 +11,7 @@ Requires-Dist: openai>=1.30
 Requires-Dist: langgraph>=0.2
 Requires-Dist: langgraph-checkpoint-redis>=0.1
 Requires-Dist: clickhouse-connect>=0.7
+Requires-Dist: psycopg[binary]>=3.2
 Requires-Dist: opensearch-py>=2.5
 Requires-Dist: redis>=5.0
 Requires-Dist: aiokafka>=0.11

@@ -25,6 +25,7 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public class JwtTokenService {
@@ -246,7 +247,7 @@ public class JwtTokenService {
           userId,
           claimsSet.getStringClaim("username"),
           claimsSet.getStringClaim("sid"),
-          asStringSet(claimsSet.getClaim("roles")),
+          asRoleSet(claimsSet.getClaim("roles")),
           asStringSet(claimsSet.getClaim("permissions")),
           asLongSet(claimsSet.getClaim("outletIds")),
           deviceId,
@@ -334,6 +335,19 @@ public class JwtTokenService {
       if (!value.isEmpty()) {
         values.add(value);
       }
+    }
+    return Set.copyOf(values);
+  }
+
+  /** Canonical role names for RBAC (match Python policy / Spring AuthorizationPolicyService). */
+  private static Set<String> asRoleSet(Object rawValue) {
+    Set<String> base = asStringSet(rawValue);
+    if (base.isEmpty()) {
+      return base;
+    }
+    LinkedHashSet<String> values = new LinkedHashSet<>();
+    for (String r : base) {
+      values.add(r.toLowerCase(Locale.ROOT));
     }
     return Set.copyOf(values);
   }

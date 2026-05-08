@@ -371,18 +371,25 @@ public class ProductRepository extends BaseRepository {
     if (version != null && !version.isBlank()) {
       return findRecipeVersion(productId, version);
     }
-    List<ProductDtos.RecipeView> versions = queryList(
-        """
-        SELECT product_id, version, yield_qty, yield_uom_code, status
-        FROM core.recipe
-        WHERE product_id = ?
-        ORDER BY created_at DESC
-        LIMIT 1
-        """,
-        rs -> mapRecipeHeader(rs, loadRecipeLines(productId, getString(rs, "version"))),
-        productId
-    );
-    return versions.stream().findFirst();
+    return executeInTransaction(conn -> {
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          SELECT product_id, version, yield_qty, yield_uom_code, status
+          FROM core.recipe
+          WHERE product_id = ?
+          ORDER BY created_at DESC
+          LIMIT 1
+          """
+      )) {
+        ps.setLong(1, productId);
+        try (ResultSet rs = ps.executeQuery()) {
+          if (rs.next()) {
+            return Optional.of(mapRecipeHeader(rs, loadRecipeLinesTransactional(conn, productId, getString(rs, "version"))));
+          }
+          return Optional.empty();
+        }
+      }
+    });
   }
 
   public ProductDtos.RecipeView upsertRecipe(
@@ -562,17 +569,7 @@ public class ProductRepository extends BaseRepository {
   }
 
   private Optional<ProductDtos.RecipeView> findRecipeVersion(long productId, String version) {
-    List<ProductDtos.RecipeView> recipes = queryList(
-        """
-        SELECT product_id, version, yield_qty, yield_uom_code, status
-        FROM core.recipe
-        WHERE product_id = ? AND version = ?
-        """,
-        rs -> mapRecipeHeader(rs, loadRecipeLines(productId, version)),
-        productId,
-        version
-    );
-    return recipes.stream().findFirst();
+    return executeInTransaction(conn -> findRecipeVersionTransactional(conn, productId, version));
   }
 
   private Optional<ProductDtos.ProductView> findProductById(Connection conn, long productId) throws Exception {

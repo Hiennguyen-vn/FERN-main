@@ -31,7 +31,14 @@ public final class AuthDtos {
       List<BusinessScopeView> scopeAssignments,
       String sessionId,
       Instant issuedAt,
-      Instant expiresAt
+      Instant expiresAt,
+      /**
+       * Role codes resolved to their canonical form (e.g. "cashier" → "staff",
+       * "finance_manager" → "finance") using the backend {@code RoleAliasResolver}.
+       * Frontend MUST use this field for routing/UI decisions instead of maintaining
+       * its own alias map, which would drift whenever new roles are added to the backend.
+       */
+      Map<Long, Set<String>> canonicalRolesByOutlet
   ) {
   }
 
@@ -73,7 +80,9 @@ public final class AuthDtos {
       List<BusinessScopeView> scopeAssignments,
       String sessionId,
       Instant issuedAt,
-      Instant expiresAt
+      Instant expiresAt,
+      /** @see LoginResponse#canonicalRolesByOutlet() */
+      Map<Long, Set<String>> canonicalRolesByOutlet
   ) {
   }
 

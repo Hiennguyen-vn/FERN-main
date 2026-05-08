@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir \
     "fastapi>=0.115" "uvicorn[standard]>=0.29" "pydantic>=2.7" "pydantic-settings>=2.2" \
     "openai>=1.30" "langgraph>=0.2" "langgraph-checkpoint-redis>=0.1" \
-    "clickhouse-connect>=0.7" "opensearch-py>=2.5" "redis>=5.0" "aiokafka>=0.11" \
+    "clickhouse-connect>=0.7" "psycopg[binary]>=3.2" "opensearch-py>=2.5" "redis>=5.0" "aiokafka>=0.11" \
     "sqlglot>=23" "jinja2>=3.1" "pyyaml>=6.0" "httpx>=0.27" "structlog>=24.1"
 
 COPY app ./app

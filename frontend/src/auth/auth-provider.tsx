@@ -80,7 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       },
     }),
     [
-      bootstrap.isLoading,
+      bootstrap.isPending,
       loginMutation,
       queryClient,
       refreshMutation,

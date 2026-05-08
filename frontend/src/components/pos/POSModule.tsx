@@ -42,6 +42,7 @@ import { useAuth } from '@/auth/use-auth';
 import type { PermissionState } from '@/types/shell';
 import { reportError } from '@/lib/report-error';
 import { cn } from '@/lib/utils';
+import { roundMoney } from '@/lib/money';
 import { toast } from 'sonner';
 
 type POSView =
@@ -94,6 +95,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
   const [view, setView] = useState<POSView>({ screen: 'list' });
   const [orders, setOrders] = useState<SaleOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [orderDetailLoadingId, setOrderDetailLoadingId] = useState('');
   const [ordersMap, setOrdersMap] = useState<Record<string, SaleOrder>>({});
   const [productNameById, setProductNameById] = useState<Map<string, string>>(new Map());
   const [customers, setCustomers] = useState<CrmCustomerView[]>([]);
@@ -236,19 +238,10 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     context: { sessionCodeById: Map<string, string>; sessionOperatorNameById: Map<string, string> },
   ): Promise<SaleOrder[]> => {
     if (!token || items.length === 0) return [];
-    const detailResponses = await Promise.all(
-      items.map(async (item) => {
-        try {
-          return await salesApi.orderDetail(token, String(item.id));
-        } catch {
-          return null;
-        }
-      }),
-    );
-    return items.map((item, index) =>
+    return items.map((item) =>
       mapSaleToUi(
         item,
-        detailResponses[index],
+        null,
         outletName,
         operatorName,
         context.sessionCodeById,
@@ -321,6 +314,42 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       setOrdersLoading(false);
     }
   }, [buildSessionContext, loadOrdersWithContext, mergeOrdersIntoState, token]);
+
+  const ensureOrderDetail = useCallback(async (orderId: string) => {
+    if (!token || !orderId) return;
+
+    const existing = ordersMap[orderId] || orders.find((order) => order.id === orderId);
+    if (existing?.lineItems.length && (existing.paymentStatus !== 'paid' || existing.payments.length > 0)) {
+      return;
+    }
+
+    setOrderDetailLoadingId(orderId);
+    try {
+      const detail = await salesApi.orderDetail(token, orderId);
+      const context = await buildSessionContext();
+      mergeOrdersIntoState([
+        mapSaleToUi(
+          detail,
+          detail,
+          outletName,
+          operatorName,
+          context.sessionCodeById,
+          productNameById,
+          context.sessionOperatorNameById,
+        ),
+      ]);
+    } catch (error) {
+      reportError(error, 'pos.sale-order-detail.load');
+      toast.error(getErrorMessage(error, 'Unable to load sale order detail'));
+    } finally {
+      setOrderDetailLoadingId((current) => current === orderId ? '' : current);
+    }
+  }, [buildSessionContext, mergeOrdersIntoState, operatorName, orders, ordersMap, outletName, productNameById, token]);
+
+  const handleViewOrder = useCallback((orderId: string) => {
+    setView({ screen: 'order-detail', orderId });
+    void ensureOrderDetail(orderId);
+  }, [ensureOrderDetail]);
 
   useEffect(() => {
     void fetchOrders();
@@ -757,7 +786,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
         onClose={() => setView({ screen: 'close-session', sessionId: session.id })}
         onReconcile={() => setView({ screen: 'reconcile', sessionId: session.id })}
         onNewOrder={() => setView({ screen: 'order-entry', sessionId: session.id })}
-        onViewOrder={(orderId) => setView({ screen: 'order-detail', orderId })}
+        onViewOrder={handleViewOrder}
       />
     );
   }
@@ -770,12 +799,14 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
         sessionCode={session.code}
         outletName={outletName}
         cashierName={operatorName}
+        currencyCode={session.currencyCode}
         onBack={() => setView({ screen: 'session-detail', sessionId: view.sessionId })}
         onCheckout={(items, promo, promoDiscount) => {
           const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
           const adjustedSubtotal = subtotal - promoDiscount;
-          const taxAmount = +(adjustedSubtotal * 0.08).toFixed(2);
-          const total = +(adjustedSubtotal + taxAmount).toFixed(2);
+          const currencyCode = session.currencyCode || 'USD';
+          const taxAmount = roundMoney(adjustedSubtotal * 0.08, currencyCode);
+          const total = roundMoney(adjustedSubtotal + taxAmount, currencyCode);
           setView({ screen: 'payment', sessionId: view.sessionId, items, promo, total, subtotal, taxAmount, promoDiscount });
         }}
       />
@@ -784,7 +815,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
 
   if (view.screen === 'order-detail') {
     const order = ordersMap[view.orderId] || orders.find((item) => item.id === view.orderId);
-    if (ordersLoading && !order) {
+    if ((ordersLoading || orderDetailLoadingId === view.orderId) && (!order || order.lineItems.length === 0)) {
       return <div className="flex items-center justify-center py-20"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
     }
     if (!order) return <div className="p-6 text-sm text-muted-foreground">Order not found</div>;

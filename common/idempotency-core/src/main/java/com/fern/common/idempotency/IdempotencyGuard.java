@@ -204,6 +204,44 @@ public class IdempotencyGuard {
         }
     }
 
+    /**
+     * Recover stuck rows: any row that has been in {@code started} status for longer than
+     * {@code stalenessSeconds} is considered orphaned (the owning process crashed between the
+     * {@code INSERT status='started'} and the subsequent {@code UPDATE status='completed'}).
+     * Such rows are transitioned to {@code failed} so that the next retry can proceed instead
+     * of receiving {@link IdempotencyInProgressException} indefinitely until TTL expiry.
+     *
+     * @param stalenessSeconds minimum age of a {@code started} row (via {@code created_at})
+     *                         before it is eligible for recovery; 300 (5 min) is a safe default.
+     * @param batchSize        maximum number of rows to update per call.
+     * @return number of rows transitioned to {@code failed}.
+     */
+    public int recoverStuck(int stalenessSeconds, int batchSize) {
+        String sql = """
+                WITH stuck AS (
+                  SELECT service_name, idempotency_key
+                  FROM idempotency_keys
+                  WHERE status = 'started'
+                    AND created_at < NOW() - (? * INTERVAL '1 second')
+                  ORDER BY created_at
+                  LIMIT ?
+                )
+                UPDATE idempotency_keys k
+                   SET status = 'failed', updated_at = NOW()
+                  FROM stuck
+                 WHERE k.service_name   = stuck.service_name
+                   AND k.idempotency_key = stuck.idempotency_key
+                """;
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, stalenessSeconds);
+            ps.setInt(2, batchSize);
+            return ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IdempotencyException("recoverStuck failed", e);
+        }
+    }
+
     private static String sha256(String input) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");

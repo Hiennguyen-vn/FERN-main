@@ -69,8 +69,14 @@ def test_empty_intersection_raises():
 def test_template_role_restriction_payroll():
     assert check_template_access("T27_payroll_cost_by_outlet", {"finance"})
     assert check_template_access("T27_payroll_cost_by_outlet", {"admin"})
+    assert check_template_access("T27_payroll_cost_by_outlet", {"superadmin"})
     assert not check_template_access("T27_payroll_cost_by_outlet", {"outlet_manager"})
     assert not check_template_access("T27_payroll_cost_by_outlet", {"region_manager"})
+
+
+def test_template_role_restriction_finance_includes_superadmin():
+    assert check_template_access("T24_daily_pnl_summary", {"superadmin"})
+    assert check_template_access("T25_expense_breakdown", {"superadmin"})
 
 
 def test_template_no_restriction():
@@ -80,6 +86,7 @@ def test_template_no_restriction():
 def test_has_global_scope():
     assert has_global_scope({"finance"})
     assert has_global_scope({"admin"})
+    assert has_global_scope({"superadmin"})
     assert not has_global_scope({"outlet_manager"})
 
 

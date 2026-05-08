@@ -65,4 +65,63 @@ describe('sale-order-utils', () => {
       }],
     });
   });
+
+  it('falls back to list payload items and payment when detail is not loaded yet', () => {
+    const sale: SaleListItemView = {
+      id: '3478000000000000002',
+      outletId: '3477603326876991488',
+      posSessionId: '3478000000000000999',
+      status: 'payment_done',
+      paymentStatus: 'paid',
+      orderType: 'takeaway',
+      currencyCode: 'VND',
+      subtotal: 120000,
+      discount: 0,
+      taxAmount: 8000,
+      totalAmount: 128000,
+      createdAt: '2026-04-11T12:35:00Z',
+      items: [{
+        productId: '5001',
+        quantity: 1,
+        unitPrice: 120000,
+        lineTotal: 120000,
+        note: 'Hot',
+      }],
+      payment: {
+        paymentMethod: 'cash',
+        amount: 128000,
+        paymentTime: '2026-04-11T12:36:00Z',
+        transactionRef: 'TX-001',
+      },
+    };
+
+    const mapped = mapSaleToUi(
+      sale,
+      null,
+      'VN-HCM-001 · Saigon Central Outlet',
+      'Cashier One',
+      new Map([['3478000000000000999', 'POS-20260411-999']]),
+      new Map([['5001', 'Black Coffee']]),
+    );
+
+    expect(mapped).toMatchObject({
+      orderNumber: 'SO-000002',
+      sessionCode: 'POS-20260411-999',
+      status: 'completed',
+      paymentStatus: 'paid',
+      total: 128000,
+      lineItems: [{
+        productId: '5001',
+        productName: 'Black Coffee',
+        quantity: 1,
+        lineTotal: 120000,
+        note: 'Hot',
+      }],
+      payments: [{
+        method: 'cash',
+        amount: 128000,
+        reference: 'TX-001',
+      }],
+    });
+  });
 });

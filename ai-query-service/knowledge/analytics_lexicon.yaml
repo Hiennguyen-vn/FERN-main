@@ -29,3 +29,4 @@ T27_payroll_cost_by_outlet: "Chi phí lương tổng hợp theo outlet — khôn
 T28_payment_capture_analysis: "Thanh toán / capture (POS) theo kỳ."
 T29_stock_low_events: "Sự kiện tồn thấp (theo kỳ CDC/event)."
 T30_sale_cancellation_rate: "Tỷ lệ hủy đơn / void theo outlet hoặc kỳ."
+T32_period_revenue_summary: "Tổng hợp doanh thu toàn phạm vi outlet trong kỳ: doanh thu gộp/ròng, số giao dịch, giảm giá, số ngày kinh doanh."

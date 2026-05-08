@@ -18,10 +18,14 @@ def test_query_response_model_roundtrip_optional_fields():
         supervisor_intent="export_request",
         preview_max_rows=50,
         rows_preview=[{"a": 1}],
+        workflow_steps=[{"key": "analyze", "label": "Phân tích", "status": "done"}],
+        chart_spec={"type": "bar"},
     )
     dumped = r.model_dump()
     assert dumped["supervisor_intent"] == "export_request"
     assert dumped["preview_max_rows"] == 50
+    assert dumped["workflow_steps"][0]["key"] == "analyze"
+    assert dumped["chart_spec"]["type"] == "bar"
 
 
 def test_jsonify_scalar_and_collections():

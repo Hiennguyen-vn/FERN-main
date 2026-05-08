@@ -335,7 +335,7 @@ class GatewayAuthenticationFilterTest {
   }
 
   @Test
-  void userJwtCannotCreateTerminalOrder() {
+  void userJwtCanCreateTerminalOrder() {
     JwtTokenService jwtTokenService = new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET);
     AuthSessionService authSessionService = Mockito.mock(AuthSessionService.class);
     GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
@@ -361,16 +361,24 @@ class GatewayAuthenticationFilterTest {
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .build()
     );
-    AtomicBoolean chainInvoked = new AtomicBoolean(false);
+    AtomicReference<ServerHttpRequest> forwarded = new AtomicReference<>();
 
     filter.filter(exchange, currentExchange -> {
-      chainInvoked.set(true);
+      forwarded.set(currentExchange.getRequest());
       return Mono.empty();
     }).block();
 
-    assertEquals(HttpStatus.FORBIDDEN, exchange.getResponse().getStatusCode());
-    assertFalse(chainInvoked.get());
-    Mockito.verifyNoInteractions(authSessionService);
+    ServerHttpRequest forwardedRequest = forwarded.get();
+    assertNotNull(forwardedRequest);
+    assertNull(exchange.getResponse().getStatusCode());
+    assertEquals("gateway", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SERVICE_NAME));
+    assertEquals(INTERNAL_TOKEN,
+        forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SERVICE_TOKEN));
+    assertEquals("1001", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_USER_ID));
+    assertEquals("session-1001", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SESSION_ID));
+    assertEquals("sales.order.write", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_PERMISSIONS));
+    assertEquals("7", forwardedRequest.getHeaders().getFirst("X-Internal-Outlet-Ids"));
+    Mockito.verify(authSessionService).requireActiveSession("session-1001", 1001L);
   }
 
   @Test
@@ -448,6 +456,52 @@ class GatewayAuthenticationFilterTest {
   }
 
   @Test
+  void deviceJwtCanMutateTerminalOrderLifecycle() {
+    JwtTokenService jwtTokenService = new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET);
+    DeviceTokenRegistry deviceTokenRegistry = Mockito.mock(DeviceTokenRegistry.class);
+    GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
+        jwtTokenService,
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        Mockito.mock(AuthSessionService.class),
+        deviceTokenRegistry,
+        AUTH_COOKIE_NAME
+    );
+
+    String token = jwtTokenService.issueDeviceToken(55L, 7L, 3600);
+    for (String path : java.util.List.of(
+        "/api/v1/sales/orders/7001/approve",
+        "/api/v1/sales/orders/7001/confirm",
+        "/api/v1/sales/orders/7001/mark-payment-done",
+        "/api/v1/sales/orders/7001/cancel",
+        "/api/v1/sales/orders/7001/customer",
+        "/api/v1/sales/orders/7001/ordering-table"
+    )) {
+      MockServerHttpRequest request = MockServerHttpRequest.post(path)
+          .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+          .header(InternalServiceAuth.HEADER_SERVICE_NAME, "spoofed-service")
+          .header("X-Internal-Device-Id", "999")
+          .build();
+      MockServerWebExchange exchange = MockServerWebExchange.from(request);
+      AtomicReference<ServerHttpRequest> forwarded = new AtomicReference<>();
+
+      filter.filter(exchange, currentExchange -> {
+        forwarded.set(currentExchange.getRequest());
+        return Mono.empty();
+      }).block();
+
+      ServerHttpRequest forwardedRequest = forwarded.get();
+      assertNotNull(forwardedRequest, path);
+      assertEquals("pos-device", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SERVICE_NAME), path);
+      assertEquals(INTERNAL_TOKEN,
+          forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SERVICE_TOKEN), path);
+      assertEquals("55", forwardedRequest.getHeaders().getFirst("X-Internal-Device-Id"), path);
+      assertEquals("7", forwardedRequest.getHeaders().getFirst("X-Internal-Device-Outlet-Id"), path);
+      assertNull(exchange.getResponse().getStatusCode(), path);
+    }
+    Mockito.verify(deviceTokenRegistry, Mockito.times(6)).requireActiveDevice(Mockito.any(), Mockito.eq(token));
+  }
+
+  @Test
   void internalServiceHeadersCannotReachDeviceSyncEndpoint() {
     RuntimeEnvironment.setTestArguments(java.util.List.of(), java.util.List.of("--dev"));
     GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
@@ -509,6 +563,50 @@ class GatewayAuthenticationFilterTest {
 
     ServerHttpRequest forwardedRequest = forwarded.get();
     assertNotNull(forwardedRequest);
+    assertEquals("gateway", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SERVICE_NAME));
+    assertEquals("2002", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_USER_ID));
+    assertEquals("cookie-session", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SESSION_ID));
+    assertEquals("sales.order.write", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_PERMISSIONS));
+    assertEquals("9", forwardedRequest.getHeaders().getFirst("X-Internal-Outlet-Ids"));
+    Mockito.verify(authSessionService).requireActiveSession("cookie-session", 2002L);
+  }
+
+  @Test
+  void sessionCookieCanCreateTerminalOrder() {
+    JwtTokenService jwtTokenService = new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET);
+    AuthSessionService authSessionService = Mockito.mock(AuthSessionService.class);
+    GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
+        jwtTokenService,
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        authSessionService,
+        Mockito.mock(DeviceTokenRegistry.class),
+        AUTH_COOKIE_NAME
+    );
+
+    String token = jwtTokenService.issueAccessToken(
+        2002L,
+        "cookie-user",
+        "cookie-session",
+        Set.of("outlet_manager"),
+        Set.of("sales.order.write"),
+        Set.of(9L),
+        3600
+    );
+
+    MockServerHttpRequest request = MockServerHttpRequest.post("/api/v1/sales/orders")
+        .cookie(new HttpCookie(AUTH_COOKIE_NAME, token))
+        .build();
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+    AtomicReference<ServerHttpRequest> forwarded = new AtomicReference<>();
+
+    filter.filter(exchange, currentExchange -> {
+      forwarded.set(currentExchange.getRequest());
+      return Mono.empty();
+    }).block();
+
+    ServerHttpRequest forwardedRequest = forwarded.get();
+    assertNotNull(forwardedRequest);
+    assertNull(exchange.getResponse().getStatusCode());
     assertEquals("gateway", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SERVICE_NAME));
     assertEquals("2002", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_USER_ID));
     assertEquals("cookie-session", forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SESSION_ID));

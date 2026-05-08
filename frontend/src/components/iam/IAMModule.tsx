@@ -36,7 +36,12 @@ import {
   type ScopeRegion,
 } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
-import { hasIamRoleManagementAccess, hasIamUserManagementAccess, isSuperadminSession } from '@/auth/authorization';
+import {
+  effectiveRolesByOutletRecord,
+  hasIamRoleManagementAccess,
+  hasIamUserManagementAccess,
+  isSuperadminSession,
+} from '@/auth/authorization';
 import { useAuth } from '@/auth/use-auth';
 import {
   buildDirectoryMeta,
@@ -241,7 +246,7 @@ export function IAMModule() {
     if (!session) return null;
     if (isSuperadminSession(session)) return null; // superadmin sees everything, no banner needed
     // Collect outlet IDs where actor has 'admin' role
-    const adminOutletIds = Object.entries(session.rolesByOutlet ?? {})
+    const adminOutletIds = Object.entries(effectiveRolesByOutletRecord(session))
       .filter(([, roles]) => roles.includes('admin'))
       .map(([id]) => id);
     if (adminOutletIds.length === 0) return null;

@@ -26,6 +26,21 @@ interface CatalogMetrics {
   loading: boolean;
 }
 
+const RECIPE_COVERAGE_SAMPLE_LIMIT = 20;
+
+async function countResolvedRecipes(products: ProductView[], token: string) {
+  let count = 0;
+  for (const product of products) {
+    try {
+      await productApi.recipe(token, String(product.id));
+      count += 1;
+    } catch {
+      // Missing recipes are expected while the catalog is being built.
+    }
+  }
+  return count;
+}
+
 export function CatalogControlTower({ token, outletId, onNavigate }: ControlTowerProps) {
   const [metrics, setMetrics] = useState<CatalogMetrics>({
     totalProducts: 0, activeProducts: 0, draftProducts: 0,
@@ -57,19 +72,12 @@ export function CatalogControlTower({ token, outletId, onNavigate }: ControlTowe
         availableCount = allAvail.filter(a => a.available).length;
       } catch { /* optional */ }
 
-      // Count recipes by loading first page of products and checking each
-      let recipeCount = 0;
-      const prodPage = await productApi.productsPaged(token, { limit: 50, offset: 0 });
-      const checks = await Promise.all(
-        prodPage.items.map(p =>
-          productApi.recipe(token, String(p.id)).then(() => true).catch(() => false)
-        )
-      );
-      recipeCount = checks.filter(Boolean).length;
+      const prodPage = await productApi.productsPaged(token, { limit: RECIPE_COVERAGE_SAMPLE_LIMIT, offset: 0 });
+      const recipeCount = await countResolvedRecipes(prodPage.items, token);
 
       const activeCount = prodPage.items.filter(p => p.status === 'active').length;
       const draftCount = prodPage.items.filter(p => p.status === 'draft').length;
-      const sampleSize = Math.min(products.totalCount, 50);
+      const sampleSize = Math.min(products.totalCount, RECIPE_COVERAGE_SAMPLE_LIMIT);
 
       setMetrics({
         totalProducts: products.totalCount,

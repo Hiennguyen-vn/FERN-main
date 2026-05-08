@@ -6,7 +6,7 @@ from app.rbac.policy import check_template_access
 from app.templates.registry import TEMPLATES
 
 
-MAX_DATE_RANGE_DAYS = 366
+MAX_DATE_RANGE_DAYS = 2557
 MAX_LIMIT = 1000
 
 

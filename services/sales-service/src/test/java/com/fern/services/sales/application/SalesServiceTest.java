@@ -276,7 +276,7 @@ class SalesServiceTest {
   }
 
   @Test
-  void submitSaleRejectsUserContextEvenWithSalesWritePermission() {
+  void submitSaleAllowsUserContextWithSalesWritePermission() {
     RequestUserContextHolder.set(new RequestUserContext(
         7L, "admin", "sess-admin", Set.of("admin"), Set.of("sales.order.write"), Set.of(7L),
         true, false, null, null, null));
@@ -288,6 +288,35 @@ class SalesServiceTest {
         )),
         null
     );
+    SalesDtos.SaleView sale = new SalesDtos.SaleView(
+        "901", 7L, "300", null, null, null, "USD", "dine_in", "order_created", "unpaid",
+        new BigDecimal("5.00"), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("5.00"),
+        "n", List.of(), null, Instant.parse("2026-03-27T00:00:00Z")
+    );
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(7L))).thenReturn(true);
+    when(salesRepository.submitSale(request)).thenReturn(sale);
+
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+    SalesDtos.SaleView result = service.submitSale(request);
+
+    assertEquals("901", result.id());
+    verify(salesRepository).submitSale(request);
+  }
+
+  @Test
+  void submitSaleRejectsUserContextWithoutSalesWritePermission() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        7L, "admin", "sess-admin", Set.of("admin"), Set.of(), Set.of(7L),
+        true, false, null, null, null));
+    SalesDtos.SubmitSaleRequest request = new SalesDtos.SubmitSaleRequest(
+        7L, 300L, "USD", "dine_in", "n",
+        List.of(new SalesDtos.SaleLineRequest(
+            11L, new BigDecimal("1.0000"), BigDecimal.ZERO, BigDecimal.ZERO, null, Set.of(),
+            null, null, null
+        )),
+        null
+    );
+    when(authorizationPolicyService.canWriteSalesForOutlet(any(), eq(7L))).thenReturn(false);
     SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
 
     ServiceException exception = assertThrows(ServiceException.class, () -> service.submitSale(request));
@@ -592,6 +621,34 @@ class SalesServiceTest {
   }
 
   @Test
+  void approveSaleAllowsDeviceContextForSameOutlet() {
+    RequestUserContextHolder.set(deviceContext(55L, 2000L));
+    SalesDtos.SaleView openOrder = publicOrder("9800", 2000L, "order_created");
+    SalesDtos.SaleView approvedOrder = publicOrder("9800", 2000L, "order_approved");
+    when(salesRepository.findSale(9800L)).thenReturn(Optional.of(openOrder));
+    when(salesRepository.approveSale(9800L, null)).thenReturn(approvedOrder);
+
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+    SalesDtos.SaleView result = service.approveSale(9800L);
+
+    verify(salesRepository).approveSale(9800L, null);
+    verify(authorizationPolicyService, org.mockito.Mockito.never()).canWriteSalesForOutlet(any(), eq(2000L));
+    assertEquals("order_approved", result.status());
+  }
+
+  @Test
+  void approveSaleRejectsDeviceContextOutsideOutlet() {
+    RequestUserContextHolder.set(deviceContext(55L, 2002L));
+    when(salesRepository.findSale(9800L)).thenReturn(Optional.of(publicOrder("9800", 2000L, "order_created")));
+
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+
+    ServiceException exception = assertThrows(ServiceException.class, () -> service.approveSale(9800L));
+    assertEquals(403, exception.getStatusCode());
+    verify(authorizationPolicyService, org.mockito.Mockito.never()).canWriteSalesForOutlet(any(), eq(2000L));
+  }
+
+  @Test
   void approveSaleRejectsScopedWriterOutsideOutlet() {
     RequestUserContextHolder.set(new RequestUserContext(
         15L,
@@ -817,6 +874,57 @@ class SalesServiceTest {
 
     verify(salesRepository).markPaymentDone(9800L, request);
     // Events now appended to outbox inside SalesRepository — verified via OutboxWriter, not direct publish.
+    assertEquals("payment_done", result.status());
+    assertEquals("paid", result.paymentStatus());
+  }
+
+  @Test
+  void markPaymentDoneAllowsDeviceContextForSameOutlet() {
+    RequestUserContextHolder.set(deviceContext(55L, 2000L));
+    SalesDtos.SaleView approvedOrder = publicOrder("9800", 2000L, "order_approved");
+    SalesDtos.MarkPaymentDoneRequest request = new SalesDtos.MarkPaymentDoneRequest(
+        "cash",
+        new BigDecimal("35000.00"),
+        Instant.parse("2026-03-31T08:40:00Z"),
+        "txn-9800",
+        "Paid in cash"
+    );
+    SalesDtos.SaleView paidOrder = new SalesDtos.SaleView(
+        "9800",
+        2000L,
+        null,
+        "ord_public_9800",
+        "T1",
+        "Table 1",
+        "VND",
+        "online",
+        "payment_done",
+        "paid",
+        new BigDecimal("35000.00"),
+        BigDecimal.ZERO,
+        BigDecimal.ZERO,
+        new BigDecimal("35000.00"),
+        "QR order T1 (Table 1)",
+        approvedOrder.items(),
+        new SalesDtos.PaymentView(
+            "9800",
+            "cash",
+            new BigDecimal("35000.00"),
+            "success",
+            Instant.parse("2026-03-31T08:40:00Z"),
+            "txn-9800",
+            "Paid in cash"
+        ),
+        Instant.parse("2026-03-31T08:35:00Z")
+    );
+    when(salesRepository.findSale(9800L)).thenReturn(Optional.of(approvedOrder));
+    when(salesRepository.markPaymentDone(9800L, request)).thenReturn(paidOrder);
+
+    SalesService service = new SalesService(salesRepository, authorizationPolicyService, clock);
+    SalesDtos.SaleView result = service.markPaymentDone(9800L, request);
+
+    verify(salesRepository).markPaymentDone(9800L, request);
+    verify(authorizationPolicyService, org.mockito.Mockito.never()).canWriteSalesForOutlet(any(), eq(2000L));
     assertEquals("payment_done", result.status());
     assertEquals("paid", result.paymentStatus());
   }

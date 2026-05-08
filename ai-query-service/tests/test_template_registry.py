@@ -15,8 +15,8 @@ def test_all_templates_have_sql_file():
     assert not missing, f"Missing SQL files: {missing}"
 
 
-def test_thirty_templates_registered():
-    assert len(TEMPLATES) == 30
+def test_thirty_six_templates_registered():
+    assert len(TEMPLATES) == 36
 
 
 def test_render_t01():
@@ -29,6 +29,35 @@ def test_render_t01():
     assert "outlet_id IN (1,2,3)" in sql
     assert "2026-01-01" in sql
     assert "2026-01-31" in sql
+
+
+def test_render_t35_weekly():
+    sql = render(
+        "T35_weekly_revenue_trend",
+        outlet_ids=[1, 2, 3],
+        from_date="2026-02-01",
+        to_date="2026-03-31",
+    )
+    assert "toMonday" in sql
+    assert "week_start" in sql
+    assert "outlet_id IN (1,2,3)" in sql
+    assert "2026-02-01" in sql
+    assert "2026-03-31" in sql
+
+
+def test_render_t36_driver_bridge():
+    sql = render(
+        "T36_revenue_period_driver_bridge",
+        outlet_ids=[1, 2],
+        from_date_a="2026-01-01",
+        to_date_a="2026-03-31",
+        from_date_b="2025-07-01",
+        to_date_b="2025-09-30",
+    )
+    assert "sumIf(net_revenue" in sql
+    assert "from_date_a" not in sql
+    assert "2026-01-01" in sql
+    assert "2025-09-30" in sql
 
 
 def test_render_missing_required_param():
@@ -68,6 +97,17 @@ def test_render_optional_param_default():
         limit=5,
     )
     assert "LIMIT 5" in sql2
+
+
+def test_inventory_current_stock_templates_use_latest_scope_snapshot():
+    sql = render("T12_inventory_low_stock", outlet_ids=[1, 2], threshold=0)
+
+    assert "business_date = (" in sql
+    assert "SELECT max(business_date)" in sql
+    assert "WHERE outlet_id IN (1,2)" in sql
+    assert "AND qty_on_hand < 0" in sql
+    assert "argMax" not in sql
+    assert "sum(qty_on_hand)" not in sql
 
 
 @pytest.mark.parametrize("key", sorted(TEMPLATES.keys()))

@@ -6,7 +6,7 @@ ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 INFRA_DIR="$ROOT_DIR/infra"
 
 USERNAME="admin"
-PASSWORD="123123132"
+PASSWORD="Workflow#2026!"
 FULL_NAME=""
 EMPLOYEE_CODE=""
 EMAIL=""
@@ -21,7 +21,7 @@ Creates or updates an admin-capable account in PostgreSQL and grants:
   - every current direct permission at every non-deleted outlet
 
 Options:
-  --username USERNAME         Login username. Default: admin.root
+  --username USERNAME         Login username. Default: admin
   --password PASSWORD         Plaintext password. Required when creating a new user.
   --full-name FULL_NAME       Full name. Used on create, optional on update.
   --employee-code CODE        Employee code. Optional; defaults on create to GLOBAL-ADMIN-{user_id}.

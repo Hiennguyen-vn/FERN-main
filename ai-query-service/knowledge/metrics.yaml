@@ -119,3 +119,17 @@ templates:
     intent: revenue
     description_vi: "Ty le huy don, cancellation rate, don bi huy"
     required_params: [from_date, to_date]
+  - key: T31_outlet_directory
+    intent: lookup
+    description_vi: >
+      Danh sach cua hang / outlet trong pham vi nguoi dung: ten, ma, trang thai.
+      Dung khi hoi 'co nhung cua hang nao', 'danh sach chi nhanh', 'outlet trong he thong',
+      'liet ke cua hang', 'tim outlet', master outlet list.
+    required_params: []
+  - key: T32_period_revenue_summary
+    intent: revenue
+    description_vi: >
+      Tong hop doanh thu trong mot ky cho toan bo pham vi outlet: gross revenue,
+      net revenue, transaction count, discount, so ngay kinh doanh va so outlet co phat sinh doanh thu.
+      Dung khi hoi tong doanh thu tat ca cua hang / ca he thong / all outlets trong thang, tuan, nam.
+    required_params: [from_date, to_date]

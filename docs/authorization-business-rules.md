@@ -30,15 +30,15 @@ Ten business roles form the canonical taxonomy. All legacy role codes are mapped
 | Role | Code | Default Scope | Purpose |
 |------|------|---------------|---------|
 | **Superadmin** | `superadmin` | Global | Full system access. Emergency override. |
-| **Admin** | `admin` | Outlet / Region | IAM governance within scope. No business operations. |
+| **Admin** | `admin` | Outlet / Region | Scoped IAM governance for a region or outlet. No business operations. |
 | **Region Manager** | `region_manager` | Region | Operational oversight and read access across a region. |
 | **Outlet Manager** | `outlet_manager` | Outlet | Store-level business owner. Final approver for procurement, inventory exceptions, internal expenses, POS. |
-| **Staff** | `staff` | Outlet | POS/cashier operator. Sales order flow only. |
-| **Product Manager** | `product_manager` | Region | Catalog/menu/pricing management within a region. |
-| **Procurement** | `procurement` | Outlet | Purchase order creation and processing within an outlet. No final approval. |
-| **Finance** | `finance` | Region | Financial operations, expense management, payroll approval within a region. |
-| **Kitchen Staff** | `kitchen_staff` | Outlet | Kitchen fulfillment. No business operations beyond outlet membership. |
-| **HR** | `hr` | Region | Employee contracts, scheduling, payroll preparation within a region. No payroll approval. |
+| **Staff** | `staff` | Outlet | Frontline cashier and POS operator. Sales order flow only. |
+| **Product Manager** | `product_manager` | Region | Regional catalog, menu, and pricing management. |
+| **Procurement** | `procurement` | Outlet | Store procurement operator. Purchase order creation and processing. No final approval. |
+| **Finance** | `finance` | Region | Financial operations, expense management, and payroll approval within a region. |
+| **Kitchen Staff** | `kitchen_staff` | Outlet | Outlet kitchen and fulfillment operator. No business operations beyond outlet membership. |
+| **HR** | `hr` | Region | Regional HR: employee contracts, scheduling, payroll preparation. No payroll approval. |
 
 ---
 

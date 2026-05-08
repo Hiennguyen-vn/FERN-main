@@ -88,6 +88,15 @@ fern:
     idempotency-cleanup-initial-delay-ms: ${FERN_CACHE_IDEMPOTENCY_CLEANUP_INITIAL_DELAY_MS:60000}
     idempotency-cleanup-batch-size: ${FERN_CACHE_IDEMPOTENCY_CLEANUP_BATCH_SIZE:5000}
     idempotency-cleanup-max-batches: ${FERN_CACHE_IDEMPOTENCY_CLEANUP_MAX_BATCHES:10}
+  idempotency:
+    # Sweeper: recovers rows stuck in 'started' after a JVM crash between INSERT and UPDATE.
+    stuck-sweeper-enabled: ${FERN_IDEMPOTENCY_STUCK_SWEEPER_ENABLED:true}
+    # Minimum age (seconds) a 'started' row must have before the sweeper marks it 'failed'.
+    # Should be comfortably longer than the longest expected handler execution time.
+    stuck-staleness-seconds: ${FERN_IDEMPOTENCY_STUCK_STALENESS_SECONDS:300}
+    stuck-batch-size: ${FERN_IDEMPOTENCY_STUCK_BATCH_SIZE:200}
+    stuck-sweeper-delay-ms: ${FERN_IDEMPOTENCY_STUCK_SWEEPER_DELAY_MS:60000}
+    stuck-sweeper-initial-delay-ms: ${FERN_IDEMPOTENCY_STUCK_SWEEPER_INITIAL_DELAY_MS:30000}
   sync:
     manifest-private-key-pkcs8-b64: ${FERN_SYNC_MANIFEST_PRIVATE_KEY_PKCS8_B64:}
     manifest-key-id: ${FERN_SYNC_MANIFEST_KEY_ID:dev-key}

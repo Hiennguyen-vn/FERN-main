@@ -419,7 +419,7 @@ export function AuditModule() {
                   </button>
                 </div>
                 <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1.5 text-xs">
-                  {[
+                  {([
                     ['ID', selected.id],
                     ['Module', selected.module],
                     ['Entity', `${selected.entityName ?? '—'} #${selected.entityId ?? '—'}`],
@@ -428,8 +428,8 @@ export function AuditModule() {
                     ['Created', selected.createdAt],
                     ['Reason', selected.reason ?? '—'],
                     ['Correlation', selected.correlationId ?? '—'],
-                  ].map(([k, v]) => (
-                    <Fragment key={k as string}>
+                  ] satisfies Array<[string, unknown]>).map(([k, v]) => (
+                    <Fragment key={k}>
                       <dt className="text-muted-foreground">{k}</dt>
                       <dd className="font-mono break-all">{String(v ?? '—')}</dd>
                     </Fragment>

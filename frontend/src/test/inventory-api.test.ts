@@ -147,4 +147,82 @@ describe('inventoryApi', () => {
       note: 'Damaged during storage',
     });
   });
+
+  it('loads all paginated stock balance pages for POS menu availability checks', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          items: [
+            {
+              outletId: 2001,
+              itemId: 4000,
+              itemName: 'Pho Broth',
+              qtyOnHand: 8942,
+              unitCost: 15,
+              baseUomCode: 'ml',
+            },
+            {
+              outletId: 2001,
+              itemId: 4001,
+              itemName: 'Pho Noodles',
+              qtyOnHand: 4410,
+              unitCost: 20,
+              baseUomCode: 'g',
+            },
+          ],
+          limit: 2,
+          offset: 0,
+          total: 3,
+          hasMore: true,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          items: [
+            {
+              outletId: 2001,
+              itemId: 4002,
+              itemName: 'Bean Sprouts',
+              qtyOnHand: 206,
+              unitCost: 10,
+              baseUomCode: 'g',
+            },
+          ],
+          limit: 2,
+          offset: 2,
+          total: 3,
+          hasMore: false,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const balances = await inventoryApi.balances('token', '2001');
+
+    expect(balances).toHaveLength(3);
+    expect(balances[0]).toMatchObject({
+      outletId: '2001',
+      itemId: '4000',
+      itemName: 'Pho Broth',
+      qtyOnHand: 8942,
+      unitCode: 'ml',
+    });
+    expect(balances[2]).toMatchObject({
+      itemId: '4002',
+      itemName: 'Bean Sprouts',
+      qtyOnHand: 206,
+      unitCode: 'g',
+    });
+
+    const firstUrl = new URL(String(fetchMock.mock.calls[0][0]), 'http://localhost');
+    const secondUrl = new URL(String(fetchMock.mock.calls[1][0]), 'http://localhost');
+    expect(firstUrl.searchParams.get('limit')).toBe('200');
+    expect(firstUrl.searchParams.get('offset')).toBe('0');
+    expect(secondUrl.searchParams.get('offset')).toBe('2');
+  });
 });

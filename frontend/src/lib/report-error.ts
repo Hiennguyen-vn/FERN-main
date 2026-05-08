@@ -16,10 +16,8 @@ export function reportError(error: unknown, context: string, fallback = 'Somethi
   const message = getErrorMessage(error, fallback);
   if (isProd) {
     // Single structured line — easy to grep, no stack-trace leak.
-    // eslint-disable-next-line no-console
     console.warn(JSON.stringify({ level: 'error', context, message }));
   } else {
-    // eslint-disable-next-line no-console
     console.error(`[${context}]`, error);
   }
   return message;

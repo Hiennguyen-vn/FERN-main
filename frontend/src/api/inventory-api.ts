@@ -1,5 +1,5 @@
 import { apiRequest, type PagedResponse } from '@/api/client';
-import { decodeArray, decodePaged } from '@/api/decoders';
+import { decodeArray, decodeArrayFromPageOrArray, decodePaged } from '@/api/decoders';
 import {
   asDateOnly,
   asId,
@@ -185,15 +185,30 @@ function decodeStockCountSession(value: unknown): StockCountSessionView {
   };
 }
 
-export const inventoryApi = {
-  balances: async (token: string, outletId: string, lowOnly = false): Promise<StockBalanceView[]> =>
-    decodeArray(
+async function listAllBalances(token: string, outletId: string, lowOnly = false): Promise<StockBalanceView[]> {
+  const limit = 200;
+  let offset = 0;
+  const items: StockBalanceView[] = [];
+
+  while (true) {
+    const page = decodePaged(
       await apiRequest('/api/v1/inventory/stock-balances', {
         token,
-        query: { outletId, lowOnly: lowOnly || undefined },
+        query: { outletId, lowOnly: lowOnly || undefined, limit, offset },
       }),
       decodeStockBalance,
-    ),
+    );
+    items.push(...page.items);
+    if (!page.hasMore || page.items.length === 0) {
+      return items;
+    }
+    offset += page.items.length;
+  }
+}
+
+export const inventoryApi = {
+  balances: async (token: string, outletId: string, lowOnly = false): Promise<StockBalanceView[]> =>
+    listAllBalances(token, outletId, lowOnly),
   balancesPage: async (token: string, query: InventoryBalancesQuery): Promise<PagedResponse<StockBalanceView>> =>
     decodePaged(await apiRequest('/api/v1/inventory/stock-balances', { token, query }), decodeStockBalance),
   balanceDetail: async (token: string, outletId: string, itemId: string): Promise<StockBalanceView> =>

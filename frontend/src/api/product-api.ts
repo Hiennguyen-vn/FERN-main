@@ -407,6 +407,24 @@ function decodeCatalogAuditLog(value: unknown): CatalogAuditLogView {
   };
 }
 
+async function listAllPrices(token: string, outletId: string, on?: string): Promise<PriceView[]> {
+  const limit = 200;
+  let offset = 0;
+  const items: PriceView[] = [];
+
+  while (true) {
+    const page = decodePaged(
+      await apiRequest('/api/v1/product/prices', { token, query: { outletId, on, limit, offset } }),
+      decodePrice,
+    );
+    items.push(...page.items);
+    if (!page.hasMore || page.items.length === 0) {
+      return items;
+    }
+    offset += page.items.length;
+  }
+}
+
 export const productApi = {
   products: async (token: string): Promise<ProductView[]> =>
     decodeArrayFromPageOrArray(await apiRequest('/api/v1/product/products', { token, query: { limit: 1000 } }), decodeProduct),
@@ -442,7 +460,7 @@ export const productApi = {
       },
     }),
   prices: async (token: string, outletId: string, on?: string): Promise<PriceView[]> =>
-    decodeArrayFromPageOrArray(await apiRequest('/api/v1/product/prices', { token, query: { outletId, on } }), decodePrice),
+    listAllPrices(token, outletId, on),
   pricesPaged: async (token: string, query: PricesQuery): Promise<PagedResponse<PriceView>> =>
     decodePaged(await apiRequest('/api/v1/product/prices', { token, query }), decodePrice),
   upsertPrice: async (token: string, payload: UpsertPricePayload): Promise<unknown> =>

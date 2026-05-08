@@ -59,6 +59,21 @@ function nextKey() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+async function loadRecipeMap(
+  token: string,
+  products: ProductView[],
+): Promise<Record<string, RecipeView | null>> {
+  const byId: Record<string, RecipeView | null> = {};
+  for (const product of products) {
+    try {
+      byId[String(product.id)] = await productApi.recipe(token, String(product.id));
+    } catch {
+      byId[String(product.id)] = null;
+    }
+  }
+  return byId;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────
 
 export function CatalogModule() {
@@ -122,9 +137,7 @@ export function CatalogModule() {
     try {
       const r = await productApi.productsPaged(token, { q: recipesQuery.debouncedSearch || undefined, sortBy: recipesQuery.sortBy, sortDir: recipesQuery.sortDir, limit: recipesQuery.limit, offset: recipesQuery.offset });
       setRecipeProducts(r.items); setRecipeTotal(r.totalCount); setRecipeHasMore(r.items.length >= recipesQuery.limit);
-      const byId: Record<string, RecipeView | null> = {};
-      await Promise.all(r.items.map(async p => { try { byId[String(p.id)] = await productApi.recipe(token, String(p.id)); } catch { byId[String(p.id)] = null; } }));
-      setRecipesByProductId(byId);
+      setRecipesByProductId(await loadRecipeMap(token, r.items));
     } catch (e) { toast.error(getErrorMessage(e, 'Failed to load recipes')); } finally { setRecipesLoading(false); }
   }, [token, recipesQuery.debouncedSearch, recipesQuery.sortBy, recipesQuery.sortDir, recipesQuery.limit, recipesQuery.offset]);
 

@@ -36,13 +36,15 @@ describe('shell layout helpers', () => {
     );
 
     expect(scopeTree[0].id).toBe('system');
-    expect(scopeTree[0].children?.[0]?.children?.[0]?.name).toBe('HN01 · Hanoi 1');
+    expect(scopeTree[0].children?.[0]?.children?.[0]?.name).toBe('Hanoi 1');
+    expect(scopeTree[0].children?.[0]?.children?.[0]?.code).toBe('HN01');
     expect(defaultScope('outlet', scopeTree)).toEqual({
       level: 'outlet',
       regionId: 'r1',
       regionName: 'North',
       outletId: 'o1',
-      outletName: 'HN01 · Hanoi 1',
+      outletName: 'Hanoi 1',
+      outletCode: 'HN01',
     });
   });
 

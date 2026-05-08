@@ -27,6 +27,15 @@ TEMPLATES: dict[str, TemplateMeta] = {
     "T08_revenue_by_payment_method": TemplateMeta("T08_revenue_by_payment_method", ("from_date", "to_date"), ()),
     "T09_avg_basket_size": TemplateMeta("T09_avg_basket_size", ("from_date", "to_date"), ()),
     "T10_transaction_count": TemplateMeta("T10_transaction_count", ("from_date", "to_date"), ()),
+    "T32_period_revenue_summary": TemplateMeta("T32_period_revenue_summary", ("from_date", "to_date"), ()),
+    "T33_zero_revenue_outlets": TemplateMeta("T33_zero_revenue_outlets", ("from_date", "to_date"), ()),
+    "T34_sales_detail_by_day": TemplateMeta("T34_sales_detail_by_day", ("from_date", "to_date"), ()),
+    "T35_weekly_revenue_trend": TemplateMeta("T35_weekly_revenue_trend", ("from_date", "to_date"), ()),
+    "T36_revenue_period_driver_bridge": TemplateMeta(
+        "T36_revenue_period_driver_bridge",
+        ("from_date_a", "to_date_a", "from_date_b", "to_date_b"),
+        (),
+    ),
     # Inventory (5)
     "T11_inventory_current_stock": TemplateMeta("T11_inventory_current_stock", (), ("limit",)),
     "T12_inventory_low_stock": TemplateMeta("T12_inventory_low_stock", (), ("threshold",)),
@@ -45,6 +54,8 @@ TEMPLATES: dict[str, TemplateMeta] = {
     "T23_peak_hour_analysis": TemplateMeta("T23_peak_hour_analysis", ("from_date", "to_date"), ()),
     "T28_payment_capture_analysis": TemplateMeta("T28_payment_capture_analysis", ("from_date", "to_date"), ()),
     "T30_sale_cancellation_rate": TemplateMeta("T30_sale_cancellation_rate", ("from_date", "to_date"), ()),
+    # Directory / lookup (1)
+    "T31_outlet_directory": TemplateMeta("T31_outlet_directory", (), ()),
     # P&L / Finance (4) — restricted
     "T24_daily_pnl_summary": TemplateMeta("T24_daily_pnl_summary", ("from_date", "to_date"), ()),
     "T25_expense_breakdown": TemplateMeta("T25_expense_breakdown", ("from_date", "to_date"), ()),

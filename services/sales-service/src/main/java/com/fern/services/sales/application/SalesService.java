@@ -49,17 +49,26 @@ public class SalesService {
   private final ObjectMapper objectMapper;
   private final TieredCache<List<SalesDtos.MonthlyRevenueRow>> monthlyRevenueCache;
   private final PosMetrics posMetrics;
-  private com.fern.services.sales.infrastructure.InventoryReservationClient reservationClient;
   private boolean reservationEnabled;
-
-  @org.springframework.beans.factory.annotation.Autowired(required = false)
-  public void setReservationClient(com.fern.services.sales.infrastructure.InventoryReservationClient client) {
-    this.reservationClient = client;
-  }
 
   @org.springframework.beans.factory.annotation.Value("${sales.reservation.enabled:false}")
   public void setReservationEnabled(boolean enabled) {
     this.reservationEnabled = enabled;
+  }
+
+  /**
+   * Fail-fast guard: reject startup if someone flips sales.reservation.enabled=true before
+   * W0.3 BomResolver is implemented. productId != itemId (core.item), so enabling the flag
+   * without a resolver would silently corrupt inventory reservations on every sale submission.
+   */
+  @jakarta.annotation.PostConstruct
+  void validateReservationConfig() {
+    if (reservationEnabled) {
+      throw new IllegalStateException(
+          "sales.reservation.enabled=true is not safe: BOM resolver (W0.3) is not yet implemented. "
+          + "productId cannot be used as itemId for stock reservation — this would corrupt inventory. "
+          + "Keep sales.reservation.enabled=false until a BomResolver bean is wired and validated.");
+    }
   }
 
   // Optional — wired only in production-context. Tests/legacy ctors leave it null.
@@ -167,7 +176,7 @@ public class SalesService {
 
   public SalesDtos.SaleView submitSale(String idempotencyKey, Long deviceId, SalesDtos.SubmitSaleRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
-    requireTerminalDeviceForOutlet(context, request.outletId());
+    requireOrderSubmissionAccess(context, request.outletId());
     if (request.payment() != null) {
       throw ServiceException.badRequest("Payment is captured with mark-payment-done after order approval");
     }
@@ -253,15 +262,14 @@ public class SalesService {
   }
 
   private void reserveStockIfEnabled(SalesDtos.SaleView view, SalesDtos.SubmitSaleRequest request) {
-    if (!reservationEnabled || reservationClient == null) return;
-    // W0.3: BOM resolver not yet implemented. ReserveLine.itemId() must reference core.item,
-    // NOT core.product. Sending productId as itemId corrupts inventory reservations.
-    // Keep sales.reservation.enabled=false until a BomResolver bean is wired in.
-    log.error(
-        "stock-reservation: BOM resolution is required before enabling inventory reservation. "
-        + "productId cannot be used as itemId. sale={} outlet={} — reservation SKIPPED. "
-        + "Set sales.reservation.enabled=false until W0.3 BomResolver is implemented.",
-        view.id(), request.outletId());
+    if (!reservationEnabled) return;
+    // validateReservationConfig() blocks startup if reservationEnabled=true, so this path
+    // should never be reached in a correctly configured deployment. Throw defensively to
+    // prevent silent inventory corruption if the @PostConstruct guard is somehow bypassed.
+    throw new IllegalStateException(
+        "BOM resolver (W0.3) not implemented — productId cannot be used as itemId. "
+        + "sale=" + view.id() + " outlet=" + request.outletId()
+        + " — set sales.reservation.enabled=false.");
   }
 
   private static String buildIdempotencyNamespace(Long deviceId, long outletId) {
@@ -269,13 +277,24 @@ public class SalesService {
     return IDEMPOTENCY_SERVICE + ":outlet:" + outletId + ":device:" + device;
   }
 
-  private static void requireTerminalDeviceForOutlet(RequestUserContext context, long outletId) {
-    if (context == null || !context.isDeviceContext()) {
-      throw ServiceException.forbidden("POS order creation requires device JWT authentication");
+  private void requireOrderSubmissionAccess(RequestUserContext context, long outletId) {
+    if (context != null && context.isDeviceContext()) {
+      if (!java.util.Objects.equals(context.deviceOutletId(), outletId)) {
+        throw ServiceException.forbidden("Device is not registered for outlet " + outletId);
+      }
+      return;
     }
-    if (!java.util.Objects.equals(context.deviceOutletId(), outletId)) {
-      throw ServiceException.forbidden("Device is not registered for outlet " + outletId);
+    requireSalesWriteForOutlet(context, outletId);
+  }
+
+  private void requireTerminalOrderMutationAccess(RequestUserContext context, long outletId) {
+    if (context != null && context.isDeviceContext()) {
+      if (!java.util.Objects.equals(context.deviceOutletId(), outletId)) {
+        throw ServiceException.forbidden("Device is not registered for outlet " + outletId);
+      }
+      return;
     }
+    requireSalesWriteForOutlet(context, outletId);
   }
 
   private static String normalizeIdempotencyKey(String raw) {
@@ -419,7 +438,7 @@ public class SalesService {
     RequestUserContext context = RequestUserContextHolder.get();
     SalesDtos.SaleView existing = salesRepository.findSale(saleId)
         .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
-    requireSalesWriteForOutlet(context, existing.outletId());
+    requireTerminalOrderMutationAccess(context, existing.outletId());
     salesRepository.linkCustomerToSale(saleId, customerId);
   }
 
@@ -427,7 +446,7 @@ public class SalesService {
     RequestUserContext context = RequestUserContextHolder.get();
     SalesDtos.SaleView existing = salesRepository.findSale(saleId)
         .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
-    requireSalesWriteForOutlet(context, existing.outletId());
+    requireTerminalOrderMutationAccess(context, existing.outletId());
     salesRepository.linkOrderingTableToSale(saleId, tableId);
   }
 
@@ -435,7 +454,7 @@ public class SalesService {
     RequestUserContext context = RequestUserContextHolder.get();
     SalesDtos.SaleView existing = salesRepository.findSale(saleId)
         .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
-    requireSalesWriteForOutlet(context, existing.outletId());
+    requireTerminalOrderMutationAccess(context, existing.outletId());
     SalesDtos.SaleView approved = salesRepository.approveSale(saleId, context.userId());
     try {
       autoEarnLoyalty(saleId);
@@ -449,7 +468,7 @@ public class SalesService {
     RequestUserContext context = RequestUserContextHolder.get();
     SalesDtos.SaleView existing = salesRepository.findSale(saleId)
         .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
-    requireSalesWriteForOutlet(context, existing.outletId());
+    requireTerminalOrderMutationAccess(context, existing.outletId());
     if (existing.publicOrderToken() == null || existing.orderingTableCode() == null) {
       throw ServiceException.conflict("Only customer-submitted table orders can be approved from this route");
     }
@@ -460,7 +479,7 @@ public class SalesService {
     RequestUserContext context = RequestUserContextHolder.get();
     SalesDtos.SaleView existing = salesRepository.findSale(saleId)
         .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
-    requireSalesWriteForOutlet(context, existing.outletId());
+    requireTerminalOrderMutationAccess(context, existing.outletId());
     SalesDtos.SaleView paid = salesRepository.markPaymentDone(saleId, request);
     evictMonthlyRevenueCache();
     if (posMetrics != null && existing.createdAt() != null) {
@@ -474,7 +493,7 @@ public class SalesService {
     RequestUserContext context = RequestUserContextHolder.get();
     SalesDtos.SaleView existing = salesRepository.findSale(saleId)
         .orElseThrow(() -> ServiceException.notFound("Sale not found: " + saleId));
-    requireSalesWriteForOutlet(context, existing.outletId());
+    requireTerminalOrderMutationAccess(context, existing.outletId());
     String reason       = request == null ? null : request.reason();
     String reasonCode   = request == null ? null : request.reasonCode();
     Long managerUserId  = request == null ? null : request.managerUserId();

@@ -121,7 +121,7 @@ export function CustomerOrdersPanel({
     } finally {
       setOrdersLoading(false);
     }
-  }, [outletId, token]);
+  }, [orders.length, outletId, token]);
 
   useEffect(() => {
     if (!token) {

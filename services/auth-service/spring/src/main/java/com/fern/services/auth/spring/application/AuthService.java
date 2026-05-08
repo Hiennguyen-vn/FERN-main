@@ -120,7 +120,8 @@ public class AuthService {
         toBusinessScopeViews(authorizationPolicyService.resolveUserProfile(userId, matrix)),
         session.sessionId(),
         session.issuedAt(),
-        session.expiresAt()
+        session.expiresAt(),
+        resolveCanonicalRolesByOutlet(matrix.rolesByOutlet())
     );
   }
 
@@ -680,8 +681,29 @@ public class AuthService {
         toBusinessScopeViews(profile),
         session.sessionId(),
         session.issuedAt(),
-        session.expiresAt()
+        session.expiresAt(),
+        resolveCanonicalRolesByOutlet(matrix.rolesByOutlet())
     );
+  }
+
+  /**
+   * Resolves each raw stored role code (e.g. "cashier", "finance_manager") to its canonical
+   * form (e.g. "staff", "finance") using {@link RoleAliasResolver}.
+   * The frontend uses this map for routing/UI decisions so it never needs a local alias copy.
+   */
+  private Map<Long, Set<String>> resolveCanonicalRolesByOutlet(Map<Long, Set<String>> raw) {
+    Map<Long, Set<String>> canonical = new LinkedHashMap<>();
+    raw.forEach((outletId, roles) -> {
+      Set<String> canonicalCodes = roles.stream()
+          .map(roleAliasResolver::toCanonicalRole)
+          .flatMap(Optional::stream)
+          .map(CanonicalRole::code)
+          .collect(Collectors.toCollection(LinkedHashSet::new));
+      if (!canonicalCodes.isEmpty()) {
+        canonical.put(outletId, canonicalCodes);
+      }
+    });
+    return canonical;
   }
 
   private List<OutletAccessGrant> resolveAccessGrants(AuthDtos.CreateUserRequest request) {

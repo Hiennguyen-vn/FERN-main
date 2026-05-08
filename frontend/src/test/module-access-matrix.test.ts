@@ -98,7 +98,7 @@ describe('Admin scoped governance (§2, §8.1)', () => {
 
   // Admin at outlet 101 → has outlet membership → read-floor modules visible
   const ADMIN_ALLOWED: ModuleFamily[] = [
-    'home', 'org', 'regional-ops', 'settings', 'audit', 'iam',
+    'home', 'org', 'regional-ops', 'settings', 'audit', 'iam', 'ai-query',
     // read-floor via outlet membership (§8.6)
     'catalog', 'inventory', 'reports',
   ];
@@ -562,13 +562,13 @@ describe('Golden module visibility per role (§4)', () => {
    * to any role with outlet membership (§8.6).
    */
   const GOLDEN: Record<string, string[]> = {
-    superadmin:      'home pos catalog inventory procurement finance hr workforce scheduling org regional-ops settings reports audit iam crm promotions'.split(' '),
-    admin:           'home catalog inventory org regional-ops settings reports audit iam'.split(' '),
-    region_manager:  'home catalog inventory finance org regional-ops reports audit'.split(' '),
-    outlet_manager:  'home pos catalog inventory procurement finance hr workforce scheduling reports crm promotions'.split(' '),
+    superadmin:      'home pos catalog inventory procurement finance hr workforce scheduling org regional-ops settings reports audit iam crm promotions ai-query'.split(' '),
+    admin:           'home catalog inventory org regional-ops settings reports audit iam ai-query'.split(' '),
+    region_manager:  'home catalog inventory finance org regional-ops reports audit ai-query'.split(' '),
+    outlet_manager:  'home pos catalog inventory procurement finance hr workforce scheduling reports crm promotions ai-query'.split(' '),
     staff:           'pos catalog inventory reports crm promotions'.split(' '),
     procurement:     'catalog inventory procurement reports'.split(' '),
-    finance:         'catalog inventory finance reports'.split(' '),
+    finance:         'catalog inventory finance reports ai-query'.split(' '),
     hr:              'catalog inventory hr workforce scheduling reports'.split(' '),
     kitchen_staff:   'catalog inventory reports'.split(' '),
   };
@@ -588,7 +588,7 @@ describe('Golden module visibility per role (§4)', () => {
         '2002': ['auth.user.write', 'auth.role.write', 'org.write', 'audit.read'] },
     );
     const actual = accessibleFamilies(s).sort();
-    const expected = 'home catalog inventory org regional-ops settings reports audit iam'.split(' ').sort();
+    const expected = 'home catalog inventory org regional-ops settings reports audit iam ai-query'.split(' ').sort();
     expect(actual).toEqual(expected);
   });
 
@@ -602,7 +602,7 @@ describe('Golden module visibility per role (§4)', () => {
                   'hr.schedule.manage', 'hr.attendance.approve', 'hr.payroll.view'] },
     );
     const actual = accessibleFamilies(s).sort();
-    const expected = 'home pos catalog inventory procurement finance hr workforce scheduling reports crm promotions'.split(' ').sort();
+    const expected = 'home pos catalog inventory procurement finance hr workforce scheduling reports crm promotions ai-query'.split(' ').sort();
     expect(actual).toEqual(expected);
   });
 });

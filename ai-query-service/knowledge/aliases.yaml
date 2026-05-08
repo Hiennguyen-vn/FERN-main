@@ -33,6 +33,22 @@ metrics:
     canonical_type: metric
     canonical_id: null
     canonical_name: "payroll_cost"
+  - alias_vi: ["gio lam", "giờ làm", "tong gio", "tổng giờ", "worked hours", "work hours", "bao nhieu gio", "bao nhiêu giờ"]
+    canonical_type: metric
+    canonical_id: null
+    canonical_name: "work_hours"
+  - alias_vi: ["di lam nhieu nhat", "đi làm nhiều nhất", "cham cong nhieu nhat", "chấm công nhiều nhất", "attendance ranking"]
+    canonical_type: metric
+    canonical_id: null
+    canonical_name: "attendance_top"
+  - alias_vi: ["luong da nhan", "lương đã nhận", "luong rong", "lương ròng", "net salary", "salary received"]
+    canonical_type: metric
+    canonical_id: null
+    canonical_name: "net_salary"
+  - alias_vi: ["tham nien", "thâm niên", "lam viec bao lau", "làm việc bao lâu", "ngay vao lam", "ngày vào làm", "tenure"]
+    canonical_type: metric
+    canonical_id: null
+    canonical_name: "employee_tenure"
   - alias_vi: ["ton kho", "tồn kho", "stock", "inventory", "hang con", "nguyen lieu"]
     canonical_type: metric
     canonical_id: null

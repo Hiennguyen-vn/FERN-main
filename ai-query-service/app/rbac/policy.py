@@ -13,18 +13,23 @@ Templates with no entry here are accessible by any authenticated user.
 # Canonical role names — kept in sync with backend AuthorizationPolicyService.
 _FINANCE = "finance"
 _ADMIN = "admin"
+_SUPERADMIN = "superadmin"
 _REGION_MANAGER = "region_manager"
 _OUTLET_MANAGER = "outlet_manager"
 
+# Superadmin matches backend God/other full-access roles — same as admin for finance templates.
+_TEMPLATE_FINANCE_SHARED: frozenset[str] = frozenset({_FINANCE, _ADMIN, _SUPERADMIN, _REGION_MANAGER})
+_TEMPLATE_PAYROLL_SENSITIVE: frozenset[str] = frozenset({_FINANCE, _ADMIN, _SUPERADMIN})
+
 TEMPLATE_ROLE_RESTRICTIONS: dict[str, frozenset[str]] = {
-    "T24_daily_pnl_summary":      frozenset({_FINANCE, _ADMIN, _REGION_MANAGER}),
-    "T25_expense_breakdown":      frozenset({_FINANCE, _ADMIN, _REGION_MANAGER}),
-    "T26_goods_receipt_summary":  frozenset({_FINANCE, _ADMIN, _REGION_MANAGER}),
-    "T27_payroll_cost_by_outlet": frozenset({_FINANCE, _ADMIN}),
+    "T24_daily_pnl_summary":      _TEMPLATE_FINANCE_SHARED,
+    "T25_expense_breakdown":      _TEMPLATE_FINANCE_SHARED,
+    "T26_goods_receipt_summary":  _TEMPLATE_FINANCE_SHARED,
+    "T27_payroll_cost_by_outlet": _TEMPLATE_PAYROLL_SENSITIVE,
 }
 
 # Roles that can see ALL outlets (bypass auth.outlet_ids scoping when no specific outlet requested).
-GLOBAL_SCOPE_ROLES: frozenset[str] = frozenset({_FINANCE, _ADMIN})
+GLOBAL_SCOPE_ROLES: frozenset[str] = frozenset({_FINANCE, _ADMIN, _SUPERADMIN})
 
 
 def check_template_access(template_key: str, roles: frozenset[str] | set[str]) -> bool:

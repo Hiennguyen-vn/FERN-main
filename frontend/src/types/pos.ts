@@ -1,5 +1,7 @@
 // POS types aligned to gateway contracts: /pos-sessions/**, /sale-orders/**
 
+import type { ProductAllergenView } from '@/api/fnb-api';
+
 export type POSSessionStatus = 'open' | 'closed' | 'reconciled';
 export type SaleOrderStatus = 'open' | 'completed' | 'cancelled';
 export type PaymentStatus = 'unpaid' | 'partial' | 'paid';
@@ -79,7 +81,7 @@ export interface ProductItem {
   price: number;
   sku: string;
   available: boolean;
-  allergens?: Array<{ code: string; label: string; icon: string | null; isTraces: boolean }>;
+  allergens?: ProductAllergenView[];
 }
 
 export interface ReconciliationData {

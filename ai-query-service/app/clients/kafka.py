@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 from typing import Any
 
 from aiokafka import AIOKafkaProducer
@@ -21,8 +22,14 @@ async def get_producer() -> AIOKafkaProducer:
             value_serializer=lambda v: json.dumps(v).encode("utf-8"),
             acks="all",
             enable_idempotence=True,
+            request_timeout_ms=3_000,
+            retry_backoff_ms=200,
         )
-        await _producer.start()
+        try:
+            await asyncio.wait_for(_producer.start(), timeout=3.0)
+        except Exception:
+            _producer = None
+            raise
     return _producer
 
 
@@ -33,10 +40,14 @@ async def stop_producer() -> None:
         _producer = None
 
 
-async def publish_audit(event: dict[str, Any]) -> None:
-    s = get_settings()
+async def publish_json(topic: str, event: dict[str, Any]) -> None:
     try:
         producer = await get_producer()
-        await producer.send_and_wait(s.kafka_audit_topic, event)
+        await asyncio.wait_for(producer.send_and_wait(topic, event), timeout=3.0)
     except Exception as e:  # noqa: BLE001
-        logger.error("Audit publish failed: %s", e, extra={"event_id": event.get("event_id")})
+        logger.error("Kafka publish failed topic=%s err=%s", topic, e, extra={"topic": topic})
+
+
+async def publish_audit(event: dict[str, Any]) -> None:
+    s = get_settings()
+    await publish_json(s.kafka_audit_topic, event)

@@ -29,6 +29,12 @@ export interface AuthSession {
   user: FernUser;
   rolesByOutlet: Record<string, string[]>;
   permissionsByOutlet: Record<string, string[]>;
+  /**
+   * Role codes already resolved to canonical form by the backend (e.g. "cashier" → "staff").
+   * Use this for all routing/UI decisions instead of a local alias map.
+   * Falls back to an empty object when the backend is older and does not yet emit this field.
+   */
+  canonicalRolesByOutlet: Record<string, string[]>;
   scopeAssignments?: AuthBusinessScopeView[];
   issuedAt?: string;
   expiresAt?: string;
@@ -221,6 +227,7 @@ function decodeAuthSession(value: unknown): AuthSession {
     user: decodeUser(record.user),
     rolesByOutlet: decodeRolesByOutlet(record.rolesByOutlet),
     permissionsByOutlet: decodeRolesByOutlet(record.permissionsByOutlet),
+    canonicalRolesByOutlet: decodeRolesByOutlet(record.canonicalRolesByOutlet),
     scopeAssignments: asRecordArray(record.scopeAssignments).map(decodeBusinessScope),
     issuedAt: asIsoDateTime(record.issuedAt) ?? undefined,
     expiresAt: asIsoDateTime(record.expiresAt) ?? undefined,

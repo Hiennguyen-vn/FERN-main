@@ -177,7 +177,7 @@ export function PayrollModule({ token, users, outlets, scopeRegionId, scopeOutle
     } finally {
       setLoading(false);
     }
-  }, [token, selectedPeriodId, runsQuery.query, runsQuery.filters.status, scopeOutletId]);
+  }, [token, selectedPeriodId, runsQuery.filters.status, runsQuery.sortBy, runsQuery.sortDir]);
 
   useEffect(() => {
     void loadRuns();
@@ -267,6 +267,20 @@ export function PayrollModule({ token, users, outlets, scopeRegionId, scopeOutle
   const baseDelta = prevTotalBase > 0 ? ((totalBase - prevTotalBase) / prevTotalBase) * 100 : 0;
   const netDelta = prevTotalNet > 0 ? ((totalNet - prevTotalNet) / prevTotalNet) * 100 : 0;
 
+  // Derive a run's outlet: prefer payroll_timesheet.outlet_id when present;
+  // otherwise fall back to the user's primary user_role outlet. Returns
+  // 'unassigned' when no link exists.
+  const deriveRunOutlet = useCallback((run: PayrollRunView): string => {
+    const explicit = run.outletId ? String(run.outletId) : '';
+    if (explicit) return explicit;
+    const userId = run.userId ? String(run.userId) : '';
+    const set = userId ? userOutletMap.get(userId) : undefined;
+    if (!set || set.size === 0) return 'unassigned';
+    if (scopeOutletId && set.has(scopeOutletId)) return scopeOutletId;
+    // Stable pick: first by sorted id
+    return Array.from(set).sort()[0];
+  }, [userOutletMap, scopeOutletId]);
+
   // Bar chart data — group net salary by outlet
   const outletsById = useMemo(() => new Map(outlets.map((o) => [o.id, o])), [outlets]);
   const chartData = useMemo(() => {
@@ -289,20 +303,6 @@ export function PayrollModule({ token, users, outlets, scopeRegionId, scopeOutle
     }
     return Array.from(byOutlet.values()).sort((a, b) => b.current - a.current);
   }, [visibleRuns, visibleCompareRuns, outletsById, deriveRunOutlet]);
-
-  // Derive a run's outlet: prefer payroll_timesheet.outlet_id when present;
-  // otherwise fall back to the user's primary user_role outlet. Returns
-  // 'unassigned' when no link exists.
-  const deriveRunOutlet = useCallback((run: PayrollRunView): string => {
-    const explicit = run.outletId ? String(run.outletId) : '';
-    if (explicit) return explicit;
-    const userId = run.userId ? String(run.userId) : '';
-    const set = userId ? userOutletMap.get(userId) : undefined;
-    if (!set || set.size === 0) return 'unassigned';
-    if (scopeOutletId && set.has(scopeOutletId)) return scopeOutletId;
-    // Stable pick: first by sorted id
-    return Array.from(set).sort()[0];
-  }, [userOutletMap, scopeOutletId]);
 
   const counts = useMemo(() => {
     let draft = 0;

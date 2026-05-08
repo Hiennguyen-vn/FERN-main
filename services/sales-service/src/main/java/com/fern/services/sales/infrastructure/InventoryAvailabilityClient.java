@@ -1,5 +1,6 @@
 package com.fern.services.sales.infrastructure;
 
+import com.fern.common.spring.auth.JwtTokenService;
 import com.fern.common.spring.auth.SpringInternalServiceAuth;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,17 +23,20 @@ public class InventoryAvailabilityClient {
 
   private final RestClient restClient;
   private final SpringInternalServiceAuth internalAuth;
+  private final JwtTokenService jwtTokenService;
   private final ObjectMapper objectMapper;
   private final String inventoryBaseUrl;
 
   public InventoryAvailabilityClient(
       RestClient.Builder restClientBuilder,
       SpringInternalServiceAuth internalAuth,
+      JwtTokenService jwtTokenService,
       ObjectMapper objectMapper,
       @Value("${inventory-service.base-url:http://inventory-service:8080}") String inventoryBaseUrl
   ) {
     this.restClient = restClientBuilder.build();
     this.internalAuth = internalAuth;
+    this.jwtTokenService = jwtTokenService;
     this.objectMapper = objectMapper;
     this.inventoryBaseUrl = inventoryBaseUrl.strip().replaceAll("/$", "");
   }
@@ -45,7 +49,7 @@ public class InventoryAvailabilityClient {
     for (Long id : itemIds) uri.queryParam("itemId", id);
 
     HttpHeaders headers = new HttpHeaders();
-    internalAuth.apply(headers, "sales-service", null);
+    internalAuth.applyWithJwt(headers, "sales-service", "inventory-service", jwtTokenService, null);
 
     String body = restClient.get()
         .uri(uri.build().toUri())

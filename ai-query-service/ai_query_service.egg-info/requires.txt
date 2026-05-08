@@ -6,6 +6,7 @@ openai>=1.30
 langgraph>=0.2
 langgraph-checkpoint-redis>=0.1
 clickhouse-connect>=0.7
+psycopg[binary]>=3.2
 opensearch-py>=2.5
 redis>=5.0
 aiokafka>=0.11

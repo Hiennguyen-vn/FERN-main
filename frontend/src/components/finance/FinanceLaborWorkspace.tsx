@@ -27,7 +27,8 @@ import {
   periodWindowLabel,
 } from '@/components/payroll/payroll-truth';
 import { FinancePayrollReviewWorkspace } from '@/components/finance/FinancePayrollReviewWorkspace';
-import { resolveCanonicalRoles, formatDateShort, formatMonthYear } from '@/components/finance/finance-utils';
+import { formatDateShort, formatMonthYear } from '@/components/finance/finance-utils';
+import { sessionRolesSet } from '@/auth/authorization';
 
 interface Props {
   token: string;
@@ -48,7 +49,7 @@ export function FinanceLaborWorkspace({
 }: Props) {
   const { session } = useAuth();
 
-  const roles = resolveCanonicalRoles(session?.rolesByOutlet);
+  const roles = sessionRolesSet(session ?? null);
   const isSuperadmin = roles.has('superadmin');
   const isHr = roles.has('hr');
   const isFinance = roles.has('finance');

@@ -23,16 +23,48 @@ function collectValues(groups: Record<string, string[]> | undefined) {
   return values;
 }
 
-/**
- * Resolve legacy role codes to their canonical names so the matrix only
- * needs to list canonical roles.
- */
-function resolveCanonicalRoles(raw: Set<string>): Set<string> {
-  const canonical = new Set<string>();
-  for (const role of raw) {
-    canonical.add(LEGACY_ROLE_ALIASES[role] ?? role);
+function hasCollectedValues(groups: Record<string, string[]> | undefined) {
+  return collectValues(groups).size > 0;
+}
+
+/** Roles map for routing/UI — aligned with sidebar matrix and route guards. */
+function normalizeOutletRolesList(list: string[] | undefined): string[] {
+  const out: string[] = [];
+  for (const item of list ?? []) {
+    const normalized = String(item ?? '').trim();
+    if (!normalized) continue;
+    out.push(normalized);
   }
-  return canonical;
+  return out;
+}
+
+function normalizeLegacyOutletRolesList(list: string[] | undefined): string[] {
+  const out: string[] = [];
+  for (const item of list ?? []) {
+    const normalized = String(item ?? '').trim();
+    if (!normalized) continue;
+    out.push(LEGACY_ROLE_ALIASES[normalized] ?? normalized);
+  }
+  return out;
+}
+
+export function effectiveRolesByOutletRecord(session: AuthSession | null | undefined): Record<string, string[]> {
+  if (!session) return {};
+  if (hasCollectedValues(session.canonicalRolesByOutlet)) {
+    const canonical = session.canonicalRolesByOutlet ?? {};
+    return Object.fromEntries(
+      Object.entries(canonical).map(([id, list]) => [id, normalizeOutletRolesList(list)]),
+    );
+  }
+  const raw = session.rolesByOutlet ?? {};
+  return Object.fromEntries(
+    Object.entries(raw).map(([id, list]) => [id, normalizeLegacyOutletRolesList(list)]),
+  );
+}
+
+/** Flattened canonical (or legacy-normalized) role codes for the session. */
+export function sessionRolesSet(session: AuthSession | null | undefined): Set<string> {
+  return collectValues(effectiveRolesByOutletRecord(session));
 }
 
 function hasAny(values: Set<string>, candidates: string[]) {
@@ -44,8 +76,7 @@ function hasAny(values: Set<string>, candidates: string[]) {
 // ---------------------------------------------------------------------------
 
 function getAccessState(session: AuthSession | null) {
-  const rawRoles = collectValues(session?.rolesByOutlet);
-  const roles = resolveCanonicalRoles(rawRoles);
+  const roles = sessionRolesSet(session);
   const permissions = collectValues(session?.permissionsByOutlet);
   const outletScope = new Set(
     [

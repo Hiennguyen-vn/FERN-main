@@ -1,5 +1,6 @@
 package com.fern.services.sales.infrastructure;
 
+import com.fern.common.spring.auth.JwtTokenService;
 import com.fern.common.spring.auth.SpringInternalServiceAuth;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -21,17 +22,20 @@ public class InventoryReservationClient {
 
   private final RestClient restClient;
   private final SpringInternalServiceAuth internalAuth;
+  private final JwtTokenService jwtTokenService;
   private final ObjectMapper objectMapper;
   private final String inventoryBaseUrl;
 
   public InventoryReservationClient(
       RestClient.Builder restClientBuilder,
       SpringInternalServiceAuth internalAuth,
+      JwtTokenService jwtTokenService,
       ObjectMapper objectMapper,
       @Value("${inventory-service.base-url:http://inventory-service:8080}") String inventoryBaseUrl
   ) {
     this.restClient = restClientBuilder.build();
     this.internalAuth = internalAuth;
+    this.jwtTokenService = jwtTokenService;
     this.objectMapper = objectMapper;
     this.inventoryBaseUrl = inventoryBaseUrl.strip().replaceAll("/$", "");
   }
@@ -54,7 +58,7 @@ public class InventoryReservationClient {
     body.put("lines", linesPayload);
 
     HttpHeaders headers = new HttpHeaders();
-    internalAuth.apply(headers, "sales-service", null);
+    internalAuth.applyWithJwt(headers, "sales-service", "inventory-service", jwtTokenService, null);
     headers.setContentType(MediaType.APPLICATION_JSON);
 
     try {

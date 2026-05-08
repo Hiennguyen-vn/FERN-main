@@ -1,5 +1,6 @@
 package com.fern.services.payroll.infrastructure;
 
+import com.fern.common.spring.auth.JwtTokenService;
 import com.fern.common.spring.auth.SpringInternalServiceAuth;
 import com.fern.services.payroll.api.PayrollDtos;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
@@ -30,15 +31,18 @@ public class HrServiceClient {
 
   private final RestClient restClient;
   private final SpringInternalServiceAuth internalAuth;
+  private final JwtTokenService jwtTokenService;
   private final String hrServiceBaseUrl;
 
   public HrServiceClient(
       RestClient.Builder restClientBuilder,
       SpringInternalServiceAuth internalAuth,
+      JwtTokenService jwtTokenService,
       @Value("${dependencies.hrService.baseUrl:http://localhost:8084}") String hrServiceBaseUrl
   ) {
     this.restClient = restClientBuilder.build();
     this.internalAuth = internalAuth;
+    this.jwtTokenService = jwtTokenService;
     this.hrServiceBaseUrl = hrServiceBaseUrl.strip().replaceAll("/$", "");
   }
 
@@ -69,7 +73,7 @@ public class HrServiceClient {
     }
 
     HttpHeaders internalHeaders = new HttpHeaders();
-    internalAuth.apply(internalHeaders, SERVICE_NAME, null);
+    internalAuth.applyWithJwt(internalHeaders, SERVICE_NAME, "hr-service", jwtTokenService, null);
 
     PayrollDtos.WorkShiftPage page = restClient.get()
         .uri(uriBuilder.toUriString())
@@ -94,7 +98,7 @@ public class HrServiceClient {
     String url = hrServiceBaseUrl + "/api/v1/hr/contracts/user/" + userId + "/latest";
 
     HttpHeaders internalHeaders = new HttpHeaders();
-    internalAuth.apply(internalHeaders, SERVICE_NAME, null);
+    internalAuth.applyWithJwt(internalHeaders, SERVICE_NAME, "hr-service", jwtTokenService, null);
 
     try {
       PayrollDtos.EmployeeContractSummary contract = restClient.get()

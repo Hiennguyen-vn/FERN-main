@@ -1,0 +1,640 @@
+version: 1
+generated_at: '2026-05-05T12:21:09.500030+00:00'
+snapshots:
+- full_table: analytics.ai_payment_daily
+  summary_vi: 'Bảng `analytics.ai_payment_daily` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - outlet_id: Int64
+
+    - outlet_code: String
+
+    - outlet_name: String
+
+    - business_date: Date
+
+    - payment_method: LowCardinality(String)
+
+    - revenue: Decimal(38, 2)
+
+    - txn_count: UInt64'
+- full_table: analytics.ai_pnl_daily
+  summary_vi: 'Bảng `analytics.ai_pnl_daily` trong ClickHouse (FERN analytics / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - outlet_id: Int64
+
+    - outlet_code: String
+
+    - outlet_name: String
+
+    - business_date: Date
+
+    - revenue: Decimal(38, 2)
+
+    - cogs: Decimal(38, 2)
+
+    - payroll_cost: Decimal(38, 2)
+
+    - operating_profit: Decimal(38, 2)
+
+    - operating_margin: Decimal(38, 2)'
+- full_table: analytics.ai_product_daily
+  summary_vi: 'Bảng `analytics.ai_product_daily` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - outlet_id: Int64
+
+    - outlet_code: String
+
+    - outlet_name: String
+
+    - business_date: Date
+
+    - product_id: Int64
+
+    - product_name: String
+
+    - category_code: Nullable(String)
+
+    - revenue: Decimal(38, 2)
+
+    - qty: Decimal(38, 4)
+
+    - txn_count: UInt64'
+- full_table: analytics.ai_sales_daily
+  summary_vi: 'Bảng `analytics.ai_sales_daily` trong ClickHouse (FERN analytics /
+    CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - outlet_id: Int64
+
+    - outlet_code: String
+
+    - outlet_name: String
+
+    - business_date: Date
+
+    - gross_revenue: Decimal(38, 2)
+
+    - total_discount: Decimal(38, 2)
+
+    - net_revenue: Decimal(38, 2)
+
+    - txn_count: UInt64
+
+    - avg_basket_size: Decimal(38, 2)
+
+    - cancelled_txn_count: UInt64
+
+    - cancelled_amount: Decimal(38, 2)
+
+    - cancellation_rate: Float64'
+- full_table: analytics.fct_daily_pnl
+  summary_vi: 'Bảng `analytics.fct_daily_pnl` trong ClickHouse (FERN analytics / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - outlet_id: Int64
+
+    - business_date: Date
+
+    - revenue: Decimal(38, 2)
+
+    - cogs: Decimal(38, 2)
+
+    - payroll_cost: Decimal(38, 2)
+
+    - operating_profit: Decimal(38, 2)'
+- full_table: analytics.fct_inventory_snapshot
+  summary_vi: 'Bảng `analytics.fct_inventory_snapshot` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - outlet_id: Int64
+
+    - item_id: Int64
+
+    - business_date: Date
+
+    - qty_on_hand: Decimal(38, 4)'
+- full_table: analytics.fct_payment_split
+  summary_vi: 'Bảng `analytics.fct_payment_split` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - outlet_id: Int64
+
+    - business_date: Date
+
+    - payment_method: LowCardinality(String)
+
+    - txn_count: UInt64
+
+    - revenue: Decimal(38, 2)'
+- full_table: analytics.fct_sales_by_category
+  summary_vi: 'Bảng `analytics.fct_sales_by_category` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - outlet_id: Int64
+
+    - business_date: Date
+
+    - category_code: Nullable(String)
+
+    - category_name: String
+
+    - revenue: Decimal(38, 2)
+
+    - qty: Decimal(38, 4)'
+- full_table: analytics.fct_sales_by_product
+  summary_vi: 'Bảng `analytics.fct_sales_by_product` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - outlet_id: Int64
+
+    - business_date: Date
+
+    - product_id: Int64
+
+    - product_name: String
+
+    - revenue: Decimal(38, 2)
+
+    - qty: Decimal(38, 4)
+
+    - txn_count: UInt64'
+- full_table: analytics.fct_sales_daily
+  summary_vi: 'Bảng `analytics.fct_sales_daily` trong ClickHouse (FERN analytics /
+    CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - outlet_id: Int64
+
+    - business_date: Date
+
+    - txn_count: UInt64
+
+    - gross_revenue: Decimal(38, 2)
+
+    - total_discount: Decimal(38, 2)
+
+    - net_revenue: Decimal(38, 2)'
+- full_table: cdc.fact_sale
+  summary_vi: 'Bảng `cdc.fact_sale` trong ClickHouse (FERN analytics / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - sale_id: Int64
+
+    - sale_created_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - outlet_id: Int64
+
+    - product_id: Int64
+
+    - unit_price: Decimal(18, 2)
+
+    - qty: Decimal(18, 4)
+
+    - discount_amount: Decimal(18, 2)
+
+    - tax_amount: Decimal(18, 2)
+
+    - line_total: Decimal(18, 2)
+
+    - business_date: Date
+
+    - __op: Nullable(String)
+
+    - __ts_ms: Int64
+
+    - __lsn: Nullable(Int64)
+
+    - __deleted: Nullable(String)
+
+    - note: Nullable(String)
+
+    - created_at: Nullable(DateTime64(3))
+
+    - updated_at: Nullable(DateTime64(3))
+
+    - variant_id: Nullable(Int64)
+
+    - variant_name: Nullable(String)
+
+    - legacy_price: Nullable(Bool)
+
+    - current_price_at_sync: Nullable(Decimal(18, 2))
+
+    - price_drift_amount: Nullable(Decimal(18, 2))'
+- full_table: cdc.inventory_transaction
+  summary_vi: 'Bảng `cdc.inventory_transaction` trong ClickHouse (FERN analytics /
+    CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - id: Int64
+
+    - outlet_id: Int64
+
+    - item_id: Int64
+
+    - qty_change: Decimal(18, 4)
+
+    - txn_type: LowCardinality(String)
+
+    - txn_time: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - business_date: Date
+
+    - __op: Nullable(String)
+
+    - __ts_ms: Int64
+
+    - __lsn: Nullable(Int64)
+
+    - __deleted: Nullable(String)'
+- full_table: cdc.outlet
+  summary_vi: 'Bảng `cdc.outlet` trong ClickHouse (FERN analytics / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - id: Int64
+
+    - code: String
+
+    - name: String
+
+    - region_id: Int64
+
+    - status: LowCardinality(String)
+
+    - address: Nullable(String)
+
+    - phone: Nullable(String)
+
+    - created_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - updated_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - __op: Nullable(String)
+
+    - __ts_ms: Int64
+
+    - __lsn: Nullable(Int64)
+
+    - __deleted: Nullable(String)'
+- full_table: cdc.payment
+  summary_vi: 'Bảng `cdc.payment` trong ClickHouse (FERN analytics / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - sale_id: Int64
+
+    - outlet_id: Int64
+
+    - payment_method: LowCardinality(String)
+
+    - amount: Decimal(18, 2)
+
+    - state: LowCardinality(String)
+
+    - payment_time: Nullable(DateTime64(3, ''Asia/Ho_Chi_Minh''))
+
+    - created_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - business_date: Date
+
+    - __op: Nullable(String)
+
+    - __ts_ms: Int64
+
+    - __lsn: Nullable(Int64)
+
+    - __deleted: Nullable(String)'
+- full_table: cdc.product
+  summary_vi: 'Bảng `cdc.product` trong ClickHouse (FERN analytics / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - id: Int64
+
+    - code: String
+
+    - name: String
+
+    - category_code: Nullable(String)
+
+    - status: LowCardinality(String)
+
+    - created_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - updated_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - __op: Nullable(String)
+
+    - __ts_ms: Int64
+
+    - __lsn: Nullable(Int64)
+
+    - __deleted: Nullable(String)'
+- full_table: cdc.sale_record
+  summary_vi: 'Bảng `cdc.sale_record` trong ClickHouse (FERN analytics / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - id: Int64
+
+    - outlet_id: Int64
+
+    - status: LowCardinality(String)
+
+    - payment_status: LowCardinality(String)
+
+    - subtotal: Decimal(18, 2)
+
+    - discount: Decimal(18, 2)
+
+    - tax_amount: Decimal(18, 2)
+
+    - total_amount: Decimal(18, 2)
+
+    - created_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - updated_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - business_date: Date
+
+    - __op: Nullable(String)
+
+    - __ts_ms: Int64
+
+    - __lsn: Nullable(Int64)
+
+    - __deleted: Nullable(String)'
+- full_table: fern.dim_outlet
+  summary_vi: 'Bảng `fern.dim_outlet` trong ClickHouse (FERN analytics / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - outlet_id: UInt32
+
+    - name: String
+
+    - region_id: UInt32
+
+    - updated_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')'
+- full_table: fern.dim_product
+  summary_vi: 'Bảng `fern.dim_product` trong ClickHouse (FERN analytics / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - product_id: UInt32
+
+    - name: String
+
+    - category_id: UInt32
+
+    - category_name: String
+
+    - updated_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')'
+- full_table: fern.events_expense_created
+  summary_vi: 'Bảng `fern.events_expense_created` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - eventId: String
+
+    - expenseId: UInt64
+
+    - sourceId: UInt64
+
+    - outletId: UInt32
+
+    - amount: Decimal(18, 2)
+
+    - currencyCode: LowCardinality(String)
+
+    - createdAt: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - server_received_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')'
+- full_table: fern.events_goods_receipt_posted
+  summary_vi: 'Bảng `fern.events_goods_receipt_posted` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - eventId: String
+
+    - goodsReceiptId: UInt64
+
+    - purchaseOrderId: UInt64
+
+    - supplierId: UInt64
+
+    - outletId: UInt32
+
+    - businessDate: Date
+
+    - totalPrice: Decimal(18, 2)
+
+    - currencyCode: LowCardinality(String)
+
+    - postedAt: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - server_received_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')'
+- full_table: fern.events_invoice_approved
+  summary_vi: 'Bảng `fern.events_invoice_approved` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - eventId: String
+
+    - supplierInvoiceId: UInt64
+
+    - supplierId: UInt64
+
+    - outletId: Nullable(UInt32)
+
+    - invoiceDate: Date
+
+    - totalAmount: Decimal(18, 2)
+
+    - currencyCode: LowCardinality(String)
+
+    - approvedAt: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - server_received_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')'
+- full_table: fern.events_invoice_issued
+  summary_vi: 'Bảng `fern.events_invoice_issued` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - eventId: String
+
+    - invoiceId: UInt64
+
+    - saleId: UInt64
+
+    - outletId: UInt32
+
+    - invoiceNumber: String
+
+    - issuedAt: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - server_received_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')'
+- full_table: fern.events_payment_captured
+  summary_vi: 'Bảng `fern.events_payment_captured` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - eventId: String
+
+    - saleId: UInt64
+
+    - outletId: UInt32
+
+    - businessDate: Date
+
+    - paymentMethod: LowCardinality(String)
+
+    - amount: Decimal(18, 2)
+
+    - currencyCode: LowCardinality(String)
+
+    - capturedAt: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - server_received_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')'
+- full_table: fern.events_payroll_approved
+  summary_vi: 'Bảng `fern.events_payroll_approved` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - eventId: String
+
+    - payrollId: UInt64
+
+    - payrollPeriodId: UInt64
+
+    - userId: UInt64
+
+    - outletId: Nullable(UInt32)
+
+    - netSalary: Decimal(18, 2)
+
+    - currencyCode: LowCardinality(String)
+
+    - approvedAt: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - server_received_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')'
+- full_table: fern.events_sale_completed
+  summary_vi: 'Bảng `fern.events_sale_completed` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - eventId: String
+
+    - saleId: UInt64
+
+    - outletId: UInt32
+
+    - businessDate: Date
+
+    - totalAmount: Decimal(18, 2)
+
+    - currencyCode: LowCardinality(String)
+
+    - completedAt: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - server_received_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')'
+- full_table: fern.events_stock_low
+  summary_vi: 'Bảng `fern.events_stock_low` trong ClickHouse (FERN analytics / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - eventId: String
+
+    - outletId: UInt32
+
+    - itemId: UInt32
+
+    - qtyOnHand: Decimal(18, 4)
+
+    - reorderThreshold: Decimal(18, 4)
+
+    - detectedAt: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - server_received_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')'
+- full_table: fern.fact_inventory_movement
+  summary_vi: 'Bảng `fern.fact_inventory_movement` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - txn_id: UInt64
+
+    - outlet_id: UInt32
+
+    - item_id: UInt32
+
+    - qty_change: Decimal(18, 4)
+
+    - txn_type: LowCardinality(String)
+
+    - txn_time: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - business_date: Date'
+- full_table: fern.fact_sale
+  summary_vi: 'Bảng `fern.fact_sale` trong ClickHouse (FERN analytics / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - sale_id: UInt64
+
+    - outlet_id: UInt32
+
+    - product_id: UInt32
+
+    - product_name: String
+
+    - category_id: UInt32
+
+    - qty: Decimal(18, 4)
+
+    - unit_price: Decimal(18, 2)
+
+    - discount_amount: Decimal(18, 2)
+
+    - line_total: Decimal(18, 2)
+
+    - payment_method: LowCardinality(String)
+
+    - sale_status: LowCardinality(String)
+
+    - sale_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - business_date: Date
+
+    - server_received_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - device_id: UInt64'

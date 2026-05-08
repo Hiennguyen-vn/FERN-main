@@ -3,6 +3,7 @@ package com.fern.services.auth.spring.application;
 import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.JwtTokenService;
+import com.fern.common.spring.auth.OutletScopeContext;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.services.auth.spring.api.AuthDtos;
@@ -16,6 +17,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -88,12 +90,18 @@ public class DeviceService {
     // Redeem atomically (marks used + upserts device_registry)
     // We need real deviceId from DB; issue token after we have it
     String deviceTokenHash = sha256(deviceToken);
-    DeviceRecord device = deviceRepository.redeemPairToken(pair.id(), deviceTokenHash, tokenExpiresAt);
+    DeviceRecord device = withOutletScope(
+        pair.outletId(),
+        () -> deviceRepository.redeemPairToken(pair.id(), deviceTokenHash, tokenExpiresAt)
+    );
 
     // Re-issue with actual deviceId
     String finalToken = jwtTokenService.issueDeviceToken(device.id(), device.outletId(), deviceTokenTtlSeconds);
     String finalTokenHash = sha256(finalToken);
-    deviceRepository.updateDeviceToken(device.id(), finalTokenHash, tokenExpiresAt);
+    withOutletScope(pair.outletId(), () -> {
+      deviceRepository.updateDeviceToken(device.id(), finalTokenHash, tokenExpiresAt);
+      return null;
+    });
 
     return new AuthDtos.DeviceTokenResponse(
       device.id(), device.outletId(), device.deviceLabel(),
@@ -139,6 +147,16 @@ public class DeviceService {
       return HexFormat.of().formatHex(hash);
     } catch (NoSuchAlgorithmException e) {
       throw new IllegalStateException(e);
+    }
+  }
+
+  private static <T> T withOutletScope(long outletId, Supplier<T> work) {
+    OutletScopeContext.ScopeSnapshot previousScope = OutletScopeContext.snapshot();
+    try {
+      OutletScopeContext.set(outletId);
+      return work.get();
+    } finally {
+      OutletScopeContext.restore(previousScope);
     }
   }
 }
