@@ -42,8 +42,6 @@ Ke hoach nay chuyen 11 findings kien truc thanh backlog ky thuat co the thuc thi
 2. Chay baseline test hien tai:
    - `mvn -pl gateway,services/sales-service,services/inventory-service,services/product-service,services/report-service -am test`
    - `./db/scripts/run_sql_tests.sh`
-   - `cd FERN-pos-edge/agent && npm run typecheck && npm test`
-   - `cd FERN-pos-edge && npm run build`
    - `cd frontend && npm run typecheck && npm run test:run`
 3. Ghi lai test dang fail truoc khi sua. Hien tai SQL integrity test fail o `V26_5__pg_partman_setup.sql`.
 
@@ -98,7 +96,7 @@ Ke hoach:
 
 Tieu chi nghiem thu:
 
-- POS edge gui telemetry qua gateway thanh cong.
+- Device clients gui telemetry qua gateway thanh cong.
 - `TelemetryController.requireDeviceContext()` duoc thoa man voi device JWT hop le.
 - Khong mo telemetry cho user/session token.
 
@@ -175,8 +173,7 @@ Ke hoach:
    - `ADD`
 2. Tam thoi, sua logic de sales-service khong ghi base recipe neu inventory-service se xu ly event.
 3. Dam bao inventory consumer idempotent theo `(sale_id, product_id, item_id)` va modifier-aware.
-4. Xu ly offline POS:
-   - Local reservation can co modifier-aware BOM hoac chap nhan reservation conservative.
+4. Xu ly disconnected sales:
    - Central reconciliation phai chinh xac khi sync lai.
 5. Cap nhat contract event neu `SaleApprovedEvent` chua mang modifier option ids can thiet.
 
@@ -288,7 +285,7 @@ Tieu chi nghiem thu:
 File lien quan:
 
 - `gateway/src/main/java/com/fern/gateway/ws/WebSocketSyncHandler.java`
-- POS edge client WebSocket code.
+- Device client WebSocket code.
 
 Ke hoach:
 
@@ -383,21 +380,6 @@ SQL:
 ./db/scripts/run_sql_tests.sh
 ```
 
-POS edge agent:
-
-```bash
-cd FERN-pos-edge/agent
-npm run typecheck
-npm test
-```
-
-POS edge app:
-
-```bash
-cd FERN-pos-edge
-npm run build
-```
-
 HQ frontend:
 
 ```bash
@@ -438,4 +420,3 @@ Them test moi:
   - migration dry-run.
   - POS offline/sync monitoring.
 - Dashboard co alert cho POS offline, sync lag, outbox lag, DB lock/deadlock va Kafka lag.
-

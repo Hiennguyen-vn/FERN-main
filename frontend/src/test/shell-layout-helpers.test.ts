@@ -24,6 +24,7 @@ function buildSession(overrides: Partial<AuthSession> = {}): AuthSession {
     },
     rolesByOutlet: {},
     permissionsByOutlet: {},
+    canonicalRolesByOutlet: {},
     ...overrides,
   };
 }

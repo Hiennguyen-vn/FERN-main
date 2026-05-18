@@ -29,7 +29,7 @@ _SYSTEM_PROMPT = """Bạn là Senior Analyst review câu trả lời do agent ju
 Nhiệm vụ: kiểm tra DRAFT_ANSWER trên các tiêu chí sau và trả về JSON.
 
 TIÊU CHÍ KIỂM TRA:
-1. number_consistency: Mọi con số trong DRAFT_ANSWER phải khớp với answer_facts (numeric_totals, preview_rows). Nếu DRAFT đưa ra số không có nguồn → flag.
+1. number_consistency: Mọi con số trong DRAFT_ANSWER phải khớp với answer_facts (numeric_totals, preview_rows, scope_facts, source_context). Nếu DRAFT đưa ra số không có nguồn → flag.
 2. missing_caveat: Nếu coverage_status là "outside" / "partial_*" hoặc có caveat trong source_context, DRAFT phải nhắc → nếu thiếu thì flag.
 3. wrong_metric: net_revenue vs gross_revenue, weighted vs simple average, growth không có baseline rõ — nếu DRAFT dùng sai loại → flag.
 4. leak: Nếu DRAFT lộ tên template_key (T01_*, T22_*), từ "SQL", "prompt", "reviewer", "pipeline" → flag.
@@ -43,6 +43,7 @@ QUYẾT ĐỊNH (verdict):
 
 QUY TẮC TUYỆT ĐỐI:
 - Không bịa số. Không thay đổi metric/dimension nếu không chắc chắn.
+- ID/phạm vi trong scope_facts/source_context (outlet_id, ngày, row_count, allowed_outlet_count) là nguồn hợp lệ; không flag chỉ vì số đó không nằm trong preview_rows.
 - Nếu không chắc → để verdict="approve" và note severity=low.
 - revised_answer_vi (nếu có) phải hoàn chỉnh, sẵn sàng gửi user — không được dạng diff/patch.
 - confidence là độ tự tin vào verdict, không phải vào câu trả lời.
@@ -127,17 +128,34 @@ def _safe_facts(state: GraphState) -> dict[str, Any]:
                 pass
         totals[col] = total
     ds = state.get("data_source_context") or {}
+    allowed = state.get("allowed_outlet_ids") or []
+    allowed_count = len(allowed) if isinstance(allowed, list) else 0
+    scoped_outlets = allowed[: min(len(allowed), 50)] if isinstance(allowed, list) else []
+    time_range = state.get("time_range") if isinstance(state.get("time_range"), dict) else {}
     return {
         "row_count": len(rows),
+        "allowed_outlet_count": allowed_count,
         "preview_row_count": len(preview),
         "preview_includes_all_rows": len(rows) <= cap,
         "numeric_totals": totals,
         "preview_rows": [
-            {k: row.get(k) for k in list(row.keys())[:8]} if isinstance(row, dict) else {}
+            {k: row.get(k) for k in list(row.keys())[:16]} if isinstance(row, dict) else {}
             for row in preview
         ],
+        "scope_facts": {
+            "template_key": state.get("template_key"),
+            "intent": state.get("intent"),
+            "time_range": time_range,
+            "allowed_outlet_ids": scoped_outlets,
+            "allowed_outlet_count": allowed_count,
+        },
         "coverage_status": ds.get("coverage_status"),
         "primary_dataset": ds.get("primary_dataset"),
+        "source_context": {
+            "requested_range": ds.get("requested_range") or {},
+            "available_range": ds.get("available_range") or {},
+            "actual_data_range": ds.get("actual_data_range") or {},
+        },
         "caveats": ds.get("caveats") or [],
     }
 

@@ -111,7 +111,7 @@ public class SalesRepository extends BaseRepository {
     return sessionRepository.openPosSession(request);
   }
 
-  /** Sync-path overload: caller can pin the session id (Snowflake from edge agent). */
+  /** Sync-path overload: caller can pin the session id supplied by the device client. */
   public SalesDtos.PosSessionView openPosSession(SalesDtos.OpenPosSessionRequest request, Long overrideSessionId) {
     return sessionRepository.openPosSession(request, overrideSessionId);
   }
@@ -1559,6 +1559,7 @@ public class SalesRepository extends BaseRepository {
       long completedSales = 0;
       long cancelledOrders = 0;
       BigDecimal revenueToday = BigDecimal.ZERO;
+      String currencyCode = "VND";
 
       try (PreparedStatement ps = conn.prepareStatement(
           """
@@ -1582,6 +1583,43 @@ public class SalesRepository extends BaseRepository {
             completedSales = rs.getLong("completed_sales");
             cancelledOrders = rs.getLong("cancelled_orders");
             revenueToday = money(rs.getBigDecimal("revenue_today"));
+          }
+        }
+      }
+
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          SELECT COALESCE(
+            (
+              SELECT sr.currency_code
+              FROM core.sale_record sr
+              WHERE sr.outlet_id = ?
+                AND sr.created_at >= ?
+                AND sr.created_at < ?
+              ORDER BY sr.created_at DESC
+              LIMIT 1
+            ),
+            (
+              SELECT pp.currency_code
+              FROM core.product_price pp
+              WHERE pp.outlet_id = ?
+              ORDER BY pp.effective_from DESC
+              LIMIT 1
+            ),
+            'VND'
+          ) AS currency_code
+          """
+      )) {
+        ps.setLong(1, outletId);
+        ps.setTimestamp(2, Timestamp.from(start));
+        ps.setTimestamp(3, Timestamp.from(end));
+        ps.setLong(4, outletId);
+        try (ResultSet rs = ps.executeQuery()) {
+          if (rs.next()) {
+            String resolvedCurrency = rs.getString("currency_code");
+            if (resolvedCurrency != null && !resolvedCurrency.isBlank()) {
+              currencyCode = resolvedCurrency;
+            }
           }
         }
       }
@@ -1642,7 +1680,7 @@ public class SalesRepository extends BaseRepository {
       try (PreparedStatement ps = conn.prepareStatement(
           """
           SELECT
-            EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC')::int AS hour_of_day,
+            EXTRACT(HOUR FROM created_at AT TIME ZONE ?)::int AS hour_of_day,
             COALESCE(SUM(CASE WHEN status IN ('payment_done'::sale_order_status_enum, 'completed'::sale_order_status_enum) THEN total_amount ELSE 0 END), 0) AS revenue
           FROM core.sale_record
           WHERE outlet_id = ?
@@ -1652,9 +1690,10 @@ public class SalesRepository extends BaseRepository {
           ORDER BY hour_of_day
           """
       )) {
-        ps.setLong(1, outletId);
-        ps.setTimestamp(2, Timestamp.from(start));
-        ps.setTimestamp(3, Timestamp.from(end));
+        ps.setString(1, outletZone.getId());
+        ps.setLong(2, outletId);
+        ps.setTimestamp(3, Timestamp.from(start));
+        ps.setTimestamp(4, Timestamp.from(end));
         try (ResultSet rs = ps.executeQuery()) {
           while (rs.next()) {
             int hourOfDay = rs.getInt("hour_of_day");
@@ -1691,6 +1730,7 @@ public class SalesRepository extends BaseRepository {
           cancelledOrders,
           revenueToday,
           averageOrderValue,
+          currencyCode,
           activeSessionCode,
           activeSessionStatus,
           topCategory,

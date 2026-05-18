@@ -5,7 +5,7 @@
 ## 1. Scope
 
 **In-scope tier-1**:
-- POS sales (sales-service + edge nodes)
+- POS sales (sales-service)
 - Finance ledger (finance-service)
 - Audit log (audit-service)
 - Auth (JWT verification)
@@ -66,7 +66,7 @@
 - **Idempotency keys** in Redis = lost. Falls back to DB tier (`core.idempotency_keys` partitioned table) which IS replicated. Cache cold-start performance penalty.
 - **JWT / refresh tokens** in Redis = lost. Users force re-login (acceptable per finance SLO 99.9%).
 - **In-flight transactions** at promote time: synchronous_commit=on guarantees no committed data lost; uncommitted txns rolled back.
-- **POS edge buffer** absorbs ~RTO window of disconnected operation.
+- Store sales retry/idempotency absorbs short reconnect windows.
 
 ## 6. Cost delta
 

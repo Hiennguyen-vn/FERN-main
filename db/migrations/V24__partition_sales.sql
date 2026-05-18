@@ -181,7 +181,7 @@ CREATE TABLE core.payment (
   payment_time         TIMESTAMPTZ   NOT NULL,
   transaction_ref      VARCHAR(100),
   note                 TEXT,
-  -- offline POS columns (V21)
+  -- offline reconciliation columns (V21)
   state                TEXT          NOT NULL DEFAULT 'COMPLETED'
     CHECK (state IN ('PENDING_OFFLINE','QUEUED','COMPLETED','RECONCILED','FAILED')),
   offline_captured_at  TIMESTAMPTZ,

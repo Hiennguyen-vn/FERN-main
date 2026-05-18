@@ -247,11 +247,6 @@ public class PayrollService {
             "Outlet " + request.outletId()
                 + " is outside payroll period scope " + periodScope.regionCode());
       }
-      if (!payrollRepository.userHasOutletScope(request.userId(), request.outletId())) {
-        throw ServiceException.badRequest(
-            "User " + request.userId()
-                + " is not assigned to outlet " + request.outletId());
-      }
     }
 
     // Fetch approved shifts from hr-service (internal call — no permission gate)
@@ -266,6 +261,19 @@ public class PayrollService {
       throw ServiceException.badRequest(
           "No approved work shifts found for user " + request.userId()
               + " between " + period.startDate() + " and " + period.endDate());
+    }
+
+    Long timesheetOutletId = request.outletId();
+    if (timesheetOutletId == null) {
+      LinkedHashSet<Long> shiftOutletIds = new LinkedHashSet<>();
+      for (PayrollDtos.WorkShiftSummaryItem shift : shifts) {
+        if (shift.outletId() != null) {
+          shiftOutletIds.add(shift.outletId());
+        }
+      }
+      if (shiftOutletIds.size() == 1) {
+        timesheetOutletId = shiftOutletIds.iterator().next();
+      }
     }
 
     // Aggregate attendance metrics
@@ -319,7 +327,7 @@ public class PayrollService {
         timesheetId,
         request.payrollPeriodId(),
         request.userId(),
-        request.outletId(),
+        timesheetOutletId,
         workDays,
         workHours,
         overtimeHours,

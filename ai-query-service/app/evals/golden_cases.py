@@ -176,12 +176,11 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
         expected_route="data_query",
         expected_intent="revenue",
         expected_template_key="T23_peak_hour_analysis",
-        # T23 SQL touches cdc.fact_sale + cdc.sale_record; check at least one.
-        expected_tables_subset=("analytics.ai_sales_daily",),
+        expected_tables_subset=("cdc.sale_record",),
         tags=("verified-query", "trend", "L0"),
         notes=(
-            "expected_tables_subset is advisory: T23 actually joins cdc.fact_sale; "
-            "policy floor here is ai_sales_daily so we don't break the assertion."
+            "T23 peak hour is anchored on sale header created_at/business_date; "
+            "line-level cdc.fact_sale is reserved for product/discount detail."
         ),
     ),
     # ---- §5 PRODUCT ---------------------------------------------------------

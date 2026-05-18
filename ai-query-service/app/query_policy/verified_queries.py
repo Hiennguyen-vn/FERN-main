@@ -92,7 +92,10 @@ VERIFIED_QUERY_ASSETS: tuple[VerifiedQueryAsset, ...] = (
         ("net_revenue",),
         (
             r"\b(doanh thu|doanh so|revenue|sales|gmv)\b.*\b(cao nhat|nhieu nhat|top|xep hang|ranking|rank|cua hang nao|outlet nao)\b",
+            r"\b(doanh thu|doanh so|revenue|sales|gmv)\b.*\b(thap nhat|yeu nhat|kem nhat|te nhat|lowest|worst|bottom)\b",
             r"\b(cua hang nao|outlet nao)\b.*\b(doanh thu|doanh so|revenue|sales|gmv)\b.*\b(cao nhat|top)\b",
+            r"\b(cua hang nao|outlet nao)\b.*\b(doanh thu|doanh so|revenue|sales|gmv)\b.*\b(thap nhat|yeu nhat|kem nhat|te nhat|lowest|worst|bottom)\b",
+            r"\b(cua hang|outlet|chi nhanh)\b.*\b(yeu nhat|thap nhat|kem nhat|te nhat|lowest|worst|bottom)\b",
         ),
         ("from_date", "to_date"),
         "business_date",
@@ -228,6 +231,23 @@ def _fold(text: str) -> str:
     return no_marks.replace("đ", "d").replace("Đ", "D").lower()
 
 
+def _rank_direction_from_question(question_folded: str) -> str | None:
+    if any(
+        term in question_folded
+        for term in (
+            "thap nhat",
+            "yeu nhat",
+            "kem nhat",
+            "te nhat",
+            "lowest",
+            "worst",
+            "bottom",
+        )
+    ):
+        return "asc"
+    return None
+
+
 def _params_from_slots(
     asset: VerifiedQueryAsset,
     time_range: dict[str, Any],
@@ -244,6 +264,10 @@ def _params_from_slots(
     if asset.template_key == "T04_top_products":
         limit_match = re.search(r"\b(?:top|limit)\s+(\d{1,3})\b", question_folded)
         params["limit"] = max(1, min(int(limit_match.group(1)), 100)) if limit_match else 10
+    if asset.template_key == "T22_outlet_rank":
+        rank_direction = _rank_direction_from_question(question_folded)
+        if rank_direction:
+            params["rank_direction"] = rank_direction
     return params
 
 

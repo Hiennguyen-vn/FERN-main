@@ -343,6 +343,115 @@ class PayrollServiceTest {
   }
 
   @Test
+  void importFromAttendanceTrustsApprovedShiftOutletWhenUserOutletScopeIsStale() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "payroll-service"
+    , null, null));
+    LocalDate startDate = LocalDate.parse("2026-05-01");
+    LocalDate endDate = LocalDate.parse("2026-05-31");
+    Instant now = Instant.parse("2026-05-17T00:00:00Z");
+    when(payrollRepository.findPeriod(70L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollPeriodRecord(
+            70L, 1002L, "May payroll", "open", startDate, endDate,
+            LocalDate.parse("2026-06-05"), null, now, now
+        )
+    ));
+    when(payrollRepository.findPeriodScope(70L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollPeriodScopeRecord(70L, 1002L, "VN")
+    ));
+    when(payrollRepository.findTimesheetByPeriodAndUser(70L, 3012L)).thenReturn(Optional.empty());
+    when(payrollRepository.outletBelongsToRegionScope(2001L, 1002L)).thenReturn(true);
+    when(hrServiceClient.fetchApprovedShifts(3012L, 2001L, startDate, endDate)).thenReturn(List.of(
+        new PayrollDtos.WorkShiftSummaryItem(
+            501L, 3012L, 2001L, "2026-05-02", "scheduled", "present", "approved",
+            "2026-05-02T09:00:00Z", "2026-05-02T17:00:00Z", null
+        )
+    ));
+    when(idGenerator.generateId()).thenReturn(900L);
+    when(payrollRepository.findTimesheetScope(900L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetScopeRecord(900L, 70L, 1002L, "VN", 3012L, 2001L)
+    ));
+    when(payrollRepository.findTimesheet(900L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetRecord(
+            900L, 70L, 3012L, 2001L, BigDecimal.ONE, new BigDecimal("8.0"),
+            BigDecimal.ZERO, new BigDecimal("1.50"), 0, BigDecimal.ZERO, null, now, now
+        )
+    ));
+
+    service().importFromAttendance(
+        new PayrollDtos.ImportFromAttendanceRequest(70L, 3012L, 2001L, new BigDecimal("1.50"))
+    );
+
+    verify(payrollRepository).insertTimesheet(
+        eq(900L),
+        eq(70L),
+        eq(3012L),
+        eq(2001L),
+        eq(BigDecimal.ONE),
+        eq(new BigDecimal("8.0")),
+        eq(BigDecimal.ZERO),
+        eq(new BigDecimal("1.50")),
+        eq(0),
+        eq(BigDecimal.ZERO),
+        org.mockito.ArgumentMatchers.<Long>isNull()
+    );
+  }
+
+  @Test
+  void importFromAttendanceInfersOutletFromApprovedShiftsWhenRequestOmitsOutlet() {
+    RequestUserContextHolder.set(new RequestUserContext(
+        null, null, null, Set.of(), Set.of(), Set.of(), false, true, "payroll-service"
+    , null, null));
+    LocalDate startDate = LocalDate.parse("2026-05-01");
+    LocalDate endDate = LocalDate.parse("2026-05-31");
+    Instant now = Instant.parse("2026-05-17T00:00:00Z");
+    when(payrollRepository.findPeriod(70L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollPeriodRecord(
+            70L, 1002L, "May payroll", "open", startDate, endDate,
+            LocalDate.parse("2026-06-05"), null, now, now
+        )
+    ));
+    when(payrollRepository.findPeriodScope(70L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollPeriodScopeRecord(70L, 1002L, "VN")
+    ));
+    when(payrollRepository.findTimesheetByPeriodAndUser(70L, 3012L)).thenReturn(Optional.empty());
+    when(hrServiceClient.fetchApprovedShifts(3012L, null, startDate, endDate)).thenReturn(List.of(
+        new PayrollDtos.WorkShiftSummaryItem(
+            501L, 3012L, 2001L, "2026-05-02", "scheduled", "present", "approved",
+            "2026-05-02T09:00:00Z", "2026-05-02T17:00:00Z", null
+        )
+    ));
+    when(idGenerator.generateId()).thenReturn(900L);
+    when(payrollRepository.findTimesheetScope(900L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetScopeRecord(900L, 70L, 1002L, "VN", 3012L, 2001L)
+    ));
+    when(payrollRepository.findTimesheet(900L)).thenReturn(Optional.of(
+        new PayrollRepository.PayrollTimesheetRecord(
+            900L, 70L, 3012L, 2001L, BigDecimal.ONE, new BigDecimal("8.0"),
+            BigDecimal.ZERO, new BigDecimal("1.50"), 0, BigDecimal.ZERO, null, now, now
+        )
+    ));
+
+    service().importFromAttendance(
+        new PayrollDtos.ImportFromAttendanceRequest(70L, 3012L, null, new BigDecimal("1.50"))
+    );
+
+    verify(payrollRepository).insertTimesheet(
+        eq(900L),
+        eq(70L),
+        eq(3012L),
+        eq(2001L),
+        eq(BigDecimal.ONE),
+        eq(new BigDecimal("8.0")),
+        eq(BigDecimal.ZERO),
+        eq(new BigDecimal("1.50")),
+        eq(0),
+        eq(BigDecimal.ZERO),
+        org.mockito.ArgumentMatchers.<Long>isNull()
+    );
+  }
+
+  @Test
   void generatePayrollRejectsMissingTimesheet() {
     RequestUserContextHolder.set(new RequestUserContext(
         null, null, null, Set.of(), Set.of(), Set.of(), false, true, "finance-service"

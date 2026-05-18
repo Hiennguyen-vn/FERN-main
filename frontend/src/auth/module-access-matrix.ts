@@ -175,6 +175,13 @@ export const MODULE_ACCESS_MATRIX: Record<ModuleFamily, ModuleAccessRule> = {
     permissions: ['report.read'],
     outletMembership: false,
   },
+
+  // ── Kitchen Display ─────────────────────────────────────────────
+  kitchen: {
+    roles: ['kitchen_staff', 'outlet_manager'],
+    permissions: ['kitchen.read'],
+    outletMembership: false,
+  },
 };
 
 /**

@@ -29,6 +29,7 @@ export const FAMILY_TO_PATH: Record<ModuleFamily, string> = {
   org: '/org/overview',
   'regional-ops': '/reports',
   'ai-query': '/ai-query',
+  kitchen: '/kitchen',
 };
 
 export const PATH_TO_FAMILY: Record<string, string> = Object.fromEntries(
@@ -54,6 +55,7 @@ export const MODULES: ModuleEntry[] = [
   { family: 'audit', label: 'Audit', icon: 'ScrollText', path: '/audit', visible: true },
   { family: 'iam', label: 'IAM', icon: 'Shield', path: '/iam', visible: true },
   { family: 'ai-query', label: 'AI Analyst', icon: 'BrainCircuit', path: '/ai-query', visible: true },
+  { family: 'kitchen', label: 'Kitchen Display', icon: 'ChefHat', path: '/kitchen', visible: true },
 ];
 
 export const ACTION_HUB: ActionHub = {

@@ -50,7 +50,7 @@ TEMPLATES: dict[str, TemplateMeta] = {
     "T20_product_discount_analysis": TemplateMeta("T20_product_discount_analysis", ("from_date", "to_date"), ()),
     # Outlet/Operations (5)
     "T21_outlet_performance": TemplateMeta("T21_outlet_performance", ("from_date", "to_date"), ()),
-    "T22_outlet_rank": TemplateMeta("T22_outlet_rank", ("from_date", "to_date"), ()),
+    "T22_outlet_rank": TemplateMeta("T22_outlet_rank", ("from_date", "to_date"), ("rank_direction",)),
     "T23_peak_hour_analysis": TemplateMeta("T23_peak_hour_analysis", ("from_date", "to_date"), ()),
     "T28_payment_capture_analysis": TemplateMeta("T28_payment_capture_analysis", ("from_date", "to_date"), ()),
     "T30_sale_cancellation_rate": TemplateMeta("T30_sale_cancellation_rate", ("from_date", "to_date"), ()),

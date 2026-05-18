@@ -308,6 +308,12 @@ def _maybe_clamp_time_range_to_available_coverage(state: GraphState, ctx: dict[s
     tr["from_date"] = new_from
     tr["to_date"] = new_to
     state["time_range"] = tr
+    tp = state.get("template_params")
+    if isinstance(tp, dict) and ("from_date" in tp or "to_date" in tp):
+        updated_params = dict(tp)
+        updated_params["from_date"] = new_from
+        updated_params["to_date"] = new_to
+        state["template_params"] = updated_params
     tc = dict(state.get("time_context") or {})
     tc["from_date"] = new_from
     tc["to_date"] = new_to
@@ -487,7 +493,29 @@ def _metric_hint_datasets(state: GraphState, question: str) -> list[str]:
     return out
 
 
+def executed_datasets_for_state(state: GraphState) -> list[str]:
+    """Datasets from the SQL lane that actually ran, when available."""
+    source = str(state.get("executed_sql_source") or state.get("sql_source") or "").lower()
+    if source == "template":
+        template_dataset = dataset_for_template(str(state.get("template_key") or ""))
+        return [template_dataset] if template_dataset else []
+
+    tables = [str(x).strip().lower() for x in (state.get("codegen_tables_used") or []) if str(x).strip()]
+    if source != "codegen" and (state.get("template_key") or not tables):
+        return []
+
+    out: list[str] = []
+    for table in tables:
+        if table in DATA_SOURCE_POLICIES and table not in out:
+            out.append(table)
+    return out
+
+
 def selected_datasets_for_state(state: GraphState) -> list[str]:
+    executed = executed_datasets_for_state(state)
+    if executed:
+        return executed
+
     template_dataset = dataset_for_template(str(state.get("template_key") or ""))
     if template_dataset:
         return [template_dataset]

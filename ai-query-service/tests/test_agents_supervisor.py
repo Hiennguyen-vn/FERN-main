@@ -32,6 +32,19 @@ def _auth_roles(*roles: str) -> AuthContext:
     )
 
 
+def test_supervisor_agent_invalid_time_guard_ignores_valid_iso_ranges(monkeypatch):
+    monkeypatch.setattr(supervisor_agent_module, "today_local", lambda: date(2026, 5, 18))
+
+    assert (
+        supervisor_agent_module._invalid_time_reason(
+            "Xếp hạng doanh thu theo nhóm món của Outlet VN-HCM-6 từ 2026-04-26 đến 2026-05-02"
+        )
+        is None
+    )
+    assert supervisor_agent_module._invalid_time_reason("doanh thu từ 2026-05-02 đến 2026-04-26") == "inverted_range"
+    assert supervisor_agent_module._invalid_time_reason("doanh thu ngày 31/02/2026") == "invalid_numeric_date"
+
+
 async def _wrong_data_llm(**_kwargs):
     return (
         {
@@ -556,6 +569,7 @@ async def test_supervisor_agent_rbac_refusals_do_not_generate_sql(monkeypatch, q
         ("bán được bao nhiêu hôm qua", "T32_period_revenue_summary", "revenue"),
         ("cửa hàng yếu nhất tháng này", "T22_outlet_rank", "outlet_compare"),
         ("doanh thu theo danh mục tháng này", "T03_revenue_by_category", "product_mix"),
+        ("xếp hạng doanh thu theo nhóm món tuần này", "T03_revenue_by_category", "product_mix"),
         ("phiếu nhập tuần này", "T26_goods_receipt_summary", "pnl"),
     ],
 )
@@ -574,6 +588,22 @@ async def test_supervisor_agent_verified_and_template_pinning(monkeypatch, quest
     assert out["intent"] == intent
     assert out["template_key"] == template_key
     assert out["needs_sql_writer"] is False
+
+
+@pytest.mark.asyncio
+async def test_supervisor_agent_marks_weakest_outlet_rank_ascending(monkeypatch):
+    monkeypatch.setattr(supervisor_agent_module, "llm_call_json", _wrong_data_llm)
+
+    state = {
+        "raw_question": "Outlet nào đang có doanh thu yếu nhất?",
+        "normalized_question": "Outlet nào đang có doanh thu yếu nhất?",
+        "auth": _auth_roles("finance"),
+        "trace": [],
+    }
+    out = await supervisor_agent(state)
+
+    assert out["template_key"] == "T22_outlet_rank"
+    assert out["template_params"]["rank_direction"] == "asc"
 
 
 @pytest.mark.asyncio

@@ -467,6 +467,43 @@ public class AuthorizationPolicyService {
     return context.outletIds();
   }
 
+  // --- Kitchen domain ---
+
+  public boolean canReadKitchenForOutlet(RequestUserContext context, long outletId) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    if (profile.hasRoleForOutlet(CanonicalRole.KITCHEN_STAFF, outletId)
+        || profile.hasRoleForOutlet(CanonicalRole.OUTLET_MANAGER, outletId)
+        || profile.hasRoleForOutlet(CanonicalRole.STAFF, outletId)) {
+      return true;
+    }
+    PermissionMatrix matrix = permissionMatrixService.load(userId);
+    return matrix.hasPermission(outletId, "kitchen.read");
+  }
+
+  public boolean canWriteKitchenForOutlet(RequestUserContext context, long outletId) {
+    if (context.internalService()) {
+      return true;
+    }
+    long userId = context.requireUserId();
+    BusinessUserProfile profile = resolveUserProfile(userId);
+    if (profile.hasGlobalRole(CanonicalRole.SUPERADMIN)) {
+      return true;
+    }
+    if (profile.hasRoleForOutlet(CanonicalRole.KITCHEN_STAFF, outletId)
+        || profile.hasRoleForOutlet(CanonicalRole.OUTLET_MANAGER, outletId)) {
+      return true;
+    }
+    PermissionMatrix matrix = permissionMatrixService.load(userId);
+    return matrix.hasPermission(outletId, "kitchen.write");
+  }
+
   // --- Procurement domain ---
 
   public boolean canWriteProcurement(RequestUserContext context, long outletId) {
@@ -649,10 +686,8 @@ public class AuthorizationPolicyService {
   // --- Audit domain ---
 
   /**
-   * Audit log access is unrestricted by outlet because the table lacks an outlet_id column.
-   * Only SUPERADMIN and users with a global-level ADMIN grant may read audit logs.
-   * REGION_MANAGER and outlet-scoped ADMIN must NOT see cross-outlet audit data;
-   * they are denied here until a future actor_outlet_id column enables row-level filtering.
+   * Audit log read access follows the business role matrix: superadmin, admin,
+   * and region manager can read audit surfaces.
    */
   public boolean canReadAudit(RequestUserContext context) {
     if (context.internalService()) {
@@ -661,7 +696,8 @@ public class AuthorizationPolicyService {
     long userId = context.requireUserId();
     BusinessUserProfile profile = resolveUserProfile(userId);
     return profile.hasGlobalRole(CanonicalRole.SUPERADMIN)
-        || profile.hasGlobalRole(CanonicalRole.ADMIN);
+        || profile.canonicalRoles().contains(CanonicalRole.ADMIN)
+        || profile.canonicalRoles().contains(CanonicalRole.REGION_MANAGER);
   }
 
   /**

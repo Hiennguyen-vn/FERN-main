@@ -74,7 +74,19 @@ def intent_for_route_and_template(
         return "export_request"
     if route_key == "visualization_request":
         q = (question or "").lower()
-        if any(token in q for token in ("sản phẩm", "san pham", "product", "danh mục", "danh muc", "category")):
+        if any(
+            token in q
+            for token in (
+                "sản phẩm",
+                "san pham",
+                "product",
+                "danh mục",
+                "danh muc",
+                "category",
+                "nhóm món",
+                "nhom mon",
+            )
+        ):
             return "product_mix"
         template_intent = intent_for_template(template_key)
         if template_intent == "product_mix" and not any(token in q for token in ("doanh thu", "revenue", "sales")):

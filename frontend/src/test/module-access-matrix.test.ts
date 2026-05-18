@@ -41,6 +41,7 @@ function session(
     user: { id: '1', username: 'tester', fullName: 'Test User', status: 'active' },
     rolesByOutlet: roles,
     permissionsByOutlet: permissions,
+    canonicalRolesByOutlet: {},
   };
 }
 
@@ -327,14 +328,15 @@ describe('HR region-scoped (§2, §5.7, §5.8, §8.3)', () => {
 describe('Kitchen Staff minimal (§2)', () => {
   const ks = roleSession('kitchen_staff');
 
-  it('can only access read-floor modules via outlet membership', () => {
+  it('can access read-floor modules and kitchen display', () => {
     expect(hasModuleAccess(ks, 'home')).toBe(false);
     expect(hasModuleAccess(ks, 'catalog')).toBe(true);
     expect(hasModuleAccess(ks, 'inventory')).toBe(true);
     expect(hasModuleAccess(ks, 'reports')).toBe(true);
+    expect(hasModuleAccess(ks, 'kitchen')).toBe(true);
   });
 
-  it('is denied all business-specific modules', () => {
+  it('is denied non-kitchen business-specific modules', () => {
     expect(hasModuleAccess(ks, 'pos')).toBe(false);
     expect(hasModuleAccess(ks, 'procurement')).toBe(false);
     expect(hasModuleAccess(ks, 'finance')).toBe(false);
@@ -469,7 +471,7 @@ describe('Outlet membership read floor (§8.6)', () => {
   ];
 
   it('any user with an outlet sees read-floor modules', () => {
-    // kitchen_staff has no explicit module access, but has outlet membership
+    // kitchen_staff has outlet membership for read-floor access.
     const ks = roleSession('kitchen_staff');
     for (const family of READ_FLOOR_FAMILIES) {
       expect(hasModuleAccess(ks, family)).toBe(true);
@@ -543,7 +545,7 @@ describe('Null and empty session edge cases', () => {
 
   it('session with roles at outlet gives outlet membership', () => {
     const s = session({ '101': ['kitchen_staff'] });
-    // kitchen_staff has no explicit access, but outlet membership enables read-floor
+    // kitchen_staff has kitchen access plus outlet membership read-floor.
     expect(hasModuleAccess(s, 'home')).toBe(false);
     expect(hasModuleAccess(s, 'catalog')).toBe(true);
   });
@@ -562,15 +564,15 @@ describe('Golden module visibility per role (§4)', () => {
    * to any role with outlet membership (§8.6).
    */
   const GOLDEN: Record<string, string[]> = {
-    superadmin:      'home pos catalog inventory procurement finance hr workforce scheduling org regional-ops settings reports audit iam crm promotions ai-query'.split(' '),
+    superadmin:      'home pos catalog inventory procurement finance hr workforce scheduling org regional-ops settings reports audit iam crm promotions ai-query kitchen'.split(' '),
     admin:           'home catalog inventory org regional-ops settings reports audit iam ai-query'.split(' '),
     region_manager:  'home catalog inventory finance org regional-ops reports audit ai-query'.split(' '),
-    outlet_manager:  'home pos catalog inventory procurement finance hr workforce scheduling reports crm promotions ai-query'.split(' '),
+    outlet_manager:  'home pos catalog inventory procurement finance hr workforce scheduling reports crm promotions ai-query kitchen'.split(' '),
     staff:           'pos catalog inventory reports crm promotions'.split(' '),
     procurement:     'catalog inventory procurement reports'.split(' '),
     finance:         'catalog inventory finance reports ai-query'.split(' '),
     hr:              'catalog inventory hr workforce scheduling reports'.split(' '),
-    kitchen_staff:   'catalog inventory reports'.split(' '),
+    kitchen_staff:   'catalog inventory reports kitchen'.split(' '),
   };
 
   it.each(Object.entries(GOLDEN))('%s sees exactly the expected modules', (role, expected) => {
@@ -602,7 +604,7 @@ describe('Golden module visibility per role (§4)', () => {
                   'hr.schedule.manage', 'hr.attendance.approve', 'hr.payroll.view'] },
     );
     const actual = accessibleFamilies(s).sort();
-    const expected = 'home pos catalog inventory procurement finance hr workforce scheduling reports crm promotions ai-query'.split(' ').sort();
+    const expected = 'home pos catalog inventory procurement finance hr workforce scheduling reports crm promotions ai-query kitchen'.split(' ').sort();
     expect(actual).toEqual(expected);
   });
 });

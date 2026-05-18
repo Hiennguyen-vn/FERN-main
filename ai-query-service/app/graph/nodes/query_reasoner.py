@@ -358,7 +358,7 @@ def _report_spec_for_question(state: GraphState, question: str) -> dict[str, Any
     if any(x in folded for x in ("top san pham", "san pham ban chay", "best seller", "mat hang ban chay")):
         spec.update({"analysis_mode": "ranking", "group_by": "product", "ranking_mode": "top"})
         return spec
-    if any(x in folded for x in ("danh muc", "category", "nhom san pham")):
+    if any(x in folded for x in ("danh muc", "category", "nhom san pham", "nhom mon")):
         spec.update({"analysis_mode": "breakdown", "group_by": "category", "ranking_mode": "top"})
         return spec
     if any(x in folded for x in ("so voi", "so sanh", "compare", "cung ky", "same period")):
@@ -421,7 +421,7 @@ def _recommended_templates_from_spec(spec: dict[str, Any], question: str, *, int
     if (
         intent == "product_mix"
         or group_by in {"category", "product_category"}
-        or any(x in folded for x in ("danh muc", "category", "nhom san pham"))
+        or any(x in folded for x in ("danh muc", "category", "nhom san pham", "nhom mon"))
     ):
         return ["T03_revenue_by_category"]
     if mode == "time_series":

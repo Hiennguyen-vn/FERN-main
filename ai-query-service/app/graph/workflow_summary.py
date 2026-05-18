@@ -17,6 +17,7 @@ _TRACE_KEYS_FOR_CLIENT = frozenset(
         "passed",
         "agent",
         "source",
+        "stage",
         "latency_ms",
         "tokens_in",
         "tokens_out",
@@ -359,13 +360,13 @@ def build_workflow_steps(state: dict[str, Any]) -> list[dict[str, str]]:
         ]
     else:
         plan = [
-            ("analyze", "Phân tích câu hỏi", ("contextualizer", "supervisor")),
+            ("analyze", "Phân tích câu hỏi", ("contextualizer", "supervisor", "supervisor_agent")),
             ("metadata", "Tra cứu metadata", ("catalog_digest", "metadata_context")),
             ("coverage", "Kiểm tra dữ liệu sẵn có", ("data_coverage",)),
-            ("plan", "Chọn template hoặc lập kế hoạch SQL", ("query_reasoner", "template_matcher", "codegen_sql_planner")),
+            ("plan", "Chọn template hoặc lập kế hoạch SQL", ("query_reasoner", "template_matcher", "codegen_sql_planner", "supervisor_agent")),
             ("security", "Áp dụng RBAC và SQL guard", ("rbac_injector", "codegen_rbac_injector", "sql_guard")),
-            ("execute", "Chạy truy vấn", ("executor", "codegen_trial")),
-            ("format", "Định dạng câu trả lời", ("answer_formatter",)),
+            ("execute", "Chạy truy vấn", ("executor", "codegen_trial", "template_path")),
+            ("format", "Định dạng câu trả lời", ("answer_formatter", "analysis_brief")),
             ("review", "Rà soát trả lời", ("reviewer_agent",)),
         ]
         if state.get("visualization_requested") or state.get("chart_spec"):

@@ -42,7 +42,6 @@ public final class GatewayRouteCatalog {
         new GatewayRoute("/api/v1/crm", "sales-service", salesUrl, RouteClass.USER, RateLimitTier.DEFAULT),
         new GatewayRoute("/api/v1/sync", "sales-service", salesUrl, RouteClass.DEVICE, RateLimitTier.SYNC),
         new GatewayRoute("/api/v1/telemetry", "sales-service", salesUrl, RouteClass.DEVICE, RateLimitTier.TELEMETRY),
-        new GatewayRoute("/api/v1/devices/provision", "sales-service", salesUrl, RouteClass.USER, RateLimitTier.DEFAULT),
         new GatewayRoute("/api/v1/devices", "auth-service", authUrl, RouteClass.USER, RateLimitTier.AUTH),
         new GatewayRoute("/api/v1/inventory", "inventory-service", inventoryUrl, RouteClass.USER, RateLimitTier.DEFAULT),
         new GatewayRoute("/api/v1/payroll", "payroll-service", payrollUrl, RouteClass.USER, RateLimitTier.DEFAULT),

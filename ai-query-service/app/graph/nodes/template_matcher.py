@@ -86,6 +86,30 @@ def _params_from_time_range(time_range: dict) -> dict[str, str]:
     return {"from_date": fd, "to_date": td} if fd and td else {}
 
 
+def _rank_direction_from_folded_question(folded_question: str) -> str | None:
+    if any(
+        term in folded_question
+        for term in (
+            "thap nhat",
+            "yeu nhat",
+            "kem nhat",
+            "te nhat",
+            "lowest",
+            "worst",
+            "bottom",
+        )
+    ):
+        return "asc"
+    return None
+
+
+def _outlet_rank_params(params: dict[str, str | int], folded_question: str) -> dict[str, str | int]:
+    rank_direction = _rank_direction_from_folded_question(folded_question)
+    if not rank_direction:
+        return dict(params)
+    return {**params, "rank_direction": rank_direction}
+
+
 def _split_time_range_for_period_bridge(from_date: str, to_date: str) -> dict[str, str] | None:
     """Split inclusive [from_date, to_date] into earlier half (B) and later half (A) for T36.
 
@@ -328,8 +352,15 @@ def _fast_template_match(question: str, intent: str | None, time_range: dict) ->
         x in q
         for x in (
             "cao nhat",
+            "thap nhat",
+            "yeu nhat",
+            "kem nhat",
+            "te nhat",
             "nhieu nhat",
             "top",
+            "lowest",
+            "worst",
+            "bottom",
             "xep hang",
             "ranking",
             "rank",
@@ -382,8 +413,10 @@ def _fast_template_match(question: str, intent: str | None, time_range: dict) ->
     if revenueish:
         if comparisonish and yoyish:
             return "T07_revenue_comparison_yoy", params, 0.94
+        if any(x in q for x in ("danh muc", "category", "nhom san pham", "nhom mon")):
+            return "T03_revenue_by_category", params, 0.88
         if rankish:
-            return "T22_outlet_rank", params, 0.94
+            return "T22_outlet_rank", _outlet_rank_params(params, q), 0.94
         if any(x in q for x in ("huy don", "cancel", "cancellation")):
             return "T30_sale_cancellation_rate", params, 0.9
         if _has_payment_context(q):
@@ -405,8 +438,6 @@ def _fast_template_match(question: str, intent: str | None, time_range: dict) ->
             return "T09_avg_basket_size", params, 0.9
         if any(x in q for x in ("so don", "so luong don", "transaction", "giao dich")):
             return "T10_transaction_count", params, 0.9
-        if any(x in q for x in ("danh muc", "category", "nhom san pham")):
-            return "T03_revenue_by_category", params, 0.88
         if summaryish and not dailyish:
             return "T32_period_revenue_summary", params, 0.93
         if outletish:
@@ -512,7 +543,7 @@ def _template_from_planning_decision(
     if (
         (intent or "").strip().lower() == "product_mix"
         or group_by in {"category", "product_category"}
-        or any(x in question_folded for x in ("danh muc", "category", "nhom san pham"))
+        or any(x in question_folded for x in ("danh muc", "category", "nhom san pham", "nhom mon"))
     ):
         return "T03_revenue_by_category", out, 0.88
     if mode == "time_series":
@@ -520,14 +551,14 @@ def _template_from_planning_decision(
             return "T35_weekly_revenue_trend", out, 0.88
         return "T01_daily_revenue", out, 0.88
     if mode == "ranking" and group_by == "outlet":
-        return "T22_outlet_rank", out, 0.88
+        return "T22_outlet_rank", _outlet_rank_params(out, question_folded), 0.88
     if mode == "breakdown" and group_by == "outlet":
         return "T02_revenue_by_outlet", out, 0.88
     if (intent or "").strip().lower() == "outlet_compare":
         if mode == "ranking" or any(
             x in question_folded for x in ("top", "cao nhat", "thap nhat", "tot nhat", "yeu nhat", "xep hang", "ranking", "rank")
         ):
-            return "T22_outlet_rank", out, 0.88
+            return "T22_outlet_rank", _outlet_rank_params(out, question_folded), 0.88
         return "T02_revenue_by_outlet", out, 0.88
     if (intent or "").strip().lower() in {"revenue", "trend", "outlet_compare"}:
         return "T32_period_revenue_summary", out, 0.86
@@ -1105,6 +1136,9 @@ Candidates (chọn 1):
                 {"node": "template_matcher", **usage, "recovered_by_rule": template_key}
             )
             return state
+
+    if template_key == "T22_outlet_rank":
+        params = _outlet_rank_params(params, _fold(question))
 
     state["template_key"] = template_key
     state["template_params"] = params

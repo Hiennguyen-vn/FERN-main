@@ -859,6 +859,7 @@ export function PayrollPrepWorkspace({
     if (toImport.length === 0) { toast.success('All employees already have timesheets'); setPrepStep(2); return; }
     setBulkProgress({ total: toImport.length, done: 0, failed: 0 });
     let done = 0; let failed = 0;
+    let firstError: string | null = null;
     for (const entry of toImport) {
       try {
         await payrollApi.importFromAttendance(token, {
@@ -868,12 +869,15 @@ export function PayrollPrepWorkspace({
           overtimeRate: 1.5,
         });
         done += 1;
-      } catch { failed += 1; }
+      } catch (error: unknown) {
+        failed += 1;
+        if (!firstError) firstError = getErrorMessage(error, 'Unable to import attendance');
+      }
       setBulkProgress({ total: toImport.length, done: done + failed, failed });
     }
     setBulkProgress(null);
     if (done > 0) toast.success(`${done} timesheet(s) imported`);
-    if (failed > 0) toast.error(`${failed} failed`);
+    if (failed > 0) toast.error(firstError ? `${failed} failed - ${firstError}` : `${failed} failed`);
     await loadWorkspace();
     setPrepStep(3);
   };

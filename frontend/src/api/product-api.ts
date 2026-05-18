@@ -241,7 +241,7 @@ export interface CreateItemPayload {
 export interface UpsertPricePayload {
   productId: string | number;
   outletId: string | number;
-  currencyCode?: string;
+  currencyCode: string;
   priceValue?: number | null;
   priceAmount?: number | null;
   effectiveFrom?: string | null;
@@ -470,7 +470,7 @@ export const productApi = {
       body: {
         productId: toLongValue(payload.productId),
         outletId: toLongValue(payload.outletId),
-        currencyCode: asString(payload.currencyCode ?? 'USD').trim() || 'USD',
+        currencyCode: asString(payload.currencyCode).trim().toUpperCase(),
         priceValue: payload.priceValue ?? payload.priceAmount ?? null,
         effectiveFrom: asDateOnly(payload.effectiveFrom),
         effectiveTo: asDateOnly(payload.effectiveTo),

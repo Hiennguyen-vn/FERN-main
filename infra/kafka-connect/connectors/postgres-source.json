@@ -13,7 +13,7 @@
     "slot.name": "debezium_slot",
     "publication.name": "debezium_pub",
     "publication.autocreate.mode": "filtered",
-    "table.include.list": "core.sale_record,core.sale_item,core.payment,core.inventory_transaction,core.product,core.outlet",
+    "table.include.list": "core.sale_record,core.sale_item,core.payment,core.inventory_transaction,core.product,core.product_category,core.outlet",
     "topic.prefix": "fern.cdc",
     "snapshot.mode": "initial",
     "key.converter": "org.apache.kafka.connect.json.JsonConverter",

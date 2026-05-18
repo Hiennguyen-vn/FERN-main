@@ -2,28 +2,50 @@
 
 export type AiQualityVerdictNormalized = 'approve' | 'minor_revision' | 'major_revision';
 
+function sanitizeQualityIssueText(text: string): string {
+  return text
+    .replace(/\bDRAFT_ANSWER\b|\bDRAFT\b/gi, 'Câu trả lời')
+    .replace(/\banswer_facts\b/gi, 'dữ liệu kiểm tra')
+    .replace(/\bpreview_includes_all_rows\b/gi, 'kết quả đã đủ dòng')
+    .replace(/\bpreview_rows\b/gi, 'bảng kết quả')
+    .replace(/\bsource_context\b/gi, 'ngữ cảnh nguồn dữ liệu')
+    .replace(/\brow_count\b/gi, 'số dòng')
+    .replace(/\btemplate_key\b/gi, 'loại báo cáo')
+    .replace(/\bpipeline\b/gi, 'luồng xử lý')
+    .replace(/\bSQL\b/g, 'truy vấn')
+    .replace(/\bprompt\b/gi, 'ngữ cảnh xử lý')
+    .trim();
+}
+
 export function normalizeOneQualityIssue(x: unknown): string {
+  let text = '';
   if (x == null) return '';
-  if (typeof x === 'string') return x;
-  if (typeof x === 'object') {
+  if (typeof x === 'string') text = x;
+  else if (typeof x === 'object') {
     const o = x as Record<string, unknown>;
-    if (typeof o.note_vi === 'string' && o.note_vi.trim()) return o.note_vi.trim();
-    if (typeof o.note === 'string' && o.note.trim()) return o.note.trim();
-    if (typeof o.message === 'string' && o.message.trim()) return o.message.trim();
-    const kind = typeof o.kind === 'string' ? o.kind : '';
-    const sev = typeof o.severity === 'string' ? o.severity : '';
-    if (kind || sev) return [sev, kind].filter(Boolean).join(' · ');
+    if (typeof o.note_vi === 'string' && o.note_vi.trim()) text = o.note_vi.trim();
+    else if (typeof o.note === 'string' && o.note.trim()) text = o.note.trim();
+    else if (typeof o.message === 'string' && o.message.trim()) text = o.message.trim();
+    else {
+      const kind = typeof o.kind === 'string' ? o.kind : '';
+      const sev = typeof o.severity === 'string' ? o.severity : '';
+      if (kind || sev) text = [sev, kind].filter(Boolean).join(' · ');
+      else {
+        try {
+          text = JSON.stringify(x);
+        } catch {
+          text = '';
+        }
+      }
+    }
+  } else {
     try {
-      return JSON.stringify(x);
+      text = String(x);
     } catch {
-      return '';
+      text = '';
     }
   }
-  try {
-    return String(x);
-  } catch {
-    return '';
-  }
+  return sanitizeQualityIssueText(text);
 }
 
 export function normalizeQualityIssueLines(issues: unknown): string[] {

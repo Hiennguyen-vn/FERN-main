@@ -5,6 +5,7 @@ from app.graph.nodes.data_coverage import (
     coverage_status_for_range,
     coverage_window_for_template,
     data_coverage,
+    executed_datasets_for_state,
     format_data_coverage_for_prompt,
 )
 
@@ -157,6 +158,42 @@ def test_build_data_source_context_prefers_metric_specific_finance_event_source(
     assert ctx["coverage_status"] == "partial_after"
 
 
+def test_build_data_source_context_prefers_executed_codegen_tables_over_intent_default():
+    state = {
+        "intent": "product_mix",
+        "executed_sql_source": "codegen",
+        "codegen_tables_used": ["analytics.fct_sales_by_category"],
+        "raw_question": "nhóm món tăng trưởng thế nào",
+        "time_range": {"from_date": "2026-05-01", "to_date": "2026-05-04"},
+        "data_coverage_context": {
+            "datasets": [
+                {
+                    "source": "clickhouse",
+                    "dataset": "analytics.fct_sales_by_category",
+                    "min_date": "2026-05-01",
+                    "max_date": "2026-05-04",
+                    "row_count": 12,
+                },
+                {
+                    "source": "clickhouse",
+                    "dataset": "analytics.ai_product_daily",
+                    "min_date": "2025-07-02",
+                    "max_date": "2026-05-02",
+                    "row_count": 1506,
+                },
+            ],
+            "errors": [],
+        },
+    }
+
+    assert executed_datasets_for_state(state) == ["analytics.fct_sales_by_category"]
+    ctx = build_data_source_context(state)
+
+    assert ctx is not None
+    assert ctx["primary_dataset"] == "analytics.fct_sales_by_category"
+    assert ctx["coverage_status"] == "full"
+
+
 def test_inventory_current_source_context_uses_latest_snapshot():
     state = {
         "template_key": "T11_inventory_current_stock",
@@ -180,12 +217,15 @@ def test_data_coverage_clamps_partial_after_range_to_available_max(monkeypatch):
     state = {
         "template_key": "T32_period_revenue_summary",
         "time_range": {"from_date": "2026-05-01", "to_date": "2026-05-08"},
+        "template_params": {"from_date": "2026-05-01", "to_date": "2026-05-08"},
         "trace": [],
     }
     out = data_coverage(state)
     assert out["coverage_time_clamp_applied"] is True
     assert out["time_range"]["from_date"] == "2026-05-01"
     assert out["time_range"]["to_date"] == "2026-05-02"
+    assert out["template_params"]["from_date"] == "2026-05-01"
+    assert out["template_params"]["to_date"] == "2026-05-02"
     assert any("thu hẹp" in (c or "") for c in (out.get("data_source_context") or {}).get("caveats") or [])
 
 
@@ -197,10 +237,13 @@ def test_data_coverage_clamps_fully_outside_future_to_last_week(monkeypatch):
     state = {
         "template_key": "T32_period_revenue_summary",
         "time_range": {"from_date": "2026-05-05", "to_date": "2026-05-11"},
+        "template_params": {"from_date": "2026-05-05", "to_date": "2026-05-11"},
         "trace": [],
     }
     out = data_coverage(state)
     assert out["coverage_time_clamp_applied"] is True
     assert out["time_range"]["to_date"] == "2026-05-02"
     assert out["time_range"]["from_date"] == "2026-04-26"
+    assert out["template_params"]["to_date"] == "2026-05-02"
+    assert out["template_params"]["from_date"] == "2026-04-26"
     assert any("7 ngày" in (c or "") for c in (out.get("data_source_context") or {}).get("caveats") or [])

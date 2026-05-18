@@ -1,6 +1,7 @@
 package com.fern.services.sales.application;
 
 import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.OutletScopeContext;
 import com.fern.services.sales.api.PublicPosDtos;
 import com.fern.services.sales.api.SalesDtos;
 import com.fern.services.sales.infrastructure.SalesRepository;
@@ -36,60 +37,80 @@ public class PublicPosService {
   }
 
   public PublicPosDtos.PublicTableView getTable(String tableToken) {
-    SalesRepository.PublicOrderingTableRecord table = requireActiveTable(tableToken);
-    return toTableView(table, currentBusinessDate(table));
+    return withPublicTableScope(tableToken, true, table ->
+        toTableView(table, currentBusinessDate(table)));
   }
 
   public List<PublicPosDtos.PublicMenuItemView> listMenu(String tableToken, LocalDate onDate) {
-    SalesRepository.PublicOrderingTableRecord table = requireActiveTable(tableToken);
-    LocalDate businessDate = onDate == null ? currentBusinessDate(table) : onDate;
-    return salesRepository.listPublicMenu(table.outletId(), businessDate);
+    return withPublicTableScope(tableToken, true, table -> {
+      LocalDate businessDate = onDate == null ? currentBusinessDate(table) : onDate;
+      return salesRepository.listPublicMenu(table.outletId(), businessDate);
+    });
   }
 
   public PublicPosDtos.PublicOrderReceiptView getOrder(String tableToken, String orderToken) {
-    SalesRepository.PublicOrderingTableRecord table = requireKnownTable(tableToken);
-    SalesRepository.CreatedPublicOrder order = salesRepository.findPublicOrder(tableToken, orderToken)
-        .orElseThrow(() -> ServiceException.notFound("Customer order not found"));
-    return toReceipt(table, order.orderToken(), order.sale());
+    return withPublicTableScope(tableToken, false, table -> {
+      SalesRepository.CreatedPublicOrder order = salesRepository.findPublicOrder(tableToken, orderToken)
+          .orElseThrow(() -> ServiceException.notFound("Customer order not found"));
+      return toReceipt(table, order.orderToken(), order.sale());
+    });
   }
 
   public PublicPosDtos.PublicOrderReceiptView createOrder(
       String tableToken,
       PublicPosDtos.CreatePublicOrderRequest request
   ) {
-    SalesRepository.PublicOrderingTableRecord table = requireActiveTable(tableToken);
-    LocalDate businessDate = currentBusinessDate(table);
-    List<PublicPosDtos.PublicMenuItemView> menu =
-        salesRepository.listPublicMenu(table.outletId(), businessDate);
-    Map<String, PublicPosDtos.PublicMenuItemView> menuByProductId =
-        menu.stream()
-            .collect(
-                java.util.stream.Collectors.toMap(
-                    PublicPosDtos.PublicMenuItemView::productId,
-                    Function.identity(),
-                    (left, right) -> left,
-                    java.util.LinkedHashMap::new));
-    PromotionEngine.Allocation promotionAllocation =
-        computePromotionDiscounts(table.outletId(), request, menuByProductId);
-    Map<Long, BigDecimal> discountByProduct = discountByProduct(promotionAllocation);
-    SalesRepository.CreatedPublicOrder created;
-    try {
-      created = discountByProduct.isEmpty()
-          ? salesRepository.submitPublicOrder(table, request, businessDate)
-          : salesRepository.submitPublicOrder(
-              table,
-              request,
-              businessDate,
-              discountByProduct,
-              promotionAllocation.promotionId());
-    } catch (ServiceException exception) {
-      if (exception.getStatusCode() == 409 && exception.getDetails() != null) {
-        throw ServiceException.conflict(
-            "One or more items are unavailable or exceed the stock available for this table");
+    return withPublicTableScope(tableToken, true, table -> {
+      LocalDate businessDate = currentBusinessDate(table);
+      List<PublicPosDtos.PublicMenuItemView> menu =
+          salesRepository.listPublicMenu(table.outletId(), businessDate);
+      Map<String, PublicPosDtos.PublicMenuItemView> menuByProductId =
+          menu.stream()
+              .collect(
+                  java.util.stream.Collectors.toMap(
+                      PublicPosDtos.PublicMenuItemView::productId,
+                      Function.identity(),
+                      (left, right) -> left,
+                      java.util.LinkedHashMap::new));
+      PromotionEngine.Allocation promotionAllocation =
+          computePromotionDiscounts(table.outletId(), request, menuByProductId);
+      Map<Long, BigDecimal> discountByProduct = discountByProduct(promotionAllocation);
+      SalesRepository.CreatedPublicOrder created;
+      try {
+        created = discountByProduct.isEmpty()
+            ? salesRepository.submitPublicOrder(table, request, businessDate)
+            : salesRepository.submitPublicOrder(
+                table,
+                request,
+                businessDate,
+                discountByProduct,
+                promotionAllocation.promotionId());
+      } catch (ServiceException exception) {
+        if (exception.getStatusCode() == 409 && exception.getDetails() != null) {
+          throw ServiceException.conflict(
+              "One or more items are unavailable or exceed the stock available for this table");
+        }
+        throw exception;
       }
-      throw exception;
+      return toReceipt(table, created.orderToken(), created.sale(), menuByProductId);
+    });
+  }
+
+  private <T> T withPublicTableScope(
+      String tableToken,
+      boolean requireActive,
+      Function<SalesRepository.PublicOrderingTableRecord, T> action
+  ) {
+    OutletScopeContext.ScopeSnapshot previousScope = OutletScopeContext.snapshot();
+    try {
+      SalesRepository.PublicOrderingTableRecord table = requireKnownTableForPublicRequest(tableToken);
+      if (requireActive) {
+        requireAvailable(table);
+      }
+      return action.apply(table);
+    } finally {
+      OutletScopeContext.restore(previousScope);
     }
-    return toReceipt(table, created.orderToken(), created.sale(), menuByProductId);
   }
 
   private PromotionEngine.Allocation computePromotionDiscounts(
@@ -125,21 +146,23 @@ public class PublicPosService {
     return map;
   }
 
-  private SalesRepository.PublicOrderingTableRecord requireActiveTable(String tableToken) {
-    SalesRepository.PublicOrderingTableRecord table = requireKnownTable(tableToken);
+  private void requireAvailable(SalesRepository.PublicOrderingTableRecord table) {
     if (!"active".equalsIgnoreCase(table.status())) {
       throw ServiceException.conflict("This table is not currently available for customer ordering");
     }
     if (!"active".equalsIgnoreCase(table.outletStatus())) {
       throw ServiceException.conflict("This outlet is not currently accepting customer orders");
     }
-    return table;
   }
 
-  private SalesRepository.PublicOrderingTableRecord requireKnownTable(String tableToken) {
-    return salesRepository
-        .findPublicOrderingTable(tableToken)
-        .orElseThrow(() -> ServiceException.notFound("Ordering table not found"));
+  private SalesRepository.PublicOrderingTableRecord requireKnownTableForPublicRequest(String tableToken) {
+    OutletScopeContext.set(OutletScopeContext.ALL);
+    SalesRepository.PublicOrderingTableRecord table =
+        salesRepository
+            .findPublicOrderingTable(tableToken)
+            .orElseThrow(() -> ServiceException.notFound("Ordering table not found"));
+    OutletScopeContext.set(table.outletId());
+    return table;
   }
 
   private LocalDate currentBusinessDate(SalesRepository.PublicOrderingTableRecord table) {

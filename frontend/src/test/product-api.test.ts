@@ -159,6 +159,33 @@ describe('productApi', () => {
     expect(secondUrl.searchParams.get('offset')).toBe('2');
   });
 
+  it('sends explicit uppercase currency when setting outlet prices', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ productId: 5000, outletId: 2001, currencyCode: 'VND' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await productApi.upsertPrice('token', {
+      productId: '5000',
+      outletId: '2001',
+      currencyCode: 'vnd',
+      priceAmount: 40000,
+      effectiveFrom: '2026-05-17',
+    });
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(options?.body))).toMatchObject({
+      productId: 5000,
+      outletId: 2001,
+      currencyCode: 'VND',
+      priceValue: 40000,
+      effectiveFrom: '2026-05-17',
+    });
+  });
+
   it('uploads product images through the backend multipart endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({

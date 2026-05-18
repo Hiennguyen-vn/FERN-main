@@ -36,7 +36,7 @@ class RequestAuthenticationFilterTest {
   }
 
   @Test
-  void pairEndpointIsPublicButPairTokenRequiresAuthentication() {
+  void pairEndpointIsPublicButIssuanceRequiresAuthentication() {
     RequestAuthenticationFilter filter = new RequestAuthenticationFilter(
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
         new SpringInternalServiceAuth(INTERNAL_TOKEN),

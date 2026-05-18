@@ -1,2 +1,0 @@
-ALTER TABLE app_user
-  ADD COLUMN IF NOT EXISTS pin_hash TEXT;

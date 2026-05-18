@@ -56,7 +56,7 @@
 - `tools/gen-manifest-keypair.sh` — keypair generator
 
 ### Edge Dexie sweeper
-- `FERN-pos-edge/src/sync/sweeper.ts` — TTL cleanup (audit 90d, sales 30d), storage estimate
+- Telemetry storage-warning plumbing for client-side storage pressure.
 - `use-dexie-sweeper.ts` — leader-tab gated, posts to `/api/v1/telemetry/storage-warning`
 - New telemetry endpoints: `/storage-warning`, `/clock-skew`
 

@@ -285,3 +285,26 @@ def test_build_workflow_steps_are_user_safe():
     assert any(s["key"] == "security" and s["status"] == "done" for s in steps)
     assert any(s["key"] == "review" and s["status"] == "done" for s in steps)
     assert "select " not in str(steps).lower()
+
+
+def test_build_workflow_steps_marks_agent_template_path_done():
+    state = {
+        "intent": "outlet_compare",
+        "template_key": "T22_outlet_rank",
+        "trace": [
+            {"node": "supervisor_agent"},
+            {"node": "data_coverage"},
+            {"node": "rbac_injector"},
+            {"node": "sql_guard"},
+            {"node": "template_path", "stage": "executed", "rows": 9},
+            {"node": "answer_formatter", "source": "deterministic_outlet_rank"},
+            {"node": "reviewer_agent"},
+        ],
+    }
+
+    steps = build_workflow_steps(state)
+
+    assert any(s["key"] == "analyze" and s["status"] == "done" for s in steps)
+    assert any(s["key"] == "plan" and s["status"] == "done" for s in steps)
+    assert any(s["key"] == "execute" and s["status"] == "done" for s in steps)
+    assert any(s["key"] == "format" and s["status"] == "done" for s in steps)

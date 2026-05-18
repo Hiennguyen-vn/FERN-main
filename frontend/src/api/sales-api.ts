@@ -163,6 +163,7 @@ export interface OutletStatsView {
   cancelledOrders?: number | null;
   revenueToday?: number | null;
   averageOrderValue?: number | null;
+  currencyCode?: string | null;
   activeSessionCode?: string | null;
   activeSessionStatus?: string | null;
   topCategory?: string | null;
@@ -472,6 +473,7 @@ function decodeOutletStats(value: unknown): OutletStatsView {
     cancelledOrders: asNullableNumber(record.cancelledOrders),
     revenueToday: asNullableNumber(record.revenueToday),
     averageOrderValue: asNullableNumber(record.averageOrderValue),
+    currencyCode: asNullableString(record.currencyCode),
     activeSessionCode: asNullableString(record.activeSessionCode),
     activeSessionStatus: asNullableString(record.activeSessionStatus),
     topCategory: asNullableString(record.topCategory),

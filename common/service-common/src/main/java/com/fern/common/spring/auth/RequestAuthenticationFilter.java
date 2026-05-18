@@ -184,9 +184,6 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
     SpringInternalServiceAuth.AuthenticatedService internal = internalServiceAuth.authenticate(headers);
     if (internal != null) {
       recordInternalAuthMethod("shared_token");
-      if ("pos-edge-agent".equals(internal.serviceName())) {
-        throw ServiceException.forbidden("POS edge mini server must use device JWT authentication");
-      }
       if (isDevicePath(request) && !"pos-device".equals(internal.serviceName())) {
         throw ServiceException.forbidden("Sync endpoints require device JWT authentication");
       }

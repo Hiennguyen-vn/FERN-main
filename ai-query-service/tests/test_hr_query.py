@@ -64,6 +64,42 @@ def test_hr_staff_list_runs_static_scoped_query(monkeypatch):
     assert out["skip_answer_formatter_llm"] is True
 
 
+def test_hr_staff_list_small_result_lists_every_employee(monkeypatch):
+    monkeypatch.setattr(hr, "get_settings", lambda: _settings())
+
+    rows = [
+        {
+            "user_id": idx,
+            "full_name": f"Employee {idx}",
+            "username": f"emp{idx}",
+            "employee_code": f"E{idx:02d}",
+            "status": "active",
+            "outlet_id": 2000,
+            "outlet_code": "VN-HCM-001",
+            "outlet_name": "Saigon Central Outlet",
+            "last_work_date": "2026-05-02",
+        }
+        for idx in range(1, 12)
+    ]
+
+    monkeypatch.setattr(hr.pg, "execute_readonly", lambda _sql, _params: rows)
+    node = hr.make_hr_query(lambda: [2000])
+    state = {
+        "auth": _auth({"hr"}, {2000}),
+        "normalized_question": "danh sách nhân viên outlet của tôi",
+        "raw_entities": {"outlet_names": [], "product_names": [], "categories": [], "employee_names": []},
+        "resolved_entities": {},
+        "trace": [],
+    }
+
+    out = node(state)
+
+    assert out["template_key"] == "HR_staff_list"
+    assert "Employee 11" in out["answer_text"]
+    assert "Hiển thị 10/11" not in out["answer_text"]
+    assert "Nguồn dữ liệu: HR staff/work shift" in out["answer_text"]
+
+
 def test_hr_staff_management_list_uses_role_filtered_sql(monkeypatch):
     monkeypatch.setattr(hr, "get_settings", lambda: _settings())
 

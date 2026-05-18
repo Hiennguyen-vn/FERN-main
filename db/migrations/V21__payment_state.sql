@@ -1,4 +1,4 @@
--- Payment state machine for offline POS reconciliation.
+-- Payment state machine for offline reconciliation.
 -- New columns track offline capture, reconciliation, and the originating device.
 ALTER TABLE core.payment
   ADD COLUMN IF NOT EXISTS state            TEXT NOT NULL DEFAULT 'COMPLETED'

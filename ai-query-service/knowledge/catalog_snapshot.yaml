@@ -150,7 +150,7 @@ snapshots:
 
     - business_date: Date
 
-    - category_code: Nullable(String)
+    - category_code: String
 
     - category_name: String
 
@@ -340,6 +340,31 @@ snapshots:
     - category_code: Nullable(String)
 
     - status: LowCardinality(String)
+
+    - created_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - updated_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
+
+    - __op: Nullable(String)
+
+    - __ts_ms: Int64
+
+    - __lsn: Nullable(Int64)
+
+    - __deleted: Nullable(String)'
+- full_table: cdc.product_category
+  summary_vi: 'Bảng `cdc.product_category` trong ClickHouse (FERN analytics
+    / CDC).
+
+    Danh sách cột (để chọn đúng báo cáo; không phải số liệu thực):
+
+    - code: String
+
+    - name: String
+
+    - is_active: Bool
+
+    - description: Nullable(String)
 
     - created_at: DateTime64(3, ''Asia/Ho_Chi_Minh'')
 

@@ -33,7 +33,11 @@ _DOCS_RE = re.compile(
 _EXPORT_RE = re.compile(r"\b(xuất|xuat|export|excel|csv|download|tải\s+file|tai\s+file)\b", re.IGNORECASE)
 _VISUAL_RE = re.compile(r"\b(vẽ|ve|biểu\s*đồ|bieu\s*do|chart|graph|visual)\b", re.IGNORECASE)
 _REVENUE_RE = re.compile(r"\b(doanh\s*thu|doanh\s*số|doanh\s*so|revenue|sales|gmv|aov|basket|giao\s*dịch|giao\s*dich|đơn\s*hàng|don\s*hang|hủy\s*đơn|huy\s*don)\b", re.IGNORECASE)
-_PRODUCT_RE = re.compile(r"\b(sản\s*phẩm|san\s*pham|product|mặt\s*hàng|mat\s*hang|category|danh\s*mục|danh\s*muc)\b", re.IGNORECASE)
+_PRODUCT_RE = re.compile(
+    r"\b(sản\s*phẩm|san\s*pham|product|mặt\s*hàng|mat\s*hang|"
+    r"category|danh\s*mục|danh\s*muc|nhóm\s*món|nhom\s*mon|nhóm\s*sản\s*phẩm|nhom\s*san\s*pham)\b",
+    re.IGNORECASE,
+)
 _INVENTORY_RE = re.compile(
     r"\b(tồn\s*kho|ton\s*kho|tồn\s*âm|ton\s*am|tồn\s*thấp|ton\s*thap|"
     r"inventory|stock|nguyên\s*liệu|nguyen\s*lieu|hết\s*hàng|het\s*hang|"

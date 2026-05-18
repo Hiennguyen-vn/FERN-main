@@ -187,6 +187,14 @@ TABLE_POLICIES: dict[str, TablePolicy] = {
         lookup_only=True,
         description_vi="Product master data cho tên/danh mục/trạng thái; catalog AI không có giá bán hiện hành.",
     ),
+    "cdc.product_category": TablePolicy(
+        "cdc.product_category",
+        None,
+        None,
+        "category_code",
+        lookup_only=True,
+        description_vi="Product category master data; dùng để map category_code sang tên danh mục.",
+    ),
     "cdc.outlet": TablePolicy("cdc.outlet", None, None, "outlet_id", lookup_only=True),
     # Legacy fern.* raw/event tables. These are still curated and scoped; do not expose arbitrary schema.
     "fern.fact_sale": TablePolicy(
@@ -292,7 +300,7 @@ _INTENT_TABLE_PRIORITY: dict[str, tuple[str, ...]] = {
     "revenue": ("analytics.ai_sales_daily", "analytics.ai_payment_daily", "analytics.fct_sales_daily"),
     "outlet_compare": ("analytics.ai_sales_daily", "analytics.fct_sales_daily", "cdc.outlet"),
     "trend": ("analytics.ai_sales_daily", "analytics.fct_sales_daily"),
-    "lookup": ("cdc.outlet", "cdc.product"),
+    "lookup": ("cdc.outlet", "cdc.product", "cdc.product_category"),
     "inventory": ("analytics.fct_inventory_snapshot", "cdc.inventory_transaction"),
     "product_mix": ("analytics.ai_product_daily", "analytics.fct_sales_by_product"),
     "pnl": (
@@ -352,7 +360,7 @@ QUERY_DOMAINS: dict[str, QueryDomain] = {
         intents=("product_mix", "export_request", "visualization_request"),
         description_vi="Sản phẩm/danh mục bán chạy, doanh thu và số lượng theo ngày/cửa hàng/sản phẩm.",
         preferred_tables=("analytics.ai_product_daily",),
-        lookup_tables=("cdc.product", "cdc.outlet"),
+        lookup_tables=("cdc.product", "cdc.product_category", "cdc.outlet"),
         fallback_tables=("analytics.fct_sales_by_product", "analytics.fct_sales_by_category", "cdc.fact_sale", "fern.fact_sale"),
         verified_templates=("T03_revenue_by_category", "T04_top_products", "T16_product_sales_mix", "T17_category_contribution", "T18_product_rank_by_outlet"),
         notes_vi=(
@@ -365,7 +373,7 @@ QUERY_DOMAINS: dict[str, QueryDomain] = {
         intents=("inventory", "export_request"),
         description_vi="Tồn kho snapshot, tồn âm/thấp, biến động inventory.",
         preferred_tables=("analytics.fct_inventory_snapshot",),
-        lookup_tables=("cdc.product", "cdc.outlet"),
+        lookup_tables=("cdc.product", "cdc.product_category", "cdc.outlet"),
         fallback_tables=("cdc.inventory_transaction", "fern.fact_inventory_movement", "fern.events_stock_low"),
         verified_templates=("T11_inventory_current_stock", "T12_inventory_low_stock", "T13_inventory_movement_summary", "T14_inventory_consumption_rate", "T15_inventory_reorder_alerts", "T29_stock_low_events"),
         notes_vi=("Snapshot hiện tại phải lấy max(business_date) trong phạm vi outlet, không cộng dồn nhiều ngày.",),
@@ -391,7 +399,7 @@ QUERY_DOMAINS: dict[str, QueryDomain] = {
         key="lookup",
         intents=("lookup", "unknown"),
         description_vi="Tra cứu outlet/product dimension an toàn trong phạm vi RBAC.",
-        preferred_tables=("cdc.outlet", "cdc.product"),
+        preferred_tables=("cdc.outlet", "cdc.product", "cdc.product_category"),
         lookup_tables=(),
         fallback_tables=("fern.dim_outlet", "fern.dim_product"),
         verified_templates=("T31_outlet_directory",),
@@ -592,6 +600,18 @@ DATA_SOURCE_POLICIES: dict[str, DataSourcePolicy] = {
         preferred_for_metrics=("product_directory",),
         time_column=None,
         time_semantics_vi="danh mục sản phẩm hiện tại, không phải chuỗi thời gian kinh doanh",
+        available_range_strategy="no_time_coverage",
+        freshness_label_vi="dữ liệu master hiện tại",
+        coverage_enabled=False,
+    ),
+    "cdc.product_category": DataSourcePolicy(
+        dataset="cdc.product_category",
+        domain="lookup",
+        source_system="Product category master data",
+        storage="clickhouse",
+        preferred_for_metrics=("product_category_directory",),
+        time_column=None,
+        time_semantics_vi="danh mục nhóm sản phẩm hiện tại, không phải chuỗi thời gian kinh doanh",
         available_range_strategy="no_time_coverage",
         freshness_label_vi="dữ liệu master hiện tại",
         coverage_enabled=False,
@@ -894,8 +914,17 @@ _DOMAIN_QUESTION_HINTS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"the\s+tin\s+dung|the\s+ghi\s+no|thu\s*tien|hinh\s*thuc\s*thu\s*tien)\b"
         ),
     ),
-    ("inventory", re.compile(r"\b(ton\s*kho|ton\s*am|ton\s*thap|inventory|stock|nguyen\s*lieu|het\s*hang|sap\s*het)\b")),
-    ("product", re.compile(r"\b(san\s*pham|mat\s*hang|product|category|danh\s*muc|ban\s*chay|best\s*seller)\b")),
+    (
+        "inventory",
+        re.compile(r"\b(ton\s*kho|ton\s*am|ton\s*thap|inventory|stock|nguyen\s*lieu|het\s*hang|sap\s*het)\b"),
+    ),
+    (
+        "product",
+        re.compile(
+            r"\b(san\s*pham|mat\s*hang|nhom\s*san\s*pham|nhom\s*mon|"
+            r"product|category|danh\s*muc|ban\s*chay|best\s*seller)\b"
+        ),
+    ),
     (
         "finance",
         re.compile(

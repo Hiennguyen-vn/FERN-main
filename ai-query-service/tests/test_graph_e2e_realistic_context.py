@@ -102,6 +102,13 @@ def _coverage():
             },
             {
                 "source": "clickhouse",
+                "dataset": "cdc.sale_record",
+                "min_date": "2025-07-02",
+                "max_date": "2026-05-04",
+                "row_count": 120000,
+            },
+            {
+                "source": "clickhouse",
                 "dataset": "analytics.fct_inventory_snapshot",
                 "min_date": "2025-07-02",
                 "max_date": "2026-05-04",
@@ -230,8 +237,8 @@ async def test_e2e_peak_hour_query_uses_verified_template_without_clarification(
 
     def fake_execute(sql: str):
         seen_sql.append(sql)
-        assert "toHour(fs.sale_created_at)" in sql
-        assert "fs.business_date BETWEEN '2026-04-27' AND '2026-05-03'" in sql
+        assert "toHour(sr.created_at)" in sql
+        assert "sr.business_date BETWEEN '2026-04-27' AND '2026-05-03'" in sql
         return [
             {"hour_of_day": 9, "txn_count": 10, "revenue": 1000000},
             {"hour_of_day": 12, "txn_count": 25, "revenue": 3000000},
@@ -247,9 +254,9 @@ async def test_e2e_peak_hour_query_uses_verified_template_without_clarification(
     assert out["verified_query_asset"]["template_key"] == "T23_peak_hour_analysis"
     assert out["planning_frame"]["task_type"] == "peak_hour_analysis"
     assert out["planning_frame"]["next_action"] == "verified_template"
-    assert out["data_source_context"]["primary_dataset"] == "cdc.fact_sale"
+    assert out["data_source_context"]["primary_dataset"] == "cdc.sale_record"
     assert "12:00-12:59" in out["answer_text"]
-    assert "Nguồn thời gian: business_date trong cdc.fact_sale" in out["answer_text"]
+    assert "Nguồn thời gian: business_date trong cdc.sale_record" in out["answer_text"]
     assert "SQL" not in out["answer_text"]
     assert "template" not in out["answer_text"].lower()
     assert seen_sql
@@ -261,8 +268,8 @@ async def test_e2e_peak_sales_q3_2025_parses_quarter_and_runs_peak_hour(realisti
 
     def fake_execute(sql: str):
         seen_sql.append(sql)
-        assert "toHour(fs.sale_created_at)" in sql
-        assert "fs.business_date BETWEEN '2025-07-01' AND '2025-09-30'" in sql
+        assert "toHour(sr.created_at)" in sql
+        assert "sr.business_date BETWEEN '2025-07-02' AND '2025-09-30'" in sql
         return [
             {"hour_of_day": 8, "txn_count": 150, "revenue": 8000000},
             {"hour_of_day": 12, "txn_count": 450, "revenue": 25000000},
@@ -802,7 +809,7 @@ async def test_e2e_hr_previous_month_followup_keeps_employee_code_context(realis
 async def test_e2e_revenue_7_year_window_runs_with_coverage_caveat(realistic_graph, monkeypatch):
     def fake_execute(sql: str):
         assert "analytics.ai_sales_daily" in sql
-        assert "business_date BETWEEN '2019-05-05' AND '2026-05-04'" in sql
+        assert "business_date BETWEEN '2025-07-02' AND '2026-05-04'" in sql
         return [
             {
                 "active_outlets": 8,

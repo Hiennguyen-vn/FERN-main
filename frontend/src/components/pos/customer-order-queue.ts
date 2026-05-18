@@ -11,19 +11,20 @@ function normalizeStatus(value: string | null | undefined) {
 }
 
 export function isWaitingCustomerOrder(order: CustomerOrderQueueStatusLike) {
-  const status = normalizeStatus(order.backendStatus ?? order.status);
-  const paymentStatus = normalizeStatus(order.paymentStatus);
-  return status !== 'cancelled'
-      && status !== 'completed'
-      && paymentStatus !== 'paid'
-      && status !== 'order_approved';
+  return getCustomerOrderQueueFilter(order) === 'waiting';
 }
 
 export function getCustomerOrderQueueFilter(order: CustomerOrderQueueStatusLike): CustomerOrderQueueFilter {
   const status = normalizeStatus(order.backendStatus ?? order.status);
   const paymentStatus = normalizeStatus(order.paymentStatus);
   if (status === 'cancelled') return 'cancelled';
-  if (paymentStatus === 'paid' || status === 'completed') return 'paid';
+  if (paymentStatus === 'paid' || status === 'completed' || status === 'payment_done') return 'paid';
   if (status === 'order_approved') return 'approved';
   return 'waiting';
+}
+
+export function canCaptureCustomerOrderPayment(order: CustomerOrderQueueStatusLike) {
+  const status = normalizeStatus(order.backendStatus ?? order.status);
+  const paymentStatus = normalizeStatus(order.paymentStatus);
+  return status === 'order_approved' && paymentStatus !== 'paid';
 }

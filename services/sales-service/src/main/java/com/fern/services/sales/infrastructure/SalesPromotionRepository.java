@@ -289,8 +289,8 @@ public class SalesPromotionRepository extends BaseRepository {
             )
           """
       )) {
-        ps.setObject(1, now);
-        ps.setObject(2, now);
+        ps.setTimestamp(1, Timestamp.from(now));
+        ps.setTimestamp(2, Timestamp.from(now));
         ps.setLong(3, outletId);
         try (ResultSet rs = ps.executeQuery()) {
           List<ActivePromotionRow> rows = new ArrayList<>();

@@ -137,6 +137,7 @@ async def test_query_reasoner_builds_report_spec_from_planning_frame(monkeypatch
     [
         ("top cửa hàng theo doanh thu tháng này", "outlet_compare", "outlet_compare", "T22_outlet_rank", "outlet"),
         ("doanh thu theo danh mục tháng này", "product_mix", "product_mix", "T03_revenue_by_category", "category"),
+        ("xếp hạng doanh thu theo nhóm món tuần này", "product_mix", "product_mix", "T03_revenue_by_category", "category"),
     ],
 )
 async def test_query_reasoner_does_not_treat_theo_as_card_payment(

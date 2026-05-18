@@ -39,8 +39,7 @@ Status legend: `[ ]` TODO · `[~]` IN-PROGRESS · `[x]` DONE · `[!]` BLOCKED.
 | Consumer idempotency keyed on regenerated id | `InventoryEventConsumer.java:74` (`envelope.eventId()`) |
 | Internal auth = single shared token | `InternalServiceAuth.java:90-94`, `SpringInternalServiceAuth.java:54-56` |
 | Gateway route classification hardcoded | `GatewayAuthenticationFilter.isPublicPath/isDevicePath` vs prefix-string switch in `GatewayRoutesConfiguration.routePolicy` |
-| Telemetry route absent | No entry in `GatewayRouteCatalog.routes()`; no `TelemetryController` on POS edge |
-| Manifest fail-open in dev | `FERN-pos-edge/agent/src/services/manifest-verifier.ts:56-58` (`if (!key) return true`) |
+| Telemetry route absent | No entry in `GatewayRouteCatalog.routes()` for device telemetry |
 | Report uses `DATE(created_at)` | `ReportRepository.java:47, 61, 391, 397` |
 | HA gaps | `infra/docker-compose.yml` has 1 manual postgres-replica, no Patroni; no service replica counts; no chaos suite |
 
@@ -53,11 +52,11 @@ Status legend: `[ ]` TODO · `[~]` IN-PROGRESS · `[x]` DONE · `[!]` BLOCKED.
 | W0 | Stop the bleeding: stable event identity, single inventory writer, business_date | S1 | Replay + chaos test in staging |
 | W1 | Service identity & gateway enforcement | S2-S3 | Shared token usage = 0 in prod metrics |
 | W2 | Repository decomposition (Sales/Inventory/Finance) | S3-S5 | All repo IT green; `SalesRepository` < 500 LOC façade |
-| W3 | POS edge consistency | S4-S5 | Manifest fail-closed; recipe modifier parity test |
+| W3 | Device sync consistency | S4-S5 | Recipe modifier parity test |
 | W4 | Reporting projection (ClickHouse) | S5-S7 | Report-service has zero `core.*` reads |
 | W5 | Production readiness (HA, chaos, migration safety) | S6-S8 | Full chaos suite green for 7 days |
 
-Critical-path dependency: **W0.1 must land before W3.4** (POS edge already uses outbox.id as eventId; central must too) and before W4.x (replay storms during projection backfill).
+Critical-path dependency: **W0.1 must land before W4.x** to avoid replay storms during projection backfill.
 
 ---
 
@@ -370,58 +369,33 @@ mvn -pl gateway test -Dtest='GatewayRouteCatalogSnapshotTest,*ClassificationTest
 
 ---
 
-# Wave 3 — POS edge consistency
+# Wave 3 — Device sync consistency
 
-## Task W3.1 — Manifest fail-closed [ ]
+## Task W3.1 — Recipe modifier consistency for sync clients [ ]
 
-**Why**: `manifest-verifier.ts` returns `true` when no public key is configured. In production this silently disables manifest signature checks.
-
-**Evidence**: `FERN-pos-edge/agent/src/services/manifest-verifier.ts:56-58`.
-
-**Scope**:
-- New env `MANIFEST_VERIFY_REQUIRED=true` (forced `true` in production build profile, default `false` only in dev).
-- When `required=true && publicKey == null` ⇒ throw at agent startup.
-- When `required=true && envelope.signature == null` ⇒ reject manifest, log alert, do not apply.
-
-**Files**:
-- `FERN-pos-edge/agent/src/services/manifest-verifier.ts`
-- `FERN-pos-edge/agent/test/manifest-verifier.test.ts`
-
-**Acceptance**:
-- Agent in `production` profile without key fails to start with explicit error.
-- Manifest with wrong `kid` is rejected; counter `pos_manifest_reject_total{reason="kid-mismatch"}` increments.
-
----
-
-## Task W3.2 — Recipe modifier consistency at POS edge [ ]
-
-**Why**: Modifiers (`V70`, `V55`) can change required ingredient quantities (e.g. extra cheese ⇒ +30 g). POS edge `recipe-puller.ts` only pulls base recipe and components — when offline, deductions diverge from central recalculation.
+**Why**: Modifiers (`V70`, `V55`) can change required ingredient quantities (e.g. extra cheese ⇒ +30 g). Sync clients must receive modifier effects so central reconciliation and client-side checks use the same inputs.
 
 **Scope**:
 - Extend `GET /api/v1/sync/pull/recipes` to include `modifierEffects[]` per recipe.
-- POS edge schema migration: `recipe_modifier_effect (recipe_product_id, modifier_id, item_id, qty_delta, ...)`.
-- `recipe-puller.ts` upserts modifier effects.
-- Local sales path applies modifier deltas when computing offline deductions.
-- Parity test: same order with same modifiers, applied offline at POS and recomputed at central, produces identical `inventory_movement` rows.
+- Central sync contract documents modifier effect semantics.
+- Parity test: same order with same modifiers produces identical central inventory movement rows across direct and sync ingest paths.
 
 **Files**:
 - `services/sales-service/src/main/java/com/fern/services/sales/api/SyncController.java` (or recipe pull endpoint)
-- `FERN-pos-edge/agent/src/services/recipe-puller.ts`
-- `FERN-pos-edge/agent/src/db/migrations/0xx_recipe_modifier_effect.sql`
-- `FERN-pos-edge/agent/src/services/sales-service.ts` (deduction path)
-- E2E: `FERN-pos-edge/e2e/recipe-modifier-parity.spec.ts`.
+- `services/sales-service/src/test/java/com/fern/services/sales/application/SyncServiceTest.java`
+- `docs/openapi/frontend-surface.json`
 
 **Acceptance**: parity diff = 0 across 100 randomly generated orders with modifiers.
 
 ---
 
-## Task W3.3 — Telemetry & fleet health [ ]
+## Task W3.2 — Telemetry & fleet health [ ]
 
 **Why**: No telemetry route, no fleet dashboard. Operations cannot tell which terminals are stuck offline or behind on sync.
 
 **Scope**:
 - Backend route `/api/v1/telemetry` (added in W1.2).
-- POS-edge agent emits heartbeat every 60 s with: `device_id`, `outbox_lag_count`, `oldest_pending_age_seconds`, `last_sync_attempt_at`, `recipe_version`, `manifest_kid`, `local_disk_free_bytes`, `app_version`.
+- Device clients emit heartbeat every 60 s with: `device_id`, `outbox_lag_count`, `oldest_pending_age_seconds`, `last_sync_attempt_at`, `recipe_version`, `manifest_kid`, `local_disk_free_bytes`, `app_version`.
 - Backend stores in `core.device_heartbeat` (partitioned daily, retention 30 d).
 - Grafana dashboard `infra/grafana/dashboards/fleet-health.json`.
 - Alerts: outlet with > 50 % terminals at outbox lag > 5 min; any terminal with manifest mismatch.
@@ -430,17 +404,8 @@ mvn -pl gateway test -Dtest='GatewayRouteCatalogSnapshotTest,*ClassificationTest
 - `services/sales-service/src/main/java/com/fern/services/sales/api/TelemetryController.java`
 - `services/sales-service/src/main/java/com/fern/services/sales/application/TelemetryService.java`
 - `db/migrations/Vxx__device_heartbeat.sql`
-- `FERN-pos-edge/agent/src/services/telemetry-emitter.ts` *(new)*
 - `infra/grafana/dashboards/fleet-health.json`
 - `infra/prometheus/alerts/fleet-lag.yml`
-
----
-
-## Task W3.4 — POS-edge outbox identity parity [ ]
-
-**Why**: POS-edge already uses `outbox.id` as `eventId` (`FERN-pos-edge/agent/src/services/outbox-relay.ts:146`). After W0.1, the central side must accept this id as the canonical idempotency key — verify no UUID regeneration happens on the central ingest path.
-
-**Scope**: regression test only (`SyncIngestServiceIT`) — push the same `eventId` twice ⇒ exactly one `core.processed_events` row.
 
 ---
 
@@ -527,7 +492,7 @@ mvn -pl gateway test -Dtest='GatewayRouteCatalogSnapshotTest,*ClassificationTest
 **Scope**: weekly run in staging.
 - Kafka outage (kill 1 broker).
 - Postgres failover (Patroni demote).
-- Network partition POS edge ↔ central.
+- Network partition device clients ↔ central.
 - Replay storm (24 h topic dump replayed).
 
 **Acceptance**: each scenario passes its assertion (no lost data, recovery within SLO, idempotency holds).

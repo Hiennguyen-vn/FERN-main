@@ -30,7 +30,7 @@ public class DeviceController {
     return deviceService.issuePairToken(request);
   }
 
-  /** Edge agent redeems pair token → gets long-lived device-JWT. */
+  /** Device client redeems pair token and gets a long-lived device JWT. */
   @PostMapping("/pair")
   public AuthDtos.DeviceTokenResponse redeemPairToken(
       @Valid @RequestBody AuthDtos.DeviceRedeemRequest request
@@ -38,7 +38,7 @@ public class DeviceController {
     return deviceService.redeemPairToken(request);
   }
 
-  /** Edge agent refreshes its device-JWT before expiry. Must present current device-JWT. */
+  /** Device client refreshes its device JWT before expiry. Must present current device JWT. */
   @PostMapping("/refresh")
   public AuthDtos.DeviceRefreshResponse refreshDeviceToken() {
     return deviceService.refreshDeviceToken();

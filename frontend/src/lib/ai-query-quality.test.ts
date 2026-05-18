@@ -24,6 +24,14 @@ describe('ai-query-quality', () => {
     expect(normalizeQualityIssueLines(['a', 'b'])).toEqual(['a', 'b']);
   });
 
+  it('sanitizes internal reviewer terms before showing issue text', () => {
+    expect(normalizeQualityIssueLines([
+      { note_vi: 'DRAFT ghi sai so với answer_facts và preview_rows' },
+    ])).toEqual([
+      'Câu trả lời ghi sai so với dữ liệu kiểm tra và bảng kết quả',
+    ]);
+  });
+
   it('falls back for note-less objects', () => {
     expect(normalizeQualityIssueLines([{ kind: 'leak', severity: 'medium' }])).toEqual([
       'medium · leak',

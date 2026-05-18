@@ -7,6 +7,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
+  orgApi,
   productApi,
   type ItemView, type PriceView, type ProductView, type RecipeView,
 } from '@/api/fern-api';
@@ -57,6 +58,11 @@ function normalizeNumeric(v: string | undefined) {
 
 function nextKey() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeCurrencyCode(value: unknown) {
+  const text = String(value ?? '').trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(text) ? text : '';
 }
 
 async function loadRecipeMap(
@@ -111,6 +117,7 @@ export function CatalogModule() {
   const [pricesTotal, setPricesTotal] = useState(0);
   const [pricesHasMore, setPricesHasMore] = useState(false);
   const [priceForm, setPriceForm] = useState({ productId: '', priceAmount: '0', effectiveFrom: todayLocalISO() });
+  const [priceCurrencyCode, setPriceCurrencyCode] = useState('');
 
   // Query states
   const itemsQuery = useListQueryState({ initialLimit: 25, initialSortBy: 'name', initialSortDir: 'asc' as const });
@@ -155,6 +162,25 @@ export function CatalogModule() {
     try { const [p, i] = await Promise.all([productApi.products(token), productApi.items(token)]); setProductOptions(p); setItemOptions(i); } catch { /* */ }
   }, [token]);
 
+  const loadPriceCurrency = useCallback(async () => {
+    if (!token || !outletId) {
+      setPriceCurrencyCode('');
+      return '';
+    }
+    try {
+      const hierarchy = await orgApi.hierarchy(token);
+      const outlet = hierarchy.outlets.find((entry) => String(entry.id) === outletId);
+      const regionId = String(outlet?.regionId || scope.regionId || '');
+      const region = hierarchy.regions.find((entry) => String(entry.id) === regionId);
+      const currencyCode = normalizeCurrencyCode(region?.currencyCode);
+      setPriceCurrencyCode(currencyCode);
+      return currencyCode;
+    } catch {
+      setPriceCurrencyCode('');
+      return '';
+    }
+  }, [outletId, scope.regionId, token]);
+
   // Tab triggers
   useEffect(() => { if (activeTab === 'ingredients') void loadItems(); }, [activeTab, loadItems]);
   useEffect(() => { if (activeTab === 'recipes') { void loadRecipes(); void loadOptions(); } }, [activeTab, loadRecipes, loadOptions]);
@@ -162,7 +188,8 @@ export function CatalogModule() {
     if (activeTab !== 'pricing') return;
     void loadPricing();
     void loadOptions();
-  }, [activeTab, loadPricing, loadOptions]);
+    void loadPriceCurrency();
+  }, [activeTab, loadPricing, loadOptions, loadPriceCurrency]);
   useEffect(() => { patchPriceFilters({ outletId: outletId || undefined }); }, [outletId, patchPriceFilters]);
   useEffect(() => {
     if (visibleTabs.some((tab) => tab.key === activeTab)) return;
@@ -230,9 +257,14 @@ export function CatalogModule() {
 
   const upsertPrice = async () => {
     if (!priceForm.productId || !outletId) return;
+    const currencyCode = priceCurrencyCode || await loadPriceCurrency();
+    if (!currencyCode) {
+      toast.error('Outlet currency unavailable. Refresh scope and try again.');
+      return;
+    }
     setActionBusy('upsert-price');
     try {
-      await productApi.upsertPrice(token, { productId: priceForm.productId, outletId, priceAmount: Number(priceForm.priceAmount), effectiveFrom: priceForm.effectiveFrom });
+      await productApi.upsertPrice(token, { productId: priceForm.productId, outletId, currencyCode, priceAmount: Number(priceForm.priceAmount), effectiveFrom: priceForm.effectiveFrom });
       toast.success('Price saved'); void loadPricing();
     } catch (e) { toast.error(getErrorMessage(e, 'Failed')); } finally { setActionBusy(''); }
   };
@@ -431,7 +463,7 @@ export function CatalogModule() {
                 {canManageCatalog ? (
                   <div className="surface-elevated p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
                     <div className="md:col-span-2"><label className="text-xs text-muted-foreground">Product</label><select className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={priceForm.productId} onChange={e => setPriceForm(f => ({ ...f, productId: e.target.value }))}><option value="">Select</option>{productOptions.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.name || p.code)}</option>)}</select></div>
-                    <div><label className="text-xs text-muted-foreground">Price</label><input type="number" className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={priceForm.priceAmount} onChange={e => setPriceForm(f => ({ ...f, priceAmount: e.target.value }))} /></div>
+                    <div><label className="text-xs text-muted-foreground">Price{priceCurrencyCode ? ` (${priceCurrencyCode})` : ''}</label><input type="number" className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={priceForm.priceAmount} onChange={e => setPriceForm(f => ({ ...f, priceAmount: e.target.value }))} /></div>
                     <div className="flex items-end"><button onClick={() => void upsertPrice()} disabled={!!actionBusy} className="h-9 w-full rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-60">{actionBusy === 'upsert-price' ? '...' : 'Save Price'}</button></div>
                   </div>
                 ) : null}

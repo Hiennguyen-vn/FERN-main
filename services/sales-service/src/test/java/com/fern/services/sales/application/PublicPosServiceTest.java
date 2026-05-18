@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fern.common.middleware.ServiceException;
+import com.fern.common.spring.auth.OutletScopeContext;
 import com.fern.services.sales.api.PublicPosDtos;
 import com.fern.services.sales.api.SalesDtos;
 import com.fern.services.sales.infrastructure.SalesRepository;
@@ -69,6 +70,33 @@ class PublicPosServiceTest {
             ServiceException.class,
             () -> service.listMenu("tbl_hcm1_unavailable_9x2m", null));
     assertEquals(409, exception.getStatusCode());
+  }
+
+  @Test
+  void publicRequestsScopeTokenLookupThenOutletReadsAndRestoreScope() {
+    OutletScopeContext.clear();
+    try {
+      when(salesRepository.findPublicOrderingTable("tbl_hcm1_u7k29q"))
+          .thenAnswer(invocation -> {
+            assertEquals("all", OutletScopeContext.gucValue());
+            return Optional.of(activeTable());
+          });
+      when(salesRepository.listPublicMenu(2000L, LocalDate.parse("2026-03-31")))
+          .thenAnswer(invocation -> {
+            assertEquals("2000", OutletScopeContext.gucValue());
+            assertEquals("2000", OutletScopeContext.gucOutletIdsValue());
+            return List.of();
+          });
+
+      PublicPosService service = new PublicPosService(salesRepository, clock, mock(PromotionEngine.class), false);
+
+      service.listMenu("tbl_hcm1_u7k29q", null);
+
+      assertEquals("unset", OutletScopeContext.gucValue());
+      assertEquals("", OutletScopeContext.gucOutletIdsValue());
+    } finally {
+      OutletScopeContext.clear();
+    }
   }
 
   @Test

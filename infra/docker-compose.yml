@@ -594,6 +594,7 @@ services:
     environment:
       <<: *service-env
       SERVER_PORT: 8089
+      HR_SERVICE_URL: http://hr-service:8084
     depends_on:
       master-node:
         condition: service_healthy

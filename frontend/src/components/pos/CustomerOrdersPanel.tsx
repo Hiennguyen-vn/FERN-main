@@ -20,6 +20,7 @@ import { SaleOrderDetail } from '@/components/pos/SaleOrderDetail';
 import { cn } from '@/lib/utils';
 import { formatPosCurrency, mapSaleToUi } from '@/components/pos/sale-order-utils';
 import {
+  canCaptureCustomerOrderPayment,
   getCustomerOrderQueueFilter,
   isWaitingCustomerOrder,
   type CustomerOrderQueueFilter,
@@ -227,6 +228,37 @@ export function CustomerOrdersPanel({
     );
   }, [productNameById, resolvedOutletName, selectedDetail, selectedOrderBase, sessionCodeById, user.displayName]);
 
+  const mapFreshCustomerOrder = useCallback((order: SaleOrder, detail: SaleDetailView) => {
+    const baseSale = orders.find((candidate) => String(candidate.id) === order.id);
+    return mapSaleToUi(
+      baseSale ?? {
+        id: order.id,
+        outletId,
+        posSessionId: order.sessionId || detail.posSessionId || null,
+        publicOrderToken: order.publicOrderToken || detail.publicOrderToken || null,
+        status: detail.status,
+        paymentStatus: detail.paymentStatus,
+        orderType: detail.orderType,
+        orderingTableCode: detail.orderingTableCode,
+        orderingTableName: detail.orderingTableName,
+        currencyCode: detail.currencyCode,
+        subtotal: detail.subtotal,
+        discount: detail.discount,
+        taxAmount: detail.taxAmount,
+        totalAmount: detail.totalAmount,
+        note: detail.note,
+        createdAt: detail.createdAt,
+        items: detail.items,
+        payment: detail.payment,
+      },
+      detail,
+      resolvedOutletName,
+      user.displayName,
+      sessionCodeById,
+      productNameById,
+    );
+  }, [orders, outletId, productNameById, resolvedOutletName, sessionCodeById, user.displayName]);
+
   const handleApprove = useCallback(async (order: SaleOrder) => {
     if (!token) { toast.error('Please sign in first'); return; }
     setApproveBusyId(order.id);
@@ -254,42 +286,23 @@ export function CustomerOrdersPanel({
     if (!token) { toast.error('Please sign in first'); return; }
     try {
       const detail = await salesApi.orderDetail(token, order.id);
-      const baseSale = orders.find((candidate) => String(candidate.id) === order.id);
+      const freshOrder = mapFreshCustomerOrder(order, detail);
       setSelectedOrderId(order.id);
       setSelectedDetail(detail);
-      setPaymentTarget(
-        mapSaleToUi(
-          baseSale ?? {
-            id: order.id,
-            outletId,
-            posSessionId: order.sessionId || null,
-            publicOrderToken: order.publicOrderToken || null,
-            status: detail.status,
-            paymentStatus: detail.paymentStatus,
-            orderType: detail.orderType,
-            orderingTableCode: detail.orderingTableCode,
-            orderingTableName: detail.orderingTableName,
-            currencyCode: detail.currencyCode,
-            subtotal: detail.subtotal,
-            discount: detail.discount,
-            taxAmount: detail.taxAmount,
-            totalAmount: detail.totalAmount,
-            note: detail.note,
-            createdAt: detail.createdAt,
-            items: detail.items,
-            payment: detail.payment,
-          },
-          detail,
-          resolvedOutletName,
-          user.displayName,
-          sessionCodeById,
-          productNameById,
-        ),
-      );
+      if (!canCaptureCustomerOrderPayment(freshOrder)) {
+        setPaymentTarget(null);
+        await loadOrders();
+        const queueState = getCustomerOrderQueueFilter(freshOrder);
+        toast.error(queueState === 'paid'
+          ? 'Customer order is already paid'
+          : 'Approve this customer order before capturing payment');
+        return;
+      }
+      setPaymentTarget(freshOrder);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, 'Unable to load order payment detail'));
     }
-  }, [orders, outletId, productNameById, resolvedOutletName, sessionCodeById, token, user.displayName]);
+  }, [loadOrders, mapFreshCustomerOrder, token]);
 
   const handleCompletePayment = useCallback(async (payload: { paymentMethod: PaymentMethod; totalCharged: number; note: string }) => {
     if (!token || !paymentTarget) {
@@ -297,6 +310,21 @@ export function CustomerOrdersPanel({
     }
     setPaymentBusyId(paymentTarget.id);
     try {
+      const latestDetail = await salesApi.orderDetail(token, paymentTarget.id);
+      const latestOrder = mapFreshCustomerOrder(paymentTarget, latestDetail);
+      if (!canCaptureCustomerOrderPayment(latestOrder)) {
+        setSelectedDetail(latestDetail);
+        setPaymentTarget(null);
+        await loadOrders();
+        await Promise.resolve(onQueueMutation?.());
+        if (getCustomerOrderQueueFilter(latestOrder) === 'paid') {
+          toast.success('Customer order payment already captured');
+          return { ok: true };
+        }
+        const message = 'Approve this customer order before capturing payment';
+        toast.error(message);
+        return { ok: false, errorMessage: message };
+      }
       await salesApi.markPaymentDone(token, paymentTarget.id, {
         paymentMethod: payload.paymentMethod,
         amount: payload.totalCharged > 0 ? payload.totalCharged : paymentTarget.total,
@@ -312,12 +340,28 @@ export function CustomerOrdersPanel({
       return { ok: true };
     } catch (error: unknown) {
       const message = getErrorMessage(error, 'Unable to capture payment');
+      if (message.includes('Only approved orders can be marked as payment done')) {
+        try {
+          const refreshed = await salesApi.orderDetail(token, paymentTarget.id);
+          const refreshedOrder = mapFreshCustomerOrder(paymentTarget, refreshed);
+          setSelectedDetail(refreshed);
+          setPaymentTarget(null);
+          await loadOrders();
+          await Promise.resolve(onQueueMutation?.());
+          if (getCustomerOrderQueueFilter(refreshedOrder) === 'paid') {
+            toast.success('Customer order payment already captured');
+            return { ok: true };
+          }
+        } catch {
+          // Fall through to the original backend message.
+        }
+      }
       toast.error(message);
       return { ok: false, errorMessage: message };
     } finally {
       setPaymentBusyId('');
     }
-  }, [loadOrders, onQueueMutation, paymentTarget, token]);
+  }, [loadOrders, mapFreshCustomerOrder, onQueueMutation, paymentTarget, token]);
 
   if (!outletId) {
     return (
@@ -507,7 +551,7 @@ export function CustomerOrdersPanel({
               order={selectedOrder}
               onBack={() => setSelectedOrderId('')}
               onApprove={getCustomerOrderQueueFilter(selectedOrder) === 'waiting' ? () => void handleApprove(selectedOrder) : undefined}
-              onPay={getCustomerOrderQueueFilter(selectedOrder) === 'approved' ? () => void openPaymentCapture(selectedOrder) : undefined}
+              onPay={canCaptureCustomerOrderPayment(selectedOrder) ? () => void openPaymentCapture(selectedOrder) : undefined}
               approvePending={approveBusyId === selectedOrder.id}
               paymentPending={paymentBusyId === selectedOrder.id}
             />

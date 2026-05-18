@@ -1,5 +1,6 @@
 package com.fern.services.payroll.infrastructure;
 
+import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.JwtTokenService;
 import com.fern.common.spring.auth.SpringInternalServiceAuth;
 import com.fern.services.payroll.api.PayrollDtos;
@@ -116,18 +117,13 @@ public class HrServiceClient {
   private List<PayrollDtos.WorkShiftSummaryItem> fetchApprovedShiftsFallback(
       long userId, Long outletId, LocalDate startDate, LocalDate endDate, Throwable ex) {
     log.warn("hr-service circuit open or call failed for fetchApprovedShifts userId={}: {}", userId, ex.toString());
-    throw new HrServiceUnavailableException("hr-service unavailable for shift fetch", ex);
+    throw new ServiceException(503, "service_unavailable", "HR service is unavailable for attendance import");
   }
 
   @SuppressWarnings("unused")
   private Optional<PayrollDtos.EmployeeContractSummary> fetchLatestContractFallback(long userId, Throwable ex) {
     log.warn("hr-service circuit open or call failed for fetchLatestContract userId={}: {}", userId, ex.toString());
-    throw new HrServiceUnavailableException("hr-service unavailable for contract fetch", ex);
+    throw new ServiceException(503, "service_unavailable", "HR service is unavailable for contract lookup");
   }
 
-  public static class HrServiceUnavailableException extends RuntimeException {
-    public HrServiceUnavailableException(String msg, Throwable cause) {
-      super(msg, cause);
-    }
-  }
 }

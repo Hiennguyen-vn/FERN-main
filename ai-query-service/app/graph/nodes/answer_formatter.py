@@ -3,6 +3,7 @@ from datetime import date, datetime
 import json
 import logging
 import re
+import unicodedata
 from typing import Any
 
 from app.graph.question_frame import question_text
@@ -90,6 +91,35 @@ def _refusal(state: GraphState) -> str:
     if violations:
         return "Yêu cầu của bạn không thể xử lý do vi phạm chính sách bảo mật."
     return "Xin lỗi, tôi không xử lý được câu hỏi này. Bạn có thể diễn đạt lại không?"
+
+
+def _fold_text(text: str) -> str:
+    decomposed = unicodedata.normalize("NFD", text or "")
+    no_marks = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+    return no_marks.replace("đ", "d").replace("Đ", "D").lower()
+
+
+def _outlet_rank_direction(state: GraphState) -> str:
+    params = state.get("template_params")
+    if isinstance(params, dict):
+        direction = str(params.get("rank_direction") or "").strip().lower()
+        if direction in {"asc", "bottom", "lowest", "weakest"}:
+            return "asc"
+    q = _fold_text(question_text(state))
+    if any(
+        term in q
+        for term in (
+            "thap nhat",
+            "yeu nhat",
+            "kem nhat",
+            "te nhat",
+            "lowest",
+            "worst",
+            "bottom",
+        )
+    ):
+        return "asc"
+    return "desc"
 
 
 def _sql_verdict_footnote(state: GraphState) -> str:
@@ -566,17 +596,28 @@ def _format_outlet_rank_answer(state: GraphState, rows: list[dict[str, Any]], no
         _append_common_footer(lines, state, now, recap=recap)
         return "\n\n".join(lines)
 
+    direction = _outlet_rank_direction(state)
     top = rows[0]
-    lines = [
-        f"{top.get('outlet_name') or top.get('outlet_id')} đang dẫn đầu doanh thu, "
-        f"đạt {_format_vnd(top.get('net_revenue'))} doanh thu ròng."
-    ]
+    if direction == "asc":
+        lines = [
+            f"{top.get('outlet_name') or top.get('outlet_id')} đang có doanh thu thấp nhất trong phạm vi dữ liệu, "
+            f"đạt {_format_vnd(top.get('net_revenue'))} doanh thu ròng."
+        ]
+    else:
+        lines = [
+            f"{top.get('outlet_name') or top.get('outlet_id')} đang dẫn đầu doanh thu, "
+            f"đạt {_format_vnd(top.get('net_revenue'))} doanh thu ròng."
+        ]
     if len(rows) > 1:
-        lines.append("Top cửa hàng:")
-        for row in rows[:5]:
+        lines.append("Xếp hạng doanh thu ròng từ thấp đến cao:" if direction == "asc" else "Top cửa hàng:")
+        cap = max(5, int(get_settings().answer_facts_max_rows))
+        shown_rows = rows[:cap]
+        for row in shown_rows:
             rank = row.get("rank")
             prefix = f"{rank}. " if rank is not None else "- "
             lines.append(f"{prefix}{row.get('outlet_name') or row.get('outlet_id')}: {_format_vnd(row.get('net_revenue'))}")
+        if len(rows) > len(shown_rows):
+            lines.append(f"Còn {len(rows) - len(shown_rows)} cửa hàng khác trong kết quả.")
     _append_common_footer(lines, state, now, recap=recap)
     return "\n".join(lines) + _sql_verdict_footnote(state)
 
@@ -1311,6 +1352,7 @@ async def answer_formatter(state: GraphState) -> GraphState:
         )
         state["citations"] = []
         state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "empty_result"})
         return state
 
     if state.get("chart_spec"):

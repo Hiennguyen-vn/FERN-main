@@ -4,16 +4,16 @@ import { cn } from '@/lib/utils';
 
 type AdminTab = 'price-drift' | 'dlt' | 'cash' | 'loyalty';
 
-const PriceDriftPage = lazy(() => import('@/components/admin/PriceDriftPage').then(m => ({ default: m.PriceDriftPage })));
-const DltReplayPage  = lazy(() => import('@/components/admin/DltReplayPage').then(m => ({ default: m.DltReplayPage })));
-const CashReconPage  = lazy(() => import('@/components/admin/CashReconPage').then(m => ({ default: m.CashReconPage })));
-const LoyaltyPage    = lazy(() => import('@/components/admin/LoyaltyPage').then(m => ({ default: m.LoyaltyPage })));
+const PriceDriftPage    = lazy(() => import('@/components/admin/PriceDriftPage').then(m => ({ default: m.PriceDriftPage })));
+const DltReplayPage     = lazy(() => import('@/components/admin/DltReplayPage').then(m => ({ default: m.DltReplayPage })));
+const CashReconPage     = lazy(() => import('@/components/admin/CashReconPage').then(m => ({ default: m.CashReconPage })));
+const LoyaltyPage       = lazy(() => import('@/components/admin/LoyaltyPage').then(m => ({ default: m.LoyaltyPage })));
 
 const TABS: Array<{ key: AdminTab; label: string; icon: typeof AlertTriangle }> = [
-  { key: 'price-drift', label: 'Price Drift',         icon: AlertTriangle },
-  { key: 'dlt',         label: 'Failed Sync (DLT)',   icon: RotateCcw     },
-  { key: 'cash',        label: 'Cash Reconciliation', icon: Wallet        },
-  { key: 'loyalty',     label: 'Loyalty Customers',   icon: UserCog       },
+  { key: 'price-drift',    label: 'Price Drift',         icon: AlertTriangle },
+  { key: 'dlt',            label: 'Failed Sync (DLT)',   icon: RotateCcw     },
+  { key: 'cash',           label: 'Cash Reconciliation', icon: Wallet        },
+  { key: 'loyalty',        label: 'Loyalty Customers',   icon: UserCog       },
 ];
 
 function AdminFallback() {

@@ -324,15 +324,4 @@ public final class AuthDtos {
       Instant expiresAt
   ) {
   }
-
-  public record DeviceView(
-      long id,
-      long outletId,
-      String deviceLabel,
-      int workerId,
-      Instant pairedAt,
-      Instant lastSeenAt,
-      Instant revokedAt
-  ) {
-  }
 }

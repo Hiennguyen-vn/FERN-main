@@ -10,7 +10,6 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.common.middleware.ServiceException;
-import com.fern.common.spring.auth.AuthorizationPolicyService;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.common.spring.web.PagedResult;
@@ -111,27 +110,6 @@ class SalesApiControllerTest {
     crmController.listCustomers(7L, "legacy", "normalized", "name", "asc", 100, 0);
 
     verify(crmService).listCustomers(7L, "legacy", "normalized", "name", "asc", 100, 0);
-  }
-
-  @Test
-  void deviceControllerRequiresSalesWritePermission() {
-    DeviceService deviceService = mock(DeviceService.class);
-    AuthorizationPolicyService auth = mock(AuthorizationPolicyService.class);
-    DeviceController controller = new DeviceController(deviceService, auth);
-    RequestUserContextHolder.set(new RequestUserContext(
-        2L, "manager", "sess", Set.of("manager"), Set.of(), Set.of(10L),
-        true, false, null, null, null));
-    DeviceDtos.ProvisionRequest request =
-        new DeviceDtos.ProvisionRequest(10L, "Register A", "fingerprint");
-    DeviceDtos.ProvisionResponse response = new DeviceDtos.ProvisionResponse(101L, 128);
-    when(auth.canWriteSales(any())).thenReturn(true);
-    when(deviceService.provision(request)).thenReturn(response);
-
-    assertEquals(response, controller.provision(request).getBody());
-
-    when(auth.canWriteSales(any())).thenReturn(false);
-    ServiceException exception = assertThrows(ServiceException.class, () -> controller.provision(request));
-    assertEquals(403, exception.getStatusCode());
   }
 
   @Test

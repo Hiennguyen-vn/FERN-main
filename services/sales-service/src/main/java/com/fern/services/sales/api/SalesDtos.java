@@ -425,6 +425,7 @@ public final class SalesDtos {
       long cancelledOrders,
       BigDecimal revenueToday,
       BigDecimal averageOrderValue,
+      String currencyCode,
       String activeSessionCode,
       String activeSessionStatus,
       String topCategory,

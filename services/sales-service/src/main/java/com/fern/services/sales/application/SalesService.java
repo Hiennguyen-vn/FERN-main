@@ -78,6 +78,9 @@ public class SalesService {
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   private PromotionEngine promotionEngine;
 
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private com.fern.services.sales.application.kitchen.KitchenTicketService kitchenTicketService;
+
   @org.springframework.beans.factory.annotation.Value("${promotion.engine.enabled:true}")
   private boolean promotionEngineEnabled;
 
@@ -461,6 +464,7 @@ public class SalesService {
     } catch (RuntimeException e) {
       log.warn("loyalty auto-earn failed for sale {}: {}", saleId, e.getMessage());
     }
+    emitKitchenTicket(saleId);
     return approved;
   }
 
@@ -472,7 +476,18 @@ public class SalesService {
     if (existing.publicOrderToken() == null || existing.orderingTableCode() == null) {
       throw ServiceException.conflict("Only customer-submitted table orders can be approved from this route");
     }
-    return salesRepository.approveSale(saleId, context.userId());
+    SalesDtos.SaleView approved = salesRepository.approveSale(saleId, context.userId());
+    emitKitchenTicket(saleId);
+    return approved;
+  }
+
+  private void emitKitchenTicket(long saleId) {
+    if (kitchenTicketService == null) return;
+    try {
+      kitchenTicketService.createFromSale(saleId);
+    } catch (RuntimeException e) {
+      log.warn("kitchen ticket emission failed for sale {}: {}", saleId, e.getMessage());
+    }
   }
 
   public SalesDtos.SaleView markPaymentDone(long saleId, SalesDtos.MarkPaymentDoneRequest request) {
@@ -697,6 +712,8 @@ public class SalesService {
     } catch (RuntimeException e) {
       log.warn("loyalty auto-earn (sync) failed for sale {}: {}", saleId, e.getMessage());
     }
+
+    emitKitchenTicket(saleId);
 
     // Persist manager override audit if edge attached one (manager unlocked the oversell at POS).
     @SuppressWarnings("unchecked")

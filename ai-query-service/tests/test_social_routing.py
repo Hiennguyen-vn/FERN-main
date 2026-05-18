@@ -235,6 +235,7 @@ async def test_template_matcher_uses_planning_decision_report_spec(monkeypatch):
     [
         ("top cửa hàng theo doanh thu tháng này", "outlet_compare", "T22_outlet_rank"),
         ("doanh thu theo danh mục tháng này", "product_mix", "T03_revenue_by_category"),
+        ("xếp hạng doanh thu theo nhóm món tuần này", "product_mix", "T03_revenue_by_category"),
     ],
 )
 async def test_template_matcher_ignores_stale_payment_plan_without_payment_context(

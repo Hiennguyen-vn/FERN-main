@@ -1,8 +1,9 @@
+{% set rank_direction_safe = 'ASC' if (rank_direction | default('desc') | lower) == 'asc' else 'DESC' %}
 SELECT
     outlet_id,
     outlet_name,
     net_revenue,
-    rank() OVER (ORDER BY net_revenue DESC) AS rank
+    rank() OVER (ORDER BY net_revenue {{ rank_direction_safe }}) AS rank
 FROM (
     SELECT
         outlet_id,

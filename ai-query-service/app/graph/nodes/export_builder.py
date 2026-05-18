@@ -7,6 +7,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.exports import build_csv_artifact, build_json_artifact, should_generate_export
+from app.graph.nodes.data_coverage import ensure_data_source_context, executed_datasets_for_state
 from app.graph.state import GraphState
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,8 @@ def export_builder(state: GraphState) -> GraphState:
 
     allowed_outlets = state.get("allowed_outlet_ids") or []
     allowed_count = len(allowed_outlets) if isinstance(allowed_outlets, list) else 0
+    tables_used = executed_datasets_for_state(state)
+    data_source = ensure_data_source_context(state)
 
     artifact = build_csv_artifact(
         rows=rows,
@@ -65,10 +68,10 @@ def export_builder(state: GraphState) -> GraphState:
         template_key=template_key,
         intent=intent if isinstance(intent, str) else None,
         rationale_vi=state.get("codegen_rationale_vi"),
-        tables_used=list(state.get("codegen_tables_used") or []),
+        tables_used=tables_used,
         time_range=state.get("time_range") or {},
         allowed_outlet_count=allowed_count,
-        data_source=state.get("data_source_context"),
+        data_source=data_source,
     )
     if artifact is None:
         return state
@@ -91,10 +94,10 @@ def export_builder(state: GraphState) -> GraphState:
         user_id=_safe_user_id(state),
         template_key=template_key,
         intent=intent if isinstance(intent, str) else None,
-        tables_used=list(state.get("codegen_tables_used") or []),
+        tables_used=tables_used,
         time_range=state.get("time_range") or {},
         allowed_outlet_count=allowed_count,
-        data_source=state.get("data_source_context"),
+        data_source=data_source,
     )
     if json_art is not None:
         state.setdefault("exports", []).append(

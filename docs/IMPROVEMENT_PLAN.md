@@ -130,23 +130,20 @@ mvn -pl services/sales-service,services/inventory-service test jacoco:report
 > - 29/29 backend controllers use `/api/v1/<domain>` class-level mapping (gateway info/fallback exempt — infra endpoints)
 > - Gateway route catalog: 20 routes all under `/api/v1/`
 > - Frontend client (`frontend/src/api/*.ts`): all paths `/api/v1/...`
-> - POS edge: no direct API paths (uses gateway)
 >
 > **Audit cmd**: `grep -rln '@RestController' services/ gateway/ | xargs awk '/^@RequestMapping/{m=$0; next} /^public class/{print m; exit}'` → 0 missing `/api/v1`.
 
-**Why**: Breaking change = vỡ mobile + POS edge clients.
+**Why**: Breaking change = vỡ mobile + device clients.
 
 **Scope**:
 - Prefix all REST controllers with `/api/v1/`.
 - Gateway route catalog updated to match.
 - Frontend `frontend/src/api/client.ts` base path updated.
-- POS edge sync URL updated.
 
 **Files**:
 - `services/*/src/main/java/**/api/*Controller.java` (every `@RequestMapping`)
 - `gateway/src/main/java/com/fern/gateway/routing/GatewayRouteCatalog.java`
 - `frontend/src/api/client.ts`
-- `FERN-pos-edge/**/sync*.ts`
 - `docs/openapi/*.yaml`
 
 **Verify**:
@@ -234,13 +231,12 @@ mvn -pl services/product-service test
 **Scope**:
 - Flyway migration: drop old constraint, add `UNIQUE(outlet_id, business_date, terminal_id)`.
 - Update `PosSession` entity + reserve/release logic.
-- POS edge: send `terminal_id` on session open.
+- POS client: send `terminal_id` on session open.
 
 **Files**:
 - `db/migrations/V50__pos_session_terminal.sql`
 - `services/sales-service/src/main/java/com/fern/services/sales/domain/PosSession.java`
 - `services/sales-service/src/main/java/com/fern/services/sales/application/PosSessionService.java`
-- `FERN-pos-edge/src/sync/session.ts`
 
 **Verify**: 2 terminals same outlet same day → 2 sessions created.
 
@@ -273,7 +269,7 @@ mvn -pl services/product-service test
 
 ### Task 3.3 — Promotion Engine [x]
 
-> Audit corrected doc claim ("discount=0 hardcoded"): wrong. Promotion CRUD already exists (`/api/v1/sales/promotions` list/get/create/update/deactivate), DB schema has `core.promotion`, `core.promotion_scope`, `core.sale_item_promotion` link table, enum types percentage/fixed_amount/buy_x_get_y/combo_price/subsidy. POS edge calculates discount and sends via sync.
+> Audit corrected doc claim ("discount=0 hardcoded"): wrong. Promotion CRUD already exists (`/api/v1/sales/promotions` list/get/create/update/deactivate), DB schema has `core.promotion`, `core.promotion_scope`, `core.sale_item_promotion` link table, enum types percentage/fixed_amount/buy_x_get_y/combo_price/subsidy. POS clients calculate discount and send it via sync.
 >
 > Real gap: server-side auto-apply for online channel (PublicPosService). Added:
 > - `SalesRepository.findActivePromotionsForOutlet(outletId, now)` + `ActivePromotionRow` DTO. Filters by status=active, effective window, scope (global or outlet-specific).
@@ -351,23 +347,21 @@ mvn -pl services/product-service test
 
 ### Task 3.6 — Frontend E2E Coverage [x]
 
-> Audit found existing Playwright setup with 6 spec files (frontend/e2e/ + FERN-pos-edge/e2e/):
+> Audit found existing Playwright setup in `frontend/e2e/`:
 > - `auth.spec.ts` — login/logout
 > - `routes.spec.ts` — route navigation
 > - `public-order.spec.ts` — public POS add-to-cart + submit against live backend
 > - `workflows.spec.ts` — 11 read-only smoke tests (Dashboard/Inventory/Catalog/Procurement/IAM/Audit/Finance/HR/Org/Reports)
 > - `helpers.ts` — shared utilities
-> - `FERN-pos-edge/e2e/hub-smoke.spec.ts` — multi-terminal sync via MockHubServer (covers offline disconnect → orders → reconnect → sync)
 >
 > Added: `frontend/e2e/sales-flow.spec.ts` — golden path (login → create order → pay cash → verify inventory decrement via polling → verify report row). Skipped when `E2E_SALES_FLOW_ENABLED` unset to avoid CI noise; opt-in for full-stack regression runs.
 
 **Scope**: Playwright flows.
 - Login → create order → pay cash → verify inventory decrement → verify report row.
-- Offline POS: disconnect network, create 5 orders, reconnect, verify sync.
+- Disconnected sales: disconnect network, create 5 orders, reconnect, verify sync.
 
 **Files**:
 - `frontend/tests/e2e/sales-flow.spec.ts`
-- `FERN-pos-edge/tests/e2e/offline-sync.spec.ts`
 
 ---
 

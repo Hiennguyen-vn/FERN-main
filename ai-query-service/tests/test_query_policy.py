@@ -226,6 +226,15 @@ def test_verified_query_selector_picks_common_assets():
     assert top.template_key == "T22_outlet_rank"
     assert top.params == time_range
 
+    weakest = select_verified_query(
+        question="Outlet nào đang có doanh thu yếu nhất?",
+        intent="outlet_compare",
+        time_range=time_range,
+    )
+    assert weakest is not None
+    assert weakest.template_key == "T22_outlet_rank"
+    assert weakest.params == {**time_range, "rank_direction": "asc"}
+
     yoy = select_verified_query(
         question="doanh thu tháng này so với cùng kỳ năm ngoái",
         intent="revenue",

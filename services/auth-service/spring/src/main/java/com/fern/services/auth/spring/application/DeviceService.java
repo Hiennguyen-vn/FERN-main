@@ -69,7 +69,7 @@ public class DeviceService {
     );
   }
 
-  /** Edge agent redeems pair token → receives long-lived device-JWT. */
+  /** Device client redeems pair token and receives a long-lived device JWT. */
   public AuthDtos.DeviceTokenResponse redeemPairToken(AuthDtos.DeviceRedeemRequest request) {
     String tokenHash = sha256(request.pairToken());
     PairTokenRecord pair = deviceRepository.findPairTokenByHash(tokenHash)
@@ -109,7 +109,7 @@ public class DeviceService {
     );
   }
 
-  /** Edge agent refreshes its device-JWT. Must be called with a valid (non-expired) device-JWT. */
+  /** Device client refreshes its device JWT. Must be called with a valid, non-expired device JWT. */
   public AuthDtos.DeviceRefreshResponse refreshDeviceToken() {
     RequestUserContext ctx = resolveDeviceContext();
     long deviceId = ctx.deviceId();

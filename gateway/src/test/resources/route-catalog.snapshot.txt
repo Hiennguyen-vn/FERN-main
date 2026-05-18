@@ -5,7 +5,6 @@
 /api/v1/control|master-node|INTERNAL_ONLY|DEFAULT
 /api/v1/crm|sales-service|USER|DEFAULT
 /api/v1/customer-allergies|product-service|USER|DEFAULT
-/api/v1/devices/provision|sales-service|USER|DEFAULT
 /api/v1/devices|auth-service|USER|AUTH
 /api/v1/finance|finance-service|USER|DEFAULT
 /api/v1/gateway|gateway|PUBLIC|DEFAULT

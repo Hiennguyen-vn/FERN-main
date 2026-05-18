@@ -210,7 +210,7 @@ Giảm lock contention 90% trên SKU hot. Đã có outbox pattern, mở rộng t
 
 ### 1.9 Dexie TTL ⚠️ PARTIAL
 
-**File:** [FERN-pos-edge/src/db/schema.ts:113-126](FERN-pos-edge/src/db/schema.ts#L113-L126), `audit-flush.ts:50-88`
+**File:** client-side audit cache schema and flush path.
 
 **Có:** `forwarded_at` tracking. `expires_at` cho credential cache. Manual flush.
 
@@ -500,4 +500,4 @@ Pilot 3 store (mặt phố + TTTM + văn phòng) đủ tín hiệu trước roll
 
 ---
 
-*Verified refs:* [V16](db/migrations/V16__product_variants_modifiers.sql), [V38](db/migrations/V38__internal_invoice.sql), [V39](db/migrations/V39__hub_register_sales_detail.sql), [SyncService.java](services/sales-service/src/main/java/com/fern/services/sales/application/SyncService.java), [PaymentStateMachine.java](services/sales-service/src/main/java/com/fern/services/sales/application/PaymentStateMachine.java), [PromotionEngine.java](services/sales-service/src/main/java/com/fern/services/sales/application/PromotionEngine.java), [InventoryEventConsumer.java](services/inventory-service/src/main/java/com/fern/services/inventory/application/InventoryEventConsumer.java), [FERN-pos-edge schema.ts](FERN-pos-edge/src/db/schema.ts).
+*Verified refs:* [V16](db/migrations/V16__product_variants_modifiers.sql), [V38](db/migrations/V38__internal_invoice.sql), [V39](db/migrations/V39__hub_register_sales_detail.sql), [SyncService.java](services/sales-service/src/main/java/com/fern/services/sales/application/SyncService.java), [PaymentStateMachine.java](services/sales-service/src/main/java/com/fern/services/sales/application/PaymentStateMachine.java), [PromotionEngine.java](services/sales-service/src/main/java/com/fern/services/sales/application/PromotionEngine.java), [InventoryEventConsumer.java](services/inventory-service/src/main/java/com/fern/services/inventory/application/InventoryEventConsumer.java).

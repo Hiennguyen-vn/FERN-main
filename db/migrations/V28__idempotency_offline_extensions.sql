@@ -1,4 +1,4 @@
--- Extend core.idempotency_keys for offline POS context.
+-- Extend core.idempotency_keys for offline reconciliation context.
 -- Adds device/outlet/event columns and time-range index for partition pruning.
 
 ALTER TABLE core.idempotency_keys

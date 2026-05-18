@@ -39,6 +39,17 @@ def validator(state: GraphState) -> GraphState:
         return state
 
     meta = TEMPLATES[template_key]
+    time_range = state.get("time_range")
+    if (
+        isinstance(time_range, dict)
+        and "from_date" in meta.required_params
+        and "to_date" in meta.required_params
+    ):
+        for key in ("from_date", "to_date"):
+            value = str(time_range.get(key) or "").strip()
+            if value:
+                params[key] = value
+
     for req in meta.required_params:
         if req not in params or params[req] in (None, ""):
             errors.append(f"Missing required param: {req}")

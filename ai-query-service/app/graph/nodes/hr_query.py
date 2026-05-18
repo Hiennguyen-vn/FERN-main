@@ -1480,7 +1480,8 @@ def _format_staff_answer(rows: list[dict], outlet_ids: list[int], limit: int) ->
     if not rows:
         return "Không tìm thấy nhân viên active trong phạm vi outlet bạn được phép xem."
 
-    shown = rows[: min(10, len(rows))]
+    display_limit = len(rows) if len(rows) <= 20 else 10
+    shown = rows[:display_limit]
     scope = ", ".join(sorted({_outlet_label(r) for r in rows if r.get("outlet_id")}))
     lines = [f"Có {len(rows)} nhân viên active trong phạm vi {scope or outlet_ids}:"]
     for row in shown:
@@ -1488,8 +1489,11 @@ def _format_staff_answer(rows: list[dict], outlet_ids: list[int], limit: int) ->
         last = row.get("last_work_date")
         last_text = f", ca gần nhất {last}" if last else ""
         lines.append(f"- {_employee_label(row)} - {outlet}{last_text}")
+    if len(rows) > display_limit:
+        lines.append(f"_Hiển thị {display_limit}/{len(rows)} nhân viên đầu tiên; dùng export để xem đầy đủ._")
     if len(rows) >= limit:
         lines.append(f"_Đang hiển thị tối đa {limit} dòng theo giới hạn HR query._")
+    lines.append("_Nguồn dữ liệu: HR staff/work shift trong phạm vi RBAC._")
     return "\n".join(lines)
 
 

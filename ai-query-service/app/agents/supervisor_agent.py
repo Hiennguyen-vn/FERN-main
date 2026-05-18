@@ -407,7 +407,18 @@ def _invalid_time_reason(question: str) -> str | None:
     if re.search(r"\bthang\s*(?:1[3-9]|[2-9]\d)\b", q):
         return "invalid_month"
 
-    for match in re.finditer(r"(?<!\d)(\d{1,2})\s*[/-]\s*(\d{1,2})(?:\s*[/-]\s*(20\d{2}))?(?!\d)", raw):
+    iso_dates: list[date] = []
+    for iso_text in re.findall(r"\b(20\d{2}-\d{2}-\d{2})\b", raw):
+        try:
+            iso_dates.append(date.fromisoformat(iso_text))
+        except ValueError:
+            return "invalid_iso_date"
+
+    raw_without_iso_dates = re.sub(r"\b20\d{2}-\d{2}-\d{2}\b", " ", raw)
+    for match in re.finditer(
+        r"(?<![\d/-])(\d{1,2})\s*[/-]\s*(\d{1,2})(?:\s*[/-]\s*(20\d{2}))?(?![\d/-])",
+        raw_without_iso_dates,
+    ):
         day = int(match.group(1))
         month = int(match.group(2))
         year = int(match.group(3) or today_local().year)
@@ -416,7 +427,6 @@ def _invalid_time_reason(question: str) -> str | None:
         except ValueError:
             return "invalid_numeric_date"
 
-    iso_dates = [date.fromisoformat(x) for x in re.findall(r"\b(20\d{2}-\d{2}-\d{2})\b", raw)]
     if len(iso_dates) >= 2:
         if iso_dates[0] > iso_dates[1]:
             return "inverted_range"
@@ -553,6 +563,7 @@ def _is_hr_staff_question(question: str) -> bool:
 
 def _deterministic_template_override(question: str) -> str | None:
     q = _fold_text(question)
+    categoryish = any(token in q for token in ("danh muc", "category", "nhom san pham", "nhom mon"))
     if re.search(r"\b(bao cao ban hang|cho xem doanh thu tuan nay)\b", q):
         return "T01_daily_revenue"
     if "xu huong doanh thu 30 ngay qua" in q or "daily revenue trend" in q:
@@ -564,9 +575,9 @@ def _deterministic_template_override(question: str) -> str | None:
         or (("outlet" in q or "cua hang" in q) and "doanh thu" in q and ("cao nhat" in q or "thap nhat" in q))
     ):
         return "T22_outlet_rank"
-    if ("dong gop" in q or "contribution" in q) and ("danh muc" in q or "category" in q):
+    if ("dong gop" in q or "contribution" in q) and categoryish:
         return "T17_category_contribution"
-    if ("danh muc" in q or "category" in q) and ("doanh thu" in q or "revenue" in q):
+    if categoryish and ("doanh thu" in q or "revenue" in q):
         return "T03_revenue_by_category"
     finance_template = _finance_template_for_question(question)
     if finance_template:
@@ -696,7 +707,7 @@ def _custom_sql_writer_override(question: str) -> tuple[bool, str | None]:
         return True, "revenue"
     if (
         ("growth" in q or "tang truong" in q)
-        and ("category" in q or "danh muc" in q)
+        and any(token in q for token in ("category", "danh muc", "nhom san pham", "nhom mon"))
         and ("mom" in q or "month over month" in q or "so voi thang truoc" in q)
     ):
         return True, "product_mix"
@@ -889,6 +900,37 @@ def _ensure_template_params(
         if not params.get(required) and required in time_range:
             params[required] = time_range[required]
     return params
+
+
+def _rank_direction_from_question(question: str) -> str | None:
+    q = _fold_text(question)
+    if any(
+        term in q
+        for term in (
+            "thap nhat",
+            "yeu nhat",
+            "kem nhat",
+            "te nhat",
+            "lowest",
+            "worst",
+            "bottom",
+        )
+    ):
+        return "asc"
+    return None
+
+
+def _apply_question_derived_template_params(
+    template_key: str | None,
+    params: dict[str, Any],
+    question: str,
+) -> dict[str, Any]:
+    if template_key != "T22_outlet_rank":
+        return params
+    rank_direction = _rank_direction_from_question(question)
+    if not rank_direction:
+        return params
+    return {**params, "rank_direction": rank_direction}
 
 
 def _verified_query_shortcut(
@@ -1194,6 +1236,8 @@ async def supervisor_agent(state: GraphState) -> GraphState:
                 template_key = None
                 template_params = {}
                 needs_sql_writer = True
+
+    template_params = _apply_question_derived_template_params(template_key, template_params, current)
 
     # ---- Commit to state ----
     from app.agents.personas import detect_audience as _detect_audience  # avoid circular at import time

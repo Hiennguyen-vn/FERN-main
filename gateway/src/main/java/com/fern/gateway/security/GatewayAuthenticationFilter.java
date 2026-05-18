@@ -153,10 +153,6 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
           exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
           return exchange.getResponse().setComplete();
         }
-        if ("pos-edge-agent".equals(internal.serviceName())) {
-          exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
-          return exchange.getResponse().setComplete();
-        }
         builder.headers(httpHeaders -> applyTrustedInternalHeaders(httpHeaders, internal, requestHeaders));
         return chain.filter(exchange.mutate().request(builder.build()).build());
       } catch (Exception e) {

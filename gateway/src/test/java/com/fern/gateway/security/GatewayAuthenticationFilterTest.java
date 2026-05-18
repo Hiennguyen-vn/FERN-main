@@ -72,6 +72,46 @@ class GatewayAuthenticationFilterTest {
   }
 
   @Test
+  void devicePairRedeemBypassesJwtButPairTokenDoesNot() {
+    GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
+        new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        Mockito.mock(AuthSessionService.class),
+        Mockito.mock(DeviceTokenRegistry.class),
+        AUTH_COOKIE_NAME
+    );
+
+    MockServerHttpRequest pairRequest = MockServerHttpRequest.post("/api/v1/devices/pair")
+        .header(InternalServiceAuth.HEADER_SERVICE_NAME, "spoofed-service")
+        .header(InternalServiceAuth.HEADER_USER_ID, "999")
+        .build();
+    MockServerWebExchange pairExchange = MockServerWebExchange.from(pairRequest);
+    AtomicReference<ServerHttpRequest> forwarded = new AtomicReference<>();
+
+    filter.filter(pairExchange, currentExchange -> {
+      forwarded.set(currentExchange.getRequest());
+      return Mono.empty();
+    }).block();
+
+    ServerHttpRequest forwardedRequest = forwarded.get();
+    assertNotNull(forwardedRequest);
+    assertNull(forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_SERVICE_NAME));
+    assertNull(forwardedRequest.getHeaders().getFirst(InternalServiceAuth.HEADER_USER_ID));
+
+    MockServerHttpRequest pairTokenRequest = MockServerHttpRequest.post("/api/v1/devices/pair-token").build();
+    MockServerWebExchange pairTokenExchange = MockServerWebExchange.from(pairTokenRequest);
+    AtomicBoolean pairTokenChainInvoked = new AtomicBoolean(false);
+
+    filter.filter(pairTokenExchange, currentExchange -> {
+      pairTokenChainInvoked.set(true);
+      return Mono.empty();
+    }).block();
+
+    assertFalse(pairTokenChainInvoked.get());
+    assertEquals(HttpStatus.UNAUTHORIZED, pairTokenExchange.getResponse().getStatusCode());
+  }
+
+  @Test
   void publicPosPathsBypassJwtAndRemainPublic() {
     GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),

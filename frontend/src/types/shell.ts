@@ -27,7 +27,8 @@ export type ModuleFamily =
   | 'procurement' | 'inventory' | 'workforce' | 'reports'
   | 'settings'
   | 'crm' | 'promotions' | 'scheduling'
-  | 'ai-query';
+  | 'ai-query'
+  | 'kitchen';
 
 export interface ModuleEntry {
   family: ModuleFamily;

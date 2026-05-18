@@ -12,7 +12,6 @@
 | Layer | Component | Vị trí repo |
 |---|---|---|
 | Edge | Frontend SPA (React) | `frontend/` |
-| Edge | POS Edge node (offline-capable) | `FERN-pos-edge/` |
 | Gateway | API Gateway (Spring Cloud Gateway) | `gateway/` |
 | Services | 12 microservices | `services/{auth,org,product,inventory,procurement,sales,finance,payroll,hr,audit,report,master-node}` |
 | Data | Postgres (primary store) | `infra/postgres/` |
@@ -28,7 +27,7 @@
 ### 1.2 Đặc thù bài toán ERP
 
 - **Finance + Audit module**: yêu cầu **không mất transaction**, RPO ≈ 0 cho ledger.
-- **POS realtime**: cần availability cao trong giờ kinh doanh, có **edge node offline** → đã có buffer chịu lỗi network.
+- **POS realtime**: cần availability cao trong giờ kinh doanh; backend phải có retry/idempotency rõ ràng để chịu lỗi network ngắn hạn.
 - **Procurement / Inventory event flow**: phụ thuộc Kafka event (`GoodsReceiptPostedEvent`, `InvoiceApprovedEvent`, `ExpenseRecordCreatedEvent`) → mất event = sai sổ sách.
 - **Payroll period close**: chạy batch, RTO có thể chấp nhận vài phút nhưng không được mất dữ liệu.
 - **Multi-tenant org structure** (`org-service`): mọi service đều resolve org context → org-service down = toàn bộ down.
@@ -128,7 +127,7 @@ CREATE INDEX idx_outbox_unpublished ON event_outbox (created_at) WHERE published
 - **Redis Sentinel** (3 sentinel + 1 master + 2 replica) — đơn giản, đủ dùng.
 - Spring Boot client: Lettuce với Sentinel config → tự reconnect.
 - Code path: cache miss → fallback DB. Wrap bằng Resilience4j circuit breaker.
-- POS edge đã có local cache → tolerant với Redis outage trong lúc giao dịch.
+- POS trung tâm cần cache miss fallback rõ ràng để chịu Redis outage ngắn hạn.
 
 **Tránh**: Redis Cluster trừ khi cần > 100GB cache. FERN scale hiện chưa cần.
 
@@ -185,13 +184,13 @@ spec:
 - `auth-service`: JWT stateless → scale tự do. Refresh token vào Redis.
 - `master-node`: nếu là leader-election based, dùng K8s Lease API hoặc ShedLock.
 
-### 2.6 POS Edge — đã có resilience
+### 2.6 POS realtime resilience
 
-POS edge node ([FERN-pos-edge/](FERN-pos-edge/)) đã offline-capable. Cần verify:
+POS trung tâm cần verify:
 
-- Local SQLite/IndexedDB queue khi mất kết nối.
-- Sync conflict resolution policy (last-write-wins vs CRDT) tài liệu rõ.
-- Khi backend Postgres failover, edge phải retry với exponential backoff không gây thundering herd.
+- Client retry không tạo double-submit nhờ idempotency key.
+- Khi backend Postgres failover, client retry với exponential backoff không gây thundering herd.
+- Luồng thanh toán và session có trạng thái rõ ràng khi request timeout.
 
 ### 2.7 Vault — P2
 
@@ -258,7 +257,7 @@ Không critical với business flow trực tiếp → ưu tiên sau P0/P1.
 ### 5.1 Failover Postgres giữa giờ peak POS
 
 - Steps: kill primary Postgres khi POS đang ghi sales.
-- Expect: POS edge buffer giao dịch, retry sau ≤ 60s, không mất bill.
+- Expect: POS client retry/idempotency hoạt động, không mất bill hoặc ghi trùng bill.
 - Verify: `sales-service` log không có `unique violation`, ledger finance khớp số.
 
 ### 5.2 Kafka broker loss khi finance close period

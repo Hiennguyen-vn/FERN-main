@@ -1,13 +1,11 @@
 -- Master outlet list trong phạm vi RBAC (outlet_ids inject). Outer WHERE dùng outlet_id để thỏa sql_ast.
--- Địa chỉ / điện thoại từ CDC (bổ sung cho câu hỏi thông tin quản lý cửa hàng).
+-- Không select address/phone vì policy chặn các cột liên hệ nhạy cảm của outlet.
 SELECT
     o.outlet_id,
     o.code AS outlet_code,
     o.name AS outlet_name,
     o.status AS outlet_status,
     o.region_id,
-    o.address,
-    o.phone,
     o.created_at,
     o.updated_at
 FROM (
@@ -17,8 +15,6 @@ FROM (
         name,
         status,
         region_id,
-        address,
-        phone,
         created_at,
         updated_at
     FROM cdc.outlet FINAL

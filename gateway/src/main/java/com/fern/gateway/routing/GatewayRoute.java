@@ -18,7 +18,7 @@ public record GatewayRoute(
     PUBLIC,
     /** User session JWT required. */
     USER,
-    /** Device JWT required (POS edge). */
+    /** Device JWT required. */
     DEVICE,
     /** Internal service JWT required; rejects browser/user tokens. */
     INTERNAL_ONLY

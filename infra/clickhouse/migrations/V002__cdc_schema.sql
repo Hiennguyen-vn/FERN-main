@@ -113,6 +113,20 @@ CREATE TABLE IF NOT EXISTS cdc.product (
 ) ENGINE = ReplacingMergeTree(__ts_ms)
 ORDER BY id;
 
+CREATE TABLE IF NOT EXISTS cdc.product_category (
+    code          String,
+    name          String,
+    is_active     Bool,
+    description   Nullable(String),
+    created_at    DateTime64(3, 'Asia/Ho_Chi_Minh'),
+    updated_at    DateTime64(3, 'Asia/Ho_Chi_Minh'),
+    `__op`        Nullable(String),
+    `__ts_ms`     Int64 DEFAULT 0,
+    `__lsn`       Nullable(Int64),
+    `__deleted`   Nullable(String)
+) ENGINE = ReplacingMergeTree(__ts_ms)
+ORDER BY code;
+
 -- ── analytics.* views over cdc.* ──
 DROP VIEW IF EXISTS analytics.fct_sales_daily;
 DROP VIEW IF EXISTS analytics.fct_sales_by_category;
@@ -151,17 +165,26 @@ GROUP BY fs.outlet_id, fs.business_date, fs.product_id;
 
 CREATE OR REPLACE VIEW analytics.fct_sales_by_category AS
 SELECT
-    fs.outlet_id      AS outlet_id,
-    fs.business_date  AS business_date,
-    p.category_code    AS category_code,
-    any(p.name)        AS category_name,
-    sum(fs.line_total) AS revenue,
-    sum(fs.qty)        AS qty
+    fs.outlet_id                              AS outlet_id,
+    fs.business_date                          AS business_date,
+    coalesce(p.category_code, 'uncategorized') AS category_code,
+    coalesce(any(pc.name), coalesce(p.category_code, 'uncategorized')) AS category_name,
+    sum(fs.line_total)                        AS revenue,
+    sum(fs.qty)                               AS qty
 FROM cdc.fact_sale AS fs FINAL
 INNER JOIN (SELECT id, status FROM cdc.sale_record FINAL WHERE status NOT IN ('cancelled', 'voided', 'open')) sr
        ON fs.sale_id = sr.id
-LEFT JOIN (SELECT id, name, category_code FROM cdc.product FINAL) p ON fs.product_id = p.id
-GROUP BY fs.outlet_id, fs.business_date, p.category_code;
+LEFT JOIN (
+    SELECT id, category_code
+    FROM cdc.product FINAL
+    WHERE coalesce(__deleted, 'false') = 'false'
+) p ON fs.product_id = p.id
+LEFT JOIN (
+    SELECT code, name
+    FROM cdc.product_category FINAL
+    WHERE coalesce(__deleted, 'false') = 'false'
+) pc ON p.category_code = pc.code
+GROUP BY fs.outlet_id, fs.business_date, coalesce(p.category_code, 'uncategorized');
 
 CREATE OR REPLACE VIEW analytics.fct_inventory_snapshot AS
 SELECT

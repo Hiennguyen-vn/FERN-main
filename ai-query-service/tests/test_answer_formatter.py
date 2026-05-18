@@ -512,6 +512,34 @@ async def test_answer_formatter_uses_deterministic_outlet_rank(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_answer_formatter_uses_lowest_copy_for_ascending_outlet_rank(monkeypatch):
+    async def fail_if_called(**_kwargs):
+        raise AssertionError("formatter LLM should not be called for outlet rank")
+
+    monkeypatch.setattr(af, "llm_call_text", fail_if_called)
+
+    state = {
+        "normalized_question": "Outlet nào đang có doanh thu yếu nhất?",
+        "time_range": {"from_date": "2026-04-26", "to_date": "2026-05-02"},
+        "template_params": {"from_date": "2026-04-26", "to_date": "2026-05-02", "rank_direction": "asc"},
+        "allowed_outlet_ids": [1, 2],
+        "guard_passed": True,
+        "raw_result": [
+            {"outlet_id": 1, "outlet_name": "Outlet yếu", "net_revenue": 1100000, "rank": 1},
+            {"outlet_id": 2, "outlet_name": "Outlet mạnh", "net_revenue": 2200000, "rank": 2},
+        ],
+        "template_key": "T22_outlet_rank",
+        "trace": [],
+    }
+
+    out = await af.answer_formatter(state)
+
+    assert "doanh thu thấp nhất" in out["answer_text"]
+    assert "Outlet yếu" in out["answer_text"]
+    assert "đang dẫn đầu" not in out["answer_text"]
+
+
+@pytest.mark.asyncio
 async def test_answer_formatter_uses_deterministic_yoy_revenue(monkeypatch):
     async def fail_if_called(**_kwargs):
         raise AssertionError("formatter LLM should not be called for YoY revenue")
