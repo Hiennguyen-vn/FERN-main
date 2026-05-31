@@ -88,24 +88,24 @@ VITE_API_BASE_URL=http://127.0.0.1:8180 npm run dev
 
 The default browser URL is:
 
-- `http://127.0.0.1:5173`
-- example protected cashier POS workspace after login: `http://127.0.0.1:5173/pos`
-- example protected non-cashier staff order queue after login: `http://127.0.0.1:5173/order`
-- example public customer ordering URL after seeding: `http://127.0.0.1:5173/order/tbl_hcm1_u7k29q`
+- `http://127.0.0.1:8095`
+- example protected cashier POS workspace after login: `http://127.0.0.1:8095/pos`
+- example protected non-cashier staff order queue after login: `http://127.0.0.1:8095/order`
+- example public customer ordering URL after seeding: `http://127.0.0.1:8095/order/tbl_hcm1_u7k29q`
 
 ## 4. Local Browser Access Strategy
 
 The default local browser workflow uses the Vite dev proxy:
 
-- browser origin: `http://127.0.0.1:5173`
+- browser origin: `http://127.0.0.1:8095`
 - proxied gateway target: `http://127.0.0.1:8180`
 
 The backend gateway also supports env-driven local browser CORS for alternate dev setups.
 
 Default local example allowlist lives in [services.env.example](/Users/nguyendinhkhiem/Development/Javas/FERN/infra/env/services.env.example):
 
-- `http://localhost:5173`
-- `http://127.0.0.1:5173`
+- `http://localhost:8095`
+- `http://127.0.0.1:8095`
 - `http://localhost:3000`
 - `http://127.0.0.1:3000`
 
@@ -275,7 +275,7 @@ Machine-readable contract:
 ## 9. Login Troubleshooting
 
 - If `POST /api/v1/auth/login` works directly on gateway but fails from frontend with `404`, frontend routing is misconfigured.
-- Ensure frontend runs on `http://127.0.0.1:5173` and Vite proxy is active for `/api` and `/health`.
+- Ensure frontend runs on `http://127.0.0.1:8095` and Vite proxy is active for `/api` and `/health`.
 - If needed, bypass proxy by setting `VITE_API_BASE_URL=http://127.0.0.1:8180`.
 
 Backend JSON errors now follow a stable shape:

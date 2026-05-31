@@ -2,18 +2,86 @@
 
 This is intentionally narrower than a general SQL executor: callers pass static
 queries plus bound parameters, and the connection is configured read-only.
+
+Connection pooling
+------------------
+A module-level ``psycopg_pool.ConnectionPool`` is initialised lazily on first
+use (``_get_pool``).  The pool size is intentionally small (1–3) because HR
+queries are infrequent and we don't want to exhaust Postgres connections.
+Re-using connections across requests removes the per-query TCP + auth overhead
+that the previous ``_connect()`` approach incurred.
+
+If ``psycopg_pool`` is not installed the code falls back to a direct
+per-query connection so the service still starts in environments where the
+pool package is absent (e.g. minimal Docker layers during development).
 """
+from __future__ import annotations
+
+import logging
 from typing import Any
 
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
 
-def _connect():
+_pool = None  # psycopg_pool.ConnectionPool | None
+
+
+def _make_conninfo() -> str:
+    s = get_settings()
+    timeout_ms = max(1, int(s.postgres_statement_timeout_seconds)) * 1000
+    # Build a libpq-compatible conninfo string.
+    return (
+        f"host={s.postgres_host} "
+        f"port={s.postgres_port} "
+        f"dbname={s.postgres_db} "
+        f"user={s.postgres_user} "
+        f"password={s.postgres_password} "
+        f"application_name=fern-ai-query-service "
+        f"options='-c default_transaction_read_only=on -c statement_timeout={timeout_ms}'"
+    )
+
+
+def _get_pool():
+    """Return (or lazily create) the shared ConnectionPool.
+
+    Falls back to ``None`` when psycopg_pool is not installed so that
+    callers can degrade gracefully to per-query connections.
+    """
+    global _pool
+    if _pool is not None:
+        return _pool
+    try:
+        from psycopg_pool import ConnectionPool  # type: ignore[import]
+        from psycopg.rows import dict_row  # noqa: PLC0415
+
+        _pool = ConnectionPool(
+            conninfo=_make_conninfo(),
+            min_size=1,
+            max_size=3,
+            kwargs={"row_factory": dict_row, "autocommit": True},
+            open=True,
+        )
+        logger.info("Postgres connection pool initialised (min=1, max=3)")
+    except ImportError:
+        logger.warning(
+            "psycopg_pool not installed — falling back to per-query connections. "
+            "Install psycopg[pool] for connection reuse."
+        )
+        _pool = None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Postgres pool init failed, will use per-query fallback: %s", exc)
+        _pool = None
+    return _pool
+
+
+def _connect_direct():
+    """Create a single direct connection (fallback when pool is unavailable)."""
     s = get_settings()
     try:
         import psycopg
         from psycopg.rows import dict_row
-    except ImportError as exc:  # pragma: no cover - exercised in container/runtime packaging
+    except ImportError as exc:  # pragma: no cover
         raise RuntimeError("psycopg is required for Postgres HR queries") from exc
 
     timeout_ms = max(1, int(s.postgres_statement_timeout_seconds)) * 1000
@@ -36,7 +104,17 @@ def execute_readonly(sql: str, params: dict[str, Any] | None = None) -> list[dic
     if first_token not in {"select", "with"}:
         raise ValueError("Postgres client only allows SELECT/WITH queries")
 
-    with _connect() as conn:
+    pool = _get_pool()
+
+    if pool is not None:
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params or {})
+                rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
+    # Fallback: per-query connection
+    with _connect_direct() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params or {})
             rows = cur.fetchall()

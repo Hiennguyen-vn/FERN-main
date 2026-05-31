@@ -1,15 +1,17 @@
 from app.graph.nodes.doc_reader import doc_reader
 from app.graph.nodes.visualizer import visualizer
+import pytest
 
 
-def test_doc_reader_answers_metric_definition_without_db():
+@pytest.mark.asyncio
+async def test_doc_reader_answers_metric_definition_without_db():
     state = {
         "normalized_question": "doanh thu ròng là gì?",
         "intent": "lookup",
         "agent_route": "docs_question",
         "trace": [],
     }
-    out = doc_reader(state)
+    out = await doc_reader(state)
     assert out["response_kind"] == "answer"
     assert "net_revenue" in out["answer_text"]
     assert out["skip_answer_formatter_llm"] is True

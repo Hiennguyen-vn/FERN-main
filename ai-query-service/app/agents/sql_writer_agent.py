@@ -35,6 +35,7 @@ from app.agents.tools import (
     search_schema_tool,
 )
 from app.config import get_settings
+from app.graph.outlet_scope import requested_outlet_ids_for_rbac
 from app.graph.state import GraphState
 from app.llm.openai_client import (
     get_client,
@@ -43,6 +44,7 @@ from app.llm.openai_client import (
 )
 from app.query_policy import candidate_tables_for_prompt, format_domain_contract
 from app.time_utils import format_time_context_for_prompt
+from app.utils.text import fold_text as _fold_text
 
 logger = logging.getLogger(__name__)
 
@@ -128,11 +130,6 @@ def _final_message_schema() -> dict[str, Any]:
         },
     }
 
-
-def _fold_text(text: str) -> str:
-    decomposed = unicodedata.normalize("NFD", (text or "").replace("đ", "d").replace("Đ", "D"))
-    ascii_text = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
-    return " ".join(ascii_text.lower().split())
 
 
 def _deterministic_sql_for_question(state: GraphState) -> tuple[str, str] | None:
@@ -424,7 +421,6 @@ def _build_user_prompt(state: GraphState, candidate_tables: list[str]) -> str:
 def _bind_tools(state: GraphState, all_outlet_ids_provider: Callable[[], list[int]] | None):
     s = get_settings()
     auth = state["auth"]
-    resolved = state.get("resolved_entities") or {}
     intent = state.get("intent") or ""
     candidate_tables = candidate_tables_for_prompt(
         intent,
@@ -437,7 +433,7 @@ def _bind_tools(state: GraphState, all_outlet_ids_provider: Callable[[], list[in
         auth_outlet_ids=frozenset(auth.outlet_ids),
         auth_roles=frozenset(auth.roles),
         candidate_tables=frozenset(candidate_tables),
-        requested_outlet_ids=list(resolved.get("outlet_ids") or []),
+        requested_outlet_ids=requested_outlet_ids_for_rbac(state),
         all_outlet_ids_provider=all_outlet_ids_provider,
     )
     exec_ctx = ExecuteContext(

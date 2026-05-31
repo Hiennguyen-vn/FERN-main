@@ -133,6 +133,7 @@ def grade_case(
     """
     actual_route = state.get("agent_route") or state.get("social_kind") or "unknown"
     actual_intent = state.get("intent")
+    actual_response_kind = state.get("response_kind")
     actual_template = state.get("template_key")
     actual_tables = _tables_used_from_state(state)
     has_sql = bool(state.get("final_sql"))
@@ -143,6 +144,8 @@ def grade_case(
     axes["route"] = actual_route == case.expected_route
     if case.expected_intent:
         axes["intent"] = actual_intent == case.expected_intent
+    if case.expected_response_kind:
+        axes["response_kind"] = actual_response_kind == case.expected_response_kind
     if case.expected_template_key is not None:
         axes["template_key"] = actual_template == case.expected_template_key
     if case.expected_tables_subset:
@@ -197,6 +200,7 @@ def grade_case(
         actual={
             "route": actual_route,
             "intent": actual_intent,
+            "response_kind": actual_response_kind,
             "template_key": actual_template,
             "tables_used": actual_tables,
             "has_sql": has_sql,
@@ -206,6 +210,7 @@ def grade_case(
         expected={
             "route": case.expected_route,
             "intent": case.expected_intent,
+            "response_kind": case.expected_response_kind,
             "template_key": case.expected_template_key,
             "tables_subset": list(case.expected_tables_subset),
             "expects_sql": case.expects_sql,

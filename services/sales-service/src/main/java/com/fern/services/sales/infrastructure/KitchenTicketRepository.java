@@ -264,19 +264,23 @@ public class KitchenTicketRepository extends BaseRepository {
   private String rollupTicket(Connection conn, long ticketId) throws Exception {
     String statusSql = """
         WITH s AS (
-          SELECT status, COUNT(*) AS c FROM core.kitchen_ticket_item
-          WHERE ticket_id = ? AND status <> 'cancelled' GROUP BY status
+          SELECT
+            COUNT(*) FILTER (WHERE status <> 'cancelled') AS active_count,
+            COUNT(*) FILTER (WHERE status = 'served') AS served_count,
+            COUNT(*) FILTER (WHERE status IN ('ready','served')) AS ready_or_served_count,
+            COUNT(*) FILTER (WHERE status IN ('preparing','ready','served')) AS started_count
+          FROM core.kitchen_ticket_item
+          WHERE ticket_id = ?
         )
         SELECT
           CASE
-            WHEN NOT EXISTS (SELECT 1 FROM s) THEN 'cancelled'
-            WHEN (SELECT c FROM s WHERE status = 'served')
-                 = (SELECT SUM(c) FROM s) THEN 'served'
-            WHEN (SELECT c FROM s WHERE status IN ('ready','served'))
-                 = (SELECT SUM(c) FROM s) THEN 'ready'
-            WHEN EXISTS (SELECT 1 FROM s WHERE status IN ('preparing','ready','served')) THEN 'in_progress'
+            WHEN active_count = 0 THEN 'cancelled'
+            WHEN served_count = active_count THEN 'served'
+            WHEN ready_or_served_count = active_count THEN 'ready'
+            WHEN started_count > 0 THEN 'in_progress'
             ELSE 'new'
           END AS rolled
+        FROM s
         """;
     String rolled;
     try (PreparedStatement ps = conn.prepareStatement(statusSql)) {

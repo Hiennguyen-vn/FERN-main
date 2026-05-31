@@ -109,7 +109,7 @@ def _coverage():
             },
             {
                 "source": "clickhouse",
-                "dataset": "analytics.fct_inventory_snapshot",
+                "dataset": "analytics.ai_inventory_on_hand_daily",
                 "min_date": "2025-07-02",
                 "max_date": "2026-05-04",
                 "row_count": 89877,
@@ -477,9 +477,9 @@ async def test_e2e_payment_breakdown_colloquial_phrase_uses_report_spec(realisti
 @pytest.mark.asyncio
 async def test_e2e_inventory_negative_stock_uses_latest_snapshot_template(realistic_graph, monkeypatch):
     def fake_execute(sql: str):
-        assert "analytics.fct_inventory_snapshot" in sql
+        assert "cdc.inventory_transaction" in sql
         assert "SELECT max(business_date)" in sql
-        assert "AND qty_on_hand < 0" in sql
+        assert "HAVING qty_on_hand < 0" in sql
         return [
             {"outlet_id": 6, "item_id": 3485603532637749262, "snapshot_date": "2026-05-02", "qty_on_hand": -8752},
             {"outlet_id": 6, "item_id": 3485603532637749254, "snapshot_date": "2026-05-02", "qty_on_hand": -5065},
@@ -511,9 +511,9 @@ async def test_e2e_inventory_negative_stock_stays_inventory_when_reasoning_enabl
     monkeypatch.setattr(dc, "_cached_coverage", _coverage)
 
     def fake_execute(sql: str):
-        assert "analytics.fct_inventory_snapshot" in sql
+        assert "cdc.inventory_transaction" in sql
         assert "analytics.ai_sales_daily" not in sql
-        assert "AND qty_on_hand < 0" in sql
+        assert "HAVING qty_on_hand < 0" in sql
         return [
             {"outlet_id": 6, "item_id": 3485603532637749262, "snapshot_date": "2026-05-02", "qty_on_hand": -8752},
         ]
@@ -527,7 +527,7 @@ async def test_e2e_inventory_negative_stock_stays_inventory_when_reasoning_enabl
     assert out["template_params"]["threshold"] == 0
     assert out["planning_frame"]["domain"] == "inventory"
     assert out["planning_decision"]["recommended_template_keys"] == ["T12_inventory_low_stock"]
-    assert out["data_source_context"]["primary_dataset"] == "analytics.fct_inventory_snapshot"
+    assert out["data_source_context"]["primary_dataset"] == "analytics.ai_inventory_on_hand_daily"
     assert "snapshot 2026-05-02" in out["answer_text"]
 
 

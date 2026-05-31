@@ -1,0 +1,42 @@
+{
+  "info": {
+    "name": "FERN API - Full Test Suite",
+    "description": "Bộ test đầy đủ cho FERN backend. Username: workflow.admin | Password: Workflow#2026!",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "🏥 Gateway",
+      "item": [
+        {
+          "name": "Health Live",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('✅ Server đang chạy (200)', function() { pm.response.to.have.status(200); });",
+            "pm.test('✅ Phản hồi nhanh dưới 1 giây', function() { pm.expect(pm.response.responseTime).to.be.below(1000); });"
+          ]}}],
+          "request": {"method": "GET", "header": [], "url": {"raw": "{{base_url}}/health/live", "host": ["{{base_url}}"], "path": ["health", "live"]}}
+        },
+        {
+          "name": "Health Ready",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('✅ Server sẵn sàng (200)', function() { pm.response.to.have.status(200); });"
+          ]}}],
+          "request": {"method": "GET", "header": [], "url": {"raw": "{{base_url}}/health/ready", "host": ["{{base_url}}"], "path": ["health", "ready"]}}
+        },
+        {
+          "name": "Gateway Info",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('✅ Gateway info (200)', function() { pm.response.to.have.status(200); });",
+            "pm.test('✅ Response là JSON', function() { pm.response.to.be.json; });"
+          ]}}],
+          "request": {"method": "GET", "header": [], "url": {"raw": "{{base_url}}/api/v1/gateway/info", "host": ["{{base_url}}"], "path": ["api","v1","gateway","info"]}}
+        },
+        {
+          "name": "Gateway Routes",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('✅ Routes (200)', function() { pm.response.to.have.status(200); });"
+          ]}}],
+          "request": {"method": "GET", "header": [], "url": {"raw": "{{base_url}}/api/v1/gateway/routes", "host": ["{{base_url}}"], "path": ["api","v1","gateway","routes"]}}
+        }
+      ]
+    },

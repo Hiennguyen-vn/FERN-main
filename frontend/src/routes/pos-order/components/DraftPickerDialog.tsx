@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import type { DraftOrder } from '../hooks/use-draft-orders';
 import type { CartLine, OrderType } from '../hooks/use-pos-cart';
 import { formatVnd } from '../utils/format';
+import { lineUnitPrice } from '../utils/line-modifiers';
 
 interface Props {
   open: boolean;
@@ -22,8 +23,7 @@ function timeStr(iso: string) {
 
 function draftTotal(lines: CartLine[]) {
   return lines.reduce((s, l) => {
-    const unit = l.basePrice + (l.sizePriceAdd ?? 0) + l.toppings.reduce((t, x) => t + x.priceAdd, 0);
-    return s + unit * l.quantity;
+    return s + lineUnitPrice(l) * l.quantity;
   }, 0);
 }
 
@@ -173,7 +173,7 @@ function DraftRow({ draft, editing, onToggleEdit, onRestore, onDelete, onUpdate 
 }
 
 function LineEditor({ line, onChange, onRemove }: { line: CartLine; onChange: (l: CartLine) => void; onRemove: () => void }) {
-  const unit = line.basePrice + (line.sizePriceAdd ?? 0) + line.toppings.reduce((s, t) => s + t.priceAdd, 0);
+  const unit = lineUnitPrice(line);
   return (
     <div className="flex items-center gap-3 text-sm bg-white rounded-md px-3 py-2 border">
       <span className="flex-1 truncate">{line.name}</span>

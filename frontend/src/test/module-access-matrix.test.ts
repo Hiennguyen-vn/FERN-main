@@ -322,17 +322,17 @@ describe('HR region-scoped (§2, §5.7, §5.8, §8.3)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// §2 — Kitchen Staff: Minimal (Outlet Membership Read Only)
+// §2 — Kitchen Staff: Kitchen Display Only
 // ---------------------------------------------------------------------------
 
 describe('Kitchen Staff minimal (§2)', () => {
   const ks = roleSession('kitchen_staff');
 
-  it('can access read-floor modules and kitchen display', () => {
+  it('can access only kitchen display', () => {
     expect(hasModuleAccess(ks, 'home')).toBe(false);
-    expect(hasModuleAccess(ks, 'catalog')).toBe(true);
-    expect(hasModuleAccess(ks, 'inventory')).toBe(true);
-    expect(hasModuleAccess(ks, 'reports')).toBe(true);
+    expect(hasModuleAccess(ks, 'catalog')).toBe(false);
+    expect(hasModuleAccess(ks, 'inventory')).toBe(false);
+    expect(hasModuleAccess(ks, 'reports')).toBe(false);
     expect(hasModuleAccess(ks, 'kitchen')).toBe(true);
   });
 
@@ -471,8 +471,7 @@ describe('Outlet membership read floor (§8.6)', () => {
   ];
 
   it('any user with an outlet sees read-floor modules', () => {
-    // kitchen_staff has outlet membership for read-floor access.
-    const ks = roleSession('kitchen_staff');
+    const ks = session({ '101': ['support'] });
     for (const family of READ_FLOOR_FAMILIES) {
       expect(hasModuleAccess(ks, family)).toBe(true);
     }
@@ -544,8 +543,7 @@ describe('Null and empty session edge cases', () => {
   });
 
   it('session with roles at outlet gives outlet membership', () => {
-    const s = session({ '101': ['kitchen_staff'] });
-    // kitchen_staff has kitchen access plus outlet membership read-floor.
+    const s = session({ '101': ['support'] });
     expect(hasModuleAccess(s, 'home')).toBe(false);
     expect(hasModuleAccess(s, 'catalog')).toBe(true);
   });
@@ -572,7 +570,7 @@ describe('Golden module visibility per role (§4)', () => {
     procurement:     'catalog inventory procurement reports'.split(' '),
     finance:         'catalog inventory finance reports ai-query'.split(' '),
     hr:              'catalog inventory hr workforce scheduling reports'.split(' '),
-    kitchen_staff:   'catalog inventory reports kitchen'.split(' '),
+    kitchen_staff:   'kitchen'.split(' '),
   };
 
   it.each(Object.entries(GOLDEN))('%s sees exactly the expected modules', (role, expected) => {

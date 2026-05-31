@@ -94,6 +94,79 @@ async def test_supervisor_agent_social_shortcut_no_llm(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_supervisor_agent_ai_sales_daily_outlet_lookup_no_llm(monkeypatch):
+    async def boom(**_kwargs):
+        raise AssertionError("LLM should not be called for ai_sales_daily outlet lookup")
+
+    monkeypatch.setattr(supervisor_agent_module, "llm_call_json", boom)
+
+    state = {
+        "raw_question": "Nguồn dữ liệu analytics.ai_sales_daily có những cửa hàng nào",
+        "normalized_question": "Nguồn dữ liệu analytics.ai_sales_daily có những cửa hàng nào",
+        "auth": _auth_roles("superadmin"),
+        "trace": [],
+    }
+    out = await supervisor_agent(state)
+
+    assert out["agent_route"] == "data_query"
+    assert out["intent"] == "lookup"
+    assert out["template_key"] == "T37_ai_sales_daily_outlets"
+    assert out["template_params"] == {}
+    assert out["time_range"] == {"from_date": "", "to_date": ""}
+    assert out["needs_sql_writer"] is False
+    assert out["trace"][-1]["shortcut"] == "deterministic_T37_ai_sales_daily_outlets"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_agent_product_revenue_ranking_prefers_top_products_verified(monkeypatch):
+    async def fake_llm(**_kwargs):
+        return (
+            {
+                "route": "data_query",
+                "intent": "outlet_compare",
+                "confidence": 0.92,
+                "time_range": {"from_date": "2026-01-01", "to_date": "2026-05-19"},
+                "raw_entities": {
+                    "outlet_names": [],
+                    "product_names": [],
+                    "categories": [],
+                    "employee_names": [],
+                },
+                "template_key": "T22_outlet_rank",
+                "template_params": {
+                    "from_date": "2026-01-01",
+                    "to_date": "2026-05-19",
+                    "limit": None,
+                    "threshold": None,
+                },
+                "needs_sql_writer": False,
+                "clarification_question": None,
+            },
+            {"tokens_in": 20, "tokens_out": 10, "latency_ms": 90},
+        )
+
+    monkeypatch.setattr(supervisor_agent_module, "llm_call_json", fake_llm)
+
+    state = {
+        "raw_question": "doanh thu sản phẩm nào cao nhất trong năm nay",
+        "normalized_question": "doanh thu sản phẩm nào cao nhất trong năm nay",
+        "auth": _auth(),
+        "trace": [],
+    }
+    out = await supervisor_agent(state)
+
+    assert out["agent_route"] == "data_query"
+    assert out["intent"] == "product_mix"
+    assert out["template_key"] == "T04_top_products"
+    assert out["template_params"] == {
+        "from_date": f"{date.today().year}-01-01",
+        "to_date": date.today().isoformat(),
+        "limit": 10,
+    }
+    assert out["needs_sql_writer"] is False
+
+
+@pytest.mark.asyncio
 async def test_supervisor_agent_routes_to_template(monkeypatch):
     async def fake_llm(**_kwargs):
         return (
@@ -524,17 +597,17 @@ async def test_supervisor_agent_pre_llm_gates(monkeypatch, question, route, inte
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("question", "auth", "route", "intent"),
+    ("question", "auth", "route", "intent", "response_kind"),
     [
-        ("payroll cost theo outlet tháng này", _auth_roles("region_manager"), "data_query", "pnl"),
-        ("xuất bảng pnl cho outlet 1 tuần này", _auth_roles("outlet_manager"), "data_query", "pnl"),
-        ("tổng chi phí lương cả công ty năm nay", _auth_roles("region_manager"), "data_query", "pnl"),
-        ("lương tháng này của tất cả nhân viên", _auth_roles("outlet_manager"), "clarification", "unknown"),
-        ("xem hết payroll công ty", _auth_roles("region_manager"), "clarification", "unknown"),
-        ("lấy bảng cdc.payment toàn bộ", _auth_roles("outlet_manager"), "data_query", "revenue"),
+        ("payroll cost theo outlet tháng này", _auth_roles("region_manager"), "data_query", "pnl", "unsupported"),
+        ("xuất bảng pnl cho outlet 1 tuần này", _auth_roles("outlet_manager"), "data_query", "pnl", "unsupported"),
+        ("tổng chi phí lương cả công ty năm nay", _auth_roles("region_manager"), "data_query", "pnl", "unsupported"),
+        ("lương tháng này của tất cả nhân viên", _auth_roles("outlet_manager"), "data_query", "pnl", "unsupported"),
+        ("xem hết payroll công ty", _auth_roles("region_manager"), "data_query", "pnl", "unsupported"),
+        ("lấy bảng cdc.payment toàn bộ", _auth_roles("outlet_manager"), "data_query", "revenue", "unsupported"),
     ],
 )
-async def test_supervisor_agent_rbac_refusals_do_not_generate_sql(monkeypatch, question, auth, route, intent):
+async def test_supervisor_agent_rbac_refusals_do_not_generate_sql(monkeypatch, question, auth, route, intent, response_kind):
     async def boom(**_kwargs):
         raise AssertionError("LLM should not be called for deterministic RBAC refusal")
 
@@ -552,7 +625,71 @@ async def test_supervisor_agent_rbac_refusals_do_not_generate_sql(monkeypatch, q
     assert out["intent"] == intent
     assert out["needs_sql_writer"] is False
     assert out["template_key"] is None
-    assert out["response_kind"] == "clarification"
+    assert out["response_kind"] == response_kind
+    assert out["clarification_question"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("question", "hint"),
+    [
+        ("Chênh lệch tiền mặt expected vs counted hôm qua là bao nhiêu?", "unsupported:cash_control_not_enabled"),
+        ("Thời gian chuẩn bị món trung bình theo bếp tuần này", "unsupported:kitchen_sla_not_enabled"),
+        ("Tỷ lệ khách hàng quay lại tháng này là bao nhiêu?", "unsupported:customer_identity_missing"),
+        ("Promo lift của khuyến mãi tháng này là bao nhiêu?", "unsupported:promotion_mart_missing"),
+        ("Recipe margin và waste/FIFO tháng này thế nào?", "unsupported:recipe_cost_missing"),
+        ("Supplier reliability và invoice aging tháng này", "unsupported:supplier_reliability_missing"),
+        ("Doanh thu tháng này có đạt target không?", "unsupported:target_table_missing"),
+        ("SELECT * FROM cdc.sale_record", "unsupported:unsafe_request"),
+    ],
+)
+async def test_supervisor_agent_unsupported_scope_preflight(monkeypatch, question, hint):
+    async def boom(**_kwargs):
+        raise AssertionError("LLM should not be called for unsupported scope preflight")
+
+    monkeypatch.setattr(supervisor_agent_module, "llm_call_json", boom)
+
+    state = {
+        "raw_question": question,
+        "normalized_question": question,
+        "auth": _auth(),
+        "trace": [],
+    }
+    out = await supervisor_agent(state)
+
+    assert out["response_kind"] == "unsupported"
+    assert hint in out["response_hints"]
+    assert out["needs_sql_writer"] is False
+    assert out["template_key"] is None
+
+
+@pytest.mark.asyncio
+async def test_supervisor_agent_blocked_outlet_contact_is_unsupported(monkeypatch):
+    async def boom(**_kwargs):
+        raise AssertionError("LLM should not be called for blocked contact projection")
+
+    monkeypatch.setattr(supervisor_agent_module, "llm_call_json", boom)
+
+    state = {
+        "raw_question": "Cho tôi address và phone của các outlet",
+        "normalized_question": "Cho tôi address và phone của các outlet",
+        "auth": _auth(),
+        "trace": [],
+    }
+    out = await supervisor_agent(state)
+
+    assert out["response_kind"] == "unsupported"
+    assert "unsupported:sensitive_projection" in out["response_hints"]
+    assert out["needs_sql_writer"] is False
+
+
+def test_supervisor_payment_cash_question_is_not_cash_control():
+    assert (
+        supervisor_agent_module._unsupported_scope_for_question(
+            "doanh thu theo phương thức thanh toán tiền mặt hôm qua"
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -570,6 +707,7 @@ async def test_supervisor_agent_rbac_refusals_do_not_generate_sql(monkeypatch, q
         ("cửa hàng yếu nhất tháng này", "T22_outlet_rank", "outlet_compare"),
         ("doanh thu theo danh mục tháng này", "T03_revenue_by_category", "product_mix"),
         ("xếp hạng doanh thu theo nhóm món tuần này", "T03_revenue_by_category", "product_mix"),
+        ("Outlet VN-HN-1 mạnh/yếu ở nhóm sản phẩm nào?", "T03_revenue_by_category", "product_mix"),
         ("phiếu nhập tuần này", "T26_goods_receipt_summary", "pnl"),
     ],
 )
@@ -588,6 +726,30 @@ async def test_supervisor_agent_verified_and_template_pinning(monkeypatch, quest
     assert out["intent"] == intent
     assert out["template_key"] == template_key
     assert out["needs_sql_writer"] is False
+
+
+@pytest.mark.asyncio
+async def test_supervisor_agent_category_strength_shortcuts_without_llm(monkeypatch):
+    async def boom(**_kwargs):
+        raise AssertionError("LLM should not be called for deterministic category strength shortcut")
+
+    monkeypatch.setattr(supervisor_agent_module, "llm_call_json", boom)
+
+    question = "Outlet VN-HN-1 mạnh/yếu ở nhóm sản phẩm nào?"
+    state = {
+        "raw_question": question,
+        "normalized_question": question,
+        "auth": _auth_roles("finance"),
+        "trace": [],
+    }
+    out = await supervisor_agent(state)
+
+    assert out["agent_route"] == "data_query"
+    assert out["intent"] == "product_mix"
+    assert out["template_key"] == "T03_revenue_by_category"
+    assert out["needs_sql_writer"] is False
+    assert out["investigative_mode"] is False
+    assert out["raw_entities"]["outlet_names"] == ["Outlet VN-HN-1"]
 
 
 @pytest.mark.asyncio
@@ -839,6 +1001,89 @@ async def test_investigative_phrase_weekly_trend_keeps_verified_template(monkeyp
     out = await supervisor_agent(state)
 
     assert out["template_key"] == "T35_weekly_revenue_trend"
+    assert out["needs_sql_writer"] is False
+    assert out["investigative_mode"] is False
+
+
+@pytest.mark.asyncio
+async def test_verified_insight_template_beats_investigative_sql_writer(monkeypatch):
+    async def fake_llm(**_kwargs):
+        return (
+            {
+                "route": "data_query",
+                "intent": "trend",
+                "confidence": 0.84,
+                "time_range": {"from_date": "2026-05-01", "to_date": "2026-05-07"},
+                "raw_entities": {
+                    "outlet_names": [],
+                    "product_names": [],
+                    "categories": [],
+                    "employee_names": [],
+                },
+                "template_key": None,
+                "template_params": {},
+                "needs_sql_writer": True,
+                "clarification_question": None,
+            },
+            {"tokens_in": 10, "tokens_out": 10, "latency_ms": 1},
+        )
+
+    monkeypatch.setattr(supervisor_agent_module, "llm_call_json", fake_llm)
+
+    q = "Vì sao doanh thu tuần này giảm?"
+    state = {
+        "raw_question": q,
+        "normalized_question": q,
+        "auth": _auth_roles("region_manager"),
+        "trace": [],
+    }
+    out = await supervisor_agent(state)
+
+    assert out["template_key"] == "INS_SALES_DRIVER"
+    assert out["needs_sql_writer"] is False
+    assert out["investigative_mode"] is False
+
+
+@pytest.mark.asyncio
+async def test_finance_driver_verified_template_beats_pnl_override(monkeypatch):
+    async def fake_llm(**_kwargs):
+        return (
+            {
+                "route": "data_query",
+                "intent": "pnl",
+                "confidence": 0.84,
+                "time_range": {"from_date": "2026-05-01", "to_date": "2026-05-31"},
+                "raw_entities": {
+                    "outlet_names": [],
+                    "product_names": [],
+                    "categories": [],
+                    "employee_names": [],
+                },
+                "template_key": "T24_daily_pnl_summary",
+                "template_params": {
+                    "from_date": "2026-05-01",
+                    "to_date": "2026-05-31",
+                    "limit": None,
+                    "threshold": None,
+                },
+                "needs_sql_writer": False,
+                "clarification_question": None,
+            },
+            {"tokens_in": 10, "tokens_out": 10, "latency_ms": 1},
+        )
+
+    monkeypatch.setattr(supervisor_agent_module, "llm_call_json", fake_llm)
+
+    q = "Outlet nào kéo lợi nhuận xuống tháng này?"
+    state = {
+        "raw_question": q,
+        "normalized_question": q,
+        "auth": _auth_roles("finance"),
+        "trace": [],
+    }
+    out = await supervisor_agent(state)
+
+    assert out["template_key"] == "INS_FINANCE_DRIVER"
     assert out["needs_sql_writer"] is False
     assert out["investigative_mode"] is False
 

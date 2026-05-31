@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { VOUCHERS } from '../data/mock-menu';
+import { lineUnitPrice } from '../utils/line-modifiers';
 
 export interface CartLineModifier {
   groupCode: string;
@@ -20,6 +21,7 @@ export interface CartLine {
   ice?: string;
   toppings: { code: string; name: string; priceAdd: number }[];
   modifiers?: CartLineModifier[];
+  modifierOptionIds?: string[];
   note?: string;
   quantity: number;
 }
@@ -43,8 +45,7 @@ export function useCart() {
   const [voucherError, setVoucherError] = useState('');
 
   const lineTotal = (l: CartLine) => {
-    const unit = l.basePrice + (l.sizePriceAdd ?? 0) + l.toppings.reduce((s, t) => s + t.priceAdd, 0);
-    return unit * l.quantity;
+    return lineUnitPrice(l) * l.quantity;
   };
 
   const subtotal = useMemo(() => lines.reduce((s, l) => s + lineTotal(l), 0), [lines]);

@@ -15,7 +15,7 @@ from app.graph.nodes.query_reasoner import format_planning_decision_for_matcher,
 from app.graph.question_frame import question_text, question_time_range
 from app.knowledge.lexicon import format_lexicon_hints
 from app.llm.openai_client import embed, llm_call_json
-from app.templates.registry import TEMPLATES, list_templates
+from app.templates.registry import TEMPLATES, ensure_runtime_templates_loaded, list_templates
 from app.time_utils import format_time_context_for_prompt, has_time_expression
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ _OUTLET_LIST_QUESTION = re.compile(
     r"tất\s+cả\s+(cửa\s*hàng|cua\s*hang|outlet)|store\s+list|list\s+outlets?)",
     re.IGNORECASE,
 )
+_AI_SALES_DAILY_DATASET_RE = re.compile(r"\b(?:analytics\.)?ai_sales_daily\b", re.IGNORECASE)
 _OUTLET_CODE_RE = re.compile(r"\b[A-Z]{2,}(?:-[A-Z0-9]+){1,}-OUT-\d{1,6}\b", re.IGNORECASE)
 _OUTLET_DETAIL_RE = re.compile(
     r"(thông\s*tin|thong\s*tin|chi\s*tiết|chi\s*tiet|detail|details?|info|profile|hồ\s*sơ|ho\s*so)",
@@ -74,6 +75,27 @@ def _fold(text: str) -> str:
     decomposed = unicodedata.normalize("NFD", text)
     no_marks = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
     return no_marks.replace("đ", "d").replace("Đ", "D").lower()
+
+
+def _is_ai_sales_daily_outlet_list_question(question: str) -> bool:
+    q = _fold(question)
+    if not _AI_SALES_DAILY_DATASET_RE.search(q):
+        return False
+    return any(
+        token in q
+        for token in (
+            "co nhung cua hang nao",
+            "nhung cua hang nao",
+            "cua hang nao",
+            "outlet nao",
+            "danh sach cua hang",
+            "danh sach outlet",
+            "liet ke cua hang",
+            "liet ke outlet",
+            "store list",
+            "list outlet",
+        )
+    )
 
 
 def _has_payment_context(folded_question: str) -> bool:
@@ -158,6 +180,13 @@ def _limit_from_question(question_folded: str, *, default: int = 10, cap: int = 
     except ValueError:
         return default
     return max(1, min(value, cap))
+
+
+def _is_product_revenue_ranking_question(question_folded: str) -> bool:
+    productish = any(x in question_folded for x in ("san pham", "mat hang", "product"))
+    revenueish = any(x in question_folded for x in ("doanh thu", "revenue", "sales"))
+    rankish = any(x in question_folded for x in ("cao nhat", "nhieu nhat", "top", "xep hang", "ranking", "rank"))
+    return productish and revenueish and rankish
 
 
 def _inventory_fast_match(question_folded: str) -> tuple[str, dict[str, str | int], float] | None:
@@ -452,7 +481,7 @@ def _fast_template_match(question: str, intent: str | None, time_range: dict) ->
             return "T01_daily_revenue", params, 0.93
         return "T32_period_revenue_summary", params, 0.9
 
-    if any(x in q for x in ("top san pham", "san pham ban chay", "best seller", "mat hang ban chay")):
+    if any(x in q for x in ("top san pham", "san pham ban chay", "best seller", "mat hang ban chay")) or _is_product_revenue_ranking_question(q):
         out = dict(params)
         out["limit"] = _limit_from_question(q, default=10)
         return "T04_top_products", out, 0.92
@@ -539,6 +568,9 @@ def _template_from_planning_decision(
         return "T24_daily_pnl_summary", out, 0.88
     if mode == "ranking" and group_by == "product":
         out["limit"] = _limit_from_question(_fold(question), default=10)
+        return "T04_top_products", out, 0.88
+    if _is_product_revenue_ranking_question(question_folded):
+        out["limit"] = _limit_from_question(question_folded, default=10)
         return "T04_top_products", out, 0.88
     if (
         (intent or "").strip().lower() == "product_mix"
@@ -707,6 +739,7 @@ def _clarification_for_failed_match(state: GraphState, missing_info: list[str]) 
 
 
 async def template_matcher(state: GraphState) -> GraphState:
+    ensure_runtime_templates_loaded()
     question = question_text(state)
     intent = state.get("intent")
     time_range = question_time_range(state)
@@ -738,9 +771,20 @@ async def template_matcher(state: GraphState) -> GraphState:
         state.setdefault("trace", []).append({"node": "template_matcher", "clarification": "generic_metric_time"})
         return state
 
+    folded_question = _fold(question)
+    if _is_ai_sales_daily_outlet_list_question(question):
+        state["template_key"] = "T37_ai_sales_daily_outlets"
+        state["template_params"] = {}
+        state["template_confidence"] = 0.98
+        state["matcher_missing_info"] = []
+        state["response_kind"] = "answer"
+        state["response_hints"] = []
+        state["clarification_question"] = None
+        state.setdefault("trace", []).append({"node": "template_matcher", "shortcut": "T37_ai_sales_daily_outlets"})
+        return state
+
     business_data_question = bool(_BUSINESS_DATA_RE.search(question))
     business_detail_question = bool(_BUSINESS_DETAIL_RE.search(question))
-    folded_question = _fold(question)
     zero_revenue_question = bool(_zero_revenue_fast_match(folded_question, {"from_date": "x", "to_date": "x"}))
     if (business_detail_question or zero_revenue_question) and not _has_explicit_or_context_time(state, question):
         state["template_key"] = None
@@ -1020,8 +1064,9 @@ async def template_matcher(state: GraphState) -> GraphState:
         state.setdefault("trace", []).append({"node": "template_matcher", "shortcut": key})
         return state
 
+    settings = get_settings()
     emb = None
-    if get_settings().openai_embeddings_enabled:
+    if getattr(settings, "opensearch_enabled", False) and getattr(settings, "openai_embeddings_enabled", False):
         try:
             emb = await embed(question)
         except Exception as e:  # noqa: BLE001
@@ -1029,11 +1074,13 @@ async def template_matcher(state: GraphState) -> GraphState:
 
     # export_request không có template riêng — dùng cùng chỉ số POS/revenue/inventory.
     os_intent = None if intent == "export_request" else intent
-    try:
-        hits = hybrid_search_templates(text=question, embedding=emb, intent=os_intent, size=3)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("OpenSearch templates failed, falling back to full template list: %s", e)
-        hits = []
+    hits: list[dict] = []
+    if getattr(settings, "opensearch_enabled", False):
+        try:
+            hits = hybrid_search_templates(text=question, embedding=emb, intent=os_intent, size=3)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("OpenSearch templates failed, falling back to full template list: %s", e)
+            hits = []
 
     candidate_keys = [h.get("template_key") for h in hits if h.get("template_key") in TEMPLATES]
     if not candidate_keys:

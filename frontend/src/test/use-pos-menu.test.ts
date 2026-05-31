@@ -5,6 +5,26 @@ import type { StockBalanceView } from '@/api/inventory-api';
 
 describe('mergeMenu', () => {
   const groups: ModifierGroupView[] = [];
+  const sizeGroup: ModifierGroupView = {
+    id: 'size',
+    code: 'size',
+    name: 'Size',
+    selectionType: 'single',
+    minSelections: 1,
+    maxSelections: 1,
+    isActive: true,
+    options: [],
+  };
+  const toppingGroup: ModifierGroupView = {
+    id: 'toppings',
+    code: 'toppings',
+    name: 'Toppings',
+    selectionType: 'multiple',
+    minSelections: 0,
+    maxSelections: 3,
+    isActive: true,
+    options: [],
+  };
 
   it('keeps products visible but marks them unavailable when ingredients are short', () => {
     const products: ProductView[] = [
@@ -84,6 +104,36 @@ describe('mergeMenu', () => {
       isAvailable: true,
       unavailableCode: undefined,
       unavailableReason: undefined,
+    });
+  });
+
+  it('uses only modifier groups linked to each product', () => {
+    const products: ProductView[] = [
+      { id: '104', name: 'Pho Ga', categoryCode: 'pho', status: 'active' },
+      { id: '105', name: 'Ca Phe Den', categoryCode: 'coffee', status: 'active' },
+    ];
+    const prices = [
+      { productId: '104', priceValue: 45000 },
+      { productId: '105', priceValue: 25000 },
+    ];
+
+    const result = mergeMenu(
+      products,
+      prices,
+      [sizeGroup, toppingGroup],
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map([['104', [sizeGroup]]]),
+    );
+
+    expect(result.menu.find((item) => item.id === '104')).toMatchObject({
+      hasModifiers: true,
+      modifierGroups: [sizeGroup],
+    });
+    expect(result.menu.find((item) => item.id === '105')).toMatchObject({
+      hasModifiers: false,
+      modifierGroups: [],
     });
   });
 });

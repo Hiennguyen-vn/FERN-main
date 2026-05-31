@@ -1,4 +1,4 @@
-import os
+from functools import lru_cache
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     postgres_statement_timeout_seconds: int = 10
 
     # OpenSearch
+    opensearch_enabled: bool = True
     opensearch_url: str = "http://opensearch:9200"
     opensearch_aliases_index: str = "ai_aliases"
     opensearch_templates_index: str = "ai_templates"
@@ -103,6 +104,7 @@ class Settings(BaseSettings):
     agent_extended_dataset_max_tables: int = 10
     learned_scenario_matching_enabled: bool = True
     learned_scenario_match_min_score: float = 0.78
+    runtime_catalog_cache_seconds: int = 60
 
     # GenSQL orchestrator (experimental): LLM proposes SELECT → AST phase1 → RBAC inject → guard → reviewer → trial → execute
     codegen_sql_enabled: bool = False
@@ -237,11 +239,11 @@ class Settings(BaseSettings):
         return [b.strip() for b in self.kafka_bootstrap.split(",") if b.strip()]
 
 
-_settings: Settings | None = None
-
-
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-    return _settings
+    """Return the singleton Settings instance.
+
+    Thread-safe via lru_cache. In tests, call ``get_settings.cache_clear()``
+    before patching environment variables to force re-instantiation.
+    """
+    return Settings()

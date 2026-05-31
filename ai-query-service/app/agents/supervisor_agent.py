@@ -26,11 +26,20 @@ from __future__ import annotations
 
 import logging
 import re
-import unicodedata
 from datetime import date
 from typing import Any
 
 from app.config import get_settings
+from app.agents.supervisor_prompts import SUPERVISOR_SCHEMA, build_supervisor_system_prompt
+from app.agents.supervisor_routing import (
+    apply_question_derived_template_params,
+    deterministic_ai_sales_daily_outlet_shortcut,
+    deterministic_category_template_shortcut,
+    ensure_template_params,
+    normalise_template_key,
+    verified_query_shortcut as _routing_verified_query_shortcut,
+)
+from app.agents.time_parser import default_time_range, invalid_time_reason
 from app.graph.nodes.preprocess import detect_standalone_social
 from app.graph.nodes.supervisor import _install_planning_frame, _make_planning_frame
 from app.graph.question_frame import build_question_frame
@@ -46,6 +55,7 @@ from app.time_utils import (
     parse_two_quarter_ranges_in_order,
     today_local,
 )
+from app.utils.text import fold_text as _fold_text
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +221,8 @@ _INVESTIGATIVE_RE = re.compile(
     r"yếu|yeu|tệ|te|kém|kem|tốt|tot|bất\s*thường|bat\s*thuong|outlier)\b",
     re.IGNORECASE,
 )
+_OUTLET_NAME_RE = re.compile(r"\boutlet\s+[\w-]+", re.IGNORECASE)
+_AI_SALES_DAILY_DATASET_RE = re.compile(r"\b(?:analytics\.)?ai_sales_daily\b", re.IGNORECASE)
 
 
 def _detect_investigative_intent(text: str) -> bool:
@@ -224,6 +236,75 @@ def _detect_investigative_intent(text: str) -> bool:
     ) and not re.search(r"\b(tai\s*sao|vi\s*sao|nguyen\s*nhan|why)\b", q):
         return False
     return bool(_INVESTIGATIVE_RE.search(q))
+
+
+def _category_template_for_question(question: str) -> str | None:
+    q = _fold_text(question)
+    categoryish = any(token in q for token in ("danh muc", "category", "nhom san pham", "nhom mon"))
+    if not categoryish:
+        return None
+    if any(token in q for token in ("dong gop", "contribution", "ty trong", "share")):
+        return "T17_category_contribution"
+    if any(
+        token in q
+        for token in (
+            "doanh thu",
+            "revenue",
+            "xep hang",
+            "rank",
+            "manh",
+            "yeu",
+            "kem",
+            "te",
+            "tot",
+            "xau",
+            "ban tot",
+            "ban xau",
+            "ban chay",
+            "ban cham",
+            "cao nhat",
+            "thap nhat",
+            "nhieu nhat",
+            "it nhat",
+        )
+    ):
+        return "T03_revenue_by_category"
+    return None
+
+
+def _deterministic_template_entities(question: str) -> dict[str, list[str]]:
+    outlets = [m.group(0).strip() for m in _OUTLET_NAME_RE.finditer(question or "")]
+    return {
+        "outlet_names": outlets,
+        "product_names": [],
+        "categories": [],
+        "employee_names": [],
+    }
+
+
+def _deterministic_category_template_shortcut(
+    question: str,
+    time_range: dict[str, str],
+) -> dict[str, Any] | None:
+    template_key = _category_template_for_question(question)
+    if template_key not in {"T03_revenue_by_category", "T17_category_contribution"}:
+        return None
+    return {
+        "route": "data_query",
+        "intent": "product_mix",
+        "confidence": 0.99,
+        "time_range": dict(time_range),
+        "raw_entities": _deterministic_template_entities(question),
+        "template_key": template_key,
+        "template_params": {
+            "from_date": time_range["from_date"],
+            "to_date": time_range["to_date"],
+            "limit": None,
+            "threshold": None,
+        },
+        "needs_sql_writer": False,
+        "clarification_question": None,
+    }
 
 
 def _investigative_safe_revenue_trend_template(
@@ -277,10 +358,42 @@ def _normalise_template_key(key: str | None) -> str | None:
     return None
 
 
-def _fold_text(text: str) -> str:
-    decomposed = unicodedata.normalize("NFD", text or "")
-    no_marks = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
-    return no_marks.replace("đ", "d").replace("Đ", "D").lower()
+
+def _is_ai_sales_daily_outlet_list_question(question: str) -> bool:
+    q = _fold_text(question)
+    if not _AI_SALES_DAILY_DATASET_RE.search(q):
+        return False
+    return any(
+        token in q
+        for token in (
+            "co nhung cua hang nao",
+            "nhung cua hang nao",
+            "cua hang nao",
+            "outlet nao",
+            "danh sach cua hang",
+            "danh sach outlet",
+            "liet ke cua hang",
+            "liet ke outlet",
+            "store list",
+            "list outlet",
+        )
+    )
+
+
+def _deterministic_ai_sales_daily_outlet_shortcut(question: str) -> dict[str, Any] | None:
+    if not _is_ai_sales_daily_outlet_list_question(question):
+        return None
+    return {
+        "route": "data_query",
+        "intent": "lookup",
+        "confidence": 0.99,
+        "time_range": {"from_date": "", "to_date": ""},
+        "raw_entities": _deterministic_template_entities(question),
+        "template_key": "T37_ai_sales_daily_outlets",
+        "template_params": {},
+        "needs_sql_writer": False,
+        "clarification_question": None,
+    }
 
 
 def _default_time_range() -> dict[str, str]:
@@ -304,6 +417,7 @@ def _commit_no_sql(
     trace_reason: str,
     response_kind: str = "clarification",
     time_range: dict[str, str] | None = None,
+    response_hints: list[str] | tuple[str, ...] | None = None,
 ) -> GraphState:
     from app.agents.personas import detect_audience as _detect_audience
     state["agent_route"] = route
@@ -314,12 +428,18 @@ def _commit_no_sql(
         "categories": [],
         "employee_names": [],
     }
-    state["time_range"] = time_range or state.get("time_range") or _default_time_range()
+    state["time_range"] = time_range or state.get("time_range") or default_time_range()
     state["time_context"] = {**(state.get("time_context") or {}), **state["time_range"]}
     _clear_data_lane(state)
     state["visualization_requested"] = False
     state["response_kind"] = response_kind
-    state["clarification_question"] = message if response_kind == "clarification" else None
+    state["clarification_question"] = message if response_kind in {"clarification", "unsupported"} else None
+    if response_hints is not None:
+        hints = list(state.get("response_hints") or [])
+        for hint in response_hints:
+            if hint and hint not in hints:
+                hints.append(str(hint))
+        state["response_hints"] = hints
     state["audience"] = _detect_audience(state.get("auth"))
     state.setdefault("trace", []).append(
         {"node": "supervisor_agent", "deterministic_gate": trace_reason, "route": route, "intent": intent}
@@ -522,6 +642,166 @@ def _is_raw_payment_dump_request(question: str) -> bool:
     return "cdc.payment" in q and ("toan bo" in q or "bang" in q or "dump" in q or "raw" in q)
 
 
+def _unsupported_scope_for_question(question: str) -> tuple[str, str, str, str] | None:
+    """Return (hint, message, trace_reason, intent) for unsupported BI domains.
+
+    These are deliberate product-contract refusals, not clarification prompts:
+    the warehouse/semantic layer does not yet expose a safe mart for them.
+    """
+
+    q = _fold_text(question)
+
+    cash_context = any(token in q for token in ("tien mat", "cash", "kiem quy", "quy tien"))
+    cash_control = any(
+        token in q
+        for token in (
+            "variance",
+            "chenh lech",
+            "expected",
+            "counted",
+            "cash drop",
+            "cash session",
+            "paid in",
+            "paid out",
+            "doi soat",
+            "reconcile",
+            "kiem quy",
+            "ket ca",
+        )
+    )
+    if cash_context and cash_control:
+        return (
+            "unsupported:cash_control_not_enabled",
+            "Hiện ai-query chưa bật mart cash-control để tính expected vs counted, cash variance, paid-in/out hoặc cash drop. Bạn có thể hỏi payment tổng hợp theo phương thức thanh toán.",
+            "unsupported_cash_control",
+            "unknown",
+        )
+
+    kitchen_context = any(token in q for token in ("kitchen", "kds", "bep", "ticket bep"))
+    kitchen_metric = any(
+        token in q
+        for token in (
+            "prep time",
+            "thoi gian chuan bi",
+            "sla",
+            "overdue",
+            "tre han",
+            "qua han",
+            "ticket",
+        )
+    )
+    if kitchen_context and kitchen_metric:
+        return (
+            "unsupported:kitchen_sla_not_enabled",
+            "Hiện ai-query chưa bật mart kitchen/KDS SLA nên chưa thể trả lời prep time, ticket SLA hoặc món quá hạn theo bếp.",
+            "unsupported_kitchen_sla",
+            "unknown",
+        )
+
+    if any(
+        token in q
+        for token in (
+            "khach hang quay lai",
+            "repeat buyer",
+            "repeat customer",
+            "retention",
+            "cohort",
+            "rfm",
+            "loyalty",
+            "diem thuong",
+            "redeem",
+            "redemption",
+            "crm",
+        )
+    ):
+        return (
+            "unsupported:customer_identity_missing",
+            "Hiện ai-query chưa có customer identity/mart CRM đã kiểm chứng nên chưa thể tính repeat buyer, retention, cohort, RFM hoặc loyalty redemption.",
+            "unsupported_customer_identity",
+            "unknown",
+        )
+
+    promotion_context = any(token in q for token in ("promotion", "promo", "khuyen mai", "ma giam gia", "voucher"))
+    promotion_advanced = any(
+        token in q
+        for token in (
+            "lift",
+            "hieu qua",
+            "effectiveness",
+            "cannibalization",
+            "an mon",
+            "tro gia",
+            "subsidy",
+            "margin sau",
+        )
+    )
+    if promotion_context and promotion_advanced:
+        return (
+            "unsupported:promotion_mart_missing",
+            "Hiện ai-query chưa có mart promotion lift/cannibalization/subsidy nên chưa thể kết luận hiệu quả khuyến mãi nâng cao.",
+            "unsupported_promotion_mart",
+            "unknown",
+        )
+
+    if any(
+        token in q
+        for token in (
+            "recipe",
+            "cong thuc",
+            "food cost",
+            "true cogs",
+            "theoretical cogs",
+            "theoretical vs actual",
+            "actual food cost",
+            "waste",
+            "hao hut",
+            "fifo",
+        )
+    ):
+        return (
+            "unsupported:recipe_cost_missing",
+            "Hiện ai-query chưa bật mart recipe cost/waste/FIFO đã kiểm chứng nên chưa thể tính true COGS, recipe margin hoặc theoretical vs actual food cost.",
+            "unsupported_recipe_cost",
+            "unknown",
+        )
+
+    supplier_context = any(token in q for token in ("supplier", "nha cung cap", "po ", "purchase order"))
+    supplier_advanced = any(
+        token in q
+        for token in (
+            "reliability",
+            "do tin cay",
+            "aging",
+            "tuoi no",
+            "cong no",
+            "payment status",
+            "trang thai thanh toan",
+            "qua han",
+        )
+    )
+    if supplier_context and supplier_advanced:
+        return (
+            "unsupported:supplier_reliability_missing",
+            "Hiện ai-query chưa có mart supplier reliability/PO aging/invoice aging nên chưa thể trả lời phân tích nhà cung cấp nâng cao.",
+            "unsupported_supplier_advanced",
+            "unknown",
+        )
+
+    target_context = any(token in q for token in ("target", "muc tieu", "budget", "ngan sach", "quota"))
+    target_conclusion = target_context and any(
+        token in q for token in ("co dat", "dat khong", "dat target", "dat muc tieu", "gap", "variance")
+    )
+    if target_conclusion:
+        return (
+            "unsupported:target_table_missing",
+            "Hiện ai-query chưa có target/budget table nên chưa thể kết luận đạt/chưa đạt mục tiêu. Bạn vẫn có thể hỏi projection doanh thu/lợi nhuận nếu không yêu cầu so với target.",
+            "unsupported_target_table",
+            "unknown",
+        )
+
+    return None
+
+
 def _is_hr_staff_question(question: str) -> bool:
     q = _fold_text(question)
     if any(
@@ -563,7 +843,7 @@ def _is_hr_staff_question(question: str) -> bool:
 
 def _deterministic_template_override(question: str) -> str | None:
     q = _fold_text(question)
-    categoryish = any(token in q for token in ("danh muc", "category", "nhom san pham", "nhom mon"))
+    category_template = _category_template_for_question(question)
     if re.search(r"\b(bao cao ban hang|cho xem doanh thu tuan nay)\b", q):
         return "T01_daily_revenue"
     if "xu huong doanh thu 30 ngay qua" in q or "daily revenue trend" in q:
@@ -575,10 +855,8 @@ def _deterministic_template_override(question: str) -> str | None:
         or (("outlet" in q or "cua hang" in q) and "doanh thu" in q and ("cao nhat" in q or "thap nhat" in q))
     ):
         return "T22_outlet_rank"
-    if ("dong gop" in q or "contribution" in q) and categoryish:
-        return "T17_category_contribution"
-    if categoryish and ("doanh thu" in q or "revenue" in q):
-        return "T03_revenue_by_category"
+    if category_template:
+        return category_template
     finance_template = _finance_template_for_question(question)
     if finance_template:
         return finance_template
@@ -616,6 +894,8 @@ def _deterministic_preflight(state: GraphState, question: str) -> GraphState | N
             intent="unknown",
             message="Yêu cầu này không thể xử lý vì vi phạm chính sách an toàn truy vấn.",
             trace_reason="adversarial_or_raw_sql",
+            response_kind="unsupported",
+            response_hints=["unsupported:unsafe_request"],
         )
 
     if _is_bare_metric(question):
@@ -627,7 +907,7 @@ def _deterministic_preflight(state: GraphState, question: str) -> GraphState | N
             trace_reason="bare_metric_missing_time",
         )
 
-    invalid_time = _invalid_time_reason(question)
+    invalid_time = invalid_time_reason(question)
     if invalid_time:
         return _commit_no_sql(
             state,
@@ -637,6 +917,19 @@ def _deterministic_preflight(state: GraphState, question: str) -> GraphState | N
             trace_reason=f"time_{invalid_time}",
         )
 
+    unsupported_scope = _unsupported_scope_for_question(question)
+    if unsupported_scope:
+        hint, message, trace_reason, intent = unsupported_scope
+        return _commit_no_sql(
+            state,
+            route="data_query",
+            intent=intent,
+            message=message,
+            trace_reason=trace_reason,
+            response_kind="unsupported",
+            response_hints=[hint],
+        )
+
     if _is_raw_payment_dump_request(question):
         return _commit_no_sql(
             state,
@@ -644,6 +937,8 @@ def _deterministic_preflight(state: GraphState, question: str) -> GraphState | N
             intent="revenue",
             message="Tôi không thể dump bảng thanh toán raw. Hãy hỏi một chỉ số tổng hợp theo thời gian/outlet.",
             trace_reason="raw_payment_dump",
+            response_kind="unsupported",
+            response_hints=["unsupported:unsafe_request"],
         )
 
     finance_template = _finance_template_for_question(question)
@@ -654,15 +949,19 @@ def _deterministic_preflight(state: GraphState, question: str) -> GraphState | N
             intent="pnl",
             message="Bạn không có quyền xem dữ liệu finance/payroll này.",
             trace_reason=f"finance_rbac_{finance_template}",
+            response_kind="unsupported",
+            response_hints=["unsupported:rbac_denied"],
         )
 
     if _is_hr_payroll_bulk_request(question) and not _has_role(state, {"hr", "finance", "admin", "superadmin"}):
         return _commit_no_sql(
             state,
-            route="clarification",
-            intent="unknown",
+            route="data_query",
+            intent="pnl",
             message="Bạn không có quyền xem payroll của toàn bộ nhân viên.",
             trace_reason="hr_payroll_rbac",
+            response_kind="unsupported",
+            response_hints=["unsupported:rbac_denied"],
         )
 
     if _is_hr_staff_question(question):
@@ -874,6 +1173,12 @@ def _intent_for_template(template_key: str | None) -> str | None:
     return intent_for_template(template_key)
 
 
+def _verified_query_shortcut(
+    *, question: str, intent: str | None, time_range: dict[str, str]
+) -> dict[str, Any] | None:
+    return _routing_verified_query_shortcut(question=question, intent=intent, time_range=time_range)
+
+
 def _blocked_outlet_contact_request(question: str) -> bool:
     q = _fold_text(question)
     has_outlet = "outlet" in q or "cua hang" in q or "chi nhanh" in q
@@ -966,13 +1271,13 @@ async def supervisor_agent(state: GraphState) -> GraphState:
     raw = str(state.get("raw_question") or "").strip()
     state.setdefault("trace", [])
 
-    if state.get("response_kind") == "clarification" and state.get("clarification_question"):
-        state["agent_route"] = "clarification"
+    if state.get("response_kind") in {"clarification", "unsupported"} and state.get("clarification_question"):
+        state["agent_route"] = state.get("agent_route") or "clarification"
         state["intent"] = state.get("intent") or "unknown"
         state["needs_sql_writer"] = False
         state["template_key"] = None
         state["template_params"] = {}
-        state["trace"].append({"node": "supervisor_agent", "skipped": "preprocess_clarification"})
+        state["trace"].append({"node": "supervisor_agent", "skipped": "preprocess_refusal"})
         return state
 
     # ---- Pre-flight: standalone social → no LLM, no further nodes ----
@@ -998,19 +1303,18 @@ async def supervisor_agent(state: GraphState) -> GraphState:
         return deterministic_gate
 
     if _blocked_outlet_contact_request(current):
-        state["agent_route"] = "clarification"
-        state["intent"] = "unknown"
-        state["needs_sql_writer"] = False
-        state["template_key"] = None
-        state["template_params"] = {}
-        state["template_confidence"] = 0.0
-        state["response_kind"] = "clarification"
-        state["clarification_question"] = (
-            "Tôi không thể cung cấp address hoặc phone của outlet. "
-            "Bạn có thể hỏi danh sách outlet với mã/tên/trạng thái/khu vực."
+        return _commit_no_sql(
+            state,
+            route="clarification",
+            intent="unknown",
+            message=(
+                "Tôi không thể cung cấp address hoặc phone của outlet vì đây là projection nhạy cảm. "
+                "Bạn có thể hỏi danh sách outlet với mã/tên/trạng thái/khu vực."
+            ),
+            trace_reason="outlet_contact_columns",
+            response_kind="unsupported",
+            response_hints=["unsupported:sensitive_projection"],
         )
-        state["trace"].append({"node": "supervisor_agent", "blocked": "outlet_contact_columns"})
-        return state
 
     time_ctx = build_time_context(
         current_question=current,
@@ -1025,58 +1329,72 @@ async def supervisor_agent(state: GraphState) -> GraphState:
     state["time_context"] = time_ctx
     state["time_range"] = deterministic_time
 
+    deterministic_shortcut = (
+        deterministic_ai_sales_daily_outlet_shortcut(current)
+        or deterministic_category_template_shortcut(current, deterministic_time)
+    )
+
     # ---- Pre-flight: verified-query asset (regex) → bypass LLM matching ----
     intent_hint = state.get("intent")
-    driver_v = _revenue_driver_bridge_verified(current, ctx)
-    verified = driver_v or _verified_query_shortcut(
-        question=current, intent=intent_hint, time_range=deterministic_time
+    driver_v = None if deterministic_shortcut else _revenue_driver_bridge_verified(current, ctx)
+    verified = None if deterministic_shortcut else (
+        driver_v
+        or _verified_query_shortcut(question=current, intent=intent_hint, time_range=deterministic_time)
     )
     template_override = _deterministic_template_override(current)
 
     # ---- LLM call (always run for route + entities + intent normalisation) ----
-    user_prompt = (
-        f"Câu hỏi: {current}\n"
-        f"Ngữ cảnh hội thoại gần đây:\n{ctx}\n" if ctx else f"Câu hỏi: {current}\n"
-    )
-    user_prompt += f"\nGợi ý thời gian backend đã giải mã: {deterministic_time}"
-    if verified:
-        user_prompt += (
-            f"\nĐã match verified template `{verified['template_key']}`; "
-            f"hãy giữ nguyên `template_key`/`template_params` này."
+    if deterministic_shortcut:
+        parsed, usage = deterministic_shortcut, {
+            "latency_ms": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "shortcut": f"deterministic_{deterministic_shortcut.get('template_key')}",
+        }
+    else:
+        user_prompt = (
+            f"Câu hỏi: {current}\n"
+            f"Ngữ cảnh hội thoại gần đây:\n{ctx}\n" if ctx else f"Câu hỏi: {current}\n"
         )
+        user_prompt += f"\nGợi ý thời gian backend đã giải mã: {deterministic_time}"
+        if verified:
+            user_prompt += (
+                f"\nĐã match verified template `{verified['template_key']}`; "
+                f"hãy giữ nguyên `template_key`/`template_params` này."
+            )
 
-    try:
-        parsed, usage = await llm_call_json(
-            system_prompt=_system_prompt(),
-            user_prompt=user_prompt,
-            json_schema=_SUPERVISOR_SCHEMA,
-            temperature=0.1,
-            max_tokens=600,
-            agent="supervisor",
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("supervisor_agent LLM failed, falling back to verified-only: %s", exc)
-        parsed, usage = (
-            {
-                "route": "clarification" if not verified else "data_query",
-                "intent": intent_hint or "unknown",
-                "confidence": 0.0,
-                "time_range": deterministic_time,
-                "raw_entities": {
-                    "outlet_names": [],
-                    "product_names": [],
-                    "categories": [],
-                    "employee_names": [],
+        try:
+            parsed, usage = await llm_call_json(
+                system_prompt=build_supervisor_system_prompt(),
+                user_prompt=user_prompt,
+                json_schema=SUPERVISOR_SCHEMA,
+                temperature=0.1,
+                max_tokens=600,
+                agent="supervisor",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("supervisor_agent LLM failed, falling back to verified-only: %s", exc)
+            parsed, usage = (
+                {
+                    "route": "clarification" if not verified else "data_query",
+                    "intent": intent_hint or "unknown",
+                    "confidence": 0.0,
+                    "time_range": deterministic_time,
+                    "raw_entities": {
+                        "outlet_names": [],
+                        "product_names": [],
+                        "categories": [],
+                        "employee_names": [],
+                    },
+                    "template_key": verified["template_key"] if verified else None,
+                    "template_params": verified["template_params"] if verified else {},
+                    "needs_sql_writer": False,
+                    "clarification_question": None
+                    if verified
+                    else "Bạn vui lòng diễn đạt lại câu hỏi với khoảng thời gian rõ hơn nhé.",
                 },
-                "template_key": verified["template_key"] if verified else None,
-                "template_params": verified["template_params"] if verified else {},
-                "needs_sql_writer": False,
-                "clarification_question": None
-                if verified
-                else "Bạn vui lòng diễn đạt lại câu hỏi với khoảng thời gian rõ hơn nhé.",
-            },
-            {"error": type(exc).__name__, "latency_ms": 0, "tokens_in": 0, "tokens_out": 0},
-        )
+                {"error": type(exc).__name__, "latency_ms": 0, "tokens_in": 0, "tokens_out": 0},
+            )
 
     # ---- Apply deterministic time override when the user actually expressed time ----
     user_expressed_time = has_time_expression(current) or has_time_expression(raw)
@@ -1091,13 +1409,24 @@ async def supervisor_agent(state: GraphState) -> GraphState:
 
     # ---- Normalise template_key against registry ----
     raw_template = parsed.get("template_key")
-    template_key = _normalise_template_key(raw_template)
-    if template_override:
+    template_key = normalise_template_key(raw_template)
+    verified_key = verified["template_key"] if verified else None
+    verified_is_core_insight = bool(
+        verified_key
+        and (
+            verified_key.startswith("INS_")
+            or verified_key.startswith("ANOM_")
+            or verified_key.startswith("FORECAST_")
+        )
+    )
+    if verified_is_core_insight:
+        template_key = verified["template_key"]
+    elif template_override:
         template_key = template_override
     elif verified:
         template_key = verified["template_key"]
 
-    template_params = _ensure_template_params(
+    template_params = ensure_template_params(
         template_key,
         verified["template_params"] if verified else parsed.get("template_params"),
         parsed.get("time_range") or deterministic_time,
@@ -1198,10 +1527,25 @@ async def supervisor_agent(state: GraphState) -> GraphState:
     }
     investigative_mode_flag = bool(investigative)
     if investigative and get_settings().investigative_mode_enabled:
-        bridge_tpl = _investigative_revenue_driver_bridge(current, ctx)
+        if template_key in {
+            "INS_SALES_DRIVER",
+            "INS_FINANCE_DRIVER",
+            "INS_INVENTORY_DRIVER",
+            "ANOM_SALES",
+            "ANOM_FINANCE",
+            "ANOM_INVENTORY",
+            "FORECAST_REVENUE",
+            "FORECAST_PROFIT",
+            "FORECAST_STOCK_COVER",
+            "T03_revenue_by_category",
+            "T17_category_contribution",
+        }:
+            needs_sql_writer = False
+            investigative_mode_flag = False
+        bridge_tpl = None if not investigative_mode_flag else _investigative_revenue_driver_bridge(current, ctx)
         if bridge_tpl:
             template_key, safe_params = bridge_tpl
-            template_params = _ensure_template_params(template_key, safe_params, {})
+            template_params = ensure_template_params(template_key, safe_params, {})
             needs_sql_writer = False
             intent = intent_for_route_and_template(
                 route=route,
@@ -1210,13 +1554,13 @@ async def supervisor_agent(state: GraphState) -> GraphState:
                 current_intent=intent,
             )
             investigative_mode_flag = False
-        else:
+        elif investigative_mode_flag:
             safe_trend = _investigative_safe_revenue_trend_template(
                 current, parsed.get("time_range") or deterministic_time
             )
             if safe_trend:
                 template_key, safe_params = safe_trend
-                template_params = _ensure_template_params(
+                template_params = ensure_template_params(
                     template_key,
                     safe_params,
                     parsed.get("time_range") or deterministic_time,
@@ -1237,7 +1581,7 @@ async def supervisor_agent(state: GraphState) -> GraphState:
                 template_params = {}
                 needs_sql_writer = True
 
-    template_params = _apply_question_derived_template_params(template_key, template_params, current)
+    template_params = apply_question_derived_template_params(template_key, template_params, current)
 
     # ---- Commit to state ----
     from app.agents.personas import detect_audience as _detect_audience  # avoid circular at import time

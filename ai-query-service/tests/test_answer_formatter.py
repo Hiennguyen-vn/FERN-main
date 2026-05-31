@@ -15,6 +15,26 @@ def test_safe_answer_facts_includes_all_rows_when_under_cap():
     assert facts["rows_summary"]["full_row_count"] == 10
     assert facts["rows_summary"]["preview_includes_all_rows"] is True
     assert len(facts["preview_rows"]) == 10
+
+
+@pytest.mark.asyncio
+async def test_answer_formatter_standardizes_unsupported_answer():
+    state = {
+        "response_kind": "unsupported",
+        "clarification_question": "Hiện ai-query chưa bật mart cash-control.",
+        "response_hints": ["unsupported:cash_control_not_enabled"],
+        "trace": [],
+    }
+
+    out = await af.answer_formatter(state)
+
+    assert out["response_kind"] == "unsupported"
+    assert "Hiện ai-query chưa bật mart cash-control." in out["answer_text"]
+    assert "sales, finance, inventory" in out["answer_text"]
+    assert "data_source_context" not in out
+    assert out["trace"][-1]["source"] == "direct_unsupported"
+
+
 async def test_answer_formatter_falls_back_when_llm_fails(monkeypatch):
     async def fail_llm(**_kwargs):
         raise TimeoutError("slow")
@@ -25,7 +45,7 @@ async def test_answer_formatter_falls_back_when_llm_fails(monkeypatch):
         "normalized_question": "Doanh thu theo cửa hàng",
         "guard_passed": True,
         "raw_result": [{"outlet_id": 1, "net_revenue": 120000, "txn_count": 12}],
-        "template_key": "T03_revenue_by_category",
+        "template_key": None,
         "trace": [],
     }
 
@@ -34,8 +54,43 @@ async def test_answer_formatter_falls_back_when_llm_fails(monkeypatch):
     assert out["response_kind"] == "answer"
     assert "1 dòng dữ liệu" in out["answer_text"]
     assert "net_revenue=120,000" in out["answer_text"]
-    assert out["citations"] == [{"row_count": 1, "template": "T03_revenue_by_category"}]
+    assert out["citations"] == [{"row_count": 1, "template": None}]
     assert out["trace"][-1]["fallback"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("template_key", "question", "expected"),
+    [
+        ("T03_revenue_by_category", "Outlet VN-HN-1 mạnh/yếu ở nhóm sản phẩm nào?", "nhóm mạnh nhất là Đồ uống"),
+        ("T17_category_contribution", "Nhóm sản phẩm nào đóng góp doanh thu cao nhất tuần này?", "chiếm 50,00%"),
+    ],
+)
+async def test_answer_formatter_uses_deterministic_category_mix(monkeypatch, template_key, question, expected):
+    async def fail_if_called(**_kwargs):
+        raise AssertionError("formatter LLM should not be called for deterministic category mix")
+
+    monkeypatch.setattr(af, "llm_call_text", fail_if_called)
+
+    state = {
+        "normalized_question": question,
+        "time_range": {"from_date": "2026-05-13", "to_date": "2026-05-19"},
+        "allowed_outlet_ids": [3491812500481523713],
+        "guard_passed": True,
+        "raw_result": [
+            {"category_code": "BEV", "category_name": "Đồ uống", "revenue": 5000000, "qty": 100, "revenue_share": 0.5},
+            {"category_code": "FOOD", "category_name": "Món chính", "revenue": 3200000, "qty": 55, "revenue_share": 0.32},
+            {"category_code": "SIDE", "category_name": "Ăn nhẹ", "revenue": 1800000, "qty": 40, "revenue_share": 0.18},
+        ],
+        "template_key": template_key,
+        "trace": [],
+    }
+
+    out = await af.answer_formatter(state)
+
+    assert expected in out["answer_text"]
+    assert "10.000.000 đ" in out["answer_text"]
+    assert out["trace"][-1]["source"] == "deterministic_category_mix"
 
 
 @pytest.mark.asyncio
@@ -63,6 +118,8 @@ async def test_answer_formatter_uses_deterministic_revenue_by_outlet(monkeypatch
     assert "2/3 cửa hàng" in out["answer_text"]
     assert "3.300.000 đ" in out["answer_text"]
     assert "Outlet 2" in out["answer_text"]
+    assert "Cửa hàng dẫn đầu là Outlet 2" in out["answer_text"]
+    assert "2:" not in out["answer_text"]
     assert out["trace"][-1]["source"] == "deterministic_revenue_by_outlet"
 
 
@@ -147,6 +204,70 @@ async def test_answer_formatter_uses_actual_range_when_rows_have_no_date_and_cov
     assert "2026-04-30 đến 2026-05-02" in first_line
     assert "2026-05-06" not in first_line
     assert "bạn hỏi đến 2026-05-06" in out["answer_text"]
+
+
+@pytest.mark.asyncio
+async def test_answer_formatter_stock_cover_uses_snapshot_and_consumption_window(monkeypatch):
+    async def fail_if_called(**_kwargs):
+        raise AssertionError("formatter LLM should not be called for stock cover forecast")
+
+    monkeypatch.setattr(af, "llm_call_text", fail_if_called)
+
+    state = {
+        "normalized_question": "Tồn kho hiện tại đủ bán được bao lâu?",
+        "time_range": {"from_date": "2026-04-21", "to_date": "2026-05-02"},
+        "template_params": {"from_date": "2026-04-21", "to_date": "2026-05-02"},
+        "allowed_outlet_ids": [1, 2, 3, 4],
+        "guard_passed": True,
+        "raw_result": [
+            {
+                "outlet_id": 1,
+                "item_id": 101,
+                "snapshot_date": "2026-05-02",
+                "qty_on_hand": -54,
+                "avg_daily_consumption": 0.1428,
+                "days_of_cover": -378.1512,
+            },
+            {
+                "outlet_id": 2,
+                "item_id": 102,
+                "snapshot_date": "2026-05-02",
+                "qty_on_hand": 12,
+                "avg_daily_consumption": 3,
+                "days_of_cover": 4,
+            },
+        ],
+        "template_key": "FORECAST_STOCK_COVER",
+        "data_coverage_context": {
+            "datasets": [
+                {
+                    "source": "clickhouse",
+                    "dataset": "analytics.ai_inventory_on_hand_daily",
+                    "min_date": "2025-07-02",
+                    "max_date": "2026-05-02",
+                    "row_count": 89877,
+                },
+                {
+                    "source": "clickhouse",
+                    "dataset": "analytics.ai_inventory_movement_daily",
+                    "min_date": "2025-07-02",
+                    "max_date": "2026-05-02",
+                    "row_count": 157346,
+                },
+            ],
+            "errors": [],
+        },
+        "trace": [],
+    }
+
+    out = await af.answer_formatter(state)
+
+    assert "tồn âm 54 đơn vị" in out["answer_text"]
+    assert "cover -378" not in out["answer_text"]
+    assert "days-of-cover âm là dấu hiệu tồn âm/thiếu hàng" in out["answer_text"]
+    assert "snapshot tồn kho 2026-05-02" in out["answer_text"]
+    assert "cửa sổ tiêu thụ 2026-04-05 đến 2026-05-02" in out["answer_text"]
+    assert "2026-04-21 đến 2026-05-02" not in out["answer_text"]
 
 
 @pytest.mark.asyncio
@@ -329,6 +450,64 @@ async def test_answer_formatter_uses_deterministic_outlet_directory(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_answer_formatter_uses_deterministic_ai_sales_daily_outlets(monkeypatch):
+    async def fail_if_called(**_kwargs):
+        raise AssertionError("formatter LLM should not be called for ai_sales_daily outlet list")
+
+    monkeypatch.setattr(af, "llm_call_text", fail_if_called)
+
+    state = {
+        "normalized_question": "Nguồn dữ liệu analytics.ai_sales_daily có những cửa hàng nào",
+        "time_range": {"from_date": "", "to_date": ""},
+        "allowed_outlet_ids": [1, 2],
+        "guard_passed": True,
+        "raw_result": [
+            {
+                "outlet_id": 1,
+                "outlet_code": "VN-HN-1",
+                "outlet_name": "Outlet VN-HN-1",
+                "outlet_status": "active",
+                "first_business_date": "2025-07-02",
+                "last_business_date": "2026-05-19",
+                "business_days": 322,
+            },
+            {
+                "outlet_id": 2,
+                "outlet_code": "VN-HCM-1",
+                "outlet_name": "Outlet VN-HCM-1",
+                "outlet_status": "active",
+                "first_business_date": "2025-07-02",
+                "last_business_date": "2026-05-19",
+                "business_days": 322,
+            },
+        ],
+        "template_key": "T37_ai_sales_daily_outlets",
+        "data_coverage_context": {
+            "datasets": [
+                {
+                    "source": "clickhouse",
+                    "dataset": "analytics.ai_sales_daily",
+                    "min_date": "2025-07-02",
+                    "max_date": "2026-05-19",
+                    "row_count": 3864,
+                }
+            ],
+            "errors": [],
+        },
+        "trace": [],
+    }
+
+    out = await af.answer_formatter(state)
+
+    assert "Có 2 cửa hàng có dữ liệu trong analytics.ai_sales_daily" in out["answer_text"]
+    assert "Dải dữ liệu theo business_date: 2025-07-02 đến 2026-05-19" in out["answer_text"]
+    assert "Outlet VN-HN-1" in out["answer_text"]
+    assert "Nguồn thời gian: business_date trong analytics.ai_sales_daily" in out["answer_text"]
+    assert "2026-05-20" not in out["answer_text"]
+    assert out["trace"][-1]["source"] == "deterministic_ai_sales_daily_outlets"
+
+
+@pytest.mark.asyncio
 async def test_answer_formatter_outlet_directory_single_row_is_detail(monkeypatch):
     async def fail_if_called(**_kwargs):
         raise AssertionError("formatter LLM should not be called for outlet detail")
@@ -479,7 +658,8 @@ async def test_answer_formatter_outside_coverage_does_not_present_aggregate_defa
     out = await af.answer_formatter(state)
 
     assert "hiện chưa có đủ dữ liệu cho 2025-04-01 đến 2025-04-30" in out["answer_text"]
-    assert "tự động thu hẹp" in out["answer_text"] or "snapshot" in out["answer_text"]
+    assert "tự động thu hẹp" not in out["answer_text"]
+    assert "không dùng số liệu của kỳ khác" in out["answer_text"]
     assert "1970" not in out["answer_text"]
     assert out["trace"][-1]["source"] == "coverage_outside"
 
@@ -743,8 +923,26 @@ async def test_answer_formatter_daily_pnl_warns_when_cost_columns_are_zero(monke
         "time_range": {"from_date": "2026-04-01", "to_date": "2026-04-30"},
         "guard_passed": True,
         "raw_result": [
-            {"business_date": "2026-04-01", "outlet_id": 1, "revenue": 1000000, "cogs": 0, "payroll_cost": 0, "operating_profit": 1000000},
-            {"business_date": "2026-04-02", "outlet_id": 1, "revenue": 2000000, "cogs": 0, "payroll_cost": 0, "operating_profit": 2000000},
+            {
+                "business_date": "2026-04-01",
+                "outlet_id": 1,
+                "revenue": 1000000,
+                "actual_or_theoretical_cogs": 0,
+                "goods_receipt_cost": 250000,
+                "payroll_cost": 0,
+                "expense_amount": 0,
+                "operating_profit": 1000000,
+            },
+            {
+                "business_date": "2026-04-02",
+                "outlet_id": 1,
+                "revenue": 2000000,
+                "actual_or_theoretical_cogs": 0,
+                "goods_receipt_cost": 0,
+                "payroll_cost": 0,
+                "expense_amount": 0,
+                "operating_profit": 2000000,
+            },
         ],
         "template_key": "T24_daily_pnl_summary",
         "trace": [],
@@ -753,7 +951,8 @@ async def test_answer_formatter_daily_pnl_warns_when_cost_columns_are_zero(monke
     out = await af.answer_formatter(state)
 
     assert "P&L" in out["answer_text"]
-    assert "giá vốn/chi phí lương đang bằng 0" in out["answer_text"]
+    assert "không được tự xem là COGS" in out["answer_text"]
+    assert "actual/theoretical COGS" in out["answer_text"]
     assert "chưa đủ tin cậy" in out["answer_text"]
 
 
@@ -776,7 +975,7 @@ async def test_answer_formatter_inventory_low_stock_does_not_hallucinate_product
             "datasets": [
                 {
                     "source": "clickhouse",
-                    "dataset": "analytics.fct_inventory_snapshot",
+                    "dataset": "analytics.ai_inventory_on_hand_daily",
                     "min_date": "2025-07-02",
                     "max_date": "2026-05-02",
                     "row_count": 89877,
@@ -816,7 +1015,7 @@ async def test_answer_formatter_inventory_current_latest_snapshot_has_no_today_g
             "datasets": [
                 {
                     "source": "clickhouse",
-                    "dataset": "analytics.fct_inventory_snapshot",
+                    "dataset": "analytics.ai_inventory_on_hand_daily",
                     "min_date": "2025-07-02",
                     "max_date": "2026-05-02",
                     "row_count": 89877,
@@ -933,7 +1132,7 @@ async def test_answer_formatter_llm_prompt_uses_answer_facts_not_template_or_sql
         "normalized_question": "báo cáo tùy chỉnh",
         "guard_passed": True,
         "raw_result": [{"category": "A", "value": 123}],
-        "template_key": "T03_revenue_by_category",
+        "template_key": None,
         "final_sql": "SELECT * FROM analytics.ai_sales_daily",
         "trace": [],
     }

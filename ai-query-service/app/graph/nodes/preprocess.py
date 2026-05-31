@@ -84,8 +84,9 @@ def preprocess(state: GraphState) -> GraphState:
         if p.search(text):
             state["agent_route"] = "clarification"
             state["intent"] = "unknown"
-            state["response_kind"] = "clarification"
+            state["response_kind"] = "unsupported"
             state["clarification_question"] = "Yêu cầu này không thể xử lý vì vi phạm chính sách an toàn truy vấn."
+            state["response_hints"] = ["unsupported:unsafe_request"]
             state["template_key"] = None
             state["template_params"] = {}
             state["needs_sql_writer"] = False

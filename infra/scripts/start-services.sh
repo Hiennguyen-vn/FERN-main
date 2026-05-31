@@ -63,6 +63,8 @@ else
   bash "${SCRIPT_DIR}/start.sh"
 fi
 
+stop_compose_local_mode_conflicts
+
 if ! $SKIP_BUILD; then
   echo ""
   print_banner "FERN Services - Building runnable jars"
@@ -100,7 +102,12 @@ for record in "${FERN_LOCAL_SERVICE_ORDER[@]}"; do
   fi
 
   if port_in_use "$port"; then
-    fail "Port ${port} is already in use. Stop the conflicting process before starting ${name}."
+    listener_summary="$(port_listener_summary "$port" || true)"
+    if [[ -n "$listener_summary" ]]; then
+      fail "Port ${port} is already in use by ${listener_summary}. Stop the conflicting process before starting ${name}."
+    else
+      fail "Port ${port} is already in use. Stop the conflicting process before starting ${name}."
+    fi
     exit 1
   fi
 

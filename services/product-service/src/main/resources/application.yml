@@ -6,8 +6,8 @@ spring:
     name: product-service
   servlet:
     multipart:
-      max-file-size: ${PRODUCT_IMAGE_MAX_FILE_SIZE:5MB}
-      max-request-size: ${PRODUCT_IMAGE_MAX_REQUEST_SIZE:6MB}
+      max-file-size: ${PRODUCT_IMAGE_MAX_FILE_SIZE:50MB}
+      max-request-size: ${PRODUCT_IMAGE_MAX_REQUEST_SIZE:55MB}
   threads:
     virtual:
       enabled: true

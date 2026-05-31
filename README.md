@@ -105,14 +105,14 @@ npm install
 npm run dev
 ```
 
-The frontend uses the Vite proxy by default and calls the gateway through `http://127.0.0.1:8082 -> http://127.0.0.1:8180`.
+The frontend uses the Vite proxy by default and calls the gateway through `http://127.0.0.1:8095 -> http://127.0.0.1:8080`.
 Override the proxy target with `VITE_DEV_PROXY_TARGET` if your local gateway is running elsewhere.
-The current checked-in Vite dev server default is `http://127.0.0.1:8082`, so use that port unless you override it explicitly.
+The current checked-in Vite dev server default is `http://127.0.0.1:8095`, so use that port unless you override it explicitly.
 The current frontend is read-first with selective write-safe operations: auth session lifecycle, a staff customer-order queue at exact `/order`, sales promotion creation/deactivation, admin payroll create/generate/approve actions, procurement queue actions, and a public QR/table ordering flow at `/order/{tableToken}` with public order-status now run through the real gateway-backed contracts. Remaining intentional follow-up areas are cursor pagination beyond the current paged `limit + offset` envelopes, truly permission-granular navigation, public POS payment, and deeper workflow edits beyond the current operational actions.
 
 Example local customer-ordering route after seeding:
 
-- `http://127.0.0.1:5173/order/tbl_hcm1_u7k29q`
+- `http://127.0.0.1:8095/order/tbl_hcm1_u7k29q`
 
 Run the internal simulator app in preview-only mode:
 

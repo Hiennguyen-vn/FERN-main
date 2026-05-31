@@ -22,7 +22,7 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 class ProductImageStorageTest {
 
-  private static final long MAX_SIZE_BYTES = 5L * 1024 * 1024;
+  private static final long MAX_SIZE_BYTES = 50L * 1024 * 1024;
 
   private final S3Client s3Client = mock(S3Client.class);
   private final ProductImageStorage storage = new ProductImageStorage(
@@ -70,7 +70,7 @@ class ProductImageStorageTest {
   }
 
   @Test
-  void uploadObjectRejectsImagesOverFiveMegabytes() {
+  void uploadObjectRejectsImagesOverConfiguredLimit() {
     ServiceException exception = assertThrows(
         ServiceException.class,
         () -> storage.uploadObject(123L, "image/png", "large.png", new byte[(int) MAX_SIZE_BYTES + 1])

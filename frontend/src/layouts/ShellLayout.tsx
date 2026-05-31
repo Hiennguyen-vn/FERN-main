@@ -6,6 +6,7 @@ import { TopBar } from '@/components/shell/TopBar';
 import { useAuth } from '@/auth/use-auth';
 import { orgApi } from '@/api/fern-api';
 import type {
+  ShellContext,
   ShellScope,
   ScopeLevel,
   ModuleFamily,
@@ -19,6 +20,7 @@ import {
   defaultScope,
   FAMILY_TO_PATH,
   filterAccessibleModules,
+  isKitchenDisplayOnlySession,
 } from '@/layouts/shell-layout-helpers';
 
 import { ScopeSelector } from '@/components/shell/ScopeSelector';
@@ -163,6 +165,7 @@ export default function ShellLayout() {
   ]);
 
   const visibleModules = useMemo(() => filterAccessibleModules(session), [session]);
+  const kitchenDisplayOnly = useMemo(() => isKitchenDisplayOnlySession(session), [session]);
 
   const accessibleFamilies = useMemo(
     () => collectAccessibleFamilies(session),
@@ -269,6 +272,16 @@ export default function ShellLayout() {
   }, [currentScope, scopeTree, searchParams]);
 
   const shellUser = useMemo(() => buildShellUser(session), [session]);
+  const shellContext = useMemo<ShellContext>(() => ({
+    scope: currentScope,
+    availableScopes: scopeTree,
+    user: shellUser,
+    modules: visibleModules,
+    permissions: Object.values(session?.permissionsByOutlet ?? {})
+      .flat()
+      .map((permission) => String(permission ?? '').trim())
+      .filter(Boolean),
+  }), [currentScope, scopeTree, shellUser, visibleModules, session?.permissionsByOutlet]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -288,6 +301,12 @@ export default function ShellLayout() {
   const meta = ROUTE_META[basePath] || { title: 'FERN', breadcrumbs: [] };
   const activeFamily = PATH_TO_FAMILY[basePath] as ModuleFamily | undefined;
   const defaultPath = visibleModules[0]?.path || '/dashboard';
+
+  useEffect(() => {
+    if (!kitchenDisplayOnly) return;
+    if (basePath === '/kitchen') return;
+    navigate('/kitchen', { replace: true });
+  }, [basePath, kitchenDisplayOnly, navigate]);
 
   useEffect(() => {
     if (!activeFamily) return;
@@ -344,6 +363,19 @@ export default function ShellLayout() {
     if (path) navigate(path);
   };
 
+  if (kitchenDisplayOnly) {
+    if (basePath !== '/kitchen') {
+      return (
+        <main className="h-screen bg-background" aria-label="Redirecting to kitchen display" />
+      );
+    }
+    return (
+      <main className="h-screen overflow-y-auto bg-background">
+        <Outlet context={shellContext} />
+      </main>
+    );
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <AppSidebar
@@ -370,7 +402,7 @@ export default function ShellLayout() {
         />
 
         <main className="flex-1 overflow-y-auto flex flex-col">
-          <Outlet context={{ scope: currentScope, user: shellUser }} />
+          <Outlet context={shellContext} />
         </main>
       </div>
 

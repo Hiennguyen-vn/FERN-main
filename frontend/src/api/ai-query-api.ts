@@ -12,6 +12,7 @@ export interface AiQueryRequest {
   question: string;
   session_id?: string;
   conversation_turns?: AiConversationTurn[];
+  requested_outlet_ids?: string[];
   /** 0 omits preview; backend caps at 50. */
   preview_max_rows?: number;
 }

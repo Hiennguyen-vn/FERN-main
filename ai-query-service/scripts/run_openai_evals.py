@@ -37,6 +37,7 @@ import asyncio
 import json
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,46 @@ from app.auth.context import AuthContext
 from app.evals.golden_cases import GOLDEN_CASES, GoldenCase
 from app.evals.runner import report_to_jsonl, run_eval_suite
 from app.evals.test_md_loader import load_cases
+
+
+@contextmanager
+def _temporary_env(overrides: dict[str, str]):
+    saved: dict[str, str | None] = {key: os.environ.get(key) for key in overrides}
+    try:
+        for key, value in overrides.items():
+            os.environ[key] = value
+        try:
+            from app.config import get_settings
+
+            get_settings.cache_clear()
+        except Exception:  # noqa: BLE001
+            pass
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        try:
+            from app.config import get_settings
+
+            get_settings.cache_clear()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _offline_eval_env() -> dict[str, str]:
+    return {
+        "OPENSEARCH_ENABLED": "false",
+        "OPENAI_EMBEDDINGS_ENABLED": "false",
+        "METADATA_CONTEXT_ENABLED": "false",
+        "CATALOG_DIGEST_ENABLED": "false",
+        "AGENT_KB_ENABLED": "false",
+        "REVIEWER_AGENT_ENABLED": "false",
+        "FOLLOWUP_SUGGESTIONS_ENABLED": "false",
+        "SESSION_ENRICHER_ENABLED": "false",
+    }
 
 
 def _build_auth(case: GoldenCase) -> AuthContext:
@@ -123,28 +164,29 @@ def _route_intent_only_invoker(case: GoldenCase):
         sm.llm_call_json = fake_llm
         stub = lambda _sql: []  # noqa: E731
         pg_stub = lambda *_args, **_kwargs: []  # noqa: E731
-        ch.execute_query = stub  # type: ignore[assignment]
-        tp.execute_query = stub  # type: ignore[assignment]
-        pg.execute_readonly = pg_stub  # type: ignore[assignment]
-        pg.search_outlets = pg_stub  # type: ignore[assignment]
-        try:
-            await supervisor_agent(state)
-            if state.get("agent_route") == "hr_staff" or state.get("intent") == "hr_staff":
-                provider = lambda: list(state["auth"].outlet_ids)  # noqa: E731
-                hr_node = hr_mod.make_hr_query(provider)
-                hr_node(state)
-            if state.get("template_key"):
-                provider = lambda: list(state["auth"].outlet_ids)  # noqa: E731
-                template_path = make_template_path(provider)
-                if state.get("agent_route") != "hr_staff":
-                    template_path(state)
-            return state
-        finally:
-            sm.llm_call_json = original_llm
-            ch.execute_query = original_exec_ch  # type: ignore[assignment]
-            tp.execute_query = original_exec_tp  # type: ignore[assignment]
-            pg.execute_readonly = original_pg_readonly  # type: ignore[assignment]
-            pg.search_outlets = original_pg_search_outlets  # type: ignore[assignment]
+        with _temporary_env(_offline_eval_env()):
+            ch.execute_query = stub  # type: ignore[assignment]
+            tp.execute_query = stub  # type: ignore[assignment]
+            pg.execute_readonly = pg_stub  # type: ignore[assignment]
+            pg.search_outlets = pg_stub  # type: ignore[assignment]
+            try:
+                await supervisor_agent(state)
+                if state.get("agent_route") == "hr_staff" or state.get("intent") == "hr_staff":
+                    provider = lambda: list(state["auth"].outlet_ids)  # noqa: E731
+                    hr_node = hr_mod.make_hr_query(provider)
+                    hr_node(state)
+                if state.get("template_key"):
+                    provider = lambda: list(state["auth"].outlet_ids)  # noqa: E731
+                    template_path = make_template_path(provider)
+                    if state.get("agent_route") != "hr_staff":
+                        template_path(state)
+                return state
+            finally:
+                sm.llm_call_json = original_llm
+                ch.execute_query = original_exec_ch  # type: ignore[assignment]
+                tp.execute_query = original_exec_tp  # type: ignore[assignment]
+                pg.execute_readonly = original_pg_readonly  # type: ignore[assignment]
+                pg.search_outlets = original_pg_search_outlets  # type: ignore[assignment]
 
     return _run()
 
@@ -170,17 +212,9 @@ def _shadow_mock_invoker(case: GoldenCase):
     import app.graph.nodes.data_coverage as dc
 
     from app.agents import build_agent_graph
-    from app.config import Settings
-
-    import app.config as cfg_mod
     import app.llm.openai_client as oc_mod
 
-    # SQL Writer mocks only Chat Completions; force chat mode here so Responses
-    # paths never hit the real gateway when developers use OPENAI_API_MODE=responses.
-    _saved_settings = cfg_mod._settings
     _saved_client = oc_mod._client
-    _base_settings = _saved_settings if _saved_settings is not None else Settings()
-    cfg_mod._settings = _base_settings.model_copy(update={"openai_api_mode": "chat"})
     oc_mod._client = None
 
     # ── stub ClickHouse everywhere it's imported ──────────────────────────────
@@ -389,7 +423,11 @@ def _shadow_mock_invoker(case: GoldenCase):
     if original_chat_tools is not None:
         sw_mod.llm_call_chat_with_tools = fake_llm_chat_with_tools  # type: ignore[assignment]
 
-    graph = build_agent_graph(all_outlet_ids_provider=None)
+    shadow_mock_env = dict(_offline_eval_env())
+    shadow_mock_env["OPENAI_API_MODE"] = "chat"
+
+    with _temporary_env(shadow_mock_env):
+        graph = build_agent_graph(all_outlet_ids_provider=None)
 
     async def _run():
         state = _build_state(case)
@@ -405,37 +443,162 @@ def _shadow_mock_invoker(case: GoldenCase):
         return result
 
     async def _run_safe():
-        try:
-            return await _run()
-        except Exception as exc:  # noqa: BLE001
-            # PreprocessError and similar node exceptions propagate out of
-            # LangGraph when the node is synchronous (run_in_executor). Catch
-            # them and synthesise a state that reflects the blocked outcome.
-            err_msg = str(exc)
-            route = "error"
-            if is_adversarial or is_blocked_col:
-                # Normalise adversarial preprocess blocks to "clarification"
-                route = "clarification"
-            return {
-                "agent_route": route,
-                "social_kind": None,
-                "final_sql": None,
-                "execution_error": err_msg,
-                "trace": [{"node": "preprocess", "error": err_msg[:200]}],
-            }
-        finally:
-            sm.llm_call_json = original_supervisor_llm  # type: ignore[assignment]
-            if original_chat_tools is not None:
-                sw_mod.llm_call_chat_with_tools = original_chat_tools  # type: ignore[assignment]
-            cfg_mod._settings = _saved_settings
-            oc_mod._client = _saved_client
+        with _temporary_env(shadow_mock_env):
+            try:
+                return await _run()
+            except Exception as exc:  # noqa: BLE001
+                # PreprocessError and similar node exceptions propagate out of
+                # LangGraph when the node is synchronous (run_in_executor). Catch
+                # them and synthesise a state that reflects the blocked outcome.
+                err_msg = str(exc)
+                route = "error"
+                if is_adversarial or is_blocked_col:
+                    # Normalise adversarial preprocess blocks to "clarification"
+                    route = "clarification"
+                return {
+                    "agent_route": route,
+                    "social_kind": None,
+                    "final_sql": None,
+                    "execution_error": err_msg,
+                    "trace": [{"node": "preprocess", "error": err_msg[:200]}],
+                }
+            finally:
+                sm.llm_call_json = original_supervisor_llm  # type: ignore[assignment]
+                if original_chat_tools is not None:
+                    sw_mod.llm_call_chat_with_tools = original_chat_tools  # type: ignore[assignment]
+                oc_mod._client = _saved_client
 
     return _run_safe()
 
 
-def _full_invoker(case: GoldenCase, *, skip_clickhouse: bool):
-    """Shadow / full mode: drive the compiled graph (real OpenAI calls)."""
-    from app.agents import build_agent_graph
+def _legacy_mock_invoker(case: GoldenCase):
+    """Legacy graph with deterministic stubs for offline parity checks."""
+    import app.clients.clickhouse as ch
+    import app.clients.postgres as pg
+    import app.graph.nodes.answer_formatter as af
+    import app.graph.nodes.data_coverage as dc
+    import app.graph.nodes.entity_resolver as er
+    import app.graph.nodes.executor as ex
+    import app.graph.nodes.hr_query as hr
+    import app.graph.nodes.metadata_context as mc
+    import app.graph.nodes.query_reasoner as qr
+    import app.graph.nodes.supervisor as sup
+    import app.graph.nodes.template_matcher as tm
+
+    from app.graph.builder import build_graph
+
+    async def fake_supervisor_llm(**_kwargs):
+        return (
+            {
+                "agent_route": case.expected_route or "data_query",
+                "intent": case.expected_intent or "unknown",
+                "confidence": 0.95,
+                "evidence": [],
+                "ambiguities": [],
+                "time_range": {"from_date": "2026-04-01", "to_date": "2026-04-30"},
+                "raw_entities": {
+                    "outlet_names": [],
+                    "product_names": [],
+                    "categories": [],
+                    "employee_names": [],
+                },
+            },
+            {"tokens_in": 10, "tokens_out": 10, "latency_ms": 5},
+        )
+
+    async def fake_template_llm(**_kwargs):
+        return (
+            {
+                "template_key": case.expected_template_key,
+                "params": {"from_date": "2026-04-01", "to_date": "2026-04-30", "limit": None, "threshold": None},
+                "confidence": 0.95,
+                "missing_info": [],
+            },
+            {"tokens_in": 10, "tokens_out": 10, "latency_ms": 5},
+        )
+
+    async def fake_reasoner_llm(**_kwargs):
+        return (
+            {
+                "selected_domain": "sales",
+                "selected_metric_ids": [],
+                "selected_dataset_candidates": [],
+                "required_slots": [],
+                "missing_slots": [],
+                "recommended_template_keys": [case.expected_template_key] if case.expected_template_key else [],
+                "reject_reason_vi": "",
+                "problem_paraphrase_vi": case.question,
+                "grain_hypothesis_vi": "",
+            },
+            {"tokens_in": 10, "tokens_out": 10, "latency_ms": 5},
+        )
+
+    async def fake_formatter_llm(**_kwargs):
+        return ("OK", {"tokens_in": 10, "tokens_out": 10, "latency_ms": 5})
+
+    restore = [
+        (sup, "llm_call_json", sup.llm_call_json),
+        (tm, "llm_call_json", tm.llm_call_json),
+        (qr, "llm_call_json", qr.llm_call_json),
+        (af, "llm_call_text", getattr(af, "llm_call_text", None)),
+        (ch, "execute_query", ch.execute_query),
+        (ch, "execute_query_with_settings", ch.execute_query_with_settings),
+        (ch, "explain_syntax", ch.explain_syntax),
+        (ch, "explain_pipeline", ch.explain_pipeline),
+        (pg, "execute_readonly", pg.execute_readonly),
+        (pg, "search_outlets", pg.search_outlets),
+        (dc, "execute_query", dc.execute_query),
+        (ex, "execute_query", ex.execute_query),
+        (hr, "pg", hr.pg),
+        (mc, "hybrid_search_metadata", mc.hybrid_search_metadata),
+        (er, "hybrid_search_aliases", er.hybrid_search_aliases),
+        (er, "fetch_outlet_id_by_name_like", er.fetch_outlet_id_by_name_like),
+        (er, "fetch_outlet_id_by_code_exact", er.fetch_outlet_id_by_code_exact),
+        (tm, "hybrid_search_templates", tm.hybrid_search_templates),
+    ]
+
+    sup.llm_call_json = fake_supervisor_llm  # type: ignore[assignment]
+    tm.llm_call_json = fake_template_llm  # type: ignore[assignment]
+    qr.llm_call_json = fake_reasoner_llm  # type: ignore[assignment]
+    if getattr(af, "llm_call_text", None) is not None:
+        af.llm_call_text = fake_formatter_llm  # type: ignore[assignment]
+    ch.execute_query = lambda _sql: []  # type: ignore[assignment]
+    ch.execute_query_with_settings = lambda _sql, settings=None: []  # type: ignore[assignment]
+    ch.explain_syntax = lambda _sql, **_kw: (True, "")  # type: ignore[assignment]
+    ch.explain_pipeline = lambda _sql, **_kw: (True, "")  # type: ignore[assignment]
+    pg.execute_readonly = lambda *_a, **_kw: []  # type: ignore[assignment]
+    pg.search_outlets = lambda *_a, **_kw: []  # type: ignore[assignment]
+    dc.execute_query = lambda _sql: []  # type: ignore[assignment]
+    ex.execute_query = lambda _sql: []  # type: ignore[assignment]
+    hr.pg = pg  # type: ignore[assignment]
+    mc.hybrid_search_metadata = lambda **_kw: []  # type: ignore[assignment]
+    er.hybrid_search_aliases = lambda **_kw: []  # type: ignore[assignment]
+    er.fetch_outlet_id_by_name_like = lambda *_a, **_kw: []  # type: ignore[assignment]
+    er.fetch_outlet_id_by_code_exact = lambda *_a, **_kw: []  # type: ignore[assignment]
+    tm.hybrid_search_templates = lambda **_kw: []  # type: ignore[assignment]
+
+    with _temporary_env(_offline_eval_env()):
+        graph = build_graph(all_outlet_ids_provider=None)
+
+    async def _run():
+        with _temporary_env(_offline_eval_env()):
+            try:
+                state = _build_state(case)
+                return await graph.ainvoke(state)
+            finally:
+                for module, name, value in restore:
+                    if value is not None:
+                        setattr(module, name, value)
+
+    return _run()
+
+
+def _full_invoker(case: GoldenCase, *, skip_clickhouse: bool, use_agent_pipeline: bool):
+    """Shadow / full mode: drive the selected compiled graph (real OpenAI calls)."""
+    if use_agent_pipeline:
+        from app.agents import build_agent_graph
+    else:
+        from app.graph.builder import build_graph as build_agent_graph
 
     restore: list[tuple[Any, str, Any]] = []
 
@@ -500,6 +663,28 @@ def _full_invoker(case: GoldenCase, *, skip_clickhouse: bool):
                 setattr(module, name, value)
 
     return _run()
+
+
+def _compare_markdown(mode: str, left: dict[str, Any], right: dict[str, Any]) -> str:
+    def _sum(report: dict[str, Any]) -> dict[str, Any]:
+        return report["summary"]
+
+    a = _sum(left)
+    b = _sum(right)
+    lines = [
+        f"# Pipeline compare ({mode})",
+        "",
+        "| Metric | Legacy | Finch agent |",
+        "|---|---:|---:|",
+        f"| Pass rate | {a['pass_rate']*100:.1f}% | {b['pass_rate']*100:.1f}% |",
+        f"| Passed cases | {a['passed']}/{a['total']} | {b['passed']}/{b['total']} |",
+        f"| Latency p50 | {a['p50_latency_ms']}ms | {b['p50_latency_ms']}ms |",
+        f"| Latency p95 | {a['p95_latency_ms']}ms | {b['p95_latency_ms']}ms |",
+        f"| Tokens in | {a['total_tokens']['in']:,} | {b['total_tokens']['in']:,} |",
+        f"| Tokens out | {a['total_tokens']['out']:,} | {b['total_tokens']['out']:,} |",
+        f"| Tokens cached | {a['total_tokens']['cached']:,} | {b['total_tokens']['cached']:,} |",
+    ]
+    return "\n".join(lines)
 
 
 def _markdown_summary(report: dict[str, Any]) -> str:
@@ -576,43 +761,40 @@ async def _async_main(args) -> int:
         print("no cases match filters", file=sys.stderr)
         return 2
 
-    if args.mode == "local":
-        # Local mode can't drive the Codex SQL Writer Agent (no real LLM),
-        # so we skip cases that expect SQL but lack a deterministic template.
-        before = len(cases)
-        cases = [
-            c
-            for c in cases
-            if not (c.expects_sql and c.expected_template_key is None)
-        ]
-        skipped = before - len(cases)
-        if skipped:
-            print(
-                f"local mode: skipping {skipped} case(s) that require SQL Writer Agent",
-                file=sys.stderr,
-            )
-        invoke = _route_intent_only_invoker
-    elif args.mode == "shadow-mock":
-        # Full graph, deterministic mock LLM + stubbed ClickHouse. No API key needed.
-        print("shadow-mock: running full graph with deterministic LLM mock (no API key required)",
-              file=sys.stderr)
-        invoke = _shadow_mock_invoker
-    elif args.mode == "shadow":
-        invoke = lambda c: _full_invoker(c, skip_clickhouse=True)  # noqa: E731
-    elif args.mode == "full":
-        if os.getenv("RUN_GOLDEN") != "1":
-            print("--mode full requires RUN_GOLDEN=1 in env", file=sys.stderr)
-            return 2
-        invoke = lambda c: _full_invoker(c, skip_clickhouse=False)  # noqa: E731
-    else:
-        print(f"unknown mode {args.mode!r}", file=sys.stderr)
-        return 2
+    async def _build_report(pipeline: str) -> dict[str, Any]:
+        if args.mode == "local":
+            before = len(cases)
+            selected_cases = [c for c in cases if not (c.expects_sql and c.expected_template_key is None)]
+            skipped = before - len(selected_cases)
+            if skipped and pipeline == args.pipeline:
+                print(f"local mode: skipping {skipped} case(s) that require SQL Writer Agent", file=sys.stderr)
+            invoke_local = _legacy_mock_invoker if pipeline == "legacy" else _route_intent_only_invoker
+        elif args.mode == "shadow-mock":
+            if pipeline == args.pipeline:
+                print("shadow-mock: running full graph with deterministic LLM mock (no API key required)", file=sys.stderr)
+            selected_cases = list(cases)
+            invoke_local = _legacy_mock_invoker if pipeline == "legacy" else _shadow_mock_invoker
+        elif args.mode == "shadow":
+            selected_cases = list(cases)
+            invoke_local = lambda c: _full_invoker(c, skip_clickhouse=True, use_agent_pipeline=pipeline != "legacy")  # noqa: E731
+        elif args.mode == "full":
+            if os.getenv("RUN_GOLDEN") != "1":
+                raise RuntimeError("--mode full requires RUN_GOLDEN=1 in env")
+            selected_cases = list(cases)
+            invoke_local = lambda c: _full_invoker(c, skip_clickhouse=False, use_agent_pipeline=pipeline != "legacy")  # noqa: E731
+        else:
+            raise RuntimeError(f"unknown mode {args.mode!r}")
 
-    async def invoker(case: GoldenCase):
-        return await invoke(case)
+        async def invoker(case: GoldenCase):
+            return await invoke_local(case)
 
-    enable_rows_equiv = (args.mode == "full")
-    report = await run_eval_suite(cases, invoke_agent=invoker, enable_rows_equiv=enable_rows_equiv)
+        return await run_eval_suite(selected_cases, invoke_agent=invoker, enable_rows_equiv=(args.mode == "full"))
+
+    other_report: dict[str, Any] | None = None
+    report = await _build_report(args.pipeline)
+    if args.compare_pipelines:
+        other_pipeline = "legacy" if args.pipeline != "legacy" else "agent"
+        other_report = await _build_report(other_pipeline)
 
     if args.out:
         out_path = Path(args.out)
@@ -621,6 +803,9 @@ async def _async_main(args) -> int:
         print(f"wrote {out_path} ({out_path.stat().st_size} bytes)", file=sys.stderr)
 
     print(_markdown_summary(report))
+    if args.compare_pipelines and isinstance(other_report, dict):
+        print()
+        print(_compare_markdown(args.mode, other_report if args.pipeline != "legacy" else report, report if args.pipeline != "legacy" else other_report))
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -647,6 +832,8 @@ def main() -> int:
     p.add_argument("--out", help="write OpenAI Evals JSONL to this path")
     p.add_argument("--json", action="store_true", help="dump full report JSON to stdout")
     p.add_argument("--min-pass-rate", type=float, default=0.0, help="exit non-zero if below")
+    p.add_argument("--pipeline", choices=("agent", "legacy"), default="agent")
+    p.add_argument("--compare-pipelines", action="store_true", help="run both legacy and Finch agent pipelines and print a summary table")
     args = p.parse_args()
     return asyncio.run(_async_main(args))
 

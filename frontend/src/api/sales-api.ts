@@ -287,8 +287,11 @@ export interface CreateSalePayload {
     quantity: number;
     discountAmount: number;
     taxAmount: number;
-    note: null;
+    note: string | null;
     promotionIds: Array<string | number>;
+    variantId?: string | number;
+    variantName?: string | null;
+    modifierOptionIds?: Array<string | number>;
   }>;
 }
 

@@ -19,3 +19,14 @@ export function buildLineSubtitle(line: CartLine): string {
     .filter(Boolean)
     .join(' · ');
 }
+
+export function lineModifierDelta(line: CartLine): number {
+  if (line.modifiers && line.modifiers.length > 0) {
+    return line.modifiers.reduce((sum, modifier) => sum + (modifier.priceDelta || 0), 0);
+  }
+  return (line.sizePriceAdd ?? 0) + line.toppings.reduce((sum, topping) => sum + topping.priceAdd, 0);
+}
+
+export function lineUnitPrice(line: CartLine): number {
+  return line.basePrice + lineModifierDelta(line);
+}

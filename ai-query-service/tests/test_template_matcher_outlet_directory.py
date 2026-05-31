@@ -60,6 +60,30 @@ async def test_outlet_list_shortcut_unaccented_variant():
 
 
 @pytest.mark.asyncio
+async def test_ai_sales_daily_outlet_list_shortcut_avoids_llm(monkeypatch):
+    async def fail_llm(**_kwargs):
+        raise AssertionError("LLM matcher should not be called for ai_sales_daily outlet lookup")
+
+    monkeypatch.setattr(tm, "llm_call_json", fail_llm)
+
+    state = {
+        "normalized_question": "Nguồn dữ liệu analytics.ai_sales_daily có những cửa hàng nào",
+        "intent": "lookup",
+        "time_range": {"from_date": "2026-05-20", "to_date": "2026-05-20"},
+        "resolved_entities": {},
+        "conversation_context": "",
+        "trace": [],
+    }
+
+    out = await tm.template_matcher(state)
+
+    assert out["template_key"] == "T37_ai_sales_daily_outlets"
+    assert out["template_params"] == {}
+    assert out["response_kind"] == "answer"
+    assert out["trace"][-1]["shortcut"] == "T37_ai_sales_daily_outlets"
+
+
+@pytest.mark.asyncio
 async def test_outlet_detail_with_code_shortcuts_to_directory_template():
     state = {
         "normalized_question": "tôi muốn thông tin chi tiết của Outlet 1 - VN-HCM (SIM-SMALL-OUT-0001) - active",

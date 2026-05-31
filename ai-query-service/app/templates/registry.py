@@ -1,7 +1,10 @@
 from dataclasses import dataclass
 from pathlib import Path
+import threading
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
+
+from app.runtime_catalog import get_runtime_catalog_section
 
 
 SQL_DIR = Path(__file__).parent / "sql"
@@ -36,6 +39,11 @@ TEMPLATES: dict[str, TemplateMeta] = {
         ("from_date_a", "to_date_a", "from_date_b", "to_date_b"),
         (),
     ),
+    "T37_ai_sales_daily_outlets": TemplateMeta("T37_ai_sales_daily_outlets", (), ()),
+    # Core deterministic insights.
+    "INS_SALES_DRIVER": TemplateMeta("INS_SALES_DRIVER", ("from_date", "to_date"), ("limit",)),
+    "ANOM_SALES": TemplateMeta("ANOM_SALES", ("from_date", "to_date"), ("limit",)),
+    "FORECAST_REVENUE": TemplateMeta("FORECAST_REVENUE", ("from_date", "to_date"), ()),
     # Inventory (5)
     "T11_inventory_current_stock": TemplateMeta("T11_inventory_current_stock", (), ("limit",)),
     "T12_inventory_low_stock": TemplateMeta("T12_inventory_low_stock", (), ("threshold",)),
@@ -61,12 +69,53 @@ TEMPLATES: dict[str, TemplateMeta] = {
     "T25_expense_breakdown": TemplateMeta("T25_expense_breakdown", ("from_date", "to_date"), ()),
     "T26_goods_receipt_summary": TemplateMeta("T26_goods_receipt_summary", ("from_date", "to_date"), ()),
     "T27_payroll_cost_by_outlet": TemplateMeta("T27_payroll_cost_by_outlet", ("from_date", "to_date"), ()),
+    "INS_FINANCE_DRIVER": TemplateMeta("INS_FINANCE_DRIVER", ("from_date", "to_date"), ("limit",)),
+    "ANOM_FINANCE": TemplateMeta("ANOM_FINANCE", ("from_date", "to_date"), ("limit",)),
+    "FORECAST_PROFIT": TemplateMeta("FORECAST_PROFIT", ("from_date", "to_date"), ()),
     # Stock Events (1)
     "T29_stock_low_events": TemplateMeta("T29_stock_low_events", ("from_date", "to_date"), ()),
+    "INS_INVENTORY_DRIVER": TemplateMeta("INS_INVENTORY_DRIVER", ("from_date", "to_date"), ("limit",)),
+    "ANOM_INVENTORY": TemplateMeta("ANOM_INVENTORY", ("from_date", "to_date"), ("limit",)),
+    "FORECAST_STOCK_COVER": TemplateMeta("FORECAST_STOCK_COVER", ("from_date", "to_date"), ("limit",)),
 }
+
+_RUNTIME_LOCK = threading.RLock()
+_RUNTIME_VERSION: int | None = None
 
 
 _env: Environment | None = None
+
+
+def _decode_template_meta(key: str, raw: object) -> TemplateMeta | None:
+    if not isinstance(raw, dict):
+        return None
+    required = raw.get("required_params") or ()
+    optional = raw.get("optional_params") or ()
+    if not isinstance(required, (list, tuple)) or not isinstance(optional, (list, tuple)):
+        return None
+    return TemplateMeta(
+        key=str(raw.get("key") or key),
+        required_params=tuple(str(x) for x in required),
+        optional_params=tuple(str(x) for x in optional),
+    )
+
+
+def ensure_runtime_templates_loaded(*, force: bool = False) -> None:
+    global _RUNTIME_VERSION
+    with _RUNTIME_LOCK:
+        version, section = get_runtime_catalog_section("template_registry", force=force)
+        if not force and version == _RUNTIME_VERSION:
+            return
+        if isinstance(section, dict) and isinstance(section.get("templates"), dict):
+            parsed: dict[str, TemplateMeta] = {}
+            for key, raw in section["templates"].items():
+                meta = _decode_template_meta(str(key), raw)
+                if meta:
+                    parsed[str(key)] = meta
+            if parsed:
+                TEMPLATES.clear()
+                TEMPLATES.update(parsed)
+        _RUNTIME_VERSION = version
 
 
 def _get_env() -> Environment:
@@ -83,10 +132,12 @@ def _get_env() -> Environment:
 
 
 def list_templates() -> list[str]:
+    ensure_runtime_templates_loaded()
     return sorted(TEMPLATES.keys())
 
 
 def get_meta(key: str) -> TemplateMeta:
+    ensure_runtime_templates_loaded()
     if key not in TEMPLATES:
         raise KeyError(f"Unknown template: {key}")
     return TEMPLATES[key]
@@ -94,6 +145,7 @@ def get_meta(key: str) -> TemplateMeta:
 
 def render(key: str, *, outlet_ids: list[int], **params) -> str:
     """Render Jinja2 template with outlet_ids + params. outlet_ids must be list[int]."""
+    ensure_runtime_templates_loaded()
     if not isinstance(outlet_ids, list) or not all(isinstance(x, int) for x in outlet_ids):
         raise ValueError("outlet_ids must be list[int]")
     if not outlet_ids:
@@ -110,4 +162,5 @@ def render(key: str, *, outlet_ids: list[int], **params) -> str:
 
 
 def template_exists(key: str) -> bool:
+    ensure_runtime_templates_loaded()
     return key in TEMPLATES and (SQL_DIR / f"{key}.sql").exists()

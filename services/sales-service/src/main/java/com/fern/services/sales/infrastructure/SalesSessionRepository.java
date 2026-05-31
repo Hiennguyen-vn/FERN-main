@@ -137,25 +137,7 @@ public class SalesSessionRepository extends BaseRepository {
       if (!"open".equalsIgnoreCase(locked.status())) {
         throw ServiceException.conflict("Only open sessions can be closed");
       }
-      try (PreparedStatement chk = conn.prepareStatement(
-          """
-          SELECT COUNT(*) FROM core.sale_record
-          WHERE pos_session_id = ?
-            AND public_token IS NULL
-            AND status <> 'cancelled'::sale_order_status_enum
-            AND payment_status IN ('unpaid'::payment_status_enum, 'partially_paid'::payment_status_enum)
-          """
-      )) {
-        chk.setLong(1, sessionId);
-        try (ResultSet rs = chk.executeQuery()) {
-          if (rs.next()) {
-            int count = rs.getInt(1);
-            if (count > 0) {
-              throw ServiceException.conflict("SESSION_HAS_UNPAID_ORDERS:" + count);
-            }
-          }
-        }
-      }
+      ensureNoUnpaidOrders(conn, sessionId);
       try (PreparedStatement ps = conn.prepareStatement(
           """
           UPDATE core.pos_session
@@ -190,18 +172,20 @@ public class SalesSessionRepository extends BaseRepository {
       LockedPosSessionRecord lockedSession = lockPosSession(conn, sessionId)
           .orElseThrow(() -> ServiceException.notFound("POS session not found: " + sessionId));
       String sessionStatus = lockedSession.status().toLowerCase(Locale.ROOT);
-      if ("open".equals(sessionStatus)) {
-        throw ServiceException.conflict("Only closed sessions can be reconciled");
-      }
       if ("cancelled".equals(sessionStatus)) {
         throw ServiceException.conflict("Cancelled sessions cannot be reconciled");
       }
-      if (!"closed".equals(sessionStatus) && !"reconciled".equals(sessionStatus)) {
+      if (!"open".equals(sessionStatus) && !"closed".equals(sessionStatus) && !"reconciled".equals(sessionStatus)) {
         throw ServiceException.conflict("Session status does not allow reconciliation: " + lockedSession.status());
+      }
+      if ("open".equals(sessionStatus)) {
+        ensureNoUnpaidOrders(conn, sessionId);
+        requireCashCloseCount(request == null ? null : request.lines());
       }
 
       Instant now = clock.instant();
       Map<String, BigDecimal> expectedByMethod = paymentRepository.loadExpectedPaymentTotalsByMethod(conn, sessionId);
+      boolean hasExplicitCashCount = hasPaymentMethodLine(request == null ? null : request.lines(), "cash");
       Map<String, BigDecimal> actualByMethod = resolveActualPaymentTotals(
           request == null ? List.of() : request.lines(),
           expectedByMethod
@@ -229,6 +213,9 @@ public class SalesSessionRepository extends BaseRepository {
           reconciliationNote,
           lines
       );
+      if (hasExplicitCashCount) {
+        recordCloseCountMovement(conn, lockedSession, actualByMethod.get("cash"), actorUserId, now);
+      }
 
       try (PreparedStatement ps = conn.prepareStatement(
           """
@@ -251,6 +238,46 @@ public class SalesSessionRepository extends BaseRepository {
       return loadPosSessionReconciliation(conn, sessionId)
           .orElseThrow(() -> new IllegalStateException("Reconciled session payload not found"));
     });
+  }
+
+  private void ensureNoUnpaidOrders(Connection conn, long sessionId) throws Exception {
+    try (PreparedStatement chk = conn.prepareStatement(
+        """
+        SELECT COUNT(*) FROM core.sale_record
+        WHERE pos_session_id = ?
+          AND public_token IS NULL
+          AND status <> 'cancelled'::sale_order_status_enum
+          AND payment_status IN ('unpaid'::payment_status_enum, 'partially_paid'::payment_status_enum)
+        """
+    )) {
+      chk.setLong(1, sessionId);
+      try (ResultSet rs = chk.executeQuery()) {
+        if (rs.next()) {
+          int count = rs.getInt(1);
+          if (count > 0) {
+            throw ServiceException.conflict("SESSION_HAS_UNPAID_ORDERS:" + count);
+          }
+        }
+      }
+    }
+  }
+
+  private void requireCashCloseCount(List<SalesDtos.ReconcilePosSessionLineRequest> requestLines) {
+    if (!hasPaymentMethodLine(requestLines, "cash")) {
+      throw ServiceException.badRequest("CLOSE_COUNT_REQUIRED:cash");
+    }
+  }
+
+  private boolean hasPaymentMethodLine(List<SalesDtos.ReconcilePosSessionLineRequest> requestLines, String paymentMethod) {
+    if (requestLines == null || requestLines.isEmpty()) {
+      return false;
+    }
+    for (SalesDtos.ReconcilePosSessionLineRequest line : requestLines) {
+      if (paymentMethod.equals(normalizePaymentMethod(line.paymentMethod()))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   public Optional<SalesDtos.PosSessionView> findPosSession(long sessionId) {
@@ -600,6 +627,50 @@ public class SalesSessionRepository extends BaseRepository {
         ps.setTimestamp(7, now);
         ps.executeUpdate();
       }
+    }
+  }
+
+  private void recordCloseCountMovement(
+      Connection conn,
+      LockedPosSessionRecord session,
+      BigDecimal actualCashAmount,
+      Long actorUserId,
+      Instant countedAt
+  ) throws Exception {
+    if (actualCashAmount == null) {
+      return;
+    }
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        DELETE FROM core.cash_movement
+        WHERE session_id = ?
+          AND type = 'CLOSE_COUNT'
+        """
+    )) {
+      ps.setLong(1, session.id());
+      ps.executeUpdate();
+    }
+
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        INSERT INTO core.cash_movement (
+          id, session_id, outlet_id, type, amount, reason, reference_sale_id,
+          created_by_user_id, approved_by_user_id, created_at
+        ) VALUES (?, ?, ?, 'CLOSE_COUNT', ?, ?, NULL, ?, NULL, ?)
+        """
+    )) {
+      ps.setLong(1, snowflakeIdGenerator.generateId());
+      ps.setLong(2, session.id());
+      ps.setLong(3, session.outletId());
+      ps.setBigDecimal(4, actualCashAmount.setScale(2, RoundingMode.HALF_UP));
+      ps.setString(5, "POS session final cash count");
+      if (actorUserId == null) {
+        ps.setNull(6, Types.BIGINT);
+      } else {
+        ps.setLong(6, actorUserId);
+      }
+      ps.setTimestamp(7, Timestamp.from(countedAt));
+      ps.executeUpdate();
     }
   }
 

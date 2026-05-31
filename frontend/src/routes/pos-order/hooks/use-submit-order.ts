@@ -172,9 +172,12 @@ export function useSubmitOrder() {
         quantity: l.quantity,
         discountAmount: lineDiscount,
         taxAmount: lineTax,
-        note: null,
+        note: l.note ?? null,
         promotionIds: [],
       };
+      if (l.modifierOptionIds && l.modifierOptionIds.length > 0) {
+        item.modifierOptionIds = l.modifierOptionIds;
+      }
       return item;
     });
 

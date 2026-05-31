@@ -165,6 +165,8 @@ Relevant keys in [`services.env.example`](/Users/nguyendinhkhiem/Development/Jav
 
 The local example defaults allow common frontend dev origins:
 
+- `http://localhost:8095`
+- `http://127.0.0.1:8095`
 - `http://localhost:5173`
 - `http://127.0.0.1:5173`
 - `http://localhost:3000`

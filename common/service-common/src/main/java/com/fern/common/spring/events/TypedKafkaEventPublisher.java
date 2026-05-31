@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.core.EventEnvelope;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import java.util.UUID;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -50,7 +51,16 @@ public class TypedKafkaEventPublisher {
    */
   public <T> void publishAndAwaitWithId(String eventId, String topic, String aggregateId,
       String eventType, T payload, String traceId) {
-    publishInternal(eventId, topic, aggregateId, eventType, payload, traceId, true);
+    publishInternal(eventId, topic, aggregateId, eventType, payload, traceId, true, null, null);
+  }
+
+  /**
+   * Outbox relay overload with stable envelope metadata. Retries must publish
+   * byte-identical business envelopes for the same outbox row.
+   */
+  public <T> void publishAndAwaitWithId(String eventId, String topic, String aggregateId,
+      String eventType, T payload, String traceId, Instant timestamp, String sourceComponent) {
+    publishInternal(eventId, topic, aggregateId, eventType, payload, traceId, true, timestamp, sourceComponent);
   }
 
   private <T> void publishInternal(
@@ -62,13 +72,31 @@ public class TypedKafkaEventPublisher {
       String traceId,
       boolean awaitAck
   ) {
+    publishInternal(eventIdOrNull, topic, aggregateId, eventType, payload, traceId, awaitAck, null, null);
+  }
+
+  private <T> void publishInternal(
+      String eventIdOrNull,
+      String topic,
+      String aggregateId,
+      String eventType,
+      T payload,
+      String traceId,
+      boolean awaitAck,
+      Instant timestampOrNull,
+      String sourceComponentOrNull
+  ) {
     try {
+      String effectiveSourceComponent =
+          sourceComponentOrNull == null || sourceComponentOrNull.isBlank()
+              ? sourceComponent
+              : sourceComponentOrNull;
       EventEnvelope<T> envelope = new EventEnvelope<>(
         eventIdOrNull != null ? eventIdOrNull : UUID.randomUUID().toString(),
         aggregateId,
         eventType,
-        clock.instant(),
-        sourceComponent,
+        timestampOrNull == null ? clock.instant() : timestampOrNull,
+        effectiveSourceComponent,
         1,
         payload
       );

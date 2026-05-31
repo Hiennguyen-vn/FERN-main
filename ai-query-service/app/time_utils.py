@@ -46,7 +46,7 @@ _NUMERIC_DATE_FOLLOWUP_RE = re.compile(
 _TIME_EXPR_RE = re.compile(
     r"\b("
     r"hom\s*nay|today|hom\s*qua|yesterday|"
-    r"tuan\s*nay|this\s*week|tuan\s*(?:truoc|roi|vua\s*roi|qua)|last\s*week|"
+    r"trong\s*tuan(?:\s*nay)?|tuan\s*nay|this\s*week|tuan\s*(?:truoc|roi|vua\s*roi|qua)|last\s*week|"
     r"thang\s*nay|this\s*month|thang\s*(?:truoc|roi|vua\s*roi|qua)|last\s*month|"
     r"quy\s*nay|this\s*quarter|quy\s*(?:truoc|roi|vua\s*roi)|last\s*quarter|"
     r"quy\s*[1-4](?:\s*(?:/|nam)?\s*(?:20\d{2}|nay|truoc|ngoai|roi))?|q[1-4](?:\s*20\d{2})?|"
@@ -64,7 +64,7 @@ _TIME_FOLLOWUP_RE = re.compile(
     r"^\s*(?:(?:con|vay|the|thi|tie?p)\s+)*(?:so\s+voi|so\s+sanh(?:\s+voi)?|compare\s+to)?\s*"
     r"(?P<expr>"
     r"hom\s*nay|today|hom\s*qua|yesterday|"
-    r"tuan\s*nay|this\s*week|tuan\s*(?:truoc|roi|vua\s*roi|qua)|last\s*week|"
+    r"trong\s*tuan(?:\s*nay)?|tuan\s*nay|this\s*week|tuan\s*(?:truoc|roi|vua\s*roi|qua)|last\s*week|"
     r"thang\s*nay|this\s*month|thang\s*(?:truoc|roi|vua\s*roi|qua)|last\s*month|"
     r"quy\s*nay|this\s*quarter|quy\s*(?:truoc|roi|vua\s*roi)|last\s*quarter|"
     r"quy\s*[1-4](?:\s*(?:/|nam)?\s*(?:20\d{2}|nay|truoc|ngoai|roi))?|q[1-4](?:\s*20\d{2})?|"
@@ -185,7 +185,7 @@ def _year_from_relative_token(token: str | None, base: date) -> int:
 
 def _previous_period_from_context(context_text: str, today: date) -> dict[str, str] | None:
     ctx = fold_text(context_text)
-    if re.search(r"\b(tuan\s*nay|tuan\s*truoc|this\s*week|last\s*week)\b", ctx):
+    if re.search(r"\b(trong\s*tuan(?:\s*nay)?|tuan\s*nay|tuan\s*truoc|this\s*week|last\s*week)\b", ctx):
         this_monday = today - timedelta(days=today.weekday())
         return {"from_date": _iso(this_monday - timedelta(days=7)), "to_date": _iso(this_monday - timedelta(days=1))}
     if re.search(r"\b(quy\s*nay|quy\s*truoc|this\s*quarter|last\s*quarter|quy\s*[1-4]|q[1-4])\b", ctx):
@@ -360,7 +360,7 @@ def parse_time_range(text: str, *, today: date | None = None, context_text: str 
     if re.search(r"\b(tuan\s*(truoc|roi|vua\s*roi|qua)|last\s*week)\b", folded):
         this_monday = base - timedelta(days=base.weekday())
         return {"from_date": _iso(this_monday - timedelta(days=7)), "to_date": _iso(this_monday - timedelta(days=1))}
-    if re.search(r"\b(tuan\s*nay|this\s*week)\b", folded):
+    if re.search(r"\b(trong\s*tuan(?:\s*nay)?|tuan\s*nay|this\s*week)\b", folded):
         start = base - timedelta(days=base.weekday())
         return {"from_date": _iso(start), "to_date": _iso(base)}
 

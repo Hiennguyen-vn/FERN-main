@@ -378,6 +378,34 @@ function decodeAvailability(value: unknown): AvailabilityView {
   };
 }
 
+function decodeModifierOption(value: unknown): ModifierOptionView {
+  const record = asRecord(value) ?? {};
+  return {
+    id: asId(record.id),
+    code: asString(record.code),
+    name: asString(record.name ?? record.label),
+    priceAdjustment: asNullableNumber(record.priceAdjustment ?? record.priceDelta) ?? 0,
+    displayOrder: asNullableNumber(record.displayOrder ?? record.sortOrder) ?? 0,
+    isActive: asBoolean(record.isActive ?? record.active, true),
+  };
+}
+
+function decodeModifierGroup(value: unknown): ModifierGroupView {
+  const record = asRecord(value) ?? {};
+  const rawSelectionType = asString(record.selectionType).toLowerCase();
+  const selectionType = rawSelectionType.startsWith('multi') ? 'multiple' : 'single';
+  return {
+    id: asId(record.id),
+    code: asString(record.code),
+    name: asString(record.name),
+    selectionType,
+    minSelections: asNullableNumber(record.minSelections ?? record.minSelect) ?? 0,
+    maxSelections: asNullableNumber(record.maxSelections ?? record.maxSelect) ?? (selectionType === 'multiple' ? 99 : 1),
+    isActive: asBoolean(record.isActive ?? record.active, true),
+    options: Array.isArray(record.options) ? record.options.map(decodeModifierOption) : [],
+  };
+}
+
 function decodeCategory(value: unknown): CategoryView {
   const record = asRecord(value) ?? {};
   return {
@@ -759,7 +787,12 @@ export const productApi = {
 
   modifierGroups: async (token: string): Promise<ModifierGroupView[]> => {
     const result = await apiRequest('/api/v1/product/modifier-groups', { token });
-    return Array.isArray(result) ? result : [];
+    return Array.isArray(result) ? result.map(decodeModifierGroup) : [];
+  },
+
+  modifierGroupsForProduct: async (token: string, productId: string): Promise<ModifierGroupView[]> => {
+    const result = await apiRequest(`/api/v1/products/${productId}/modifier-groups`, { token });
+    return Array.isArray(result) ? result.map(decodeModifierGroup) : [];
   },
 
   createModifierGroup: async (token: string, payload: { code: string; name: string; selectionType?: string; minSelections?: number; maxSelections?: number }): Promise<ModifierGroupView> =>

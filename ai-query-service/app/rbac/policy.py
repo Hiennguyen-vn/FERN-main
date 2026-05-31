@@ -9,6 +9,9 @@ Mapping from previous uppercase aliases:
 
 Templates with no entry here are accessible by any authenticated user.
 """
+import threading
+
+from app.runtime_catalog import get_runtime_catalog_section
 
 # Canonical role names — kept in sync with backend AuthorizationPolicyService.
 _FINANCE = "finance"
@@ -26,13 +29,36 @@ TEMPLATE_ROLE_RESTRICTIONS: dict[str, frozenset[str]] = {
     "T25_expense_breakdown":      _TEMPLATE_FINANCE_SHARED,
     "T26_goods_receipt_summary":  _TEMPLATE_FINANCE_SHARED,
     "T27_payroll_cost_by_outlet": _TEMPLATE_PAYROLL_SENSITIVE,
+    "INS_FINANCE_DRIVER":         _TEMPLATE_FINANCE_SHARED,
+    "ANOM_FINANCE":               _TEMPLATE_FINANCE_SHARED,
+    "FORECAST_PROFIT":            _TEMPLATE_FINANCE_SHARED,
 }
 
 # Roles that can see ALL outlets (bypass auth.outlet_ids scoping when no specific outlet requested).
 GLOBAL_SCOPE_ROLES: frozenset[str] = frozenset({_FINANCE, _ADMIN, _SUPERADMIN})
+_RUNTIME_LOCK = threading.RLock()
+_RUNTIME_VERSION: int | None = None
+
+
+def ensure_runtime_template_rbac_loaded(*, force: bool = False) -> None:
+    global _RUNTIME_VERSION
+    with _RUNTIME_LOCK:
+        version, section = get_runtime_catalog_section("template_rbac", force=force)
+        if not force and version == _RUNTIME_VERSION:
+            return
+        if isinstance(section, dict) and isinstance(section.get("template_role_restrictions"), dict):
+            parsed: dict[str, frozenset[str]] = {}
+            for key, value in section["template_role_restrictions"].items():
+                if isinstance(value, (list, tuple, set)):
+                    parsed[str(key)] = frozenset(str(x) for x in value)
+            if parsed:
+                TEMPLATE_ROLE_RESTRICTIONS.clear()
+                TEMPLATE_ROLE_RESTRICTIONS.update(parsed)
+        _RUNTIME_VERSION = version
 
 
 def check_template_access(template_key: str, roles: frozenset[str] | set[str]) -> bool:
+    ensure_runtime_template_rbac_loaded()
     allowed = TEMPLATE_ROLE_RESTRICTIONS.get(template_key)
     if allowed is None:
         return True

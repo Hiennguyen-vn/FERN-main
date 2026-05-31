@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Banknote, CheckCircle2, CreditCard, Printer, QrCode, Ticket, UtensilsCrossed, X } from 'lucide-react';
+import { Banknote, CheckCircle2, CreditCard, Printer, QrCode, Ticket, X } from 'lucide-react';
 import { formatVnd } from '../utils/format';
 
 export type PayMethod = 'cash' | 'card' | 'qr' | 'voucher';
@@ -13,14 +13,25 @@ interface Props {
   total: number;
   orderNo: string;
   onConfirm: (method: PayMethod) => void;
-  onPrintReceipt: () => void;
-  onPrintKot: () => void;
+  onPrintOrder: () => void;
   onNewOrder: () => void;
+  isPaid?: boolean;
+  isProcessing?: boolean;
 }
 
 const QUICK = [50000, 100000, 200000, 500000];
 
-export function PaymentDialog({ open, onOpenChange, total, orderNo, onConfirm, onPrintReceipt, onPrintKot, onNewOrder }: Props) {
+export function PaymentDialog({
+  open,
+  onOpenChange,
+  total,
+  orderNo,
+  onConfirm,
+  onPrintOrder,
+  onNewOrder,
+  isPaid,
+  isProcessing = false,
+}: Props) {
   const [method, setMethod] = useState<PayMethod>('cash');
   const [tendered, setTendered] = useState<number>(0);
   const [done, setDone] = useState(false);
@@ -35,15 +46,19 @@ export function PaymentDialog({ open, onOpenChange, total, orderNo, onConfirm, o
 
   const change = Math.max(0, tendered - total);
   const canConfirm = method !== 'cash' || tendered >= total;
+  const hasControlledCompletion = isPaid !== undefined;
+  const showSuccess = hasControlledCompletion ? isPaid : done;
 
   const handleConfirm = () => {
     onConfirm(method);
-    setDone(true);
+    if (!hasControlledCompletion) {
+      setDone(true);
+    }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md p-0 overflow-hidden">
+      <DialogContent className="max-w-md p-0 overflow-hidden" aria-describedby={undefined}>
         <button
           type="button"
           onClick={() => onOpenChange(false)}
@@ -52,9 +67,9 @@ export function PaymentDialog({ open, onOpenChange, total, orderNo, onConfirm, o
           <X className="w-4 h-4" />
         </button>
 
-        {!done ? (
+        {!showSuccess ? (
           <div className="p-6 space-y-5">
-            <div className="text-xl font-bold">Thanh toán</div>
+            <DialogTitle className="text-xl font-bold">Thanh toán</DialogTitle>
 
             <div className="pos-accent-soft-bg rounded-lg p-4 text-center">
               <div className="text-xs pos-accent-text font-medium mb-1">Tổng cần thanh toán</div>
@@ -114,10 +129,10 @@ export function PaymentDialog({ open, onOpenChange, total, orderNo, onConfirm, o
 
             <Button
               className="w-full h-12 pos-accent-bg hover:opacity-90 text-base font-semibold disabled:opacity-50"
-              disabled={!canConfirm}
+              disabled={!canConfirm || isProcessing}
               onClick={handleConfirm}
             >
-              Xác nhận thanh toán
+              {isProcessing ? 'Đang xử lý...' : 'Xác nhận thanh toán'}
             </Button>
           </div>
         ) : (
@@ -126,19 +141,14 @@ export function PaymentDialog({ open, onOpenChange, total, orderNo, onConfirm, o
               <CheckCircle2 className="w-12 h-12" />
             </div>
             <div>
-              <div className="text-xl font-bold">Thanh toán thành công!</div>
+              <DialogTitle className="text-xl font-bold">Thanh toán thành công!</DialogTitle>
               <div className="text-sm text-muted-foreground">Đơn #{orderNo}</div>
               <div className="pos-accent-text text-2xl font-bold mt-2">{formatVnd(total)}</div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="outline" className="h-11" onClick={onPrintReceipt}>
-                <Printer className="w-4 h-4 mr-1.5" /> In hóa đơn
-              </Button>
-              <Button variant="outline" className="h-11" onClick={onPrintKot}>
-                <UtensilsCrossed className="w-4 h-4 mr-1.5" /> In KOT
-              </Button>
-            </div>
+            <Button variant="outline" className="w-full h-11" onClick={onPrintOrder}>
+              <Printer className="w-4 h-4 mr-1.5" /> In hóa đơn + KOT
+            </Button>
             <Button className="w-full h-12 pos-accent-bg hover:opacity-90 text-base font-semibold" onClick={onNewOrder}>
               Đơn mới
             </Button>

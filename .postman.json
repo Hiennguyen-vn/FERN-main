@@ -1,0 +1,12 @@
+{
+  "workspaceId": "535a7fa0-ae50-4ca4-8a3b-1a5d3fa62f1b",
+  "collectionId": "54984523-660690ad-83c6-4985-8191-1bf6896b4660",
+  "collectionName": "FERN Full Test Suite",
+  "environmentId": "54984523-ba2362a4-337a-4e77-b070-bda40726efcc",
+  "environmentName": "FERN Local",
+  "baseUrl": "http://127.0.0.1:8080",
+  "credentials": {
+    "username": "workflow.admin",
+    "password": "Workflow#2026!"
+  }
+}

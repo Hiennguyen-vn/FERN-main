@@ -3,7 +3,7 @@ from datetime import date
 
 from app.graph.state import GraphState
 from app.rbac.policy import check_template_access
-from app.templates.registry import TEMPLATES
+from app.templates.registry import TEMPLATES, ensure_runtime_templates_loaded
 
 
 MAX_DATE_RANGE_DAYS = 2557
@@ -18,6 +18,7 @@ def _parse_date(value: str) -> date | None:
 
 
 def validator(state: GraphState) -> GraphState:
+    ensure_runtime_templates_loaded()
     errors: list[str] = []
     template_key = state.get("template_key")
     params = dict(state.get("template_params", {}) or {})

@@ -120,6 +120,25 @@ async def test_supervisor_deterministic_inventory_negative_stock(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_supervisor_deterministic_product_revenue_ranking(monkeypatch):
+    async def fail_llm(*_args, **_kwargs):
+        raise AssertionError("LLM should not be called for obvious product revenue ranking query")
+
+    monkeypatch.setattr(sup, "llm_call_json", fail_llm)
+    monkeypatch.setattr(sup, "get_settings", lambda: type("S", (), {"deterministic_supervisor_enabled": True})())
+    state = {
+        "normalized_question": "doanh thu sản phẩm nào cao nhất trong năm nay",
+        "trace": [],
+    }
+
+    out = await sup.supervisor(state)
+
+    assert out["agent_route"] == "data_query"
+    assert out["intent"] == "product_mix"
+    assert out["time_range"]["from_date"] == f"{date.today().year}-01-01"
+
+
+@pytest.mark.asyncio
 async def test_supervisor_deterministic_hr_work_hours_without_employee_keyword(monkeypatch):
     async def fail_llm(*_args, **_kwargs):
         raise AssertionError("LLM should not be called for obvious HR work-hours query")

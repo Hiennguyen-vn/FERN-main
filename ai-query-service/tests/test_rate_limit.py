@@ -17,6 +17,7 @@ class FakePipeline:
 
 
 class FakeRedisOk:
+    """Fake Redis that does NOT implement register_script (exercises pipeline fallback)."""
     def __init__(self, per_min=1, per_hour=1):
         self.per_min = per_min
         self.per_hour = per_hour
@@ -37,12 +38,14 @@ def test_over_minute_limit_raises():
     with pytest.raises(RateLimitExceeded) as exc:
         check_and_increment(FakeRedisOk(per_min=999, per_hour=10), user_id=1)
     assert exc.value.scope == "per_minute"
+    assert exc.value.retry_after == 60
 
 
 def test_over_hour_limit_raises():
     with pytest.raises(RateLimitExceeded) as exc:
         check_and_increment(FakeRedisOk(per_min=1, per_hour=99999), user_id=1)
     assert exc.value.scope == "per_hour"
+    assert exc.value.retry_after == 3600
 
 
 def test_redis_down_fail_open():

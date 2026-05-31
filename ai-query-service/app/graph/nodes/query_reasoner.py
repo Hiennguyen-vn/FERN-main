@@ -273,6 +273,13 @@ def _has_payment_context(folded_question: str) -> bool:
     return bool(_PAYMENT_CONTEXT_RE.search(folded_question))
 
 
+def _is_product_revenue_ranking_question(folded: str) -> bool:
+    productish = any(x in folded for x in ("san pham", "mat hang", "product"))
+    revenueish = any(x in folded for x in ("doanh thu", "revenue", "sales"))
+    rankish = any(x in folded for x in ("cao nhat", "nhieu nhat", "top", "xep hang", "ranking", "rank"))
+    return productish and revenueish and rankish
+
+
 def _is_inventory_question(folded: str, task: str) -> bool:
     return task == "inventory" or any(
         x in folded
@@ -355,7 +362,7 @@ def _report_spec_for_question(state: GraphState, question: str) -> dict[str, Any
     if any(x in folded for x in ("chi phi", "expense", "khoan chi", "chi tieu")):
         spec.update({"analysis_mode": "event_summary", "metric_focus": ["expense_breakdown"], "time_axis": "createdAt"})
         return spec
-    if any(x in folded for x in ("top san pham", "san pham ban chay", "best seller", "mat hang ban chay")):
+    if any(x in folded for x in ("top san pham", "san pham ban chay", "best seller", "mat hang ban chay")) or _is_product_revenue_ranking_question(folded):
         spec.update({"analysis_mode": "ranking", "group_by": "product", "ranking_mode": "top"})
         return spec
     if any(x in folded for x in ("danh muc", "category", "nhom san pham", "nhom mon")):

@@ -70,7 +70,7 @@ def _finch_sql_writer_gate_message(state: GraphState) -> str:
 
 
 def _route_after_supervisor(state: GraphState) -> str:
-    if state.get("response_kind") == "clarification":
+    if state.get("response_kind") in {"clarification", "unsupported"}:
         return "answer_formatter"
     if state.get("social_kind"):
         return "social_reply"
@@ -86,6 +86,8 @@ def _route_after_supervisor(state: GraphState) -> str:
 
 
 def _route_after_coverage(state: GraphState) -> str:
+    if state.get("response_kind") in {"clarification", "unsupported"}:
+        return "answer_formatter"
     if state.get("agent_route") == "hr_staff" or state.get("intent") == "hr_staff":
         return "hr_query"
     if state.get("template_key"):

@@ -49,13 +49,20 @@ import type { StockLotView } from '@/api/inventory-api';
 
 type InventoryTab = 'balances' | 'ledger' | 'counts' | 'waste' | 'lots';
 
-const TABS: { key: InventoryTab; label: string; icon: React.ElementType }[] = [
+// The backend exposes stock-lot endpoints, but the current seeded/local flows do not
+// populate meaningful lot data yet, so keep the UI dormant until the workflow is live.
+const LOT_TRACKING_ENABLED = false;
+
+const BASE_TABS: { key: InventoryTab; label: string; icon: React.ElementType }[] = [
   { key: 'balances', label: 'Stock Balances', icon: Package },
   { key: 'ledger', label: 'Ledger', icon: ScrollText },
   { key: 'counts', label: 'Stock Counts', icon: ClipboardCheck },
   { key: 'waste', label: 'Waste', icon: Trash2 },
-  { key: 'lots', label: 'Lot Tracking', icon: Layers },
 ];
+
+const TABS: { key: InventoryTab; label: string; icon: React.ElementType }[] = LOT_TRACKING_ENABLED
+  ? [...BASE_TABS, { key: 'lots', label: 'Lot Tracking', icon: Layers }]
+  : BASE_TABS;
 
 function normalizeNumeric(value: string | undefined) {
   const trimmed = String(value ?? '').trim();
@@ -393,6 +400,20 @@ export function InventoryModule() {
   }, [loadItems]);
 
   useEffect(() => {
+    if (!LOT_TRACKING_ENABLED) {
+      if (activeTab === 'lots') {
+        setActiveTab('balances');
+      }
+      setExpiringLots([]);
+      return;
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!LOT_TRACKING_ENABLED) {
+      setExpiringLots([]);
+      return;
+    }
     if (!token) return;
     inventoryApi.listStockLots(token, { locationId: outletId || undefined, status: 'ACTIVE', limit: 200 })
       .then((rows) => {
@@ -570,7 +591,7 @@ export function InventoryModule() {
 
   return (
     <div className="flex flex-col h-full animate-fade-in">
-      {expiringLots.length > 0 && (
+      {LOT_TRACKING_ENABLED && expiringLots.length > 0 && (
         <button
           onClick={() => setActiveTab('lots')}
           className="flex items-center gap-2 px-6 py-2 border-b bg-warning/10 hover:bg-warning/15 text-warning transition-colors text-left"
@@ -1243,7 +1264,7 @@ export function InventoryModule() {
           </div>
         ) : null}
 
-        {activeTab === 'lots' && (
+        {LOT_TRACKING_ENABLED && activeTab === 'lots' && (
           <div className="p-4">
             <StockLotPanel outletId={outletId || undefined} canEdit />
           </div>

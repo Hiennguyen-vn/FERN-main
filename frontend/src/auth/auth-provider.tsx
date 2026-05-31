@@ -14,7 +14,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     retry: false,
     queryFn: async () => {
       try {
-        const nextSession = await authApi.me();
+        await authApi.me();
+        const nextSession = await authApi.refresh();
         setSession(nextSession);
         return nextSession;
       } catch (error) {

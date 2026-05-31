@@ -1,14 +1,18 @@
+WITH (
+    SELECT max(business_date)
+    FROM cdc.inventory_transaction
+    WHERE outlet_id IN ({{ outlet_ids | join(',') }})
+      AND coalesce(__deleted, 'false') = 'false'
+) AS snapshot_date
 SELECT
     outlet_id,
     item_id,
-    business_date AS snapshot_date,
-    qty_on_hand
-FROM analytics.fct_inventory_snapshot
+    snapshot_date,
+    sum(qty_change) AS qty_on_hand
+FROM cdc.inventory_transaction
 WHERE outlet_id IN ({{ outlet_ids | join(',') }})
-  AND business_date = (
-    SELECT max(business_date)
-    FROM analytics.fct_inventory_snapshot
-    WHERE outlet_id IN ({{ outlet_ids | join(',') }})
-  )
+  AND coalesce(__deleted, 'false') = 'false'
+  AND business_date <= snapshot_date
+GROUP BY outlet_id, item_id
 ORDER BY qty_on_hand ASC
 LIMIT {{ limit | default(100) }}

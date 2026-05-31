@@ -17,6 +17,7 @@ from app.graph.state import GraphState
 from app.llm.openai_client import llm_call_text
 from app.graph.nodes.self_correction import is_self_correction_candidate
 from app.time_utils import app_timezone, format_time_context_for_prompt
+from app.utils.text import fold_text as _fold_text
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +94,23 @@ def _refusal(state: GraphState) -> str:
     return "Xin lỗi, tôi không xử lý được câu hỏi này. Bạn có thể diễn đạt lại không?"
 
 
-def _fold_text(text: str) -> str:
-    decomposed = unicodedata.normalize("NFD", text or "")
-    no_marks = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
-    return no_marks.replace("đ", "d").replace("Đ", "D").lower()
+def _unsupported_answer(state: GraphState) -> str:
+    message = str(state.get("clarification_question") or "").strip()
+    if not message:
+        message = "Câu hỏi này nằm ngoài phạm vi dữ liệu/semantic contract hiện tại của ai-query."
+
+    hints = {str(h) for h in (state.get("response_hints") or []) if str(h).strip()}
+    if any(h.startswith("unsupported:rbac_denied") for h in hints):
+        return message
+    if any(h.startswith("unsupported:sensitive_projection") for h in hints):
+        return message
+
+    suggestions = (
+        "Trong phạm vi hiện tại, bạn có thể hỏi các chỉ số tổng hợp về sales, finance, inventory, payment hoặc HR static lane, "
+        "ví dụ: doanh thu theo outlet, lợi nhuận theo ngày, tồn kho thấp nhất, hoặc doanh thu theo phương thức thanh toán."
+    )
+    return f"{message}\n\n{suggestions}"
+
 
 
 def _outlet_rank_direction(state: GraphState) -> str:
@@ -188,6 +202,33 @@ def _scope_recap_vi(state: GraphState) -> str:
     bits = [x for x in (date_part, scope_part) if x]
     if not bits:
         return ""
+    return "_Phạm vi: " + "; ".join(bits) + "._"
+
+
+def _stock_cover_recap_vi(state: GraphState, rows: list[dict[str, Any]]) -> str:
+    ctx = ensure_data_source_context(state) or {}
+    requested = ctx.get("requested_range") if isinstance(ctx.get("requested_range"), dict) else {}
+    fd = str((requested or {}).get("from_date") or "").strip()
+    td = str((requested or {}).get("to_date") or "").strip()
+    snapshot_dates = [
+        str(row.get("snapshot_date") or "").strip()
+        for row in rows
+        if isinstance(row, dict) and str(row.get("snapshot_date") or "").strip()
+    ]
+    snapshot = max(snapshot_dates) if snapshot_dates else td
+    bits: list[str] = []
+    if snapshot:
+        bits.append(f"snapshot tồn kho {snapshot}")
+    if fd and td:
+        bits.append(f"cửa sổ tiêu thụ {fd} đến {td}")
+    outlets = state.get("allowed_outlet_ids") or []
+    if isinstance(outlets, list) and outlets:
+        if len(outlets) <= 3:
+            bits.append("cửa hàng (outlet_id): " + ", ".join(str(x) for x in outlets))
+        else:
+            bits.append(f"{len(outlets)} cửa hàng trong phạm vi quyền của bạn")
+    if not bits:
+        return _scope_recap_vi(state)
     return "_Phạm vi: " + "; ".join(bits) + "._"
 
 
@@ -330,7 +371,7 @@ def _coverage_outside_answer(state: GraphState, now: str, *, recap: str | None =
     period = f"{fd} đến {td}" if fd and td and fd != td else (fd or td or "khoảng thời gian bạn hỏi")
     lines = [
         f"Nguồn {dataset} hiện chưa có đủ dữ liệu cho {period} trong snapshot hiện tại.",
-        "Hệ thống đã có thể tự động thu hẹp kỳ truy vấn về phạm vi lịch sử có dữ liệu; nếu bạn vẫn thấy thông báo này, hãy thử hỏi lại hoặc chỉ rõ kỳ trong quá khứ có dữ liệu.",
+        "Tôi không dùng số liệu của kỳ khác để thay thế cho kỳ bạn đã hỏi.",
     ]
     _append_common_footer(lines, state, now, recap=recap)
     return "\n".join(lines)
@@ -430,8 +471,123 @@ def _outlet_name(row: dict[str, Any]) -> str:
     return str(row.get("outlet_name") or row.get("outlet_code") or row.get("outlet_id") or "Không rõ outlet")
 
 
+def _outlet_label(row: dict[str, Any], *, include_id: bool = False) -> str:
+    name = str(row.get("outlet_name") or "").strip()
+    code = str(row.get("outlet_code") or "").strip()
+    outlet_id = str(row.get("outlet_id") or "").strip()
+    if name:
+        suffix = f" ({code})" if include_id and code else (f" (ID {outlet_id})" if include_id and outlet_id else "")
+        return f"{name}{suffix}"
+    if code:
+        suffix = f" (ID {outlet_id})" if include_id and outlet_id else ""
+        return f"{code}{suffix}"
+    return f"Cửa hàng ID {outlet_id}" if outlet_id else "Không rõ outlet"
+
+
 def _product_name(row: dict[str, Any]) -> str:
     return str(row.get("product_name") or row.get("product_id") or "Không rõ sản phẩm")
+
+
+def _category_name(row: dict[str, Any]) -> str:
+    return str(row.get("category_name") or row.get("category_code") or "Không rõ nhóm")
+
+
+def _category_share(row: dict[str, Any], total_revenue: float) -> float:
+    explicit = row.get("revenue_share")
+    if explicit is not None:
+        return _numeric(explicit)
+    revenue = _numeric(row.get("revenue"))
+    return (revenue / total_revenue) if total_revenue else 0.0
+
+
+def _is_category_strength_question(state: GraphState) -> bool:
+    q = _fold_text(question_text(state))
+    return any(
+        token in q
+        for token in (
+            "manh",
+            "yeu",
+            "kem",
+            "te",
+            "tot",
+            "xau",
+            "ban tot",
+            "ban xau",
+            "ban chay",
+            "ban cham",
+            "cao nhat",
+            "thap nhat",
+            "nhieu nhat",
+            "it nhat",
+        )
+    )
+
+
+def _is_category_contribution_question(state: GraphState) -> bool:
+    if state.get("template_key") == "T17_category_contribution":
+        return True
+    q = _fold_text(question_text(state))
+    return any(token in q for token in ("dong gop", "contribution", "ty trong", "share"))
+
+
+def _format_category_mix_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
+    recap = _scope_recap_vi(state)
+    if not rows:
+        lines = ["Không có dữ liệu nhóm sản phẩm trong phạm vi này."]
+        _append_common_footer(lines, state, now, recap=recap)
+        return "\n".join(lines) + _sql_verdict_footnote(state)
+
+    sorted_rows = sorted(rows, key=lambda r: (_numeric(r.get("revenue")), _numeric(r.get("qty"))), reverse=True)
+    period = _period_from_rows_or_scope(state, sorted_rows)
+    total_revenue = _sum_numeric(sorted_rows, "revenue")
+    total_qty = _sum_numeric(sorted_rows, "qty")
+    top = sorted_rows[0]
+    bottom = sorted_rows[-1]
+    contribution_mode = _is_category_contribution_question(state)
+    strength_mode = _is_category_strength_question(state) and not contribution_mode
+
+    if contribution_mode:
+        lines = [
+            (
+                f"Trong {period}, nhóm đóng góp doanh thu cao nhất là {_category_name(top)}, "
+                f"chiếm {_format_percent(_category_share(top, total_revenue))} với doanh thu {_format_vnd(top.get('revenue'))}."
+            ),
+            f"Tổng theo kết quả: {_format_vnd(total_revenue)}, {_format_count(total_qty)} đơn vị bán.",
+            "Cơ cấu đóng góp theo nhóm:",
+        ]
+    elif strength_mode and len(sorted_rows) > 1:
+        lines = [
+            (
+                f"Trong {period}, nhóm mạnh nhất là {_category_name(top)} với {_format_vnd(top.get('revenue'))}; "
+                f"nhóm yếu nhất là {_category_name(bottom)} với {_format_vnd(bottom.get('revenue'))}."
+            ),
+            f"Tổng theo kết quả: {_format_vnd(total_revenue)}, {_format_count(total_qty)} đơn vị bán.",
+            "Top nhóm theo doanh thu:",
+        ]
+    else:
+        lines = [
+            f"Doanh thu theo nhóm sản phẩm trong {period}:",
+            f"Tổng theo kết quả: {_format_vnd(total_revenue)}, {_format_count(total_qty)} đơn vị bán.",
+            "Top nhóm theo doanh thu:",
+        ]
+
+    for idx, row in enumerate(sorted_rows[:5], start=1):
+        lines.append(
+            f"{idx}. {_category_name(row)}: {_format_vnd(row.get('revenue'))}, "
+            f"{_format_count(row.get('qty'))} đơn vị ({_format_percent(_category_share(row, total_revenue))})."
+        )
+    if strength_mode and len(sorted_rows) > 5:
+        lines.append("Nhóm thấp nhất:")
+        for idx, row in enumerate(sorted(sorted_rows[-3:], key=lambda r: (_numeric(r.get("revenue")), _numeric(r.get("qty")))), start=1):
+            lines.append(
+                f"{idx}. {_category_name(row)}: {_format_vnd(row.get('revenue'))}, "
+                f"{_format_count(row.get('qty'))} đơn vị ({_format_percent(_category_share(row, total_revenue))})."
+            )
+    elif len(sorted_rows) > 5:
+        lines.append(f"Còn {len(sorted_rows) - 5} nhóm khác trong kết quả.")
+
+    _append_common_footer(lines, state, now, recap=recap)
+    return "\n".join(lines) + _sql_verdict_footnote(state)
 
 
 def _format_outlet_directory_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
@@ -472,6 +628,46 @@ def _format_outlet_directory_answer(state: GraphState, rows: list[dict[str, Any]
     if len(rows) > 20:
         lines.append(f"Còn {len(rows) - 20} cửa hàng khác trong kết quả.")
     _append_common_footer(lines, state, now)
+    return "\n".join(lines)
+
+
+def _format_ai_sales_daily_outlets_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
+    recap = _scope_recap_vi(state)
+    if not rows:
+        lines = ["Không tìm thấy cửa hàng nào có dữ liệu trong analytics.ai_sales_daily trong phạm vi quyền hiện tại."]
+        _append_common_footer(lines, state, now, recap=recap)
+        return "\n".join(lines)
+
+    sorted_rows = sorted(
+        rows,
+        key=lambda r: str(r.get("outlet_code") or r.get("outlet_name") or r.get("outlet_id") or ""),
+    )
+    first, _ = _first_last_values(sorted_rows, "first_business_date")
+    _, last = _first_last_values(sorted_rows, "last_business_date")
+    if not first or not last:
+        first, last = _first_last_values(sorted_rows, "business_date")
+    period = f"{first} đến {last}" if first and last and first != last else (first or last or "chưa xác định")
+
+    lines = [
+        f"Có {len(sorted_rows)} cửa hàng có dữ liệu trong analytics.ai_sales_daily trong phạm vi quyền hiện tại.",
+        f"Dải dữ liệu theo business_date: {period}.",
+        "Danh sách cửa hàng:",
+    ]
+    for idx, row in enumerate(sorted_rows[:20], start=1):
+        name = str(row.get("outlet_name") or "Không rõ tên")
+        code = str(row.get("outlet_code") or row.get("outlet_id") or "").strip()
+        status = str(row.get("outlet_status") or "").strip()
+        first_date = str(row.get("first_business_date") or "").strip()
+        last_date = str(row.get("last_business_date") or "").strip()
+        date_part = f", dữ liệu {first_date} đến {last_date}" if first_date and last_date else ""
+        days = row.get("business_days")
+        days_part = f", {_format_count(days)} ngày" if days is not None else ""
+        suffix = f" ({code})" if code else ""
+        status_text = f" - {status}" if status else ""
+        lines.append(f"{idx}. {name}{suffix}{status_text}{date_part}{days_part}.")
+    if len(sorted_rows) > 20:
+        lines.append(f"Còn {len(sorted_rows) - 20} cửa hàng khác trong kết quả.")
+    _append_common_footer(lines, state, now, recap=recap)
     return "\n".join(lines)
 
 
@@ -600,12 +796,12 @@ def _format_outlet_rank_answer(state: GraphState, rows: list[dict[str, Any]], no
     top = rows[0]
     if direction == "asc":
         lines = [
-            f"{top.get('outlet_name') or top.get('outlet_id')} đang có doanh thu thấp nhất trong phạm vi dữ liệu, "
+            f"{_outlet_label(top)} đang có doanh thu thấp nhất trong phạm vi dữ liệu, "
             f"đạt {_format_vnd(top.get('net_revenue'))} doanh thu ròng."
         ]
     else:
         lines = [
-            f"{top.get('outlet_name') or top.get('outlet_id')} đang dẫn đầu doanh thu, "
+            f"{_outlet_label(top)} đang dẫn đầu doanh thu, "
             f"đạt {_format_vnd(top.get('net_revenue'))} doanh thu ròng."
         ]
     if len(rows) > 1:
@@ -615,7 +811,7 @@ def _format_outlet_rank_answer(state: GraphState, rows: list[dict[str, Any]], no
         for row in shown_rows:
             rank = row.get("rank")
             prefix = f"{rank}. " if rank is not None else "- "
-            lines.append(f"{prefix}{row.get('outlet_name') or row.get('outlet_id')}: {_format_vnd(row.get('net_revenue'))}")
+            lines.append(f"{prefix}{_outlet_label(row)}: {_format_vnd(row.get('net_revenue'))}")
         if len(rows) > len(shown_rows):
             lines.append(f"Còn {len(rows) - len(shown_rows)} cửa hàng khác trong kết quả.")
     _append_common_footer(lines, state, now, recap=recap)
@@ -644,18 +840,28 @@ def _format_revenue_by_outlet_answer(state: GraphState, rows: list[dict[str, Any
     else:
         headline = f"Trong {period}, có {outlet_count} cửa hàng phát sinh doanh thu."
 
+    top = sorted_rows[0]
+    bottom = sorted_rows[-1]
+    ratio = (_numeric(top.get("net_revenue")) / _numeric(bottom.get("net_revenue"))) if _numeric(bottom.get("net_revenue")) else 0
     lines = [
         headline,
         f"Tổng doanh thu ròng là {_format_vnd(total_net)} từ {_format_count(total_txn)} giao dịch.",
-        "Top cửa hàng:",
+        f"Cửa hàng dẫn đầu là {_outlet_label(top)} với {_format_vnd(top.get('net_revenue'))}.",
+        "Xếp hạng doanh thu ròng theo cửa hàng:",
     ]
-    for idx, row in enumerate(sorted_rows[:5], start=1):
+    cap = len(sorted_rows) if len(sorted_rows) <= 12 else 10
+    shown_rows = sorted_rows[:cap]
+    for idx, row in enumerate(shown_rows, start=1):
         lines.append(
-            f"{idx}. {_outlet_name(row)} - {_format_vnd(row.get('net_revenue'))}, "
+            f"{idx}. {_outlet_label(row)} - {_format_vnd(row.get('net_revenue'))}, "
             f"{_format_count(row.get('txn_count'))} giao dịch"
         )
-    if len(sorted_rows) > 5:
-        lines.append(f"Còn {len(sorted_rows) - 5} cửa hàng khác trong kết quả.")
+    if len(sorted_rows) > len(shown_rows):
+        lines.append(f"Còn {len(sorted_rows) - len(shown_rows)} cửa hàng khác trong kết quả.")
+    if outlet_count > 1 and ratio:
+        lines.append(
+            f"Chênh lệch cao nhất/thấp nhất khoảng {_format_scalar(ratio)} lần; nên kiểm tra traffic, danh mục bán chạy và vận hành tại nhóm cuối bảng."
+        )
     _append_common_footer(lines, state, now, recap=recap)
     return "\n".join(lines) + _sql_verdict_footnote(state)
 
@@ -1127,19 +1333,186 @@ def _format_daily_pnl_answer(state: GraphState, rows: list[dict[str, Any]], now:
 
     period = _period_from_rows_or_scope(state, rows)
     revenue = _sum_numeric(rows, "revenue")
-    cogs = _sum_numeric(rows, "cogs")
+    cogs = _sum_numeric(rows, "actual_or_theoretical_cogs")
+    goods_receipt = _sum_numeric(rows, "goods_receipt_cost")
     payroll = _sum_numeric(rows, "payroll_cost")
+    expense = _sum_numeric(rows, "expense_amount")
     profit = _sum_numeric(rows, "operating_profit")
     margin = profit / revenue if revenue else 0
     lines = [
         f"P&L trong {period}: lợi nhuận vận hành {_format_vnd(profit)}, margin {_format_percent(margin)}.",
-        f"Doanh thu {_format_vnd(revenue)}; giá vốn {_format_vnd(cogs)}; chi phí lương {_format_vnd(payroll)}.",
+        (
+            f"Doanh thu {_format_vnd(revenue)}; actual/theoretical COGS {_format_vnd(cogs)}; "
+            f"chi phí lương {_format_vnd(payroll)}; expense {_format_vnd(expense)}."
+        ),
     ]
-    if revenue > 0 and cogs == 0 and payroll == 0:
+    if goods_receipt:
         lines.append(
-            "_Lưu ý: giá vốn/chi phí lương đang bằng 0 trong kết quả, "
+            f"Chi phí nhập/nhận hàng ghi nhận trong kỳ: {_format_vnd(goods_receipt)} "
+            "(không được tự xem là COGS khi chưa có consumption/recipe cost)."
+        )
+    if revenue > 0 and cogs == 0 and payroll == 0 and expense == 0:
+        lines.append(
+            "_Lưu ý: actual/theoretical COGS, chi phí lương và expense đang bằng 0 trong kết quả, "
             "nên lợi nhuận và margin P&L chưa đủ tin cậy để kết luận tài chính._"
         )
+    _append_common_footer(lines, state, now, recap=recap)
+    return "\n".join(lines) + _sql_verdict_footnote(state)
+
+
+def _format_driver_scan_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
+    recap = _scope_recap_vi(state)
+    template = str(state.get("template_key") or "")
+    if not rows:
+        lines = ["Chưa có đủ dữ liệu để xác định driver/detractor trong phạm vi này."]
+        _append_common_footer(lines, state, now, recap=recap)
+        return "\n".join(lines) + _sql_verdict_footnote(state)
+
+    period = _period_from_rows_or_scope(state, rows)
+    if template == "INS_FINANCE_DRIVER":
+        title = f"Driver lợi nhuận trong {period}:"
+        current_col = "current_operating_profit"
+        baseline_col = "baseline_operating_profit"
+        delta_col = "delta_operating_profit"
+        value_fmt = _format_vnd
+    elif template == "INS_INVENTORY_DRIVER":
+        title = f"Driver biến động kho trong {period}:"
+        current_col = "current_qty_change"
+        baseline_col = "baseline_qty_change"
+        delta_col = "delta_qty_change"
+        value_fmt = _format_count
+    else:
+        title = f"Driver doanh thu trong {period}:"
+        current_col = "current_revenue"
+        baseline_col = "baseline_revenue"
+        delta_col = "delta_revenue"
+        value_fmt = _format_vnd
+
+    lines = [title, "So với kỳ liền trước cùng độ dài, các tác động lớn nhất là:"]
+    for idx, row in enumerate(rows[:10], start=1):
+        outlet = _outlet_name(row)
+        movement = str(row.get("movement_type") or "").strip()
+        suffix = f" / {movement}" if movement else ""
+        delta = _numeric(row.get(delta_col))
+        direction = "tăng" if delta >= 0 else "giảm"
+        lines.append(
+            f"{idx}. {outlet}{suffix}: {direction} {value_fmt(abs(delta))}; "
+            f"hiện tại {value_fmt(row.get(current_col))}, kỳ trước {value_fmt(row.get(baseline_col))}."
+        )
+    if template == "INS_FINANCE_DRIVER":
+        lines.append("Lưu ý: goods_receipt_cost là chi phí nhập/nhận hàng, không phải COGS mặc định.")
+    if template == "INS_INVENTORY_DRIVER":
+        lines.append("Lưu ý: đây là driver của biến động kho, không phải tồn kho on-hand.")
+    _append_common_footer(lines, state, now, recap=recap)
+    return "\n".join(lines) + _sql_verdict_footnote(state)
+
+
+def _format_anomaly_scan_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
+    recap = _scope_recap_vi(state)
+    template = str(state.get("template_key") or "")
+    if not rows:
+        lines = ["Không phát hiện bất thường đủ ngưỡng trong phạm vi này."]
+        lines.append("Phương pháp: so daily average hiện tại với rolling baseline 28 ngày, yêu cầu ít nhất 14 ngày baseline.")
+        _append_common_footer(lines, state, now, recap=recap)
+        return "\n".join(lines) + _sql_verdict_footnote(state)
+
+    if template == "ANOM_FINANCE":
+        title = "Bất thường lợi nhuận:"
+        current_col = "current_operating_profit"
+        value_fmt = _format_vnd
+    elif template == "ANOM_INVENTORY":
+        title = "Bất thường biến động kho:"
+        current_col = "current_qty_change"
+        value_fmt = _format_count
+    else:
+        title = "Bất thường doanh thu:"
+        current_col = "current_revenue"
+        value_fmt = _format_vnd
+
+    lines = [title]
+    for idx, row in enumerate(rows[:10], start=1):
+        outlet = _outlet_name(row)
+        movement = str(row.get("movement_type") or "").strip()
+        suffix = f" / {movement}" if movement else ""
+        lines.append(
+            f"{idx}. {outlet}{suffix}: z-score {_format_scalar(row.get('z_score'))}; "
+            f"hiện tại {value_fmt(row.get(current_col))}, baseline/ngày {value_fmt(row.get('baseline_daily_avg'))}."
+        )
+    lines.append("Phương pháp: rolling baseline 28 ngày, min 14 ngày baseline; chỉ flag khi |z-score| >= 2.")
+    if template == "ANOM_INVENTORY":
+        lines.append("Lưu ý: anomaly kho dựa trên movement quantity, không phải stock snapshot.")
+    _append_common_footer(lines, state, now, recap=recap)
+    return "\n".join(lines) + _sql_verdict_footnote(state)
+
+
+def _format_forecast_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
+    template = str(state.get("template_key") or "")
+    recap = _stock_cover_recap_vi(state, rows) if template == "FORECAST_STOCK_COVER" else _scope_recap_vi(state)
+    row = rows[0] if rows and isinstance(rows[0], dict) else {}
+    if not row:
+        lines = ["Chưa có đủ dữ liệu để forecast trong phạm vi này."]
+        _append_common_footer(lines, state, now, recap=recap)
+        return "\n".join(lines) + _sql_verdict_footnote(state)
+
+    if template == "FORECAST_PROFIT":
+        lines = [
+            "Forecast lợi nhuận tháng hiện tại theo run-rate:",
+            (
+                f"Lợi nhuận đã ghi nhận {_format_vnd(row.get('actual_operating_profit'))}; "
+                f"projected cuối tháng {_format_vnd(row.get('projected_month_operating_profit'))}."
+            ),
+            f"Elapsed days: {_format_count(row.get('elapsed_days'))}/{_format_count(row.get('month_days'))}.",
+        ]
+    elif template == "FORECAST_STOCK_COVER":
+        sorted_rows = sorted(rows, key=lambda r: (_numeric(r.get("days_of_cover")) if r.get("days_of_cover") is not None else 10**12))
+        shortage_rows = [r for r in sorted_rows if _numeric(r.get("qty_on_hand")) < 0]
+        positive_rows = [r for r in sorted_rows if _numeric(r.get("qty_on_hand")) >= 0]
+        if shortage_rows:
+            lines = [
+                (
+                    "Kết luận nhanh: tồn kho hiện tại chưa đủ bán cho một số mã trong nhóm kết quả thấp nhất "
+                    "vì on-hand đang âm."
+                ),
+                "Các mã cần xử lý trước:",
+            ]
+            display_rows = shortage_rows[:10]
+        else:
+            lines = ["Các mã có số ngày đủ bán thấp nhất:"]
+            display_rows = positive_rows[:10]
+        for idx, r in enumerate(display_rows, start=1):
+            cover = r.get("days_of_cover")
+            cover_text = "không tính được" if cover is None else f"{_format_scalar(cover)} ngày"
+            qty = _numeric(r.get("qty_on_hand"))
+            if qty < 0:
+                lines.append(
+                    f"{idx}. Cửa hàng {r.get('outlet_id')} / item {r.get('item_id')}: "
+                    f"tồn âm {_format_count(abs(qty))} đơn vị; "
+                    f"tiêu thụ bình quân {_format_scalar(r.get('avg_daily_consumption'))}/ngày."
+                )
+            else:
+                lines.append(
+                    f"{idx}. Cửa hàng {r.get('outlet_id')} / item {r.get('item_id')}: "
+                    f"on-hand {_format_count(r.get('qty_on_hand'))}; "
+                    f"tiêu thụ bình quân {_format_scalar(r.get('avg_daily_consumption'))}/ngày; "
+                    f"ước tính đủ bán {cover_text}."
+                )
+        if shortage_rows:
+            lines.append("Lưu ý: days-of-cover âm là dấu hiệu tồn âm/thiếu hàng, không phải số ngày còn bán được.")
+        lines.append("Phương pháp: snapshot on-hand mới nhất chia cho tiêu thụ bình quân 28 ngày gần nhất từ movement kho.")
+    else:
+        lines = [
+            "Forecast doanh thu tháng hiện tại theo run-rate:",
+            (
+                f"Doanh thu đã ghi nhận {_format_vnd(row.get('actual_revenue'))}; "
+                f"projected cuối tháng {_format_vnd(row.get('projected_month_revenue'))}."
+            ),
+            (
+                f"Elapsed days: {_format_count(row.get('elapsed_days'))}/{_format_count(row.get('month_days'))}; "
+                f"giao dịch {_format_count(row.get('txn_count'))}."
+            ),
+        ]
+    if str(row.get("target_status") or "") == "no_target_table":
+        lines.append("Chưa có target table nên không kết luận đạt/chưa đạt mục tiêu.")
     _append_common_footer(lines, state, now, recap=recap)
     return "\n".join(lines) + _sql_verdict_footnote(state)
 
@@ -1270,18 +1643,25 @@ def _format_visualization_answer(state: GraphState, rows: list[dict[str, Any]], 
 
 async def answer_formatter(state: GraphState) -> GraphState:
     now = datetime.now(app_timezone()).strftime("%Y-%m-%d %H:%M:%S")
-    ensure_data_source_context(state)
 
     if state.get("skip_answer_formatter_llm") and state.get("answer_text"):
         state.setdefault("citations", [])
         state.setdefault("response_kind", "answer")
         return state
 
-    if state.get("response_kind") in ("clarification", "unsupported") and state.get("clarification_question"):
+    if state.get("response_kind") == "unsupported" and state.get("clarification_question"):
+        state["answer_text"] = _unsupported_answer(state)
+        state["citations"] = []
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "direct_unsupported"})
+        return state
+
+    if state.get("response_kind") == "clarification" and state.get("clarification_question"):
         state["answer_text"] = str(state.get("clarification_question") or "")
         state["citations"] = []
         state.setdefault("trace", []).append({"node": "answer_formatter", "source": "direct_clarification"})
         return state
+
+    ensure_data_source_context(state)
 
     # Refusal paths
     if state.get("validation_errors") or not state.get("guard_passed", True) or state.get("execution_error"):
@@ -1404,6 +1784,34 @@ async def answer_formatter(state: GraphState) -> GraphState:
         state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_revenue_driver_bridge"})
         return state
 
+    if state.get("template_key") in {"T03_revenue_by_category", "T17_category_contribution"}:
+        state["answer_text"] = _format_category_mix_answer(state, rows, now)
+        state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+        state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_category_mix"})
+        return state
+
+    if state.get("template_key") in {"INS_SALES_DRIVER", "INS_FINANCE_DRIVER", "INS_INVENTORY_DRIVER"}:
+        state["answer_text"] = _format_driver_scan_answer(state, rows, now)
+        state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+        state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_driver_scan"})
+        return state
+
+    if state.get("template_key") in {"ANOM_SALES", "ANOM_FINANCE", "ANOM_INVENTORY"}:
+        state["answer_text"] = _format_anomaly_scan_answer(state, rows, now)
+        state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+        state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_anomaly_scan"})
+        return state
+
+    if state.get("template_key") in {"FORECAST_REVENUE", "FORECAST_PROFIT", "FORECAST_STOCK_COVER"}:
+        state["answer_text"] = _format_forecast_answer(state, rows, now)
+        state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+        state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_forecast"})
+        return state
+
     if state.get("template_key") == "T04_top_products":
         state["answer_text"] = _format_top_products_answer(state, rows, now)
         state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
@@ -1467,6 +1875,13 @@ async def answer_formatter(state: GraphState) -> GraphState:
         state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_inventory_stock"})
         return state
 
+    if state.get("template_key") == "T37_ai_sales_daily_outlets":
+        state["answer_text"] = _format_ai_sales_daily_outlets_answer(state, rows, now)
+        state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+        state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_ai_sales_daily_outlets"})
+        return state
+
     if state.get("template_key") == "T31_outlet_directory":
         state["answer_text"] = _format_outlet_directory_answer(state, rows, now)
         state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
@@ -1513,7 +1928,10 @@ Grounding tóm tắt:
 Answer facts JSON (căn cứ duy nhất cho số liệu — không thêm số ngoài đây):
 {json.dumps(facts, ensure_ascii=False, default=str)}
 
-Hãy phân tích dữ liệu trên và trả lời câu hỏi bằng tiếng Việt. Mở đầu bằng kết luận chính, sau đó nêu số liệu minh chứng và giới hạn dữ liệu nếu có. Thời gian hiện tại: {now}.
+Hãy phân tích dữ liệu trên và trả lời câu hỏi bằng tiếng Việt. Mở đầu bằng kết luận chính, sau đó nêu số liệu minh chứng và giới hạn dữ liệu nếu có.
+Nếu dòng dữ liệu có `outlet_name`, luôn dùng tên cửa hàng làm nhãn chính; không dùng `outlet_id` trần làm tên cửa hàng. Chỉ nêu ID trong ngoặc khi cần đối chiếu kỹ thuật.
+Với câu hỏi xếp hạng/đóng góp doanh thu theo outlet, gọi rõ là "cửa hàng dẫn đầu/doanh thu cao nhất" thay vì "yếu tố" nếu không có phân rã nguyên nhân thực sự.
+Thời gian hiện tại: {now}.
 """
 
     from app.agents.personas import detect_audience

@@ -17,7 +17,7 @@ from typing import Any
 
 from app.graph.state import GraphState
 from app.query_policy.policy import ALLOWED_FULL_TABLES, domain_keys_for_question
-from app.templates.registry import TEMPLATES
+from app.templates.registry import TEMPLATES, ensure_runtime_templates_loaded
 
 _ROOT = Path(__file__).resolve().parents[2]
 SCENARIO_KNOWLEDGE_PATH = _ROOT / "knowledge" / "learned_scenarios.yaml"
@@ -165,6 +165,7 @@ def _normalize_sql_plan(plan: Any) -> dict[str, Any]:
 
 
 def _asset_from_row(row: Any) -> LearnedScenarioAsset | None:
+    ensure_runtime_templates_loaded()
     if not isinstance(row, dict):
         return None
     template_key = str(row.get("template_key") or "").strip()

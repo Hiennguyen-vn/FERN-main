@@ -1,6 +1,7 @@
 """NO LLM. Critical security node. Inject outlet_id filter from auth headers."""
 from typing import Callable
 
+from app.graph.outlet_scope import requested_outlet_ids_for_rbac
 from app.graph.state import GraphState
 from app.rbac.policy import compute_allowed_outlets
 from app.templates.registry import render
@@ -24,8 +25,7 @@ def make_rbac_injector(all_outlet_ids_provider: Callable[[], list[int]] | None =
             state.setdefault("trace", []).append({"node": "rbac_injector", "outcome": "missing_template"})
             return state
 
-        resolved = state.get("resolved_entities", {}) or {}
-        requested = list(resolved.get("outlet_ids", []) or [])
+        requested = requested_outlet_ids_for_rbac(state)
 
         try:
             allowed = compute_allowed_outlets(

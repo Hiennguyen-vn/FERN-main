@@ -45,6 +45,21 @@ def test_build_presentation_markdown_and_chart():
     assert p["chart_spec"]["data"]["datasets"][0]["label"] == "net_revenue"
 
 
+def test_build_presentation_suppresses_lookup_chart():
+    state = {
+        "response_kind": "answer",
+        "intent": "lookup",
+        "template_key": "T37_ai_sales_daily_outlets",
+        "raw_result": [
+            {"first_business_date": "2025-01-01", "outlet_name": "Outlet 1", "net_revenue": 10},
+            {"first_business_date": "2025-01-02", "outlet_name": "Outlet 2", "net_revenue": 20},
+        ],
+    }
+    p = build_presentation_bundle(state)
+    assert "| first_business_date |" in p["markdown_table"]
+    assert "chart_spec" not in p
+
+
 def test_build_json_artifact_roundtrip(tmp_path: Path):
     from app.exports.builder import build_json_artifact
 

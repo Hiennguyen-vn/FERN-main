@@ -44,3 +44,18 @@ def test_slow_moving_products_suggestions_keep_slow_context():
 
     assert suggestions
     assert any("bán chậm" in item.lower() for item in suggestions)
+
+
+def test_lookup_suggestions_are_suppressed():
+    state = {
+        "intent": "lookup",
+        "response_kind": "answer",
+        "template_key": "T37_ai_sales_daily_outlets",
+        "raw_result": [{"outlet_name": "Outlet 1", "net_revenue": 10}],
+        "analysis_brief": {
+            "subject": {"type": "lookup", "entities": ["Outlet 1"]},
+            "guardrails": {},
+        },
+    }
+
+    assert _suggest_for_state(state, 3) == []

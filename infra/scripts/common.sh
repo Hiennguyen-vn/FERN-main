@@ -519,6 +519,28 @@ wait_for_compose_health() {
   return 1
 }
 
+compose_service_is_running() {
+  local service="$1"
+  compose ps --status running --services 2>/dev/null | grep -qx "$service"
+}
+
+stop_compose_local_mode_conflicts() {
+  local -a running_services=()
+  local service
+  for service in "${FERN_COMPOSE_LOCAL_MODE_CONFLICT_SERVICES[@]:-}"; do
+    if compose_service_is_running "$service"; then
+      running_services+=("$service")
+    fi
+  done
+
+  if (( ${#running_services[@]} == 0 )); then
+    return 0
+  fi
+
+  echo "Stopping Compose app containers that conflict with local service mode: ${running_services[*]}"
+  compose stop "${running_services[@]}"
+}
+
 port_in_use() {
   local port="$1"
   if command -v lsof >/dev/null 2>&1; then
@@ -534,6 +556,16 @@ port_in_use() {
     return $?
   fi
   fail "Missing dependency for port checks: install lsof, ss, or netstat"
+  return 1
+}
+
+port_listener_summary() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null \
+      | awk 'NR==2 { printf "%s (pid %s)", $1, $2; exit }'
+    return 0
+  fi
   return 1
 }
 

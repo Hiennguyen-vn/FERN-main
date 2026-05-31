@@ -35,7 +35,7 @@ public class ProductImageStorage {
 
   private static final Set<String> ALLOWED_CONTENT_TYPES =
       Set.of("image/jpeg", "image/png", "image/webp");
-  private static final long MAX_SIZE_BYTES = 5L * 1024 * 1024;
+  private static final long MAX_SIZE_BYTES = 50L * 1024 * 1024;
   private static final Duration PRESIGN_TTL = Duration.ofMinutes(5);
 
   private final S3Presigner presigner;

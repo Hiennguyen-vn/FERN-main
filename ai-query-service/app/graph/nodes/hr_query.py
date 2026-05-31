@@ -18,6 +18,7 @@ from app.clients import postgres as pg
 from app.config import get_settings
 from app.graph.nodes.contextualizer import effective_question as contextual_effective_question
 from app.graph.nodes.data_coverage import coverage_window_for_template, ensure_data_source_context
+from app.graph.outlet_scope import resolved_outlet_ids, scope_outlet_ids
 from app.graph.question_frame import question_text
 from app.graph.state import GraphState
 from app.rbac.policy import compute_allowed_outlets
@@ -1277,14 +1278,16 @@ def _allowed_outlets(
     all_outlet_ids_provider: Callable[[], list[int]] | None,
 ) -> tuple[list[int] | None, str | None]:
     auth = state["auth"]
-    resolved = state.get("resolved_entities") or {}
-    requested = list(resolved.get("outlet_ids") or [])
+    explicit_requested = resolved_outlet_ids(state)
+    requested = list(explicit_requested)
     for outlet_id in _resolve_extra_outlet_ids(state):
         if outlet_id not in requested:
             requested.append(outlet_id)
 
-    if _outlet_terms(state) and not requested:
+    if _outlet_terms(state) and not explicit_requested:
         return None, "Không tìm thấy outlet phù hợp trong phạm vi quyền của bạn. Bạn kiểm tra lại mã/tên outlet giúp tôi."
+    if not requested:
+        requested = scope_outlet_ids(state)
 
     try:
         allowed = compute_allowed_outlets(

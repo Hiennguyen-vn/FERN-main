@@ -10,14 +10,13 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/auth/use-auth';
 import { hasSalesOrderQueueAccess } from '@/auth/authorization';
 import { CustomerOrdersPanel } from '@/components/pos/CustomerOrdersPanel';
+import { formatPosCurrency } from '@/components/pos/sale-order-utils';
 
 const STATUS_STEPS: { key: POSSessionStatus; label: string }[] = [
   { key: 'open', label: 'Opened' },
   { key: 'closed', label: 'Closed' },
   { key: 'reconciled', label: 'Reconciled' },
 ];
-
-const fmtMoney = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 interface Props {
   session: POSSession;
@@ -37,6 +36,9 @@ export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClo
   const canQueue = hasSalesOrderQueueAccess(authSession);
   const showCustomerOrdersTab = canQueue && session.status === 'open';
   const sessionOrders = orders;
+  const paymentMethodsValue = ordersLoading && session.paymentSummary.length === 0 && session.orderCount > 0
+    ? '...'
+    : session.paymentSummary.length;
 
   const statusIndex = STATUS_STEPS.findIndex(s => s.key === session.status);
 
@@ -112,7 +114,7 @@ export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClo
             <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Revenue (Billed)</span>
           </div>
-          <p className="text-xl font-semibold text-foreground">${fmtMoney(session.totalRevenue)}</p>
+          <p className="text-xl font-semibold text-foreground">{formatPosCurrency(session.totalRevenue, session.currencyCode)}</p>
         </div>
         <div className="surface-elevated p-4">
           <div className="flex items-center gap-2 mb-2">
@@ -120,7 +122,7 @@ export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClo
             <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Avg Order</span>
           </div>
           <p className="text-xl font-semibold text-foreground">
-            ${session.orderCount > 0 ? fmtMoney(session.totalRevenue / session.orderCount) : '0.00'}
+            {formatPosCurrency(session.orderCount > 0 ? session.totalRevenue / session.orderCount : 0, session.currencyCode)}
           </p>
         </div>
         <div className="surface-elevated p-4">
@@ -128,7 +130,7 @@ export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClo
             <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Methods Used</span>
           </div>
-          <p className="text-xl font-semibold text-foreground">{session.paymentSummary.length}</p>
+          <p className="text-xl font-semibold text-foreground">{paymentMethodsValue}</p>
         </div>
       </div>
 
@@ -205,7 +207,7 @@ export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClo
                     </td>
                     <td className="px-4 py-2.5 text-xs text-foreground">{order.createdBy}</td>
                     <td className="px-4 py-2.5 text-xs text-muted-foreground">{order.lineItems.length}</td>
-                    <td className="px-4 py-2.5 text-sm font-medium text-foreground">${order.total.toFixed(2)}</td>
+                    <td className="px-4 py-2.5 text-sm font-medium text-foreground">{formatPosCurrency(order.total, order.currencyCode)}</td>
                     <td className="px-4 py-2.5">
                       <span className={cn(
                         'text-[10px] font-medium px-2 py-0.5 rounded-full',
@@ -234,6 +236,16 @@ export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClo
         <div className="surface-elevated p-5">
           <h3 className="text-sm font-semibold text-foreground mb-4">Payment Summary by Method</h3>
           <div className="space-y-3">
+            {ordersLoading && session.paymentSummary.length === 0 && (
+              <div className="p-3 rounded-lg bg-muted/30 text-xs text-muted-foreground">
+                Loading payment details...
+              </div>
+            )}
+            {!ordersLoading && session.paymentSummary.length === 0 && (
+              <div className="p-3 rounded-lg bg-muted/30 text-xs text-muted-foreground">
+                No collected payments recorded for this session.
+              </div>
+            )}
             {session.paymentSummary.map((ps) => (
               <div key={ps.method} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
                 <div className="flex items-center gap-3">
@@ -243,12 +255,12 @@ export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClo
                     <p className="text-[11px] text-muted-foreground">{ps.count} transactions</p>
                   </div>
                 </div>
-                <p className="text-sm font-semibold text-foreground">${fmtMoney(ps.total)}</p>
+                <p className="text-sm font-semibold text-foreground">{formatPosCurrency(ps.total, session.currencyCode)}</p>
               </div>
             ))}
             <div className="flex items-center justify-between pt-3 border-t">
               <p className="text-sm font-semibold text-foreground">Collected</p>
-              <p className="text-lg font-semibold text-foreground">${fmtMoney(session.totalCollected)}</p>
+              <p className="text-lg font-semibold text-foreground">{formatPosCurrency(session.totalCollected, session.currencyCode)}</p>
             </div>
             {session.outstandingAmount > 0 && (
               <div className="flex items-center justify-between p-3 rounded-lg bg-warning/10 border border-warning/30">
@@ -256,12 +268,12 @@ export function POSSessionDetail({ session, orders, ordersLoading, onBack, onClo
                   <p className="text-sm font-semibold text-warning">Outstanding</p>
                   <p className="text-[11px] text-muted-foreground">Billed revenue not yet collected</p>
                 </div>
-                <p className="text-lg font-semibold text-warning">${fmtMoney(session.outstandingAmount)}</p>
+                <p className="text-lg font-semibold text-warning">{formatPosCurrency(session.outstandingAmount, session.currencyCode)}</p>
               </div>
             )}
             <div className="flex items-center justify-between pt-3 border-t">
               <p className="text-xs text-muted-foreground">Revenue (Billed)</p>
-              <p className="text-sm font-medium text-muted-foreground">${fmtMoney(session.totalRevenue)}</p>
+              <p className="text-sm font-medium text-muted-foreground">{formatPosCurrency(session.totalRevenue, session.currencyCode)}</p>
             </div>
           </div>
         </div>

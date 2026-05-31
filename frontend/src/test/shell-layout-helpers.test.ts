@@ -10,6 +10,7 @@ import {
   defaultScope,
   filterActionHub,
   filterAccessibleModules,
+  isKitchenDisplayOnlySession,
 } from '@/layouts/shell-layout-helpers';
 
 function buildSession(overrides: Partial<AuthSession> = {}): AuthSession {
@@ -112,6 +113,18 @@ describe('shell layout helpers', () => {
     expect(cashierModules.some((module) => module.family === 'finance')).toBe(false);
     expect(cashierActions.quickActions.some((action) => action.module === 'finance')).toBe(false);
     expect(financeActions.quickActions.some((action) => action.module === 'finance')).toBe(true);
+  });
+
+  it('keeps kitchen-only operators isolated to the kitchen display module', () => {
+    const kitchenSession = buildSession({
+      rolesByOutlet: { '101': ['kitchen_staff'] },
+      permissionsByOutlet: { '101': ['kitchen.read', 'kitchen.write'] },
+    });
+
+    expect(isKitchenDisplayOnlySession(kitchenSession)).toBe(true);
+    expect([...collectAccessibleFamilies(kitchenSession)]).toEqual(['kitchen']);
+    expect(filterAccessibleModules(kitchenSession).map((module) => module.family)).toEqual(['kitchen']);
+    expect(filterActionHub(kitchenSession)).toEqual({ quickActions: [], recentItems: [] });
   });
 
   it('maps organization family to the dedicated org route while keeping legacy settings redirects accessible', () => {

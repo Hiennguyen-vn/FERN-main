@@ -23,6 +23,7 @@ from app.query_policy.policy import (
     candidate_tables_for_prompt,
     data_source_policy_rows,
     dataset_for_template,
+    datasets_for_template,
     domain_keys_for_question,
     finance_sensitive_tables,
     find_semantic_matches,
@@ -57,6 +58,12 @@ from app.query_policy.learned_scenarios import (
     select_learned_scenario,
     select_sql_writer_scenario,
 )
+from app.query_policy.semantic_contract import (
+    SemanticContractError,
+    load_semantic_contracts,
+    semantic_contract_by_domain,
+    semantic_metric_rows,
+)
 
 __all__ = [
     "ALLOWED_FULL_TABLES",
@@ -77,6 +84,7 @@ __all__ = [
     "candidate_tables_for_prompt",
     "data_source_policy_rows",
     "dataset_for_template",
+    "datasets_for_template",
     "domain_keys_for_question",
     "finance_sensitive_tables",
     "find_semantic_matches",
@@ -104,4 +112,8 @@ __all__ = [
     "load_sql_writer_scenarios",
     "select_learned_scenario",
     "select_sql_writer_scenario",
+    "SemanticContractError",
+    "load_semantic_contracts",
+    "semantic_contract_by_domain",
+    "semantic_metric_rows",
 ]

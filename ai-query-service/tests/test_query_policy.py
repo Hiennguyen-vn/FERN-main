@@ -10,21 +10,28 @@ from app.query_policy import (
     candidate_tables_for_prompt,
     data_source_policy_rows,
     dataset_for_template,
+    datasets_for_template,
     domain_keys_for_question,
     find_semantic_matches,
     format_domain_contract,
     format_metadata_context,
     select_verified_query,
+    semantic_contract_by_domain,
+    semantic_metric_rows,
     tables_for_intent,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_ai_metric_tables_are_allowlisted_and_scoped():
     for full in (
         "analytics.ai_sales_daily",
         "analytics.ai_product_daily",
-        "analytics.ai_pnl_daily",
+        "analytics.ai_finance_daily",
         "analytics.ai_payment_daily",
+        "analytics.ai_inventory_on_hand_daily",
+        "analytics.ai_inventory_movement_daily",
     ):
         assert full in ALLOWED_FULL_TABLES
         assert TABLE_OUTLET_COLUMNS[full] == "outlet_id"
@@ -73,6 +80,16 @@ def test_template_dataset_mapping_covers_time_source_templates():
     assert dataset_for_template("T08_revenue_by_payment_method") == "analytics.ai_payment_daily"
     assert dataset_for_template("T33_zero_revenue_outlets") == "analytics.ai_sales_daily"
     assert dataset_for_template("T34_sales_detail_by_day") == "cdc.sale_record"
+    assert dataset_for_template("T24_daily_pnl_summary") == "analytics.ai_finance_daily"
+    assert dataset_for_template("T11_inventory_current_stock") == "analytics.ai_inventory_on_hand_daily"
+    assert dataset_for_template("T13_inventory_movement_summary") == "analytics.ai_inventory_movement_daily"
+    assert dataset_for_template("INS_SALES_DRIVER") == "analytics.ai_sales_daily"
+    assert dataset_for_template("ANOM_INVENTORY") == "analytics.ai_inventory_movement_daily"
+    assert dataset_for_template("FORECAST_PROFIT") == "analytics.ai_finance_daily"
+    assert datasets_for_template("FORECAST_STOCK_COVER") == (
+        "analytics.ai_inventory_on_hand_daily",
+        "analytics.ai_inventory_movement_daily",
+    )
     assert dataset_for_template("T23_peak_hour_analysis") == "cdc.sale_record"
     assert dataset_for_template("T29_stock_low_events") == "fern.events_stock_low"
     assert dataset_for_template("HR_payroll_total") == "core.payroll_period"
@@ -82,7 +99,16 @@ def test_template_dataset_mapping_covers_time_source_templates():
 def test_policy_prefers_flattened_metric_tables():
     assert tables_for_intent("revenue", max_tables=2)[0] == "analytics.ai_sales_daily"
     assert tables_for_intent("product_mix", max_tables=1) == ["analytics.ai_product_daily"]
-    assert tables_for_intent("pnl", max_tables=1) == ["analytics.ai_pnl_daily"]
+    assert tables_for_intent("pnl", max_tables=1) == ["analytics.ai_finance_daily"]
+    assert tables_for_intent("inventory", max_tables=1) == ["analytics.ai_inventory_on_hand_daily"]
+
+
+def test_cash_control_terms_do_not_route_to_payment_pack():
+    assert domain_keys_for_question("unknown", "Chênh lệch tiền mặt expected vs counted hôm qua") == ["sales"]
+    assert domain_keys_for_question("unknown", "Doanh thu theo phương thức thanh toán tiền mặt hôm qua")[0] == "payment"
+
+    cash_variance_matches = find_semantic_matches("cash variance expected vs counted hôm qua")
+    assert not any(m.get("kind") == "value_alias" and m.get("canonical_type") == "payment_method" for m in cash_variance_matches)
 
 
 def test_line_level_price_and_discount_questions_expose_cdc_fact_sale():
@@ -199,7 +225,7 @@ def test_payment_alias_does_not_match_the_in_the_nao():
 
 
 def test_metric_views_migration_contains_required_columns():
-    sql = Path("../infra/clickhouse/migrations/V003__ai_metric_views.sql")
+    sql = REPO_ROOT / "infra/clickhouse/migrations/V003__ai_metric_views.sql"
     text = sql.read_text(encoding="utf-8")
     for view in ("ai_sales_daily", "ai_product_daily", "ai_pnl_daily", "ai_payment_daily"):
         assert f"analytics.{view}" in text
@@ -207,8 +233,31 @@ def test_metric_views_migration_contains_required_columns():
     assert "business_date" in text
 
 
+def test_core_bi_marts_migration_declares_semantic_views():
+    text = (REPO_ROOT / "infra/clickhouse/migrations/V004__core_bi_marts.sql").read_text(encoding="utf-8")
+    assert "analytics.ai_finance_daily" in text
+    assert "goods_receipt_cost" in text
+    assert "not treated as COGS" in text
+    assert "analytics.ai_inventory_on_hand_daily" in text
+    assert "analytics.ai_inventory_movement_daily" in text
+    assert "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW" in text
+
+
+def test_semantic_contracts_cover_core_domains_and_metrics():
+    by_domain = semantic_contract_by_domain()
+    assert {"sales", "finance", "inventory"} <= set(by_domain)
+    rows = semantic_metric_rows()
+    metric_ids = {row["id"] for row in rows}
+    assert "net_revenue" in metric_ids
+    assert "operating_profit" in metric_ids
+    assert "qty_on_hand" in metric_ids
+    finance = by_domain["finance"]
+    caveats = " ".join(" ".join(ds.get("caveats") or []) for ds in finance["datasets"])
+    assert "không phải COGS" in caveats
+
+
 def test_cdc_fact_views_alias_joined_columns_for_clickhouse():
-    text = Path("../infra/clickhouse/migrations/V002__cdc_schema.sql").read_text(encoding="utf-8")
+    text = (REPO_ROOT / "infra/clickhouse/migrations/V002__cdc_schema.sql").read_text(encoding="utf-8")
     assert "fs.outlet_id      AS outlet_id" in text
     assert "fs.business_date  AS business_date" in text
     assert "fs.product_id     AS product_id" in text
@@ -276,6 +325,55 @@ def test_verified_query_selector_picks_common_assets():
     assert peak_q3 is not None
     assert peak_q3.template_key == "T23_peak_hour_analysis"
     assert peak_q3.params == {"from_date": "2025-07-01", "to_date": "2025-09-30"}
+
+
+def test_verified_query_selector_prefers_top_products_for_product_revenue_ranking():
+    time_range = {"from_date": "2026-01-01", "to_date": "2026-05-19"}
+
+    top_product = select_verified_query(
+        question="doanh thu sản phẩm nào cao nhất trong năm nay",
+        intent="product_mix",
+        time_range=time_range,
+    )
+    assert top_product is not None
+    assert top_product.template_key == "T04_top_products"
+    assert top_product.params == {**time_range, "limit": 10}
+
+
+def test_verified_query_selector_picks_core_insight_assets():
+    tr = {"from_date": "2026-05-01", "to_date": "2026-05-07"}
+
+    sales_driver = select_verified_query(question="Vì sao doanh thu tuần này giảm?", intent="revenue", time_range=tr)
+    assert sales_driver is not None
+    assert sales_driver.template_key == "INS_SALES_DRIVER"
+
+    finance_driver = select_verified_query(
+        question="Outlet nào kéo lợi nhuận xuống tháng này?",
+        intent="pnl",
+        time_range=tr,
+    )
+    assert finance_driver is not None
+    assert finance_driver.template_key == "INS_FINANCE_DRIVER"
+
+    sales_anomaly = select_verified_query(question="Hôm nay outlet nào bất thường?", intent="revenue", time_range=tr)
+    assert sales_anomaly is not None
+    assert sales_anomaly.template_key == "ANOM_SALES"
+
+    inventory_anomaly = select_verified_query(
+        question="Kho nào có biến động bất thường 30 ngày qua?",
+        intent="inventory",
+        time_range=tr,
+    )
+    assert inventory_anomaly is not None
+    assert inventory_anomaly.template_key == "ANOM_INVENTORY"
+
+    revenue_forecast = select_verified_query(
+        question="Cuối tháng doanh thu dự kiến đạt bao nhiêu?",
+        intent="revenue",
+        time_range=tr,
+    )
+    assert revenue_forecast is not None
+    assert revenue_forecast.template_key == "FORECAST_REVENUE"
 
 
 def test_verified_query_selector_requires_time_slots():

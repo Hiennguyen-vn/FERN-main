@@ -17,9 +17,11 @@ from app.query_policy import (
     TABLE_POLICIES,
     DataSourcePolicy,
     dataset_for_template,
+    datasets_for_template,
     domain_keys_for_question,
     get_data_source_policy,
 )
+from app.time_utils import has_time_expression
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +33,22 @@ _METRIC_DATASET_HINTS: dict[str, tuple[str, ...]] = {
     "goods_receipt": ("fern.events_goods_receipt_posted",),
     "expense_breakdown": ("fern.events_expense_created",),
     "payment_capture": ("fern.events_payment_captured",),
-    "payroll_cost": ("analytics.ai_pnl_daily", "fern.events_payroll_approved"),
-    "operating_profit": ("analytics.ai_pnl_daily",),
-    "negative_stock": ("analytics.fct_inventory_snapshot",),
-    "low_stock": ("analytics.fct_inventory_snapshot", "fern.events_stock_low"),
+    "payroll_cost": ("analytics.ai_finance_daily", "fern.events_payroll_approved"),
+    "operating_profit": ("analytics.ai_finance_daily",),
+    "goods_receipt_cost": ("analytics.ai_finance_daily", "fern.events_goods_receipt_posted"),
+    "negative_stock": ("analytics.ai_inventory_on_hand_daily",),
+    "low_stock": ("analytics.ai_inventory_on_hand_daily", "fern.events_stock_low"),
+    "inventory_movement": ("analytics.ai_inventory_movement_daily",),
+}
+
+_CLICKHOUSE_COVERAGE_SOURCE_OVERRIDES: dict[str, tuple[str, str]] = {
+    # These are views over CDC tables. Scanning them for min/max/count can be
+    # much more expensive than checking the base business-date coverage.
+    "analytics.ai_inventory_on_hand_daily": ("cdc.inventory_transaction", "business_date"),
+    "analytics.ai_inventory_movement_daily": ("cdc.inventory_transaction", "business_date"),
+    "analytics.fct_inventory_snapshot": ("cdc.inventory_transaction", "business_date"),
+    "analytics.ai_payment_daily": ("cdc.payment", "business_date"),
+    "analytics.fct_payment_split": ("cdc.payment", "business_date"),
 }
 
 
@@ -54,14 +68,20 @@ def _clickhouse_coverage_sql(datasets: list[str] | tuple[str, ...] | set[str] | 
             continue
         if "/" in policy.time_column or policy.dataset not in TABLE_POLICIES:
             continue
-        col = _quote_clickhouse_identifier(policy.time_column)
+        source_dataset, source_time_column = _CLICKHOUSE_COVERAGE_SOURCE_OVERRIDES.get(
+            policy.dataset,
+            (policy.dataset, policy.time_column),
+        )
+        if source_dataset not in TABLE_POLICIES:
+            continue
+        col = _quote_clickhouse_identifier(source_time_column)
         parts.append(
             "SELECT "
             f"'{policy.dataset}' AS dataset, "
             f"if(count() = 0, CAST(NULL, 'Nullable(Date)'), min(toDate({col}))) AS min_date, "
             f"if(count() = 0, CAST(NULL, 'Nullable(Date)'), max(toDate({col}))) AS max_date, "
             "count() AS row_count "
-            f"FROM {policy.dataset}"
+            f"FROM {source_dataset}"
         )
     return "\nUNION ALL\n".join(parts)
 
@@ -166,6 +186,16 @@ def _requested_range(state: GraphState) -> dict[str, str]:
         tr = {}
     tk = state.get("template_key")
     tp = state.get("template_params") or {}
+    if tk in {"FORECAST_REVENUE", "FORECAST_PROFIT"}:
+        td = str((tp if isinstance(tp, dict) else {}).get("to_date") or tr.get("to_date") or "").strip()
+        to_date = _parse_iso_date(td)
+        if to_date:
+            return {"from_date": to_date.replace(day=1).isoformat(), "to_date": to_date.isoformat()}
+    if tk == "FORECAST_STOCK_COVER":
+        td = str((tp if isinstance(tp, dict) else {}).get("to_date") or tr.get("to_date") or "").strip()
+        to_date = _parse_iso_date(td)
+        if to_date:
+            return {"from_date": (to_date - timedelta(days=27)).isoformat(), "to_date": to_date.isoformat()}
     if tk == "T36_revenue_period_driver_bridge" and isinstance(tp, dict):
         parts: list[str] = []
         for key in ("from_date_a", "to_date_a", "from_date_b", "to_date_b"):
@@ -248,12 +278,25 @@ def _fallback_window_fully_before_available(mn: date, mx: date, *, span_days: in
     return {"from_date": start.isoformat(), "to_date": end.isoformat()}
 
 
+def _is_implicit_default_time_range(state: GraphState) -> bool:
+    """True when the time range came from the default app date, not user wording."""
+    ctx = state.get("time_context")
+    if not isinstance(ctx, dict):
+        return False
+    if bool(ctx.get("current_has_time_expression")):
+        return False
+    source_text = str(ctx.get("time_source_text") or "").strip()
+    return not has_time_expression(source_text)
+
+
 def _maybe_clamp_time_range_to_available_coverage(state: GraphState, ctx: dict[str, Any]) -> list[str]:
-    """Shrink or shift ``state['time_range']`` so queries run on real coverage.
+    """Shrink ``state['time_range']`` only when it partially overlaps coverage.
 
     When the requested range is `partial_before` / `partial_after`, intersect with
     available [min_date, max_date]. When it is fully `outside` (no intersection),
-    answer using the nearest week-shaped window inside available data and add a caveat.
+    keep the user-requested period intact if the user explicitly asked for it.
+    If the range was only the implicit default app date and the warehouse has not
+    caught up yet, move to the nearest available data window.
 
     Returns human-readable caveat lines (Vietnamese) to prepend to ``data_source_context``.
     """
@@ -289,20 +332,38 @@ def _maybe_clamp_time_range_to_available_coverage(state: GraphState, ctx: dict[s
             "để trả lời dựa trên dữ liệu thực tế trong kho dữ liệu."
         )
     else:
-        if rf > mx:
-            window = _fallback_window_fully_after_available(mn, mx)
-            hint = "sau ngày dữ liệu mới nhất trong hệ thống"
-        elif rt < mn:
-            window = _fallback_window_fully_before_available(mn, mx)
-            hint = "trước khoảng thời gian có dữ liệu"
+        span_days = max(1, (rt - rf).days + 1)
+        if _is_implicit_default_time_range(state) and rf > mx:
+            fallback = _fallback_window_fully_after_available(mn, mx, span_days=span_days)
+            new_from, new_to = fallback["from_date"], fallback["to_date"]
+            caveats.append(
+                f"Câu hỏi không nêu kỳ cụ thể; kỳ mặc định {rf_s}–{rt_s} chưa có dữ liệu. "
+                f"Hệ thống dùng kỳ dữ liệu gần nhất {new_from}–{new_to} trong coverage hiện có "
+                f"({mn_s}–{mx_s})."
+            )
+        elif _is_implicit_default_time_range(state) and rt < mn:
+            fallback = _fallback_window_fully_before_available(mn, mx, span_days=span_days)
+            new_from, new_to = fallback["from_date"], fallback["to_date"]
+            caveats.append(
+                f"Câu hỏi không nêu kỳ cụ thể; kỳ mặc định {rf_s}–{rt_s} nằm trước dữ liệu khả dụng. "
+                f"Hệ thống dùng kỳ dữ liệu đầu tiên {new_from}–{new_to} trong coverage hiện có "
+                f"({mn_s}–{mx_s})."
+            )
         else:
+            caveats.append(
+                f"Kỳ bạn hỏi ({rf_s}–{rt_s}) không giao với dữ liệu khả dụng ({mn_s}–{mx_s}). "
+                "Hệ thống không tự động dùng số liệu của kỳ khác để thay thế."
+            )
             return caveats
-        new_from, new_to = window["from_date"], window["to_date"]
-        caveats.append(
-            f"Kỳ bạn hỏi ({rf_s}–{rt_s}) không giao với dữ liệu khả dụng ({mn_s}–{mx_s}). "
-            f"Để vẫn phân tích được theo lịch sử trong kho dữ liệu, em dùng cửa sổ 7 ngày gần nhất {hint} "
-            f"({new_from}–{new_to})."
-        )
+
+    tk = str(state.get("template_key") or "")
+    new_to_date = _parse_iso_date(new_to)
+    if new_to_date and tk in {"FORECAST_REVENUE", "FORECAST_PROFIT"}:
+        forecast_start = new_to_date.replace(day=1)
+        new_from = max(mn, forecast_start).isoformat()
+    elif new_to_date and tk == "FORECAST_STOCK_COVER":
+        forecast_start = new_to_date - timedelta(days=27)
+        new_from = max(mn, forecast_start).isoformat()
 
     tr = dict(state.get("time_range") or {})
     tr["from_date"] = new_from
@@ -497,8 +558,7 @@ def executed_datasets_for_state(state: GraphState) -> list[str]:
     """Datasets from the SQL lane that actually ran, when available."""
     source = str(state.get("executed_sql_source") or state.get("sql_source") or "").lower()
     if source == "template":
-        template_dataset = dataset_for_template(str(state.get("template_key") or ""))
-        return [template_dataset] if template_dataset else []
+        return list(datasets_for_template(str(state.get("template_key") or "")))
 
     tables = [str(x).strip().lower() for x in (state.get("codegen_tables_used") or []) if str(x).strip()]
     if source != "codegen" and (state.get("template_key") or not tables):
@@ -516,9 +576,9 @@ def selected_datasets_for_state(state: GraphState) -> list[str]:
     if executed:
         return executed
 
-    template_dataset = dataset_for_template(str(state.get("template_key") or ""))
-    if template_dataset:
-        return [template_dataset]
+    template_datasets = list(datasets_for_template(str(state.get("template_key") or "")))
+    if template_datasets:
+        return template_datasets
 
     question = _question_for_selection(state)
     if state.get("agent_route") == "hr_staff" or state.get("intent") == "hr_staff" or state.get("hr_query_kind"):

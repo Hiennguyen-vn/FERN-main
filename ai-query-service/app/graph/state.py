@@ -50,6 +50,8 @@ class GraphState(TypedDict, total=False):
 
     # Entity Resolver
     resolved_entities: dict[str, list[int]]
+    """Outlet ids selected in the frontend scope picker; used only when the question has no explicit outlet."""
+    scope_outlet_ids: list[int]
 
     # Controlled HR lane (static Postgres queries)
     hr_query_kind: str | None

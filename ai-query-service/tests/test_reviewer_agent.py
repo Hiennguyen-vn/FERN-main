@@ -43,3 +43,44 @@ def test_reviewer_safe_facts_include_scope_and_hr_detail_columns(monkeypatch):
     assert facts["scope_facts"]["allowed_outlet_ids"] == [3485604078895513600]
     assert facts["scope_facts"]["time_range"] == {"from_date": "2026-05-01", "to_date": "2026-05-02"}
     assert facts["preview_rows"][0]["last_work_date"] == "2026-05-02"
+
+
+def test_reviewer_skips_deterministic_insight_templates(monkeypatch):
+    monkeypatch.setattr(
+        reviewer,
+        "get_settings",
+        lambda: SimpleNamespace(reviewer_agent_enabled=True),
+    )
+
+    skip, reason = reviewer._should_skip(
+        {
+            "template_key": "FORECAST_STOCK_COVER",
+            "response_kind": "answer",
+            "answer_text": "Câu trả lời deterministic đã có caveat nghiệp vụ.",
+            "raw_result": [{"item_id": 1}],
+        }
+    )
+
+    assert skip is True
+    assert reason == "deterministic_insight"
+
+
+def test_reviewer_skips_deterministic_lookup_templates(monkeypatch):
+    monkeypatch.setattr(
+        reviewer,
+        "get_settings",
+        lambda: SimpleNamespace(reviewer_agent_enabled=True),
+    )
+
+    skip, reason = reviewer._should_skip(
+        {
+            "template_key": "T37_ai_sales_daily_outlets",
+            "intent": "lookup",
+            "response_kind": "answer",
+            "answer_text": "Có 12 cửa hàng có dữ liệu trong analytics.ai_sales_daily.",
+            "raw_result": [{"outlet_id": 1}],
+        }
+    )
+
+    assert skip is True
+    assert reason == "deterministic_lookup"

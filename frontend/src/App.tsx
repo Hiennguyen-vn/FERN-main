@@ -12,6 +12,7 @@ import Login from "./pages/Login";
 import ShellLayout from "./layouts/ShellLayout";
 import NotFound from "./pages/NotFound";
 import { sessionRolesSet, effectiveRolesByOutletRecord } from "@/auth/authorization";
+import { isKitchenDisplayOnlySession } from "@/layouts/shell-layout-helpers";
 import type { AuthSession } from "@/api/auth-api";
 import { PosRoleRedirect } from "./routes/pos-order/guards/PosRoleRedirect";
 
@@ -177,6 +178,7 @@ function RootRedirect() {
 }
 
 function resolveLandingPath(session: AuthSession): string {
+  if (isKitchenDisplayOnlySession(session)) return '/kitchen';
   const roles = sessionRolesSet(session);
   const isManager = roles.has('superadmin') || roles.has('admin')
     || roles.has('region_manager') || roles.has('outlet_manager');

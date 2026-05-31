@@ -1,3 +1,4 @@
+import hmac
 from dataclasses import dataclass, field
 from typing import Mapping
 
@@ -53,6 +54,14 @@ def _parse_csv_strings(value: str) -> list[str]:
 _TRUSTED_CALLER = "gateway"
 
 
+def _constant_time_token_equal(a: str, b: str) -> bool:
+    """Timing-safe string comparison to prevent timing-based token oracle attacks."""
+    return hmac.compare_digest(
+        a.encode("utf-8", errors="replace"),
+        b.encode("utf-8", errors="replace"),
+    )
+
+
 def parse_auth_headers(
     headers: Mapping[str, str],
     expected_token: str,
@@ -62,6 +71,7 @@ def parse_auth_headers(
 
     Security contract:
     - X-Internal-Token must match the configured shared secret.
+      Comparison is done with hmac.compare_digest to prevent timing attacks.
     - X-Internal-Service must equal "gateway". Any other caller (even with a valid token)
       cannot be trusted to have correctly scoped the user/outlet context, so we reject it
       to prevent a compromised internal service from forging user identity.
@@ -76,7 +86,10 @@ def parse_auth_headers(
     service_name = _get("X-Internal-Service")
     token = _get("X-Internal-Token")
 
-    if not token or token != expected_token:
+    # Use constant-time comparison to prevent timing-based oracle attacks.
+    # We still check `not token` first because compare_digest requires both
+    # strings to be the same type — an empty token is always invalid.
+    if not token or not _constant_time_token_equal(token, expected_token):
         raise AuthError(401, "Invalid or missing X-Internal-Token")
 
     if service_name.lower() != _TRUSTED_CALLER:

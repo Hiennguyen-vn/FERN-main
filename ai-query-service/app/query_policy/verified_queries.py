@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import threading
 import unicodedata
 from typing import Any
+
+from app.runtime_catalog import get_runtime_catalog_section
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,129 @@ class VerifiedQueryMatch:
 
 
 VERIFIED_QUERY_ASSETS: tuple[VerifiedQueryAsset, ...] = (
+    VerifiedQueryAsset(
+        "FORECAST_REVENUE",
+        ("revenue_forecast", "net_revenue"),
+        (
+            r"\b(du kien|du phong|forecast|projection|pace)\b.*\b(doanh thu|doanh so|revenue|sales|gmv)\b",
+            r"\b(cuoi thang|het thang|end of month)\b.*\b(doanh thu|doanh so|revenue|sales|gmv)\b",
+            r"\b(co dat|dat target|dat muc tieu|on track)\b.*\b(doanh thu|doanh so|revenue|sales|gmv)\b",
+        ),
+        ("from_date", "to_date"),
+        "business_date",
+        "outlet_id",
+        ("forecast_revenue",),
+        0.96,
+    ),
+    VerifiedQueryAsset(
+        "FORECAST_PROFIT",
+        ("profit_forecast", "operating_profit"),
+        (
+            r"\b(du kien|du phong|forecast|projection|pace)\b.*\b(loi nhuan|profit|p&l|margin)\b",
+            r"\b(cuoi thang|het thang|end of month)\b.*\b(loi nhuan|profit|p&l|margin)\b",
+            r"\b(co dat|dat target|dat muc tieu|on track)\b.*\b(loi nhuan|profit|p&l|margin)\b",
+        ),
+        ("from_date", "to_date"),
+        "business_date",
+        "outlet_id",
+        ("forecast_profit",),
+        0.95,
+    ),
+    VerifiedQueryAsset(
+        "FORECAST_STOCK_COVER",
+        ("stock_cover", "qty_on_hand", "inventory_consumption"),
+        (
+            r"\b(du hang|cover|stock cover|days of cover|bao nhieu ngay)\b.*\b(ton kho|stock|inventory|hang)\b",
+            r"\b(ton kho|stock|inventory|hang)\b.*\b(duoc bao lau|bao nhieu ngay|days of cover|stock cover)\b",
+        ),
+        ("from_date", "to_date"),
+        "business_date",
+        "outlet_id",
+        ("forecast_stock_cover",),
+        0.94,
+    ),
+    VerifiedQueryAsset(
+        "INS_FINANCE_DRIVER",
+        ("finance_driver", "operating_profit"),
+        (
+            r"\b(vi sao|tai sao|nguyen nhan|driver|detractor|keo)\b.*\b(loi nhuan|profit|p&l|margin)\b",
+            r"\b(outlet nao|cua hang nao|chi nhanh nao)\b.*\b(keo|lam giam|anh huong)\b.*\b(loi nhuan|profit|p&l|margin)\b",
+            r"\b(loi nhuan|profit|p&l|margin)\b.*\b(giam|tang|driver|detractor|keo xuong|keo len)\b",
+        ),
+        ("from_date", "to_date"),
+        "business_date",
+        "outlet_id",
+        ("finance_driver_scan",),
+        0.96,
+    ),
+    VerifiedQueryAsset(
+        "INS_SALES_DRIVER",
+        ("sales_driver", "net_revenue"),
+        (
+            r"\b(vi sao|tai sao|nguyen nhan|driver|detractor|keo)\b.*\b(doanh thu|doanh so|revenue|sales|gmv)\b",
+            r"\b(outlet nao|cua hang nao|chi nhanh nao)\b.*\b(keo|lam giam|anh huong)\b.*\b(doanh thu|doanh so|revenue|sales|gmv)\b",
+            r"\b(doanh thu|doanh so|revenue|sales|gmv)\b.*\b(giam|tang|driver|detractor|keo xuong|keo len)\b",
+        ),
+        ("from_date", "to_date"),
+        "business_date",
+        "outlet_id",
+        ("sales_driver_scan",),
+        0.96,
+    ),
+    VerifiedQueryAsset(
+        "INS_INVENTORY_DRIVER",
+        ("inventory_driver", "inventory_movement"),
+        (
+            r"\b(vi sao|tai sao|nguyen nhan|driver|detractor|keo)\b.*\b(ton kho|stock|inventory|kho)\b",
+            r"\b(ton kho|stock|inventory|kho)\b.*\b(tang|giam|bien dong|churn|driver|detractor)\b",
+        ),
+        ("from_date", "to_date"),
+        "business_date",
+        "outlet_id",
+        ("inventory_driver_scan",),
+        0.94,
+    ),
+    VerifiedQueryAsset(
+        "ANOM_FINANCE",
+        ("finance_anomaly", "operating_profit"),
+        (
+            r"\b(bat thuong|anomaly|outlier|lech|dot bien)\b.*\b(loi nhuan|profit|p&l|margin)\b",
+            r"\b(loi nhuan|profit|p&l|margin)\b.*\b(bat thuong|anomaly|outlier|lech|dot bien)\b",
+        ),
+        ("from_date", "to_date"),
+        "business_date",
+        "outlet_id",
+        ("finance_anomaly_scan",),
+        0.95,
+    ),
+    VerifiedQueryAsset(
+        "ANOM_INVENTORY",
+        ("inventory_anomaly", "inventory_movement"),
+        (
+            r"\b(bat thuong|anomaly|outlier|lech|dot bien)\b.*\b(ton kho|stock|inventory|kho|movement)\b",
+            r"\b(ton kho|stock|inventory|kho|movement)\b.*\b(bat thuong|anomaly|outlier|lech|dot bien)\b",
+            r"\b(kho nao)\b.*\b(bat thuong|lech|dot bien)\b.*\b(ton kho|stock|inventory|movement|bien dong)\b",
+        ),
+        ("from_date", "to_date"),
+        "business_date",
+        "outlet_id",
+        ("inventory_anomaly_scan",),
+        0.95,
+    ),
+    VerifiedQueryAsset(
+        "ANOM_SALES",
+        ("sales_anomaly", "net_revenue"),
+        (
+            r"\b(bat thuong|anomaly|outlier|lech|dot bien)\b.*\b(doanh thu|doanh so|revenue|sales|gmv|outlet)\b",
+            r"\b(doanh thu|doanh so|revenue|sales|gmv|outlet)\b.*\b(bat thuong|anomaly|outlier|lech|dot bien)\b",
+            r"\b(hom nay|today)\b.*\b(bat thuong|anomaly|outlier|lech|dot bien)\b",
+        ),
+        ("from_date", "to_date"),
+        "business_date",
+        "outlet_id",
+        ("sales_anomaly_scan",),
+        0.95,
+    ),
     VerifiedQueryAsset(
         "T34_sales_detail_by_day",
         ("sale_record_detail", "sale_line_revenue"),
@@ -155,7 +281,11 @@ VERIFIED_QUERY_ASSETS: tuple[VerifiedQueryAsset, ...] = (
     VerifiedQueryAsset(
         "T04_top_products",
         ("revenue", "qty"),
-        (r"\b(top san pham|san pham ban chay|best seller|mat hang ban chay)\b",),
+        (
+            r"\b(top san pham|san pham ban chay|best seller|mat hang ban chay)\b",
+            r"\b(doanh thu|revenue|sales)\b.*\b(san pham|mat hang|product)\b.*\b(cao nhat|nhieu nhat|top|xep hang|ranking|rank)\b",
+            r"\b(san pham|mat hang|product)\b.*\b(doanh thu|revenue|sales)\b.*\b(cao nhat|nhieu nhat|top|xep hang|ranking|rank)\b",
+        ),
         ("from_date", "to_date"),
         "business_date",
         "outlet_id",
@@ -223,6 +353,48 @@ VERIFIED_QUERY_ASSETS: tuple[VerifiedQueryAsset, ...] = (
         0.95,
     ),
 )
+_RUNTIME_LOCK = threading.RLock()
+_RUNTIME_VERSION: int | None = None
+
+
+def _decode_verified_query_asset(raw: object) -> VerifiedQueryAsset | None:
+    if not isinstance(raw, dict):
+        return None
+    metric_ids = raw.get("metric_ids") or ()
+    question_patterns = raw.get("question_patterns") or ()
+    required_slots = raw.get("required_slots") or ()
+    golden_cases = raw.get("golden_cases") or ()
+    if not isinstance(metric_ids, (list, tuple)) or not isinstance(question_patterns, (list, tuple)):
+        return None
+    if not isinstance(required_slots, (list, tuple)) or not isinstance(golden_cases, (list, tuple)):
+        return None
+    return VerifiedQueryAsset(
+        template_key=str(raw.get("template_key") or ""),
+        metric_ids=tuple(str(x) for x in metric_ids),
+        question_patterns=tuple(str(x) for x in question_patterns),
+        required_slots=tuple(str(x) for x in required_slots),
+        time_column=str(raw.get("time_column")) if raw.get("time_column") is not None else None,
+        outlet_column=str(raw.get("outlet_column")) if raw.get("outlet_column") is not None else None,
+        golden_cases=tuple(str(x) for x in golden_cases),
+        confidence=float(raw.get("confidence") or 0.95),
+    )
+
+
+def ensure_runtime_verified_queries_loaded(*, force: bool = False) -> None:
+    global VERIFIED_QUERY_ASSETS, _RUNTIME_VERSION
+    with _RUNTIME_LOCK:
+        version, section = get_runtime_catalog_section("verified_queries", force=force)
+        if not force and version == _RUNTIME_VERSION:
+            return
+        if isinstance(section, dict) and isinstance(section.get("assets"), list):
+            parsed: list[VerifiedQueryAsset] = []
+            for raw in section["assets"]:
+                asset = _decode_verified_query_asset(raw)
+                if asset and asset.template_key:
+                    parsed.append(asset)
+            if parsed:
+                VERIFIED_QUERY_ASSETS = tuple(parsed)
+        _RUNTIME_VERSION = version
 
 
 def _fold(text: str) -> str:
@@ -246,6 +418,13 @@ def _rank_direction_from_question(question_folded: str) -> str | None:
     ):
         return "asc"
     return None
+
+
+def _is_product_revenue_ranking_question(question_folded: str) -> bool:
+    productish = any(x in question_folded for x in ("san pham", "mat hang", "product"))
+    revenueish = any(x in question_folded for x in ("doanh thu", "revenue", "sales"))
+    rankish = any(x in question_folded for x in ("cao nhat", "nhieu nhat", "top", "xep hang", "ranking", "rank"))
+    return productish and revenueish and rankish
 
 
 def _params_from_slots(
@@ -277,8 +456,10 @@ def select_verified_query(
     intent: str | None,
     time_range: dict[str, Any],
 ) -> VerifiedQueryMatch | None:
+    ensure_runtime_verified_queries_loaded()
     folded = _fold(question)
     intent_key = (intent or "").strip().lower()
+    product_ranking_q = _is_product_revenue_ranking_question(folded)
     if intent_key in {"greeting", "thanks", "hr_staff"}:
         return None
     # Raw CDC / ingestion-table requests must not shortcut into golden metric templates.
@@ -286,7 +467,11 @@ def select_verified_query(
         return None
 
     for asset in VERIFIED_QUERY_ASSETS:
+        if asset.template_key.startswith("INS_") and re.search(r"\b(bat thuong|anomaly|outlier|lech|dot bien)\b", folded):
+            continue
         if asset.template_key == "T31_outlet_directory" and intent_key not in {"lookup", "unknown"}:
+            continue
+        if asset.template_key in {"T22_outlet_rank", "T02_revenue_by_outlet"} and (intent_key == "product_mix" or product_ranking_q):
             continue
         if not any(re.search(pattern, folded) for pattern in asset.question_patterns):
             continue

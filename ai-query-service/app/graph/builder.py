@@ -67,7 +67,7 @@ def _route_after_contextualizer(state: GraphState) -> str:
 
 
 def _route_after_supervisor(state: GraphState) -> str:
-    if state.get("response_kind") == "clarification" or (state.get("planning_frame") or {}).get("next_action") == "ask_clarification":
+    if state.get("response_kind") in {"clarification", "unsupported"} or (state.get("planning_frame") or {}).get("next_action") == "ask_clarification":
         return "answer_formatter"
     if state.get("agent_route") in ("greeting", "thanks") or state.get("intent") in ("greeting", "thanks"):
         return "social_reply"

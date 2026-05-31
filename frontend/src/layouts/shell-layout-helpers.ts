@@ -1,5 +1,5 @@
 import type { AuthBusinessScopeView, AuthSession } from '@/api/auth-api';
-import { hasModuleAccess } from '@/auth/authorization';
+import { hasModuleAccess, sessionRolesSet } from '@/auth/authorization';
 import type {
   ActionHub,
   ModuleEntry,
@@ -267,14 +267,38 @@ export function buildShellUser(session: AuthSession | null | undefined): ShellCo
 }
 
 export function collectAccessibleFamilies(session: AuthSession | null | undefined): Set<ModuleFamily> {
+  if (isKitchenDisplayOnlySession(session)) return new Set(['kitchen']);
   return new Set(ROUTE_FAMILIES.filter((family) => hasModuleAccess(session ?? null, family)));
 }
 
 export function filterAccessibleModules(session: AuthSession | null | undefined): ModuleEntry[] {
+  if (isKitchenDisplayOnlySession(session)) {
+    return MODULES.filter((module) => module.family === 'kitchen').map((module) => ({
+      ...module,
+      visible: true,
+    }));
+  }
   return MODULES.filter((module) => hasModuleAccess(session ?? null, module.family)).map((module) => ({
     ...module,
     visible: true,
   }));
+}
+
+export function isKitchenDisplayOnlySession(session: AuthSession | null | undefined): boolean {
+  if (!session) return false;
+  const roles = sessionRolesSet(session);
+  const kitchenOnlyPermissions = new Set(['kitchen.read', 'kitchen.write']);
+  const permissions = new Set(
+    Object.values(session.permissionsByOutlet ?? {})
+      .flat()
+      .map((permission) => String(permission ?? '').trim())
+      .filter(Boolean),
+  );
+  const hasKitchenGrant = roles.has('kitchen_staff') || permissions.has('kitchen.read');
+  if (!hasKitchenGrant) return false;
+  const hasNonKitchenRole = [...roles].some((role) => role !== 'kitchen_staff');
+  const hasNonKitchenPermission = [...permissions].some((permission) => !kitchenOnlyPermissions.has(permission));
+  return !hasNonKitchenRole && !hasNonKitchenPermission;
 }
 
 export function filterActionHub(session: AuthSession | null | undefined): ActionHub {

@@ -9,6 +9,24 @@ FERN_DEPENDENCY_SERVICES=(
   grafana
 )
 
+FERN_COMPOSE_LOCAL_MODE_CONFLICT_SERVICES=(
+  master-node
+  auth-service
+  org-service
+  hr-service
+  product-service
+  procurement-service
+  sales-service
+  inventory-service
+  payroll-service
+  finance-service
+  audit-service
+  report-service
+  gateway
+  gateway-lb
+  gateway-2
+)
+
 FERN_LOCAL_SERVICE_ORDER=(
   "master-node|services/master-node|services/master-node/target/master-node-*.jar|MASTER_NODE_PORT|8082|spring"
   "auth-service|services/auth-service/spring|services/auth-service/spring/target/auth-service-spring-*.jar|AUTH_SERVICE_PORT|8081|spring"

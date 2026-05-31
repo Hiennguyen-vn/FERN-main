@@ -22,6 +22,7 @@ export interface PosMenuItem {
   imageUrl: string | null;
   price: number;
   hasModifiers: boolean;
+  modifierGroups: ModifierGroupView[];
   isAvailable: boolean;
   unavailableCode?: PosMenuUnavailableCode;
   unavailableReason?: string;
@@ -93,6 +94,7 @@ export function mergeMenu(
   availabilityByProduct: Map<string, boolean>,
   recipeByProduct: Map<string, RecipeView | null | undefined>,
   stockByItem: Map<string, StockBalanceView> | null,
+  modifierGroupsByProduct: Map<string, ModifierGroupView[]> = new Map(),
 ): PosMenuData {
   const priceByProduct = new Map<string, number>();
   for (const p of prices) {
@@ -102,7 +104,6 @@ export function mergeMenu(
     priceByProduct.set(pid, value);
   }
   const activeGroups = groups.filter((g) => g.isActive !== false);
-  const hasActiveModifiers = activeGroups.length > 0;
   let missingPriceCount = 0;
   let unavailableCount = 0;
   let insufficientIngredientCount = 0;
@@ -133,13 +134,17 @@ export function mergeMenu(
         unavailableCount += 1;
       }
 
+      const productModifierGroups = (modifierGroupsByProduct.get(p.id) ?? [])
+        .filter((g) => g.isActive !== false);
+
       return {
         id: p.id,
         name: p.name ?? p.code ?? 'Sản phẩm',
         categoryCode: (p.categoryCode ?? '').trim() || 'uncategorized',
         imageUrl: p.imageUrl ?? null,
         price,
-        hasModifiers: hasActiveModifiers,
+        hasModifiers: productModifierGroups.length > 0,
+        modifierGroups: productModifierGroups,
         isAvailable,
         unavailableCode,
         unavailableReason,
@@ -199,6 +204,39 @@ async function loadRecipes(
   return recipesByProduct;
 }
 
+async function loadModifierGroupsByProduct(
+  token: string,
+  productIds: string[],
+): Promise<Map<string, ModifierGroupView[]>> {
+  const groupsByProduct = new Map<string, ModifierGroupView[]>();
+  const batchSize = 24;
+
+  for (let index = 0; index < productIds.length; index += batchSize) {
+    const batch = productIds.slice(index, index + batchSize);
+    const settled = await Promise.allSettled(
+      batch.map(async (productId) => {
+        try {
+          return await productApi.modifierGroupsForProduct(token, productId);
+        } catch (error) {
+          if (isApiError(error) && error.status === 404) {
+            return [] as ModifierGroupView[];
+          }
+          return [] as ModifierGroupView[];
+        }
+      }),
+    );
+
+    settled.forEach((result, batchIndex) => {
+      groupsByProduct.set(
+        batch[batchIndex],
+        result.status === 'fulfilled' ? result.value : [],
+      );
+    });
+  }
+
+  return groupsByProduct;
+}
+
 export function usePosMenu(outletId: string | null) {
   const { session } = useAuth();
   const token = session?.accessToken;
@@ -206,10 +244,9 @@ export function usePosMenu(outletId: string | null) {
     queryKey: ['pos-order-menu', outletId, token],
     enabled: !!token && !!outletId,
     queryFn: async () => {
-      const [products, prices, groups, outletAvailability, stockBalances] = await Promise.all([
+      const [products, prices, outletAvailability, stockBalances] = await Promise.all([
         productApi.products(token!),
         productApi.prices(token!, outletId!),
-        productApi.modifierGroups(token!),
         productApi.availability(token!, { outletId: outletId! }).catch(() => [] as AvailabilityView[]),
         inventoryApi.balances(token!, outletId!).catch((): StockBalanceView[] => []),
       ]);
@@ -229,15 +266,19 @@ export function usePosMenu(outletId: string | null) {
         .filter((product) => toFiniteNumber(product.price) > 0)
         .map((product) => product.id);
 
-      const recipesByProduct = await loadRecipes(token!, activePricedProductIds);
+      const [recipesByProduct, modifierGroupsByProduct] = await Promise.all([
+        loadRecipes(token!, activePricedProductIds),
+        loadModifierGroupsByProduct(token!, activePricedProductIds),
+      ]);
 
       return mergeMenu(
         products,
         prices,
-        groups,
+        [],
         buildAvailabilityLookup(outletAvailability),
         recipesByProduct,
         buildStockLookup(stockBalances),
+        modifierGroupsByProduct,
       );
     },
     staleTime: 15_000,

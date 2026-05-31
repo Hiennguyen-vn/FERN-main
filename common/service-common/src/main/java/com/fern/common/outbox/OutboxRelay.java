@@ -5,7 +5,10 @@ import com.fern.common.util.UuidV5;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import javax.sql.DataSource;
@@ -32,6 +35,19 @@ public class OutboxRelay {
     public static final int DEFAULT_PROCESSING_RECLAIM_SECONDS = 300;
 
     private static final long[] BACKOFF_SECONDS = {1, 2, 4, 8, 16, 30, 60, 120, 300, 600};
+    private static final Map<String, String> TOPIC_PREFIX_OWNER = Map.ofEntries(
+        Map.entry("fern.audit.", "audit-service"),
+        Map.entry("fern.auth.", "auth-service"),
+        Map.entry("fern.finance.", "finance-service"),
+        Map.entry("fern.hr.", "hr-service"),
+        Map.entry("fern.inventory.", "inventory-service"),
+        Map.entry("fern.org.", "org-service"),
+        Map.entry("fern.payroll.", "payroll-service"),
+        Map.entry("fern.procurement.", "procurement-service"),
+        Map.entry("fern.product.", "product-service"),
+        Map.entry("fern.report.", "report-service"),
+        Map.entry("fern.sales.", "sales-service")
+    );
 
     private final DataSource dataSource;
     private final TypedKafkaEventPublisher publisher;
@@ -40,6 +56,8 @@ public class OutboxRelay {
     private final int batchLimit;
     private final int maxAttempts;
     private final int processingReclaimSeconds;
+    private final boolean drainAllTopics;
+    private final List<String> topicPrefixes;
 
     public OutboxRelay(DataSource dataSource, TypedKafkaEventPublisher publisher, ObjectMapper objectMapper) {
         this(dataSource, publisher, objectMapper, Optional.empty(),
@@ -65,6 +83,35 @@ public class OutboxRelay {
         int maxAttempts,
         int processingReclaimSeconds
     ) {
+        this(dataSource, publisher, objectMapper, meterRegistry, batchLimit, maxAttempts,
+            processingReclaimSeconds, true, List.of());
+    }
+
+    public OutboxRelay(
+        DataSource dataSource,
+        TypedKafkaEventPublisher publisher,
+        ObjectMapper objectMapper,
+        Optional<MeterRegistry> meterRegistry,
+        int batchLimit,
+        int maxAttempts,
+        int processingReclaimSeconds,
+        String serviceName
+    ) {
+        this(dataSource, publisher, objectMapper, meterRegistry, batchLimit, maxAttempts,
+            processingReclaimSeconds, false, topicPrefixesForService(serviceName));
+    }
+
+    private OutboxRelay(
+        DataSource dataSource,
+        TypedKafkaEventPublisher publisher,
+        ObjectMapper objectMapper,
+        Optional<MeterRegistry> meterRegistry,
+        int batchLimit,
+        int maxAttempts,
+        int processingReclaimSeconds,
+        boolean drainAllTopics,
+        List<String> topicPrefixes
+    ) {
         this.dataSource = dataSource;
         this.publisher = publisher;
         this.objectMapper = objectMapper;
@@ -73,6 +120,8 @@ public class OutboxRelay {
         this.maxAttempts = maxAttempts > 0 ? maxAttempts : DEFAULT_MAX_ATTEMPTS;
         this.processingReclaimSeconds = processingReclaimSeconds > 0
             ? processingReclaimSeconds : DEFAULT_PROCESSING_RECLAIM_SECONDS;
+        this.drainAllTopics = drainAllTopics;
+        this.topicPrefixes = List.copyOf(topicPrefixes);
     }
 
     /**
@@ -110,11 +159,14 @@ public class OutboxRelay {
     }
 
     private List<OutboxEvent> fetchAndClaimBatch(Connection conn, String owner) throws SQLException {
+        String topicFilter = topicFilterSql();
         String sql = """
             WITH candidates AS (
               SELECT id, created_at
               FROM core.outbox_event
-              WHERE (
+              WHERE %s
+                AND (
+                (
                   status = 'PENDING'
                   AND (retry_after IS NULL OR retry_after <= NOW())
                 ) OR (
@@ -122,6 +174,7 @@ public class OutboxRelay {
                   AND processing_started_at IS NOT NULL
                   AND processing_started_at <= NOW() - (?::int * INTERVAL '1 second')
                 )
+              )
               ORDER BY created_at
               LIMIT ?
               FOR UPDATE SKIP LOCKED
@@ -135,15 +188,38 @@ public class OutboxRelay {
             RETURNING oe.id, oe.aggregate_type, oe.aggregate_id, oe.topic, oe.event_key,
                       oe.payload, oe.headers, oe.created_at, oe.status, oe.attempt_count,
                       oe.retry_after, oe.last_error
-            """;
+            """.formatted(topicFilter);
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, processingReclaimSeconds);
-            ps.setInt(2, batchLimit);
-            ps.setString(3, owner);
+            int index = 1;
+            index = bindTopicFilters(ps, index);
+            ps.setInt(index++, processingReclaimSeconds);
+            ps.setInt(index++, batchLimit);
+            ps.setString(index, owner);
             try (ResultSet rs = ps.executeQuery()) {
                 return mapEvents(rs);
             }
         }
+    }
+
+    private String topicFilterSql() {
+        if (drainAllTopics) {
+            return "TRUE";
+        }
+        if (topicPrefixes.isEmpty()) {
+            return "FALSE";
+        }
+        return "(" + String.join(" OR ", Collections.nCopies(topicPrefixes.size(), "topic LIKE ?")) + ")";
+    }
+
+    private int bindTopicFilters(PreparedStatement ps, int startIndex) throws SQLException {
+        if (drainAllTopics) {
+            return startIndex;
+        }
+        int index = startIndex;
+        for (String prefix : topicPrefixes) {
+            ps.setString(index++, prefix + "%");
+        }
+        return index;
     }
 
     private List<OutboxEvent> mapEvents(ResultSet rs) throws SQLException {
@@ -171,8 +247,9 @@ public class OutboxRelay {
     private void publishEvent(OutboxEvent event) throws Exception {
         JsonNode payloadNode = objectMapper.readTree(event.payload());
         String stableEventId = UuidV5.fromOutboxId(event.id()).toString();
+        String sourceComponent = sourceComponentForTopic(event.topic());
         publisher.publishAndAwaitWithId(stableEventId, event.topic(), event.eventKey(),
-            event.aggregateType(), payloadNode, null);
+            event.aggregateType(), payloadNode, null, event.createdAt(), sourceComponent);
     }
 
     private void markPublished(OutboxEvent event, String owner) {
@@ -238,5 +315,30 @@ public class OutboxRelay {
         } catch (SQLException e) {
             throw new RuntimeException("OutboxRelay.markFailed failed", e);
         }
+    }
+
+    static List<String> topicPrefixesForService(String serviceName) {
+        if (serviceName == null || serviceName.isBlank()) {
+            return List.of();
+        }
+        List<String> prefixes = new ArrayList<>();
+        for (Map.Entry<String, String> entry : TOPIC_PREFIX_OWNER.entrySet()) {
+            if (entry.getValue().equals(serviceName)) {
+                prefixes.add(entry.getKey());
+            }
+        }
+        Collections.sort(prefixes);
+        return prefixes;
+    }
+
+    static String sourceComponentForTopic(String topic) {
+        if (topic != null) {
+            for (Map.Entry<String, String> entry : TOPIC_PREFIX_OWNER.entrySet()) {
+                if (topic.startsWith(entry.getKey())) {
+                    return entry.getValue();
+                }
+            }
+        }
+        return "unknown-service";
     }
 }

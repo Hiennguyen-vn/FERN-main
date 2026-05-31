@@ -3,6 +3,7 @@ package com.fern.services.sales.infrastructure;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -285,6 +286,63 @@ class SalesRepositoryOrderLifecycleIT {
 
     Optional<SalesDtos.SaleView> found = repository.findSale(Long.parseLong(created.id()));
     assertEquals("payment_done", found.orElseThrow().status());
+  }
+
+  @Test
+  void reconcileOpenSessionClosesAndRecordsCashCloseCount() {
+    SalesDtos.PosSessionView session = repository.openPosSession(new SalesDtos.OpenPosSessionRequest(
+        "SHIFT-HCM-COUNT",
+        TestFixtures.OUTLET_HCM_1,
+        "USD",
+        null,
+        null,
+        "REGISTER-COUNT",
+        "cashier-count",
+        LocalDate.parse("2026-04-27"),
+        "Evening shift"));
+    SalesDtos.SaleView sale = submitSaleForSession(session.id(), "Close count", BigDecimal.ONE);
+    repository.approveSale(Long.parseLong(sale.id()), TestFixtures.USER_MANAGER_HCM);
+    repository.markPaymentDone(
+        Long.parseLong(sale.id()),
+        new SalesDtos.MarkPaymentDoneRequest(
+            "cash",
+            new BigDecimal("35000.00"),
+            Instant.parse("2026-04-27T09:00:00Z"),
+            "cash-count",
+            "paid"));
+
+    SalesDtos.PosSessionReconciliationView reconciled = repository.reconcilePosSession(
+        Long.parseLong(session.id()),
+        new SalesDtos.ReconcilePosSessionRequest(
+            List.of(new SalesDtos.ReconcilePosSessionLineRequest("cash", new BigDecimal("35000.00"))),
+            "final count"),
+        TestFixtures.USER_MANAGER_HCM);
+
+    assertEquals("reconciled", reconciled.status());
+    org.junit.jupiter.api.Assertions.assertNotNull(reconciled.closedAt());
+    assertEquals(0, BigDecimal.ZERO.compareTo(reconciled.discrepancyTotal()));
+    assertEquals(0, new BigDecimal("35000.00").compareTo(closeCountAmount(Long.parseLong(session.id()))));
+  }
+
+  @Test
+  void reconcileOpenSessionRequiresCashCloseCount() {
+    SalesDtos.PosSessionView session = repository.openPosSession(new SalesDtos.OpenPosSessionRequest(
+        "SHIFT-HCM-NO-COUNT",
+        TestFixtures.OUTLET_HCM_1,
+        "USD",
+        null,
+        null,
+        "REGISTER-NO-COUNT",
+        "cashier-no-count",
+        LocalDate.parse("2026-04-27"),
+        "Evening shift"));
+
+    ServiceException ex = assertThrows(ServiceException.class, () -> repository.reconcilePosSession(
+        Long.parseLong(session.id()),
+        new SalesDtos.ReconcilePosSessionRequest(List.of(), "missing count"),
+        TestFixtures.USER_MANAGER_HCM));
+
+    assertEquals("CLOSE_COUNT_REQUIRED:cash", ex.getMessage());
   }
 
   @Test
@@ -684,6 +742,25 @@ class SalesRepositoryOrderLifecycleIT {
       }
     } catch (Exception e) {
       throw new IllegalStateException("Unable to count sale usage rows", e);
+    }
+  }
+
+  private BigDecimal closeCountAmount(long sessionId) {
+    try (Connection conn = dataSource.getConnection();
+         var ps = conn.prepareStatement(
+             """
+             SELECT amount
+             FROM core.cash_movement
+             WHERE session_id = ?
+               AND type = 'CLOSE_COUNT'
+             """)) {
+      ps.setLong(1, sessionId);
+      try (var rs = ps.executeQuery()) {
+        org.junit.jupiter.api.Assertions.assertTrue(rs.next());
+        return rs.getBigDecimal("amount");
+      }
+    } catch (Exception e) {
+      throw new IllegalStateException("Unable to read cash close count", e);
     }
   }
 

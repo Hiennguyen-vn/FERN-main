@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Printer } from 'lucide-react';
 import type { SavedOrder } from '../hooks/use-order-history';
 import { formatDateTime, formatVnd } from '../utils/format';
-import { buildLineSubtitle } from '../utils/line-modifiers';
+import { buildLineSubtitle, lineUnitPrice } from '../utils/line-modifiers';
 
 interface Props {
   open: boolean;
@@ -53,8 +53,7 @@ export function ReceiptPreview({ open, onOpenChange, order }: Props) {
 
           {order.lines.map((l) => {
             const subtitle = buildLineSubtitle(l);
-            const modifierDelta = (l.modifiers ?? []).reduce((s, m) => s + (m.priceDelta || 0), 0);
-            const unit = l.basePrice + (l.sizePriceAdd ?? 0) + l.toppings.reduce((s, t) => s + t.priceAdd, 0) + modifierDelta;
+            const unit = lineUnitPrice(l);
             return (
               <div key={l.lineId} className="mb-1">
                 <div className="flex justify-between gap-2">

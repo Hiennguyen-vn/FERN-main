@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import threading
 import unicodedata
 from typing import Any
+
+from app.runtime_catalog import get_runtime_catalog_section
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,54 @@ TABLE_POLICIES: dict[str, TablePolicy] = {
         ("revenue", "txn_count"),
         description_vi="Bảng metric phẳng ưu tiên cho doanh thu theo phương thức thanh toán.",
     ),
+    "analytics.ai_sales_hourly": TablePolicy(
+        "analytics.ai_sales_hourly",
+        "outlet_id",
+        "business_date",
+        "outlet_id + business_date + hour_of_day",
+        ("net_revenue", "txn_count", "avg_ticket"),
+        description_vi="Bảng metric theo giờ cho peak-hour/anomaly doanh thu; giờ lấy từ thời điểm tạo sale header.",
+    ),
+    "analytics.ai_finance_daily": TablePolicy(
+        "analytics.ai_finance_daily",
+        "outlet_id",
+        "business_date",
+        "outlet_id + business_date",
+        (
+            "revenue",
+            "actual_or_theoretical_cogs",
+            "goods_receipt_cost",
+            "payroll_cost",
+            "expense_amount",
+            "gross_profit",
+            "operating_profit",
+            "margin",
+        ),
+        role_group="finance",
+        description_vi=(
+            "Finance mart chuẩn cho P&L AI: goods_receipt_cost là chi phí nhập/nhận hàng, "
+            "không mặc định là COGS nếu chưa có consumption/recipe cost."
+        ),
+    ),
+    "analytics.ai_inventory_on_hand_daily": TablePolicy(
+        "analytics.ai_inventory_on_hand_daily",
+        "outlet_id",
+        "business_date",
+        "outlet_id + business_date + item_id",
+        ("qty_on_hand", "movement_qty"),
+        description_vi=(
+            "Tồn kho on-hand theo ngày được tính bằng running balance từ inventory transactions; "
+            "khác với movement trong ngày."
+        ),
+    ),
+    "analytics.ai_inventory_movement_daily": TablePolicy(
+        "analytics.ai_inventory_movement_daily",
+        "outlet_id",
+        "business_date",
+        "outlet_id + business_date + item_id + movement_type",
+        ("qty_change", "movement_count"),
+        description_vi="Biến động kho theo ngày/item/loại giao dịch; không dùng như tồn kho hiện tại.",
+    ),
     # Existing analytics/template tables.
     "analytics.fct_sales_daily": TablePolicy(
         "analytics.fct_sales_daily",
@@ -155,7 +206,10 @@ TABLE_POLICIES: dict[str, TablePolicy] = {
         "business_date",
         "outlet_id + business_date + item_id",
         ("qty_on_hand",),
-        description_vi="Tồn kho theo ngày/cửa hàng/item.",
+        description_vi=(
+            "Legacy inventory snapshot view; không dùng làm nguồn current stock ưu tiên "
+            "vì lịch sử cũ có thể là movement theo ngày."
+        ),
     ),
     # CDC/event tables still allowed for templates and special cases.
     "cdc.fact_sale": TablePolicy(
@@ -263,10 +317,10 @@ TABLE_POLICIES: dict[str, TablePolicy] = {
     ),
 }
 
-ALLOWED_FULL_TABLES: frozenset[str] = frozenset(TABLE_POLICIES)
-ALLOWED_SCHEMAS: frozenset[str] = frozenset({x.split(".", 1)[0] for x in ALLOWED_FULL_TABLES})
+ALLOWED_FULL_TABLES: set[str] = set(TABLE_POLICIES)
+ALLOWED_SCHEMAS: set[str] = {x.split(".", 1)[0] for x in ALLOWED_FULL_TABLES}
 TABLE_OUTLET_COLUMNS: dict[str, str | None] = {k: v.outlet_column for k, v in TABLE_POLICIES.items()}
-LOOKUP_ONLY_TABLES: frozenset[str] = frozenset(k for k, v in TABLE_POLICIES.items() if v.lookup_only)
+LOOKUP_ONLY_TABLES: set[str] = {k for k, v in TABLE_POLICIES.items() if v.lookup_only}
 TABLE_TIME_COLUMNS: dict[str, str | None] = {k: v.time_column for k, v in TABLE_POLICIES.items()}
 
 # Columns that AI-generated SQL must not expose directly in SELECT projections.
@@ -281,7 +335,7 @@ TABLE_BLOCKED_SELECT_COLUMNS: dict[str, frozenset[str]] = {
 # Raw/detail tables and event streams must be time-bounded in SQL Writer mode.
 # This prevents expensive or semantically unbounded scans when the generator
 # falls back from flattened marts to granular data.
-CODEGEN_TIME_FILTER_REQUIRED_TABLES: frozenset[str] = frozenset(
+CODEGEN_TIME_FILTER_REQUIRED_TABLES: set[str] = set(
     full
     for full, policy in TABLE_POLICIES.items()
     if policy.time_column
@@ -294,16 +348,17 @@ CODEGEN_TIME_FILTER_REQUIRED_TABLES: frozenset[str] = frozenset(
 
 # cdc.sale_record is not lookup-only, but non-aggregating bridge subqueries over it
 # are allowed by sql_guard when an outer scoped fact enforces tenant isolation.
-LOOKUP_SUBQUERY_TABLES_OK_WITHOUT_LOCAL_OUTLET: frozenset[str] = LOOKUP_ONLY_TABLES | frozenset({"cdc.sale_record"})
+LOOKUP_SUBQUERY_TABLES_OK_WITHOUT_LOCAL_OUTLET: set[str] = LOOKUP_ONLY_TABLES | {"cdc.sale_record"}
 
 _INTENT_TABLE_PRIORITY: dict[str, tuple[str, ...]] = {
     "revenue": ("analytics.ai_sales_daily", "analytics.ai_payment_daily", "analytics.fct_sales_daily"),
     "outlet_compare": ("analytics.ai_sales_daily", "analytics.fct_sales_daily", "cdc.outlet"),
     "trend": ("analytics.ai_sales_daily", "analytics.fct_sales_daily"),
     "lookup": ("cdc.outlet", "cdc.product", "cdc.product_category"),
-    "inventory": ("analytics.fct_inventory_snapshot", "cdc.inventory_transaction"),
+    "inventory": ("analytics.ai_inventory_on_hand_daily", "analytics.ai_inventory_movement_daily", "cdc.inventory_transaction"),
     "product_mix": ("analytics.ai_product_daily", "analytics.fct_sales_by_product"),
     "pnl": (
+        "analytics.ai_finance_daily",
         "analytics.ai_pnl_daily",
         "analytics.fct_daily_pnl",
         "fern.events_expense_created",
@@ -311,7 +366,7 @@ _INTENT_TABLE_PRIORITY: dict[str, tuple[str, ...]] = {
         "fern.events_invoice_issued",
         "fern.events_goods_receipt_posted",
     ),
-    "export_request": ("analytics.ai_sales_daily", "analytics.ai_product_daily", "analytics.fct_inventory_snapshot"),
+    "export_request": ("analytics.ai_sales_daily", "analytics.ai_product_daily", "analytics.ai_inventory_on_hand_daily"),
     "visualization_request": ("analytics.ai_sales_daily", "analytics.ai_product_daily", "analytics.ai_payment_daily"),
     "unknown": ("analytics.ai_sales_daily",),
 }
@@ -323,7 +378,14 @@ QUERY_DOMAINS: dict[str, QueryDomain] = {
         description_vi="Doanh thu, số giao dịch, AOV, tỷ lệ hủy theo ngày/cửa hàng.",
         preferred_tables=("analytics.ai_sales_daily",),
         lookup_tables=("cdc.outlet",),
-        fallback_tables=("analytics.fct_sales_daily", "cdc.fact_sale", "cdc.sale_record", "fern.fact_sale", "fern.events_sale_completed"),
+        fallback_tables=(
+            "analytics.ai_sales_hourly",
+            "analytics.fct_sales_daily",
+            "cdc.fact_sale",
+            "cdc.sale_record",
+            "fern.fact_sale",
+            "fern.events_sale_completed",
+        ),
         verified_templates=(
             "T01_daily_revenue",
             "T02_revenue_by_outlet",
@@ -337,6 +399,10 @@ QUERY_DOMAINS: dict[str, QueryDomain] = {
             "T34_sales_detail_by_day",
             "T35_weekly_revenue_trend",
             "T36_revenue_period_driver_bridge",
+            "T37_ai_sales_daily_outlets",
+            "INS_SALES_DRIVER",
+            "ANOM_SALES",
+            "FORECAST_REVENUE",
         ),
         notes_vi=(
             "Ưu tiên analytics.ai_sales_daily; chỉ dùng CDC/raw sale khi metric view không đủ cột.",
@@ -371,20 +437,40 @@ QUERY_DOMAINS: dict[str, QueryDomain] = {
     "inventory": QueryDomain(
         key="inventory",
         intents=("inventory", "export_request"),
-        description_vi="Tồn kho snapshot, tồn âm/thấp, biến động inventory.",
-        preferred_tables=("analytics.fct_inventory_snapshot",),
+        description_vi="Tồn kho on-hand, tồn âm/thấp, và biến động inventory theo ngày.",
+        preferred_tables=("analytics.ai_inventory_on_hand_daily",),
         lookup_tables=("cdc.product", "cdc.product_category", "cdc.outlet"),
-        fallback_tables=("cdc.inventory_transaction", "fern.fact_inventory_movement", "fern.events_stock_low"),
-        verified_templates=("T11_inventory_current_stock", "T12_inventory_low_stock", "T13_inventory_movement_summary", "T14_inventory_consumption_rate", "T15_inventory_reorder_alerts", "T29_stock_low_events"),
-        notes_vi=("Snapshot hiện tại phải lấy max(business_date) trong phạm vi outlet, không cộng dồn nhiều ngày.",),
+        fallback_tables=(
+            "analytics.ai_inventory_movement_daily",
+            "analytics.fct_inventory_snapshot",
+            "cdc.inventory_transaction",
+            "fern.fact_inventory_movement",
+            "fern.events_stock_low",
+        ),
+        verified_templates=(
+            "T11_inventory_current_stock",
+            "T12_inventory_low_stock",
+            "T13_inventory_movement_summary",
+            "T14_inventory_consumption_rate",
+            "T15_inventory_reorder_alerts",
+            "T29_stock_low_events",
+            "INS_INVENTORY_DRIVER",
+            "ANOM_INVENTORY",
+            "FORECAST_STOCK_COVER",
+        ),
+        notes_vi=(
+            "Current stock phải dùng analytics.ai_inventory_on_hand_daily hoặc stock balance thật.",
+            "Biến động kho dùng analytics.ai_inventory_movement_daily; không gọi movement là tồn kho hiện tại.",
+        ),
     ),
     "finance": QueryDomain(
         key="finance",
         intents=("pnl",),
-        description_vi="P&L ngày, chi phí, giá vốn, payroll cost và lợi nhuận vận hành.",
-        preferred_tables=("analytics.ai_pnl_daily",),
+        description_vi="P&L ngày, chi phí nhập/nhận hàng, payroll cost, expenses và lợi nhuận vận hành.",
+        preferred_tables=("analytics.ai_finance_daily",),
         lookup_tables=("cdc.outlet",),
         fallback_tables=(
+            "analytics.ai_pnl_daily",
             "analytics.fct_daily_pnl",
             "fern.events_expense_created",
             "fern.events_goods_receipt_posted",
@@ -392,8 +478,19 @@ QUERY_DOMAINS: dict[str, QueryDomain] = {
             "fern.events_invoice_issued",
             "fern.events_payroll_approved",
         ),
-        verified_templates=("T24_daily_pnl_summary", "T25_expense_breakdown", "T26_goods_receipt_summary", "T27_payroll_cost_by_outlet"),
-        notes_vi=("Finance tables yêu cầu role finance/admin; không expose cho user thiếu quyền.",),
+        verified_templates=(
+            "T24_daily_pnl_summary",
+            "T25_expense_breakdown",
+            "T26_goods_receipt_summary",
+            "T27_payroll_cost_by_outlet",
+            "INS_FINANCE_DRIVER",
+            "ANOM_FINANCE",
+            "FORECAST_PROFIT",
+        ),
+        notes_vi=(
+            "Finance tables yêu cầu role finance/admin; không expose cho user thiếu quyền.",
+            "Goods receipt là chi phí nhập/nhận hàng, không phải COGS mặc định.",
+        ),
     ),
     "lookup": QueryDomain(
         key="lookup",
@@ -451,14 +548,73 @@ DATA_SOURCE_POLICIES: dict[str, DataSourcePolicy] = {
         available_range_strategy="minmax_time_column",
         freshness_label_vi="ngày payment split mới nhất đã đồng bộ",
     ),
+    "analytics.ai_sales_hourly": DataSourcePolicy(
+        dataset="analytics.ai_sales_hourly",
+        domain="sales",
+        source_system="POS hourly analytics mart",
+        storage="clickhouse",
+        preferred_for_metrics=("hourly_revenue", "hourly_txn_count", "sales_anomaly"),
+        time_column="business_date",
+        time_semantics_vi="ngày kinh doanh POS; hour_of_day lấy từ thời điểm tạo sale header",
+        available_range_strategy="minmax_time_column",
+        freshness_label_vi="giờ/ngày bán hàng mới nhất đã đồng bộ",
+    ),
+    "analytics.ai_finance_daily": DataSourcePolicy(
+        dataset="analytics.ai_finance_daily",
+        domain="finance",
+        source_system="Finance core BI mart",
+        storage="clickhouse",
+        preferred_for_metrics=(
+            "revenue",
+            "actual_or_theoretical_cogs",
+            "goods_receipt_cost",
+            "payroll_cost",
+            "expense_amount",
+            "gross_profit",
+            "operating_profit",
+            "margin",
+        ),
+        time_column="business_date",
+        time_semantics_vi=(
+            "ngày kinh doanh finance mart; goods_receipt_cost là chi phí nhập/nhận hàng, "
+            "không phải COGS nếu chưa có actual consumption/recipe cost"
+        ),
+        available_range_strategy="minmax_time_column",
+        freshness_label_vi="ngày finance mart mới nhất đã đồng bộ",
+    ),
+    "analytics.ai_inventory_on_hand_daily": DataSourcePolicy(
+        dataset="analytics.ai_inventory_on_hand_daily",
+        domain="inventory",
+        source_system="Inventory on-hand analytics mart",
+        storage="clickhouse",
+        preferred_for_metrics=("qty_on_hand", "low_stock", "negative_stock", "current_inventory", "stock_cover"),
+        time_column="business_date",
+        time_semantics_vi=(
+            "ngày snapshot tồn kho on-hand tính bằng running balance từ giao dịch kho; "
+            "không phải movement trong ngày"
+        ),
+        available_range_strategy="latest_snapshot",
+        freshness_label_vi="ngày on-hand tồn kho mới nhất",
+    ),
+    "analytics.ai_inventory_movement_daily": DataSourcePolicy(
+        dataset="analytics.ai_inventory_movement_daily",
+        domain="inventory",
+        source_system="Inventory movement analytics mart",
+        storage="clickhouse",
+        preferred_for_metrics=("inventory_movement", "movement_qty", "movement_count", "consumption_rate"),
+        time_column="business_date",
+        time_semantics_vi="ngày kinh doanh của biến động kho theo item/loại giao dịch; không phải tồn hiện tại",
+        available_range_strategy="minmax_time_column",
+        freshness_label_vi="ngày movement kho mới nhất",
+    ),
     "analytics.ai_pnl_daily": DataSourcePolicy(
         dataset="analytics.ai_pnl_daily",
         domain="finance",
-        source_system="Finance analytics mart",
+        source_system="Legacy finance analytics mart",
         storage="clickhouse",
         preferred_for_metrics=("revenue", "cogs", "payroll_cost", "operating_profit", "operating_margin"),
         time_column="business_date",
-        time_semantics_vi="ngày kinh doanh dùng để tổng hợp P&L theo cửa hàng",
+        time_semantics_vi="legacy P&L theo ngày/cửa hàng; ưu tiên analytics.ai_finance_daily cho câu hỏi mới",
         available_range_strategy="minmax_time_column",
         freshness_label_vi="ngày P&L mới nhất đã đồng bộ",
     ),
@@ -525,11 +681,14 @@ DATA_SOURCE_POLICIES: dict[str, DataSourcePolicy] = {
     "analytics.fct_inventory_snapshot": DataSourcePolicy(
         dataset="analytics.fct_inventory_snapshot",
         domain="inventory",
-        source_system="Inventory analytics snapshot",
+        source_system="Legacy inventory analytics snapshot",
         storage="clickhouse",
         preferred_for_metrics=("qty_on_hand", "low_stock", "negative_stock", "current_inventory"),
         time_column="business_date",
-        time_semantics_vi="ngày snapshot tồn kho; câu hỏi hiện tại dùng snapshot mới nhất trong phạm vi quyền",
+        time_semantics_vi=(
+            "legacy snapshot tồn kho; câu hỏi current stock mới ưu tiên "
+            "analytics.ai_inventory_on_hand_daily để tránh nhầm movement theo ngày"
+        ),
         available_range_strategy="latest_snapshot",
         freshness_label_vi="ngày snapshot tồn kho mới nhất",
     ),
@@ -854,6 +1013,10 @@ TEMPLATE_DATASETS: dict[str, str] = {
     "T34_sales_detail_by_day": "cdc.sale_record",
     "T35_weekly_revenue_trend": "analytics.ai_sales_daily",
     "T36_revenue_period_driver_bridge": "analytics.ai_sales_daily",
+    "T37_ai_sales_daily_outlets": "analytics.ai_sales_daily",
+    "INS_SALES_DRIVER": "analytics.ai_sales_daily",
+    "ANOM_SALES": "analytics.ai_sales_daily",
+    "FORECAST_REVENUE": "analytics.ai_sales_daily",
     # Product/category.
     "T03_revenue_by_category": "analytics.fct_sales_by_category",
     "T04_top_products": "analytics.ai_product_daily",
@@ -864,17 +1027,23 @@ TEMPLATE_DATASETS: dict[str, str] = {
     "T20_product_discount_analysis": "cdc.fact_sale",
     # Payment / finance / inventory.
     "T08_revenue_by_payment_method": "analytics.ai_payment_daily",
-    "T24_daily_pnl_summary": "analytics.ai_pnl_daily",
+    "T24_daily_pnl_summary": "analytics.ai_finance_daily",
     "T25_expense_breakdown": "fern.events_expense_created",
     "T26_goods_receipt_summary": "fern.events_goods_receipt_posted",
     "T27_payroll_cost_by_outlet": "fern.events_payroll_approved",
+    "INS_FINANCE_DRIVER": "analytics.ai_finance_daily",
+    "ANOM_FINANCE": "analytics.ai_finance_daily",
+    "FORECAST_PROFIT": "analytics.ai_finance_daily",
     "T28_payment_capture_analysis": "fern.events_payment_captured",
     "T23_peak_hour_analysis": "cdc.sale_record",
-    "T11_inventory_current_stock": "analytics.fct_inventory_snapshot",
-    "T12_inventory_low_stock": "analytics.fct_inventory_snapshot",
-    "T13_inventory_movement_summary": "cdc.inventory_transaction",
-    "T14_inventory_consumption_rate": "cdc.inventory_transaction",
-    "T15_inventory_reorder_alerts": "analytics.fct_inventory_snapshot",
+    "T11_inventory_current_stock": "analytics.ai_inventory_on_hand_daily",
+    "T12_inventory_low_stock": "analytics.ai_inventory_on_hand_daily",
+    "T13_inventory_movement_summary": "analytics.ai_inventory_movement_daily",
+    "T14_inventory_consumption_rate": "analytics.ai_inventory_movement_daily",
+    "T15_inventory_reorder_alerts": "analytics.ai_inventory_on_hand_daily",
+    "INS_INVENTORY_DRIVER": "analytics.ai_inventory_movement_daily",
+    "ANOM_INVENTORY": "analytics.ai_inventory_movement_daily",
+    "FORECAST_STOCK_COVER": "analytics.ai_inventory_on_hand_daily",
     "T29_stock_low_events": "fern.events_stock_low",
     # Lookup and controlled HR lane.
     "T31_outlet_directory": "cdc.outlet",
@@ -890,6 +1059,13 @@ TEMPLATE_DATASETS: dict[str, str] = {
     "HR_new_contracts_list": "core.employee_contract",
     "HR_outlets_missing_staff": "core.outlet",
     "HR_employment_type_headcount": "core.employee_contract",
+}
+
+TEMPLATE_DATASET_GROUPS: dict[str, tuple[str, ...]] = {
+    "FORECAST_STOCK_COVER": (
+        "analytics.ai_inventory_on_hand_daily",
+        "analytics.ai_inventory_movement_daily",
+    ),
 }
 
 _INTENT_DOMAIN_PRIORITY: dict[str, tuple[str, ...]] = {
@@ -936,6 +1112,14 @@ _DOMAIN_QUESTION_HINTS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("lookup", re.compile(r"\b(danh\s*sach|liet\s*ke|outlet\s*nao|cua\s*hang\s*nao|store\s*list|detail|profile)\b")),
 )
 
+_CASH_CONTROL_CONTEXT_RE = re.compile(
+    r"\b(tien\s*mat|cash|kiem\s*quy|quy\s*tien)\b"
+    r".*\b(variance|chenh\s*lech|expected|counted|cash\s*drop|cash\s*session|paid\s*in|paid\s*out|doi\s*soat|reconcile|ket\s*ca)\b"
+    r"|"
+    r"\b(variance|chenh\s*lech|expected|counted|cash\s*drop|cash\s*session|paid\s*in|paid\s*out|doi\s*soat|reconcile|ket\s*ca)\b"
+    r".*\b(tien\s*mat|cash|kiem\s*quy|quy\s*tien)\b"
+)
+
 METRIC_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {
         "canonical_name": "net_revenue",
@@ -976,22 +1160,38 @@ METRIC_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {
         "canonical_name": "operating_profit",
         "aliases": ("lợi nhuận", "loi nhuan", "profit", "operating profit", "lãi"),
-        "definition_vi": "Doanh thu trừ giá vốn và chi phí lương theo ngày/cửa hàng.",
-        "preferred_table": "analytics.ai_pnl_daily",
+        "definition_vi": (
+            "Lợi nhuận vận hành theo finance mart. V1 trừ actual_or_theoretical_cogs, payroll_cost "
+            "và expense_amount; goods_receipt_cost không được tự coi là COGS."
+        ),
+        "preferred_table": "analytics.ai_finance_daily",
         "role_group": "finance",
     },
     {
         "canonical_name": "payroll_cost",
         "aliases": ("chi phí lương", "luong", "labor cost", "payroll cost"),
         "definition_vi": "Chi phí lương đã ghi nhận trong P&L hoặc payroll.",
-        "preferred_table": "analytics.ai_pnl_daily",
+        "preferred_table": "analytics.ai_finance_daily",
+        "role_group": "finance",
+    },
+    {
+        "canonical_name": "goods_receipt_cost",
+        "aliases": ("chi phí nhập hàng", "chi phi nhap hang", "goods receipt cost", "procurement intake"),
+        "definition_vi": "Tổng giá trị phiếu nhập/nhận hàng; đây là procurement intake, không phải COGS mặc định.",
+        "preferred_table": "analytics.ai_finance_daily",
         "role_group": "finance",
     },
     {
         "canonical_name": "qty_on_hand",
         "aliases": ("tồn kho", "ton kho", "stock", "inventory", "hàng còn"),
-        "definition_vi": "Tồn kho theo tổng biến động inventory tại ngày/cửa hàng/item.",
-        "preferred_table": "analytics.fct_inventory_snapshot",
+        "definition_vi": "Tồn kho on-hand theo running balance từ giao dịch kho, lấy snapshot mới nhất khi hỏi hiện tại.",
+        "preferred_table": "analytics.ai_inventory_on_hand_daily",
+    },
+    {
+        "canonical_name": "inventory_movement",
+        "aliases": ("biến động kho", "bien dong kho", "movement tồn kho", "inventory movement", "churn tồn kho"),
+        "definition_vi": "Biến động kho theo ngày/item/loại giao dịch; không phải số tồn hiện tại.",
+        "preferred_table": "analytics.ai_inventory_movement_daily",
     },
     {
         "canonical_name": "work_hours",
@@ -1160,27 +1360,189 @@ VALUE_ALIASES: tuple[dict[str, Any], ...] = (
     },
 )
 
+_RUNTIME_LOCK = threading.RLock()
+_RUNTIME_VERSION: int | None = None
+
+
+def _rebuild_policy_derived_state() -> None:
+    ALLOWED_FULL_TABLES.clear()
+    ALLOWED_FULL_TABLES.update(TABLE_POLICIES.keys())
+    ALLOWED_SCHEMAS.clear()
+    ALLOWED_SCHEMAS.update({x.split(".", 1)[0] for x in ALLOWED_FULL_TABLES})
+    TABLE_OUTLET_COLUMNS.clear()
+    TABLE_OUTLET_COLUMNS.update({k: v.outlet_column for k, v in TABLE_POLICIES.items()})
+    LOOKUP_ONLY_TABLES.clear()
+    LOOKUP_ONLY_TABLES.update({k for k, v in TABLE_POLICIES.items() if v.lookup_only})
+    TABLE_TIME_COLUMNS.clear()
+    TABLE_TIME_COLUMNS.update({k: v.time_column for k, v in TABLE_POLICIES.items()})
+    CODEGEN_TIME_FILTER_REQUIRED_TABLES.clear()
+    CODEGEN_TIME_FILTER_REQUIRED_TABLES.update(
+        full
+        for full, policy in TABLE_POLICIES.items()
+        if policy.time_column and (full.startswith("cdc.") or full.startswith("fern.events_") or full.startswith("fern.fact_"))
+    )
+    LOOKUP_SUBQUERY_TABLES_OK_WITHOUT_LOCAL_OUTLET.clear()
+    LOOKUP_SUBQUERY_TABLES_OK_WITHOUT_LOCAL_OUTLET.update(LOOKUP_ONLY_TABLES | {"cdc.sale_record"})
+
+
+def _decode_table_policy(full_name: str, raw: object) -> TablePolicy | None:
+    if not isinstance(raw, dict):
+        return None
+    metrics = raw.get("metrics") or ()
+    if not isinstance(metrics, (list, tuple)):
+        return None
+    return TablePolicy(
+        full_name=str(raw.get("full_name") or full_name).strip().lower(),
+        outlet_column=str(raw.get("outlet_column")) if raw.get("outlet_column") is not None else None,
+        time_column=str(raw.get("time_column")) if raw.get("time_column") is not None else None,
+        grain=str(raw.get("grain") or ""),
+        metrics=tuple(str(x) for x in metrics),
+        role_group=str(raw.get("role_group")) if raw.get("role_group") is not None else None,
+        lookup_only=bool(raw.get("lookup_only")),
+        description_vi=str(raw.get("description_vi") or ""),
+    )
+
+
+def _decode_query_domain(key: str, raw: object) -> QueryDomain | None:
+    if not isinstance(raw, dict):
+        return None
+    return QueryDomain(
+        key=str(raw.get("key") or key),
+        intents=tuple(str(x) for x in (raw.get("intents") or ())),
+        description_vi=str(raw.get("description_vi") or ""),
+        preferred_tables=tuple(str(x) for x in (raw.get("preferred_tables") or ())),
+        lookup_tables=tuple(str(x) for x in (raw.get("lookup_tables") or ())),
+        fallback_tables=tuple(str(x) for x in (raw.get("fallback_tables") or ())),
+        verified_templates=tuple(str(x) for x in (raw.get("verified_templates") or ())),
+        notes_vi=tuple(str(x) for x in (raw.get("notes_vi") or ())),
+    )
+
+
+def _decode_data_source_policy(dataset: str, raw: object) -> DataSourcePolicy | None:
+    if not isinstance(raw, dict):
+        return None
+    return DataSourcePolicy(
+        dataset=str(raw.get("dataset") or dataset),
+        domain=str(raw.get("domain") or ""),
+        source_system=str(raw.get("source_system") or ""),
+        storage=str(raw.get("storage") or ""),
+        preferred_for_metrics=tuple(str(x) for x in (raw.get("preferred_for_metrics") or ())),
+        time_column=str(raw.get("time_column")) if raw.get("time_column") is not None else None,
+        time_semantics_vi=str(raw.get("time_semantics_vi") or ""),
+        available_range_strategy=str(raw.get("available_range_strategy") or ""),
+        freshness_label_vi=str(raw.get("freshness_label_vi") or ""),
+        coverage_severity_policy=str(raw.get("coverage_severity_policy") or "warn_partial"),
+        static_lane=bool(raw.get("static_lane")),
+        external=bool(raw.get("external")),
+        coverage_enabled=bool(raw.get("coverage_enabled", True)),
+    )
+
+
+def ensure_runtime_query_policy_loaded(*, force: bool = False) -> None:
+    global _RUNTIME_VERSION, METRIC_DEFINITIONS, VALUE_ALIASES
+    with _RUNTIME_LOCK:
+        version, section = get_runtime_catalog_section("query_policy", force=force)
+        if not force and version == _RUNTIME_VERSION:
+            return
+        if isinstance(section, dict):
+            if isinstance(section.get("table_policies"), dict):
+                parsed_tables: dict[str, TablePolicy] = {}
+                for key, raw in section["table_policies"].items():
+                    policy = _decode_table_policy(str(key), raw)
+                    if policy:
+                        parsed_tables[policy.full_name] = policy
+                if parsed_tables:
+                    TABLE_POLICIES.clear()
+                    TABLE_POLICIES.update(parsed_tables)
+            if isinstance(section.get("query_domains"), dict):
+                parsed_domains: dict[str, QueryDomain] = {}
+                for key, raw in section["query_domains"].items():
+                    domain = _decode_query_domain(str(key), raw)
+                    if domain:
+                        parsed_domains[str(key)] = domain
+                if parsed_domains:
+                    QUERY_DOMAINS.clear()
+                    QUERY_DOMAINS.update(parsed_domains)
+            if isinstance(section.get("data_source_policies"), dict):
+                parsed_sources: dict[str, DataSourcePolicy] = {}
+                for key, raw in section["data_source_policies"].items():
+                    dsp = _decode_data_source_policy(str(key), raw)
+                    if dsp:
+                        parsed_sources[str(key)] = dsp
+                if parsed_sources:
+                    DATA_SOURCE_POLICIES.clear()
+                    DATA_SOURCE_POLICIES.update(parsed_sources)
+            if isinstance(section.get("template_datasets"), dict):
+                TEMPLATE_DATASETS.clear()
+                TEMPLATE_DATASETS.update({str(k): str(v) for k, v in section["template_datasets"].items()})
+            if isinstance(section.get("template_dataset_groups"), dict):
+                TEMPLATE_DATASET_GROUPS.clear()
+                TEMPLATE_DATASET_GROUPS.update(
+                    {str(k): tuple(str(x) for x in v) for k, v in section["template_dataset_groups"].items() if isinstance(v, (list, tuple))}
+                )
+            if isinstance(section.get("table_blocked_select_columns"), dict):
+                TABLE_BLOCKED_SELECT_COLUMNS.clear()
+                TABLE_BLOCKED_SELECT_COLUMNS.update(
+                    {str(k): frozenset(str(x) for x in v) for k, v in section["table_blocked_select_columns"].items() if isinstance(v, (list, tuple, set))}
+                )
+            if isinstance(section.get("codegen_time_filter_required_tables"), (list, tuple, set)):
+                CODEGEN_TIME_FILTER_REQUIRED_TABLES.clear()
+                CODEGEN_TIME_FILTER_REQUIRED_TABLES.update(str(x) for x in section["codegen_time_filter_required_tables"])
+            if isinstance(section.get("intent_table_priority"), dict):
+                _INTENT_TABLE_PRIORITY.clear()
+                _INTENT_TABLE_PRIORITY.update(
+                    {str(k): tuple(str(x) for x in v) for k, v in section["intent_table_priority"].items() if isinstance(v, (list, tuple))}
+                )
+            if isinstance(section.get("intent_domain_priority"), dict):
+                _INTENT_DOMAIN_PRIORITY.clear()
+                _INTENT_DOMAIN_PRIORITY.update(
+                    {str(k): tuple(str(x) for x in v) for k, v in section["intent_domain_priority"].items() if isinstance(v, (list, tuple))}
+                )
+            if isinstance(section.get("metric_definitions"), list):
+                METRIC_DEFINITIONS = tuple(item for item in section["metric_definitions"] if isinstance(item, dict))
+            if isinstance(section.get("value_aliases"), list):
+                VALUE_ALIASES = tuple(item for item in section["value_aliases"] if isinstance(item, dict))
+            _rebuild_policy_derived_state()
+        _RUNTIME_VERSION = version
+
 
 def get_table_policy(full_name: str) -> TablePolicy | None:
+    ensure_runtime_query_policy_loaded()
     return TABLE_POLICIES.get(full_name.strip().lower())
 
 
 def get_data_source_policy(dataset: str) -> DataSourcePolicy | None:
+    ensure_runtime_query_policy_loaded()
     return DATA_SOURCE_POLICIES.get(dataset.strip())
 
 
 def dataset_for_template(template_key: str | None) -> str | None:
+    ensure_runtime_query_policy_loaded()
     key = (template_key or "").strip()
     if not key:
         return None
     return TEMPLATE_DATASETS.get(key)
 
 
+def datasets_for_template(template_key: str | None) -> tuple[str, ...]:
+    ensure_runtime_query_policy_loaded()
+    key = (template_key or "").strip()
+    if not key:
+        return ()
+    grouped = TEMPLATE_DATASET_GROUPS.get(key)
+    if grouped:
+        return grouped
+    dataset = TEMPLATE_DATASETS.get(key)
+    return (dataset,) if dataset else ()
+
+
 def finance_sensitive_tables() -> frozenset[str]:
+    ensure_runtime_query_policy_loaded()
     return frozenset(k for k, v in TABLE_POLICIES.items() if v.role_group == "finance")
 
 
 def tables_for_intent(intent: str | None, *, max_tables: int) -> list[str]:
+    ensure_runtime_query_policy_loaded()
     intent_key = (intent or "unknown").strip().lower()
     chain = _INTENT_TABLE_PRIORITY.get(intent_key) or _INTENT_TABLE_PRIORITY["unknown"]
     out: list[str] = []
@@ -1199,6 +1561,7 @@ def _append_unique(out: list[str], values: tuple[str, ...]) -> None:
 
 
 def domain_keys_for_question(intent: str | None, question: str | None = None) -> list[str]:
+    ensure_runtime_query_policy_loaded()
     """Return ordered semantic domains for a question.
 
     Question hints can override a broad supervisor intent. Example: supervisor
@@ -1209,6 +1572,8 @@ def domain_keys_for_question(intent: str | None, question: str | None = None) ->
     q = _fold(question or "")
     keys: list[str] = []
     for key, pattern in _DOMAIN_QUESTION_HINTS:
+        if key == "payment" and _CASH_CONTROL_CONTEXT_RE.search(q):
+            continue
         if pattern.search(q) and key not in keys:
             keys.append(key)
 
@@ -1227,6 +1592,7 @@ def candidate_tables_for_prompt(
     max_tables: int = 8,
     include_fallbacks: bool = False,
 ) -> list[str]:
+    ensure_runtime_query_policy_loaded()
     """Small curated table pack for LLM prompts.
 
     This is intentionally narrower than ALLOWED_FULL_TABLES. The hard guard
@@ -1257,6 +1623,7 @@ def format_domain_contract(
     max_tables: int = 8,
     include_fallbacks: bool = False,
 ) -> str:
+    ensure_runtime_query_policy_loaded()
     keys = domain_keys_for_question(intent, question)
     tables = candidate_tables_for_prompt(
         intent,
@@ -1292,10 +1659,12 @@ def format_domain_contract(
 
 
 def allowed_tables_for_prompt() -> list[str]:
+    ensure_runtime_query_policy_loaded()
     return sorted(ALLOWED_FULL_TABLES)
 
 
 def table_policy_rows() -> list[dict[str, Any]]:
+    ensure_runtime_query_policy_loaded()
     return [
         {
             "full_table": p.full_name,
@@ -1312,6 +1681,7 @@ def table_policy_rows() -> list[dict[str, Any]]:
 
 
 def data_source_policy_rows() -> list[dict[str, Any]]:
+    ensure_runtime_query_policy_loaded()
     return [
         {
             "dataset": p.dataset,
@@ -1356,14 +1726,17 @@ _PAYMENT_CONTEXT_RE = re.compile(
 
 def find_semantic_matches(question: str, *, max_items: int = 8) -> list[dict[str, Any]]:
     """Deterministic local semantic matches; complements OpenSearch when unavailable."""
+    ensure_runtime_query_policy_loaded()
     q = _fold(question)
+    cash_control_context = bool(_CASH_CONTROL_CONTEXT_RE.search(q))
     out: list[dict[str, Any]] = []
     for metric in METRIC_DEFINITIONS:
         if _alias_hit(q, tuple(metric["aliases"])):
             out.append({"kind": "metric", **metric})
     for alias in VALUE_ALIASES:
-        if alias.get("canonical_type") == "payment_method" and not _PAYMENT_CONTEXT_RE.search(q):
-            continue
+        if alias.get("canonical_type") == "payment_method":
+            if cash_control_context or not _PAYMENT_CONTEXT_RE.search(q):
+                continue
         if _alias_hit(q, tuple(alias["aliases"])):
             out.append({"kind": "value_alias", **alias})
     return out[:max_items]
@@ -1378,6 +1751,7 @@ def format_metadata_context(
     include_fallbacks: bool = False,
 ) -> str:
     """Build prompt-safe semantic context from query policy + optional OpenSearch hits."""
+    ensure_runtime_query_policy_loaded()
     lines: list[str] = []
     domain_contract = format_domain_contract(
         intent=intent,

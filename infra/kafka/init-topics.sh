@@ -14,10 +14,13 @@ bootstrap_server="kafka:29092,kafka-2:29092,kafka-3:29092"
 
 # Pick first healthy broker for `compose exec` target — broker-1 may be down.
 exec_target=""
+running_brokers=0
 for candidate in kafka kafka-2 kafka-3; do
   if compose ps --status running --services 2>/dev/null | grep -qx "$candidate"; then
-    exec_target="$candidate"
-    break
+    running_brokers=$((running_brokers + 1))
+    if [[ -z "$exec_target" ]]; then
+      exec_target="$candidate"
+    fi
   fi
 done
 if [[ -z "$exec_target" ]]; then
@@ -25,8 +28,22 @@ if [[ -z "$exec_target" ]]; then
   exit 1
 fi
 
-# Critical topics: RF=3, min.insync.replicas=2, acks=all guarantee.
-# Match by prefix; rest default to RF=2.
+# Production-intended critical topics use RF=3, min.insync.replicas=2.
+# In local compose we may only have 1 broker, so cap RF/minISR to avoid
+# perpetual NotEnoughReplicasError for acks=all producers.
+critical_rf=3
+critical_min_isr=2
+default_rf=2
+default_min_isr=1
+if (( running_brokers < critical_rf )); then
+  critical_rf=$running_brokers
+  critical_min_isr=1
+fi
+if (( running_brokers < default_rf )); then
+  default_rf=$running_brokers
+fi
+
+# Match by prefix; rest default to RF=2 when enough brokers exist.
 is_critical() {
   case "$1" in
     fern.finance.*|fern.procurement.*|fern.audit.*|fern.payroll.*|fern.sales.*|fern.outbox.*) return 0 ;;
@@ -37,11 +54,11 @@ is_critical() {
 for entry in "${FERN_KAFKA_TOPICS[@]}"; do
   IFS='|' read -r topic partitions <<<"$entry"
   if is_critical "$topic"; then
-    rf=3
-    min_isr=2
+    rf=$critical_rf
+    min_isr=$critical_min_isr
   else
-    rf=2
-    min_isr=1
+    rf=$default_rf
+    min_isr=$default_min_isr
   fi
   if compose exec -T "$exec_target" /usr/bin/kafka-topics \
     --bootstrap-server "$bootstrap_server" \

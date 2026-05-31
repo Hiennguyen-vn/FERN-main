@@ -154,6 +154,8 @@ def _suggest_for_state(state: GraphState, max_n: int) -> list[str]:
         return []
     if state.get("social_kind") or state.get("agent_route") in {"social", "greeting", "thanks"}:
         return []
+    if state.get("intent") == "lookup" or state.get("template_key") in {"T31_outlet_directory", "T37_ai_sales_daily_outlets"}:
+        return []
     rows = state.get("raw_result") or []
     if not rows:
         return []

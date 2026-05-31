@@ -60,6 +60,7 @@ class QueryRequest(BaseModel):
     question: str
     session_id: str | None = None
     conversation_turns: list[ConversationTurn] | None = Field(default=None, max_length=8)
+    requested_outlet_ids: list[int] | None = Field(default=None, max_length=500)
     preview_max_rows: int | None = Field(
         default=None,
         ge=0,
@@ -210,7 +211,11 @@ async def auth_error_handler(_: Request, exc: AuthError):
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(_: Request, exc: RateLimitExceeded):
-    return JSONResponse(status_code=429, content={"error_code": "RATE_LIMIT", "message": str(exc)})
+    return JSONResponse(
+        status_code=429,
+        content={"error_code": "RATE_LIMIT", "message": str(exc)},
+        headers={"Retry-After": str(exc.retry_after)},
+    )
 
 
 @app.exception_handler(PreprocessError)
@@ -247,11 +252,12 @@ async def ready(request: Request):
     except Exception as e:  # noqa: BLE001
         issues.append(f"clickhouse: {e}")
 
-    try:
-        from app.clients.opensearch import get_os_client
-        get_os_client().info()
-    except Exception as e:  # noqa: BLE001
-        warnings.append(f"opensearch: {e}")
+    if get_settings().opensearch_enabled:
+        try:
+            from app.clients.opensearch import get_os_client
+            get_os_client().info()
+        except Exception as e:  # noqa: BLE001
+            warnings.append(f"opensearch: {e}")
 
     if get_settings().hr_query_enabled:
         try:
@@ -288,6 +294,7 @@ async def query(request: Request, body: QueryRequest) -> QueryResponse:
         "raw_question": body.question,
         "auth": auth,
         "conversation_turns": turns,
+        "scope_outlet_ids": list(body.requested_outlet_ids or []),
         "correction_attempts": 0,
         "trace": [],
     }
@@ -322,7 +329,11 @@ async def query(request: Request, body: QueryRequest) -> QueryResponse:
     if rk not in ("answer", "clarification", "unsupported", None):
         rk = None
     if rk is None:
-        rk = "answer" if result.get("template_key") else "clarification"
+        # Infer from graph state: only call it an "answer" when a template
+        # ran successfully (template_key present) AND execution did not fail.
+        execution_ok = not result.get("execution_error")
+        has_template = bool(result.get("template_key"))
+        rk = "answer" if (has_template and execution_ok) else "clarification"
 
     pr_max = int(body.preview_max_rows or 0)
     rows_preview = _rows_preview_from_result(result.get("raw_result"), pr_max)

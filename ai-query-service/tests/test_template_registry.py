@@ -15,8 +15,8 @@ def test_all_templates_have_sql_file():
     assert not missing, f"Missing SQL files: {missing}"
 
 
-def test_thirty_six_templates_registered():
-    assert len(TEMPLATES) == 36
+def test_forty_six_templates_registered():
+    assert len(TEMPLATES) == 46
 
 
 def test_render_t01():
@@ -58,6 +58,15 @@ def test_render_t36_driver_bridge():
     assert "from_date_a" not in sql
     assert "2026-01-01" in sql
     assert "2025-09-30" in sql
+
+
+def test_render_t37_ai_sales_daily_outlets():
+    sql = render("T37_ai_sales_daily_outlets", outlet_ids=[1, 2])
+
+    assert "FROM analytics.ai_sales_daily" in sql
+    assert "cdc.outlet FINAL" in sql
+    assert "s.outlet_id IN (1,2)" in sql
+    assert "business_date BETWEEN" not in sql
 
 
 def test_render_missing_required_param():
@@ -102,10 +111,11 @@ def test_render_optional_param_default():
 def test_inventory_current_stock_templates_use_latest_scope_snapshot():
     sql = render("T12_inventory_low_stock", outlet_ids=[1, 2], threshold=0)
 
-    assert "business_date = (" in sql
+    assert "FROM cdc.inventory_transaction" in sql
     assert "SELECT max(business_date)" in sql
     assert "WHERE outlet_id IN (1,2)" in sql
-    assert "AND qty_on_hand < 0" in sql
+    assert "HAVING qty_on_hand < 0" in sql
+    assert "sum(qty_change) AS qty_on_hand" in sql
     assert "argMax" not in sql
     assert "sum(qty_on_hand)" not in sql
 

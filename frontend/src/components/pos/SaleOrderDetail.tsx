@@ -26,7 +26,7 @@ export function SaleOrderDetail({
   paymentPending = false,
 }: Props) {
   const isAwaitingApproval = order.status === 'open' && order.paymentStatus === 'unpaid' && order.backendStatus !== 'order_approved';
-  const isAwaitingPayment = order.status === 'open' && order.paymentStatus === 'unpaid' && order.backendStatus === 'order_approved';
+  const canCapturePayment = order.status === 'open' && order.paymentStatus === 'unpaid';
 
   return (
     <div className="p-6 space-y-5 animate-fade-in">
@@ -74,7 +74,7 @@ export function SaleOrderDetail({
                 {approvePending ? 'Approving…' : 'Approve Order'}
               </Button>
             )}
-            {isAwaitingPayment && onPay && (
+            {canCapturePayment && onPay && (
               <>
                 {onCancel ? (
                   <Button variant="outline" size="sm" className="h-8 text-xs text-destructive border-destructive/20 hover:bg-destructive/5" onClick={onCancel}>
@@ -82,7 +82,7 @@ export function SaleOrderDetail({
                   </Button>
                 ) : null}
                 <Button size="sm" className="h-8 text-xs" onClick={onPay} disabled={paymentPending}>
-                  Capture Payment
+                  {isAwaitingApproval ? 'Approve & Capture Payment' : 'Capture Payment'}
                 </Button>
               </>
             )}

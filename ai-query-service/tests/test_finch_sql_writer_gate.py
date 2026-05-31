@@ -66,3 +66,18 @@ def test_route_after_coverage_blocks_sql_writer_when_gate_fails():
     assert state["needs_sql_writer"] is False
     assert state["response_kind"] == "clarification"
     assert state["clarification_question"]
+
+
+def test_finch_graph_routes_unsupported_directly_to_formatter():
+    from app.agents.graph_builder import _route_after_coverage, _route_after_supervisor
+
+    state = {
+        "agent_route": "data_query",
+        "intent": "unknown",
+        "response_kind": "unsupported",
+        "needs_sql_writer": False,
+        "template_key": None,
+    }
+
+    assert _route_after_supervisor(state) == "answer_formatter"
+    assert _route_after_coverage(state) == "answer_formatter"

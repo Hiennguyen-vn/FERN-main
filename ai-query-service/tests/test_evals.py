@@ -60,6 +60,21 @@ def test_grade_case_mismatched_route_fails():
     assert result.axes["route"] is False
 
 
+def test_grade_case_can_check_response_kind():
+    case = GoldenCase(
+        id="x",
+        question="q",
+        auth_roles=("finance",),
+        auth_outlet_ids=(1,),
+        expected_route="data_query",
+        expected_response_kind="unsupported",
+        expects_sql=False,
+    )
+    result = grade_case(case, _state(response_kind="unsupported", final_sql=""), duration_ms=10)
+    assert result.passed
+    assert result.axes["response_kind"] is True
+
+
 def test_grade_case_tables_subset_fails_when_extra_table_used():
     case = GoldenCase(
         id="x",

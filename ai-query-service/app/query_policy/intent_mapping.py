@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import threading
+
+from app.runtime_catalog import get_runtime_catalog_section
+
 
 _TEMPLATE_INTENTS: dict[str, str] = {
     # Revenue / sales
@@ -45,10 +49,28 @@ _TEMPLATE_INTENTS: dict[str, str] = {
     # Lookup
     "T31_outlet_directory": "lookup",
     "T33_zero_revenue_outlets": "lookup",
+    "T37_ai_sales_daily_outlets": "lookup",
 }
+_RUNTIME_LOCK = threading.RLock()
+_RUNTIME_VERSION: int | None = None
+
+
+def ensure_runtime_intent_mapping_loaded(*, force: bool = False) -> None:
+    global _RUNTIME_VERSION
+    with _RUNTIME_LOCK:
+        version, section = get_runtime_catalog_section("intent_mapping", force=force)
+        if not force and version == _RUNTIME_VERSION:
+            return
+        if isinstance(section, dict) and isinstance(section.get("template_intents"), dict):
+            parsed = {str(k): str(v) for k, v in section["template_intents"].items()}
+            if parsed:
+                _TEMPLATE_INTENTS.clear()
+                _TEMPLATE_INTENTS.update(parsed)
+        _RUNTIME_VERSION = version
 
 
 def intent_for_template(template_key: str | None) -> str | None:
+    ensure_runtime_intent_mapping_loaded()
     return _TEMPLATE_INTENTS.get(template_key or "")
 
 

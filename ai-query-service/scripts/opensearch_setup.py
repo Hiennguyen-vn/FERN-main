@@ -22,9 +22,15 @@ VI_ANALYZER = {
     }
 }
 
+SINGLE_NODE_KNN_INDEX = {
+    "knn": True,
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+}
+
 ALIASES_BODY = {
     "settings": {
-        "index": {"knn": True},
+        "index": SINGLE_NODE_KNN_INDEX,
         **VI_ANALYZER,
     },
     "mappings": {
@@ -44,7 +50,7 @@ ALIASES_BODY = {
 
 TEMPLATES_BODY = {
     "settings": {
-        "index": {"knn": True},
+        "index": SINGLE_NODE_KNN_INDEX,
         **VI_ANALYZER,
     },
     "mappings": {
@@ -64,7 +70,7 @@ TEMPLATES_BODY = {
 
 CATALOG_BODY = {
     "settings": {
-        "index": {"knn": True},
+        "index": SINGLE_NODE_KNN_INDEX,
         **VI_ANALYZER,
     },
     "mappings": {
@@ -82,7 +88,7 @@ CATALOG_BODY = {
 
 METADATA_BODY = {
     "settings": {
-        "index": {"knn": True},
+        "index": SINGLE_NODE_KNN_INDEX,
         **VI_ANALYZER,
     },
     "mappings": {

@@ -15,7 +15,7 @@ import { getErrorMessage } from '@/api/decoders';
 import { EmptyState } from '@/components/shell/PermissionStates';
 import { StatusBadge } from '@/components/catalog/StatusBadge';
 import { ScopePill } from '@/components/catalog/shared';
-import { getProductImageUploadErrorMessage, validateProductImageFile } from '@/components/catalog/product-image-upload';
+import { getProductImageUploadErrorMessage, prepareProductImageFile } from '@/components/catalog/product-image-upload';
 import { AllergenSelector } from '@/components/fnb/AllergenSelector';
 import { AllergenBadgeRow } from '@/components/fnb/AllergenBadgeRow';
 
@@ -192,14 +192,10 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
 
   const handleQuickUpload = async (file: File) => {
     if (!canManageCatalog) return;
-    const validationError = validateProductImageFile(file);
-    if (validationError) {
-      toast.error(validationError);
-      return;
-    }
     setUploadingImage(true);
     try {
-      const { finalUrl } = await productApi.uploadProductImage(token, pid, file);
+      const uploadFile = await prepareProductImageFile(file);
+      const { finalUrl } = await productApi.uploadProductImage(token, pid, uploadFile);
       await productApi.updateProduct(token, pid, { imageUrl: finalUrl });
       toast.success('Image updated');
       onProductUpdated();
@@ -213,14 +209,10 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
 
   const handleImageFileSelected = async (file: File) => {
     if (!canManageCatalog) return;
-    const validationError = validateProductImageFile(file);
-    if (validationError) {
-      toast.error(validationError);
-      return;
-    }
     setUploadingImage(true);
     try {
-      const { finalUrl } = await productApi.uploadProductImage(token, pid, file);
+      const uploadFile = await prepareProductImageFile(file);
+      const { finalUrl } = await productApi.uploadProductImage(token, pid, uploadFile);
       setEditForm((f) => ({ ...f, imageUrl: finalUrl }));
       toast.success('Image uploaded. Click Save to apply.');
     } catch (e) {
@@ -458,7 +450,7 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
                           </button>
                         )}
                       </div>
-                      <p className="text-[10px] text-muted-foreground">JPG/PNG/WEBP, tối đa 5MB.</p>
+                      <p className="text-[10px] text-muted-foreground">JPG/PNG/WEBP. Có thể tải ảnh lớn, hệ thống sẽ tự tối ưu nếu cần.</p>
                     </div>
                   </div>
                 </div>

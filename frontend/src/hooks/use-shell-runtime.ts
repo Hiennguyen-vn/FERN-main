@@ -4,6 +4,7 @@ import type { ShellContext } from '@/types/shell';
 
 export interface ShellRuntime {
   scope: ShellContext['scope'];
+  availableScopes: ShellContext['availableScopes'];
   user: ShellContext['user'];
   token: string;
 }
@@ -14,6 +15,7 @@ export function useShellRuntime(): ShellRuntime {
 
   return {
     scope: outlet.scope,
+    availableScopes: outlet.availableScopes,
     user: outlet.user,
     token: session?.accessToken ?? '',
   };

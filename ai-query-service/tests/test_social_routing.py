@@ -137,6 +137,33 @@ async def test_template_matcher_fast_path_top_products_respects_requested_limit(
 
 
 @pytest.mark.asyncio
+async def test_template_matcher_fast_path_product_revenue_ranking_uses_top_products(monkeypatch):
+    async def fail_llm(*_args, **_kwargs):
+        raise AssertionError("LLM should not be called for obvious product revenue ranking")
+
+    monkeypatch.setattr("app.graph.nodes.template_matcher.llm_call_json", fail_llm)
+    monkeypatch.setattr("app.graph.nodes.template_matcher.embed", fail_llm)
+    monkeypatch.setattr(
+        "app.graph.nodes.template_matcher.get_settings",
+        lambda: type("S", (), {"template_fast_path_enabled": True, "openai_embeddings_enabled": False})(),
+    )
+
+    state = {
+        "normalized_question": "doanh thu mặt hàng nào cao nhất trong năm nay",
+        "intent": "product_mix",
+        "time_range": {"from_date": "2026-01-01", "to_date": "2026-05-19"},
+        "resolved_entities": {},
+        "conversation_context": "",
+        "trace": [],
+    }
+
+    out = await template_matcher(state)
+
+    assert out["template_key"] == "T04_top_products"
+    assert out["template_params"] == {"from_date": "2026-01-01", "to_date": "2026-05-19", "limit": 10}
+
+
+@pytest.mark.asyncio
 async def test_template_matcher_verified_peak_hour_does_not_ask_time(monkeypatch):
     async def fail_llm(*_args, **_kwargs):
         raise AssertionError("LLM should not be called for verified peak-hour template")

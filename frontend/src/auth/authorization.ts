@@ -91,6 +91,11 @@ function getAccessState(session: AuthSession | null) {
   const isGovernanceOnly =
     roles.size > 0 &&
     [...roles].every((r) => GOVERNANCE_ONLY_ROLES.has(r));
+  const kitchenOnlyPermissions = new Set(['kitchen.read', 'kitchen.write']);
+  const isKitchenOnly =
+    (roles.has('kitchen_staff') || permissions.has('kitchen.read')) &&
+    [...roles].every((r) => r === 'kitchen_staff') &&
+    [...permissions].every((p) => kitchenOnlyPermissions.has(p));
 
   return {
     roles,
@@ -99,6 +104,7 @@ function getAccessState(session: AuthSession | null) {
     isSuperadmin: roles.has('superadmin'),
     isAdmin: roles.has('admin') || roles.has('superadmin'),
     isGovernanceOnly,
+    isKitchenOnly,
     hasOutletScope: outletScope.size > 0,
   };
 }
@@ -127,11 +133,13 @@ export function isSuperadminSession(session: AuthSession | null) {
 export function hasModuleAccess(session: AuthSession | null, family: ModuleFamily): boolean {
   if (!session) return false;
 
-  const { roles, permissions, isSuperadmin, isGovernanceOnly, hasOutletScope } =
+  const { roles, permissions, isSuperadmin, isGovernanceOnly, isKitchenOnly, hasOutletScope } =
     getAccessState(session);
 
   // §6 — superadmin global bypass
   if (isSuperadmin) return true;
+
+  if (isKitchenOnly) return family === 'kitchen';
 
   const rule = MODULE_ACCESS_MATRIX[family];
   if (!rule) return false;

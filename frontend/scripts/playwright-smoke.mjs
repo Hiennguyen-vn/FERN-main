@@ -1,6 +1,6 @@
 import { chromium } from '@playwright/test';
 
-const baseUrl = process.env.APP_URL || 'http://127.0.0.1:8082';
+const baseUrl = process.env.APP_URL || 'http://127.0.0.1:8095';
 const username = process.env.APP_USER;
 const password = process.env.APP_PASS;
 

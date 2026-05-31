@@ -2,7 +2,7 @@
 import hashlib
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from app.clients.kafka import publish_audit
@@ -64,7 +64,7 @@ def build_event(state: GraphState) -> dict[str, Any]:
 
     return {
         "event_id": str(uuid.uuid4()),
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(UTC).isoformat(),
         "user_id": auth.user_id,
         "session_id": auth.session_id,
         "correlation_id": auth.correlation_id,

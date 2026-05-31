@@ -205,6 +205,11 @@ def build_presentation_bundle(
         "table_truncated": full_count > max_table_rows,
         "full_row_count": full_count,
     }
-    if spec:
+    template_key = str(state.get("template_key") or "")
+    lookup_output = str(state.get("intent") or "") == "lookup" or template_key in {
+        "T31_outlet_directory",
+        "T37_ai_sales_daily_outlets",
+    }
+    if spec and not lookup_output:
         out["chart_spec"] = spec
     return out

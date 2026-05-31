@@ -10,6 +10,25 @@ function toNumber(value: unknown) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
+function normalizePaymentMethod(value: unknown): PaymentMethod {
+  const normalized = String(value ?? 'cash').trim().toLowerCase().replace(/[_\s]+/g, '-');
+  switch (normalized) {
+    case 'card':
+      return 'card';
+    case 'ewallet':
+    case 'e-wallet':
+      return 'e-wallet';
+    case 'banktransfer':
+    case 'bank-transfer':
+      return 'bank-transfer';
+    case 'voucher':
+      return 'voucher';
+    case 'cash':
+    default:
+      return 'cash';
+  }
+}
+
 export function formatPosCurrency(value: number | null | undefined, currencyCode?: string | null) {
   const currency = String(currencyCode || 'USD').toUpperCase();
   const amount = Number(value || 0);
@@ -92,7 +111,7 @@ export function mapSaleToUi(
   const payments = sourcePayment
     ? [{
         id: `${sale.id}-pay-1`,
-        method: String(sourcePayment.paymentMethod ?? 'cash') as PaymentMethod,
+        method: normalizePaymentMethod(sourcePayment.paymentMethod),
         amount: toNumber(sourcePayment.amount),
         capturedAt: String(sourcePayment.paymentTime ?? detail?.createdAt ?? sale.createdAt ?? new Date().toISOString()),
         reference: sourcePayment.transactionRef ? String(sourcePayment.transactionRef) : undefined,

@@ -1,0 +1,44 @@
+version: 1
+domain: inventory
+description_vi: Inventory core marts tách tồn on-hand khỏi biến động kho.
+datasets:
+  - name: analytics.ai_inventory_on_hand_daily
+    grain: outlet_id + business_date + item_id
+    time_column: business_date
+    time_semantics_vi: ngày snapshot tồn kho on-hand tính bằng running balance
+    outlet_rbac: outlet_id
+    caveats:
+      - Current stock phải lấy snapshot mới nhất trong phạm vi dữ liệu.
+      - Nếu chưa có item master trong ClickHouse thì chỉ trả item_id, không tự suy diễn tên sản phẩm.
+  - name: analytics.ai_inventory_movement_daily
+    grain: outlet_id + business_date + item_id + movement_type
+    time_column: business_date
+    time_semantics_vi: ngày kinh doanh của biến động kho
+    outlet_rbac: outlet_id
+    caveats:
+      - Movement là biến động trong ngày, không phải số tồn hiện tại.
+metrics:
+  - id: qty_on_hand
+    measure: argMax(qty_on_hand, business_date)
+    definition_vi: Tồn kho on-hand tại snapshot mới nhất theo outlet-item.
+    source_dataset: analytics.ai_inventory_on_hand_daily
+    allowed_dimensions: [business_date, outlet_id, item_id]
+    synonyms: [tồn kho, current stock, hàng còn, inventory on hand]
+    golden_cases: [INV-001, INV-003]
+  - id: inventory_movement
+    measure: sum(qty_change)
+    definition_vi: Tổng biến động kho theo item và movement_type trong kỳ.
+    source_dataset: analytics.ai_inventory_movement_daily
+    allowed_dimensions: [business_date, outlet_id, item_id, movement_type]
+    synonyms: [biến động kho, inventory movement, churn tồn kho, tốc độ tiêu thụ]
+    golden_cases: [INV-005, INV-006]
+insights:
+  - id: inventory_driver_scan
+    template_key: INS_INVENTORY_DRIVER
+    method_vi: So sánh movement quantity giữa kỳ hiện tại và kỳ liền trước, rank outlet/movement_type theo absolute delta.
+  - id: inventory_anomaly_scan
+    template_key: ANOM_INVENTORY
+    method_vi: So movement daily average với rolling baseline 28 ngày, yêu cầu ít nhất 14 ngày baseline.
+  - id: stock_cover_forecast
+    template_key: FORECAST_STOCK_COVER
+    method_vi: Days of cover = latest qty_on_hand / average daily consumption 28 ngày; NULL nếu chưa có consumption.

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import type { AppliedVoucher, CartLine, OrderType } from '../hooks/use-pos-cart';
 import { LOYALTY } from '../data/mock-menu';
 import { formatVnd } from '../utils/format';
+import { buildLineSubtitle } from '../utils/line-modifiers';
 
 interface Props {
   orderNo: string;
@@ -90,12 +91,7 @@ export function CartPanel(p: Props) {
         ) : (
           <div className="divide-y">
             {p.lines.map((l) => {
-              const subtitle = [
-                l.size && `Size ${l.size}`,
-                l.sugar !== undefined && `Đường ${l.sugar}%`,
-                l.ice !== undefined && `Đá ${l.ice}%`,
-                ...l.toppings.map((t) => `+${t.name}`),
-              ].filter(Boolean).join(' · ');
+              const subtitle = buildLineSubtitle(l);
               return (
                 <div key={l.lineId} className="p-4 flex gap-2">
                   <div className="flex-1 min-w-0">

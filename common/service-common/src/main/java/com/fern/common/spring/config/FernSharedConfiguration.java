@@ -21,6 +21,7 @@ import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.time.Clock;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -47,13 +48,12 @@ import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.web.client.RestClient;
+import org.postgresql.ds.PGSimpleDataSource;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 import redis.clients.jedis.JedisSentinelPool;
 import redis.clients.jedis.util.Pool;
-import java.util.HashSet;
-import java.util.Set;
 
 @Configuration
 @EnableKafka
@@ -183,7 +183,8 @@ public class FernSharedConfiguration {
       ObjectProvider<MeterRegistry> meterRegistryProvider,
       @Value("${outbox.batch-limit:25}") int batchLimit,
       @Value("${outbox.max-attempts:10}") int maxAttempts,
-      @Value("${outbox.reclaim-seconds:300}") int reclaimSeconds
+      @Value("${outbox.reclaim-seconds:300}") int reclaimSeconds,
+      @Value("${spring.application.name:unknown-service}") String applicationName
   ) {
     return new OutboxRelay(
         dataSource,
@@ -192,7 +193,8 @@ public class FernSharedConfiguration {
         java.util.Optional.ofNullable(meterRegistryProvider.getIfAvailable()),
         batchLimit,
         maxAttempts,
-        reclaimSeconds
+        reclaimSeconds,
+        applicationName
     );
   }
 
@@ -373,7 +375,16 @@ public class FernSharedConfiguration {
       boolean readOnly
   ) {
     HikariConfig config = new HikariConfig();
-    config.setJdbcUrl(url);
+    DataSource directDataSource = dataSourceForUrl(url, username, password);
+    if (directDataSource != null) {
+      config.setDataSource(directDataSource);
+    } else {
+      config.setJdbcUrl(url);
+      String driverClassName = jdbcDriverClassName(url);
+      if (driverClassName != null) {
+        config.setDriverClassName(driverClassName);
+      }
+    }
     config.setUsername(username);
     config.setPassword(password);
     config.setMaximumPoolSize(poolSize);
@@ -382,6 +393,30 @@ public class FernSharedConfiguration {
     config.setReadOnly(readOnly);
     config.setConnectionInitSql("SET search_path TO " + schema + ", public");
     return new HikariDataSource(config);
+  }
+
+  private static DataSource dataSourceForUrl(String url, String username, String password) {
+    if (url != null && url.startsWith("jdbc:postgresql:")) {
+      PGSimpleDataSource dataSource = new PGSimpleDataSource();
+      dataSource.setUrl(url);
+      dataSource.setUser(username);
+      dataSource.setPassword(password);
+      return dataSource;
+    }
+    return null;
+  }
+
+  private static String jdbcDriverClassName(String url) {
+    if (url == null) {
+      return null;
+    }
+    if (url.startsWith("jdbc:postgresql:")) {
+      return "org.postgresql.Driver";
+    }
+    if (url.startsWith("jdbc:clickhouse:") || url.startsWith("jdbc:ch:")) {
+      return "com.clickhouse.jdbc.ClickHouseDriver";
+    }
+    return null;
   }
 
   private static Set<String> parseCsv(String raw) {

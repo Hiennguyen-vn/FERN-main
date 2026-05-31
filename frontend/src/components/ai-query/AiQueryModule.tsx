@@ -12,7 +12,6 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { useAuth } from '@/auth/use-auth';
 import { aiQueryApi } from '@/api/ai-query-api';
 import type {
   AiConversationTurn, AiDataSourceContext, AiExportArtifact,
@@ -20,6 +19,8 @@ import type {
   AiServiceReadiness, AiWorkflowStep,
 } from '@/api/ai-query-api';
 import { isApiError } from '@/api/client';
+import { useShellRuntime } from '@/hooks/use-shell-runtime';
+import type { ScopeOption } from '@/types/shell';
 import {
   normalizeQualityIssueLines,
   normalizeQualityVerdict,
@@ -113,6 +114,41 @@ function buildPreviewCsv(rows: Record<string, unknown>[]): string {
     columns.map((col) => escapeCsvCell(formatPreviewCell(row[col]))).join(','),
   );
   return [header, ...lines].join('\r\n');
+}
+
+function collectDescendantOutletIds(nodes: ScopeOption[] | undefined, bucket: string[]): void {
+  for (const node of nodes ?? []) {
+    if (node.level === 'outlet') {
+      const outletId = String(node.id ?? '').trim();
+      if (/^\d+$/.test(outletId) && !bucket.includes(outletId)) bucket.push(outletId);
+    }
+    if (node.children?.length) collectDescendantOutletIds(node.children, bucket);
+  }
+}
+
+function resolveRequestedOutletIds(
+  scope: { level: 'system' | 'region' | 'outlet'; outletId?: string; regionId?: string },
+  scopeTree: ScopeOption[] = [],
+): string[] | undefined {
+  if (scope.level === 'system') return undefined;
+  if (scope.level === 'outlet') {
+    const outletId = String(scope.outletId ?? '').trim();
+    return /^\d+$/.test(outletId) ? [outletId] : undefined;
+  }
+  if (scope.level !== 'region' || !scope.regionId) return undefined;
+
+  const stack = [...scopeTree];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    if (node.level === 'region' && String(node.id) === String(scope.regionId)) {
+      const outletIds: string[] = [];
+      collectDescendantOutletIds(node.children, outletIds);
+      return outletIds.length > 0 ? outletIds : undefined;
+    }
+    if (node.children?.length) stack.push(...node.children);
+  }
+  return undefined;
 }
 
 export function getEscalationInfo(meta?: AiQueryResponse | null): { candidate: boolean; reason: string | null } {
@@ -1004,8 +1040,7 @@ function TypingIndicator() {
 // ─── Main module ──────────────────────────────────────────────────────────────
 
 export function AiQueryModule() {
-  const { session } = useAuth();
-  const token = session?.accessToken;
+  const { token, scope, availableScopes } = useShellRuntime();
 
   const [messages, setMessages] = useState<AiMessage[]>([]);
   const [reviewIds, setReviewIds] = useState<Record<string, string>>({});
@@ -1013,6 +1048,10 @@ export function AiQueryModule() {
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const requestedOutletIds = useMemo(
+    () => resolveRequestedOutletIds(scope, availableScopes ?? []),
+    [availableScopes, scope],
+  );
 
   const { data: readiness, isLoading: checkingReady, refetch: recheckReady } = useQuery({
     queryKey: ['ai-query', 'ready'],
@@ -1055,11 +1094,19 @@ export function AiQueryModule() {
   });
 
   const { mutate: submit, isPending } = useMutation({
-    mutationFn: (payload: { question: string; conversation_turns: AiConversationTurn[]; preview_max_rows: number }) =>
+    mutationFn: (payload: {
+      question: string;
+      conversation_turns: AiConversationTurn[];
+      preview_max_rows: number;
+      requested_outlet_ids?: string[];
+    }) =>
       aiQueryApi.query(
         {
           question: payload.question,
           preview_max_rows: payload.preview_max_rows,
+          ...(payload.requested_outlet_ids?.length
+            ? { requested_outlet_ids: payload.requested_outlet_ids }
+            : {}),
           ...(payload.conversation_turns.length > 0 ? { conversation_turns: payload.conversation_turns } : {}),
         },
         token,
@@ -1103,8 +1150,9 @@ export function AiQueryModule() {
       question: q.trim(),
       conversation_turns: buildConversationTurns(messages),
       preview_max_rows: inferPreviewMaxRows(q, messages),
+      requested_outlet_ids: requestedOutletIds,
     });
-  }, [isPending, messages, submit]);
+  }, [isPending, messages, requestedOutletIds, submit]);
 
   const handleSubmit = useCallback(() => doSubmit(input), [doSubmit, input]);
 

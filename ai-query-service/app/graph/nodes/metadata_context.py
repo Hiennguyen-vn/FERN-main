@@ -42,13 +42,14 @@ def metadata_context(state: GraphState) -> GraphState:
         return state
 
     hits: list[dict] = []
-    try:
-        # Keep this node synchronous and cheap. BM25/fuzzy metadata hits complement
-        # deterministic local policy matches; embedding retrieval is handled by seed/search clients elsewhere.
-        hits = hybrid_search_metadata(text=question, embedding=None, size=s.metadata_context_max_hits)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("metadata OpenSearch search failed: %s", e)
-        hits = []
+    if s.opensearch_enabled:
+        try:
+            # Keep this node synchronous and cheap. BM25/fuzzy metadata hits complement
+            # deterministic local policy matches; embedding retrieval is handled by seed/search clients elsewhere.
+            hits = hybrid_search_metadata(text=question, embedding=None, size=s.metadata_context_max_hits)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("metadata OpenSearch search failed: %s", e)
+            hits = []
 
     text = format_metadata_context(
         question=question,

@@ -18,6 +18,8 @@ _NUMERIC_OUTLET_RE = re.compile(r"\b(?:outlet|cua\s+hang|cửa\s+hàng)\s+(\d{1,
 
 
 async def _resolve_one(term: str, canonical_type: str) -> dict | None:
+    if not get_settings().opensearch_enabled:
+        return None
     emb = None
     if get_settings().openai_embeddings_enabled:
         try:
@@ -90,7 +92,12 @@ def _outlet_name_terms_from_state(state: GraphState) -> list[str]:
 async def entity_resolver(state: GraphState) -> GraphState:
     auth = state["auth"]
     raw = state.get("raw_entities", {}) or {}
-    resolved: dict[str, list[int]] = {"outlet_ids": [], "product_ids": [], "category_ids": []}
+    preset = state.get("resolved_entities") or {}
+    resolved: dict[str, list[int]] = {
+        "outlet_ids": [int(x) for x in (preset.get("outlet_ids") or [])],
+        "product_ids": [int(x) for x in (preset.get("product_ids") or [])],
+        "category_ids": [int(x) for x in (preset.get("category_ids") or [])],
+    }
 
     # Outlets
     exact_codes = _outlet_codes_from_state(state)

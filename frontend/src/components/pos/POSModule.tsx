@@ -118,7 +118,6 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     loading,
     createSession,
     updateSession,
-    closeSession: dbClose,
     reconcileSession: dbReconcile,
     deleteSession,
   } = usePOSSessions();
@@ -295,7 +294,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     }
   }, [buildSessionContext, loadOrdersWithContext, scopedOutletId, token]);
 
-  const fetchOrdersForSession = useCallback(async (sessionId: string) => {
+  const fetchOrdersForSession = useCallback(async (sessionId: string, includeDetails = false) => {
     if (!token || !sessionId) return;
     setOrdersLoading(true);
     try {
@@ -305,7 +304,29 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
         offset: 0,
       });
       const context = await buildSessionContext();
-      const mapped = await loadOrdersWithContext(page.items || [], context);
+      const rows = page.items || [];
+      const rowsWithDetails = includeDetails
+        ? await Promise.all(rows.map(async (item) => {
+            try {
+              return await salesApi.orderDetail(token, item.id);
+            } catch {
+              return item;
+            }
+          }))
+        : rows;
+      const mapped = includeDetails
+        ? rowsWithDetails.map((item) =>
+            mapSaleToUi(
+              item,
+              item,
+              outletName,
+              operatorName,
+              context.sessionCodeById,
+              productNameById,
+              context.sessionOperatorNameById,
+            ),
+          )
+        : await loadOrdersWithContext(rowsWithDetails, context);
       mergeOrdersIntoState(mapped);
     } catch (error) {
       reportError(error, 'pos.session-orders.load');
@@ -313,7 +334,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     } finally {
       setOrdersLoading(false);
     }
-  }, [buildSessionContext, loadOrdersWithContext, mergeOrdersIntoState, token]);
+  }, [buildSessionContext, loadOrdersWithContext, mergeOrdersIntoState, operatorName, outletName, productNameById, token]);
 
   const ensureOrderDetail = useCallback(async (orderId: string) => {
     if (!token || !orderId) return;
@@ -356,8 +377,8 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
   }, [fetchOrders]);
 
   useEffect(() => {
-    if (view.screen === 'session-detail') {
-      void fetchOrdersForSession(view.sessionId);
+    if (view.screen === 'session-detail' || view.screen === 'close-session' || view.screen === 'reconcile') {
+      void fetchOrdersForSession(view.sessionId, true);
     }
   }, [fetchOrdersForSession, view]);
 
@@ -466,12 +487,19 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     }
   }, [createSession, dbSessions, outletId, scope.outletId]);
 
-  const handleCloseSession = useCallback(async (sessionId: string) => {
-    const closed = await dbClose(sessionId, 0);
-    if (closed) {
-      goList();
+  const handleCloseSession = useCallback(async (
+    sessionId: string,
+    payload: {
+      lines: Array<{ paymentMethod: string; actualAmount: number }>;
+      note?: string;
+    },
+  ) => {
+    const reconciled = await dbReconcile(sessionId, payload);
+    if (reconciled) {
+      await fetchOrders();
+      setView({ screen: 'session-detail', sessionId });
     }
-  }, [dbClose, goList]);
+  }, [dbReconcile, fetchOrders]);
 
   const handleReconcileSession = useCallback(async (
     sessionId: string,
@@ -880,7 +908,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       <CloseSession
         session={session}
         onBack={() => setView({ screen: 'session-detail', sessionId: session.id })}
-        onConfirm={() => void handleCloseSession(session.id)}
+        onConfirm={(payload) => handleCloseSession(session.id, payload)}
       />
     );
   }

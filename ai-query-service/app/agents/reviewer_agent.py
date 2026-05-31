@@ -89,10 +89,19 @@ _REVIEWER_SCHEMA: dict[str, Any] = {
 }
 
 
+_DETERMINISTIC_INSIGHT_PREFIXES = ("INS_", "ANOM_", "FORECAST_")
+_DETERMINISTIC_LOOKUP_TEMPLATES = {"T31_outlet_directory", "T37_ai_sales_daily_outlets"}
+
+
 def _should_skip(state: GraphState) -> tuple[bool, str]:
     s = get_settings()
     if not s.reviewer_agent_enabled:
         return True, "flag_off"
+    template_key = str(state.get("template_key") or "")
+    if template_key.startswith(_DETERMINISTIC_INSIGHT_PREFIXES):
+        return True, "deterministic_insight"
+    if template_key in _DETERMINISTIC_LOOKUP_TEMPLATES or state.get("intent") == "lookup":
+        return True, "deterministic_lookup"
     rk = state.get("response_kind")
     if rk in {"clarification", "unsupported"}:
         return True, "non_data_response"

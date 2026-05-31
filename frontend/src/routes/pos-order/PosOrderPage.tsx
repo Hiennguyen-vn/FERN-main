@@ -14,8 +14,7 @@ import { MenuGrid } from './components/MenuGrid';
 import { ItemOptionsDialog } from './components/ItemOptionsDialog';
 import { CartPanel } from './components/CartPanel';
 import { PaymentDialog, type PayMethod } from './components/PaymentDialog';
-import { ReceiptPreview } from './components/ReceiptPreview';
-import { KotPreview } from './components/KotPreview';
+import { OrderPrintPreview } from './components/OrderPrintPreview';
 import { OutletPicker } from './components/OutletPicker';
 import { OpenShiftDialog } from './components/OpenShiftDialog';
 import { SubmitStatusOverlay } from './components/SubmitStatusOverlay';
@@ -51,8 +50,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
   const [pickedItem, setPickedItem] = useState<PosMenuItem | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
-  const [receiptOpen, setReceiptOpen] = useState(false);
-  const [kotOpen, setKotOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
   const [lastOrder, setLastOrder] = useState<SavedOrder | null>(null);
   const [clock, setClock] = useState(() => new Date());
   const [pendingOrderNo, setPendingOrderNo] = useState(history.nextOrderNo());
@@ -69,6 +67,12 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
   const pendingFeed = useOrdersFeed(outletId, 'pending', true, posSessionId);
   const todayCount = todayFeed.data?.length ?? history.orders.length;
   const pendingCount = pendingFeed.data?.length ?? 0;
+  const isPaymentProcessing =
+    submit.phase === 'creating' ||
+    submit.phase === 'created' ||
+    submit.phase === 'approving' ||
+    submit.phase === 'approved' ||
+    submit.phase === 'paying';
 
   const [resumeTarget, setResumeTarget] = useState<SaleListItemView | null>(null);
 
@@ -166,11 +170,10 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
 
   const menu = menuQuery.data?.menu ?? [];
   const categories = menuQuery.data?.categories ?? [];
-  const modifierGroups = menuQuery.data?.modifierGroups ?? [];
 
   const handlePick = (item: PosMenuItem) => {
     if (!item.isAvailable) return;
-    if (!item.hasModifiers || modifierGroups.length === 0) {
+    if (!item.hasModifiers || item.modifierGroups.length === 0) {
       cart.addLine({ itemId: item.id, name: item.name, basePrice: item.price, toppings: [], quantity: 1 });
       return;
     }
@@ -225,10 +228,19 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submit.phase]);
 
-  const handleNewOrder = () => {
+  const finalizePaidOrder = () => {
     setPaymentOpen(false);
     submit.reset();
     cart.reset();
+  };
+
+  const handleNewOrder = () => {
+    finalizePaidOrder();
+  };
+
+  const handlePrintOrder = () => {
+    finalizePaidOrder();
+    setPrintOpen(true);
   };
 
   const handleLogout = async () => {
@@ -379,7 +391,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
 
       <ItemOptionsDialog
         item={pickedItem}
-        modifierGroups={modifierGroups}
+        modifierGroups={pickedItem?.modifierGroups ?? []}
         open={optionsOpen}
         onOpenChange={setOptionsOpen}
         onConfirm={cart.addLine}
@@ -387,17 +399,23 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
 
       <PaymentDialog
         open={paymentOpen}
-        onOpenChange={setPaymentOpen}
-        total={cart.total}
-        orderNo={pendingOrderNo}
+        onOpenChange={(open) => {
+          if (!open && submit.phase === 'paid') {
+            finalizePaidOrder();
+            return;
+          }
+          setPaymentOpen(open);
+        }}
+        total={lastOrder?.total ?? cart.total}
+        orderNo={lastOrder?.orderNo ?? pendingOrderNo}
         onConfirm={doSubmit}
-        onPrintReceipt={() => { setPaymentOpen(false); setTimeout(() => setReceiptOpen(true), 120); }}
-        onPrintKot={() => { setPaymentOpen(false); setTimeout(() => setKotOpen(true), 120); }}
+        onPrintOrder={handlePrintOrder}
         onNewOrder={handleNewOrder}
+        isPaid={submit.phase === 'paid' && lastOrder !== null}
+        isProcessing={isPaymentProcessing}
       />
 
-      <ReceiptPreview open={receiptOpen} onOpenChange={setReceiptOpen} order={lastOrder} />
-      <KotPreview open={kotOpen} onOpenChange={setKotOpen} order={lastOrder} />
+      <OrderPrintPreview open={printOpen} onOpenChange={setPrintOpen} order={lastOrder} />
 
       <SubmitStatusOverlay
         phase={submit.phase}
@@ -428,8 +446,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
         total={Number(resumeTarget?.totalAmount ?? 0)}
         orderNo={resumeTarget ? String(resumeTarget.id).slice(-6) : ''}
         onConfirm={handleResumeConfirm}
-        onPrintReceipt={() => setResumeTarget(null)}
-        onPrintKot={() => setResumeTarget(null)}
+        onPrintOrder={() => setResumeTarget(null)}
         onNewOrder={() => setResumeTarget(null)}
       />
 

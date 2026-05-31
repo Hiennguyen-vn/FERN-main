@@ -85,12 +85,15 @@ export function ItemOptionsDialog({ item, modifierGroups, open, onOpenChange, on
       itemId: item.id,
       name: item.name,
       basePrice: item.price,
-      sizePriceAdd: modifierAdd,
-      toppings: selectedOptions.map(({ group, option }) => ({
-        code: `${group.code}:${option.code}`,
-        name: `${group.name}: ${option.name}`,
-        priceAdd: Number(option.priceAdjustment) || 0,
+      toppings: [],
+      modifiers: selectedOptions.map(({ group, option }) => ({
+        groupCode: group.code,
+        groupName: group.name,
+        optionCode: option.code,
+        optionLabel: option.name,
+        priceDelta: Number(option.priceAdjustment) || 0,
       })),
+      modifierOptionIds: selectedOptions.map(({ option }) => option.id),
       note: note.trim() || undefined,
       quantity: qty,
     });

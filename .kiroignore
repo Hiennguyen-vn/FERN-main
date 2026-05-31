@@ -1,0 +1,16 @@
+# Reduce agent overhead on generated dependencies and build outputs.
+node_modules/
+target/
+dist/
+build/
+.next/
+coverage/
+
+# Local caches and generated output directories.
+.tmp/
+.tmp_uc_preview/
+.vite/
+.playwright-cli/
+output/
+simulator-output/
+BOOT-INF/
