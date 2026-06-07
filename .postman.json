@@ -1,12 +1,36 @@
 {
-  "workspaceId": "535a7fa0-ae50-4ca4-8a3b-1a5d3fa62f1b",
-  "collectionId": "54984523-660690ad-83c6-4985-8191-1bf6896b4660",
-  "collectionName": "FERN Full Test Suite",
-  "environmentId": "54984523-ba2362a4-337a-4e77-b070-bda40726efcc",
-  "environmentName": "FERN Local",
-  "baseUrl": "http://127.0.0.1:8080",
-  "credentials": {
-    "username": "workflow.admin",
-    "password": "Workflow#2026!"
-  }
+  "workspace": {
+    "id": "df9e634e-e0b2-4adc-9a95-da6ecddea267",
+    "name": "FERN API Tests"
+  },
+  "environment": {
+    "id": "fb355ec0-b1c9-4f08-a7a7-e8dc0c6632ce",
+    "uid": "54984523-fb355ec0-b1c9-4f08-a7a7-e8dc0c6632ce",
+    "name": "Local (Gateway)",
+    "base_url": "http://localhost:8080"
+  },
+  "auth": {
+    "model": "Login via POST /api/v1/auth/login captures accessToken into the environment. All collections send Authorization: Bearer {{accessToken}}.",
+    "seededAccount": {
+      "username": "test.superadmin",
+      "password": "Workflow#2026!",
+      "note": "Seeded by db/seeds/011_role_test_accounts_seed.sql. Other roles: test.admin, test.finance, test.hr, test.procurement, test.staff, test.kitchen (same password)."
+    }
+  },
+  "collections": [
+    { "name": "01 - Auth Service", "id": "5ecf7821-d918-47a6-9f12-73256817f21c", "uid": "54984523-5ecf7821-d918-47a6-9f12-73256817f21c", "service": "auth-service", "port": 8081 },
+    { "name": "02 - Org Service", "id": "a7f61c96-13cb-4887-93f6-72d397e3207a", "uid": "54984523-a7f61c96-13cb-4887-93f6-72d397e3207a", "service": "org-service", "port": 8083 },
+    { "name": "03 - Master Node (Control Plane, internal)", "id": "5a558ab6-0703-4bc6-906b-ceb2e83ccc5d", "uid": "54984523-5a558ab6-0703-4bc6-906b-ceb2e83ccc5d", "service": "master-node", "port": 8082, "note": "INTERNAL_ONLY routes; user JWT will usually get 403/404." },
+    { "name": "04 - HR Service", "id": "86e2719f-74c0-4183-a7a1-448d175a3f45", "uid": "54984523-86e2719f-74c0-4183-a7a1-448d175a3f45", "service": "hr-service", "port": 8084 },
+    { "name": "05 - Product Service", "id": "70a887c2-7712-4ca6-8133-6df6789c97db", "uid": "54984523-70a887c2-7712-4ca6-8133-6df6789c97db", "service": "product-service", "port": 8085 },
+    { "name": "06 - Sales Service", "id": "59169dff-88c7-49c6-990e-55e8b49fa3df", "uid": "54984523-59169dff-88c7-49c6-990e-55e8b49fa3df", "service": "sales-service", "port": 8087 },
+    { "name": "07 - Procurement Service", "id": "4630d309-e4f5-4d8c-8238-2cc7b09e676a", "uid": "54984523-4630d309-e4f5-4d8c-8238-2cc7b09e676a", "service": "procurement-service", "port": 8086 },
+    { "name": "08 - Inventory Service", "id": "1521035b-9689-404e-9b0e-00bb4d1ad887", "uid": "54984523-1521035b-9689-404e-9b0e-00bb4d1ad887", "service": "inventory-service", "port": 8088 },
+    { "name": "09 - Payroll Service", "id": "c5b9af91-0c4f-4f34-b1d6-d80c13b4b145", "uid": "54984523-c5b9af91-0c4f-4f34-b1d6-d80c13b4b145", "service": "payroll-service", "port": 8089 },
+    { "name": "10 - Finance Service", "id": "d5c5b30e-86e0-4f1b-8d1a-b42b543a4d16", "uid": "54984523-d5c5b30e-86e0-4f1b-8d1a-b42b543a4d16", "service": "finance-service", "port": 8090 },
+    { "name": "11 - Audit Service", "id": "2cb4db30-5a0f-4a98-b770-cda507e54be0", "uid": "54984523-2cb4db30-5a0f-4a98-b770-cda507e54be0", "service": "audit-service", "port": 8091 },
+    { "name": "12 - Report Service", "id": "8b642ae8-9305-4938-8e73-269ca4460c51", "uid": "54984523-8b642ae8-9305-4938-8e73-269ca4460c51", "service": "report-service", "port": 8092 },
+    { "name": "13 - Gateway (Public)", "id": "f2e952e0-9a85-41e9-9bbf-0f39da1f6f42", "uid": "54984523-f2e952e0-9a85-41e9-9bbf-0f39da1f6f42", "service": "gateway", "port": 8080 },
+    { "name": "14 - AI Query Service", "id": "a87dbd43-d69f-4128-9f9f-8703d51806da", "uid": "54984523-a87dbd43-d69f-4128-9f9f-8703d51806da", "service": "ai-query-service", "port": 8093 }
+  ]
 }
