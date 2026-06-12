@@ -1,16 +1,49 @@
+import contextvars
 import json
+import logging
 import time
-from typing import Any
+from typing import Any, Awaitable, Callable
 
-from openai import AsyncOpenAI
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    InternalServerError,
+    RateLimitError,
+)
 
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
+
+# Transient / availability failures worth retrying on a different provider.
+# Deterministic 4xx errors (bad request, auth, not-found) are NOT here: they
+# would fail identically on the fallback, so we let them surface immediately.
+_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
+    APIConnectionError,
+    APITimeoutError,
+    RateLimitError,
+    InternalServerError,
+)
+
+
+class LLMUnavailableError(RuntimeError):
+    """Raised when every configured LLM provider failed a request."""
+
 
 _client: AsyncOpenAI | None = None
+_fallback_client: AsyncOpenAI | None = None
+
+# Populated by ``_with_fallback`` for the most recent LLM call in this task.
+_last_provider_meta: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "llm_provider_meta",
+    default=None,
+)
 
 
 def get_client() -> AsyncOpenAI:
+    """Primary LLM client (lazy singleton)."""
     global _client
     if _client is None:
         s = get_settings()
@@ -24,6 +57,99 @@ def get_client() -> AsyncOpenAI:
             kwargs["base_url"] = s.openai_base_url
         _client = AsyncOpenAI(**kwargs)
     return _client
+
+
+def get_fallback_client() -> AsyncOpenAI | None:
+    """Secondary LLM client, or None when failover is not configured."""
+    global _fallback_client
+    s = get_settings()
+    if not (getattr(s, "openai_fallback_base_url", "") or getattr(s, "openai_fallback_api_key", "")):
+        return None
+    if _fallback_client is None:
+        kwargs: dict[str, Any] = {
+            "api_key": s.openai_fallback_api_key or s.openai_api_key,
+            "timeout": max(5.0, float(s.openai_timeout_seconds)),
+            "max_retries": max(0, int(s.openai_max_retries)),
+            "default_headers": {"User-Agent": s.openai_user_agent},
+        }
+        if s.openai_fallback_base_url:
+            kwargs["base_url"] = s.openai_fallback_base_url
+        _fallback_client = AsyncOpenAI(**kwargs)
+    return _fallback_client
+
+
+def reset_clients() -> None:
+    """Drop cached clients (used by tests after changing settings)."""
+    global _client, _fallback_client
+    _client = None
+    _fallback_client = None
+
+
+def _providers(model: str) -> list[tuple[str, AsyncOpenAI, str]]:
+    """Ordered (label, client, model) pairs: primary first, fallback if set."""
+    providers = [("primary", get_client(), model)]
+    fb = get_fallback_client()
+    if fb is not None:
+        s = get_settings()
+        providers.append(("fallback", fb, (getattr(s, "openai_fallback_model", "") or model)))
+    return providers
+
+
+def get_last_provider_meta() -> dict[str, Any] | None:
+    return _last_provider_meta.get()
+
+
+async def _with_fallback(model: str, op: Callable[[AsyncOpenAI, str], Awaitable[Any]]) -> Any:
+    """Run ``op(client, model)`` against each provider until one succeeds.
+
+    The OpenAI SDK already retries transient errors against a single provider
+    (``max_retries``); this adds a second layer that fails over to a different
+    provider so a full outage of the primary does not take the service down.
+    """
+    last_err: Exception | None = None
+    providers = _providers(model)
+    for idx, (label, client, provider_model) in enumerate(providers):
+        try:
+            result = await op(client, provider_model)
+            _last_provider_meta.set(
+                {
+                    "llm_provider": label,
+                    "llm_model": provider_model,
+                    "llm_fallback_used": idx > 0,
+                    "llm_providers_tried": idx + 1,
+                }
+            )
+            return result
+        except _FALLBACK_ERRORS as e:
+            last_err = e
+            logger.warning(
+                "LLM provider '%s' failed (%s); trying next provider",
+                label,
+                type(e).__name__,
+            )
+        except APIStatusError as e:
+            # Retry on 5xx only; deterministic 4xx surface immediately.
+            if e.status_code >= 500:
+                last_err = e
+                logger.warning(
+                    "LLM provider '%s' returned %s; trying next provider",
+                    label,
+                    e.status_code,
+                )
+            else:
+                raise
+    _last_provider_meta.set(
+        {
+            "llm_provider": None,
+            "llm_model": model,
+            "llm_fallback_used": len(providers) > 1,
+            "llm_providers_tried": len(providers),
+            "llm_unavailable": True,
+        }
+    )
+    raise LLMUnavailableError(
+        f"All LLM providers failed for model '{model}': {last_err}"
+    ) from last_err
 
 
 def _cached_input_tokens(usage: Any) -> int:
@@ -93,6 +219,9 @@ def _usage_with_model(usage: dict, *, model: str, agent: str | None) -> dict:
     usage["provider"] = "openai_compatible"
     if agent:
         usage["agent"] = agent
+    meta = get_last_provider_meta()
+    if meta:
+        usage.update(meta)
     return usage
 
 
@@ -142,37 +271,42 @@ async def llm_call_json(
     ≥1024 tokens.
     """
     s = get_settings()
-    client = get_client()
     model = _model_for_agent(agent)
     t0 = time.time()
     if s.openai_api_mode == "responses":
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "instructions": system_prompt,
-            "input": user_prompt,
-            "text": _responses_json_format(json_schema),
-        }
-        if previous_response_id and s.openai_responses_previous_response_id_enabled:
-            kwargs["previous_response_id"] = previous_response_id
-        if store is not None:
-            kwargs["store"] = store
-        resp = await client.responses.create(**kwargs)
+        async def _op(client: AsyncOpenAI, m: str) -> Any:
+            kwargs: dict[str, Any] = {
+                "model": m,
+                "instructions": system_prompt,
+                "input": user_prompt,
+                "text": _responses_json_format(json_schema),
+            }
+            if previous_response_id and s.openai_responses_previous_response_id_enabled:
+                kwargs["previous_response_id"] = previous_response_id
+            if store is not None:
+                kwargs["store"] = store
+            return await client.responses.create(**kwargs)
+
+        resp = await _with_fallback(model, _op)
         parsed = json.loads(_response_output_text(resp) or "{}")
         return parsed, _usage_with_model(_usage_from_response(resp, t0), model=model, agent=agent)
 
-    resp = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": json_schema,
-        },
-        temperature=temperature,
-        max_completion_tokens=max_tokens,
-    )
+    async def _op(client: AsyncOpenAI, m: str) -> Any:
+        return await client.chat.completions.create(
+            model=m,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": json_schema,
+            },
+            temperature=temperature,
+            max_completion_tokens=max_tokens,
+        )
+
+    resp = await _with_fallback(model, _op)
     parsed = json.loads(resp.choices[0].message.content or "{}")
     return parsed, _usage_with_model(_usage_from_chat(resp, t0), model=model, agent=agent)
 
@@ -186,26 +320,31 @@ async def llm_call_text(
     agent: str | None = None,
 ) -> tuple[str, dict]:
     s = get_settings()
-    client = get_client()
     model = _model_for_agent(agent)
     t0 = time.time()
     if s.openai_api_mode == "responses":
-        resp = await client.responses.create(
-            model=model,
-            instructions=system_prompt,
-            input=user_prompt,
-        )
+        async def _op(client: AsyncOpenAI, m: str) -> Any:
+            return await client.responses.create(
+                model=m,
+                instructions=system_prompt,
+                input=user_prompt,
+            )
+
+        resp = await _with_fallback(model, _op)
         return _response_output_text(resp), _usage_with_model(_usage_from_response(resp, t0), model=model, agent=agent)
 
-    resp = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=temperature,
-        max_completion_tokens=max_tokens,
-    )
+    async def _op(client: AsyncOpenAI, m: str) -> Any:
+        return await client.chat.completions.create(
+            model=m,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_completion_tokens=max_tokens,
+        )
+
+    resp = await _with_fallback(model, _op)
     text = resp.choices[0].message.content or ""
     return text, _usage_with_model(_usage_from_chat(resp, t0), model=model, agent=agent)
 
@@ -258,17 +397,24 @@ async def llm_call_chat_with_tools(
     max_tokens: int = 1500,
     tool_choice: str | dict = "auto",
 ) -> tuple[Any, dict]:
-    """Single Chat Completions turn with tool calling. Returns (response, usage)."""
-    client = get_client()
+    """Single Chat Completions turn with tool calling. Returns (response, usage).
+
+    Stateless (the full message list is sent each turn), so cross-provider
+    failover is always safe here.
+    """
     t0 = time.time()
-    resp = await client.chat.completions.create(
-        model=model,
-        messages=messages,
-        tools=tools,
-        tool_choice=tool_choice,
-        temperature=temperature,
-        max_completion_tokens=max_tokens,
-    )
+
+    async def _op(client: AsyncOpenAI, m: str) -> Any:
+        return await client.chat.completions.create(
+            model=m,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=temperature,
+            max_completion_tokens=max_tokens,
+        )
+
+    resp = await _with_fallback(model, _op)
     return resp, _usage_with_model(_usage_from_chat(resp, t0), model=model, agent="sql_generator")
 
 
@@ -288,24 +434,37 @@ async def llm_call_responses_with_tools(
     sent over the wire. Combined with prefix caching, this is the cheapest
     way to drive the SQL Writer's tool loop.
     """
-    client = get_client()
     t0 = time.time()
-    kwargs: dict[str, Any] = {
-        "model": model,
-        "input": user_input,
-        "tools": _responses_tools_schema(tools),
-        "store": store,
-    }
     use_previous_response_id = (
         bool(previous_response_id) and get_settings().openai_responses_previous_response_id_enabled
     )
-    if instructions and not use_previous_response_id:
-        # Only send the (large, static) system prompt on the FIRST turn —
-        # subsequent turns inherit it via ``previous_response_id``.
-        kwargs["instructions"] = instructions
+
+    def _build_kwargs(m: str) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "model": m,
+            "input": user_input,
+            "tools": _responses_tools_schema(tools),
+            "store": store,
+        }
+        if instructions and not use_previous_response_id:
+            # Only send the (large, static) system prompt on the FIRST turn —
+            # subsequent turns inherit it via ``previous_response_id``.
+            kwargs["instructions"] = instructions
+        if use_previous_response_id:
+            kwargs["previous_response_id"] = previous_response_id
+        return kwargs
+
     if use_previous_response_id:
-        kwargs["previous_response_id"] = previous_response_id
-    resp = await client.responses.create(**kwargs)
+        # Server-side conversation state lives on the provider that issued
+        # ``previous_response_id``; failing over would send an id the other
+        # provider does not recognise. Pin to the primary in this case.
+        client = get_client()
+        resp = await client.responses.create(**_build_kwargs(model))
+    else:
+        async def _op(client: AsyncOpenAI, m: str) -> Any:
+            return await client.responses.create(**_build_kwargs(m))
+
+        resp = await _with_fallback(model, _op)
     return resp, _usage_with_model(_usage_from_response(resp, t0), model=model, agent="sql_generator")
 
 
@@ -313,6 +472,9 @@ async def embed(text: str) -> list[float]:
     s = get_settings()
     if not s.openai_embeddings_enabled:
         raise RuntimeError("OpenAI embeddings are disabled")
-    client = get_client()
-    resp = await client.embeddings.create(model=s.openai_embedding_model, input=text)
+
+    async def _op(client: AsyncOpenAI, _m: str) -> Any:
+        return await client.embeddings.create(model=s.openai_embedding_model, input=text)
+
+    resp = await _with_fallback(s.openai_embedding_model, _op)
     return resp.data[0].embedding

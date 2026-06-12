@@ -35,6 +35,47 @@ class Settings(BaseSettings):
     openai_timeout_seconds: float = 120.0
     openai_max_retries: int = 2
 
+    # Secondary LLM provider for cross-provider failover. When the primary
+    # provider is unavailable (connection/timeout/5xx/rate-limit) the LLM
+    # client transparently retries the same request on this provider.
+    # Leave base_url AND api_key empty to disable failover.
+    openai_fallback_base_url: str = ""
+    openai_fallback_api_key: str = ""
+    openai_fallback_model: str = ""
+
+    # Rate limit behaviour when Redis is unavailable:
+    #   fail_open       — allow requests (legacy default for dev)
+    #   local_fallback  — enforce per-process counters (recommended for prod)
+    #   fail_closed     — reject with 429
+    rate_limit_redis_unavailable_policy: str = "fail_open"
+
+    # Internal auth mode:
+    #   static — shared secret only (legacy)
+    #   signed — short-lived HMAC token with jti replay protection
+    #   both   — accept signed JWT-shaped tokens OR static secret
+    internal_auth_mode: str = "static"
+    internal_token_signing_key: str = ""
+    # Optional key id for the active signing key (embedded in token header).
+    internal_token_signing_key_id: str = "primary"
+    # Optional verification key ring: "kid1:key1,kid2:key2". Supports rotation
+    # without downtime; if empty we verify with the active signing key only.
+    internal_token_verify_keys: str = ""
+    internal_token_ttl_seconds: int = 60
+    internal_token_issuer: str = "gateway"
+    # When Redis is down during jti check: fail_closed (reject) or fail_open (allow).
+    internal_token_replay_redis_policy: str = "fail_closed"
+
+    # LangGraph checkpoint (optional — off by default for backward compatibility).
+    langgraph_checkpoint_enabled: bool = False
+    langgraph_checkpoint_ttl_minutes: int = 60
+
+    # Per-node wall-clock budget for the agent graph. When a node (e.g. a hung
+    # LLM call) exceeds this, the graph degrades gracefully instead of hanging
+    # the whole request. 0 disables the guard (recommended for environments
+    # that rely on the long-running multi-turn SQL Writer loop + LLM failover,
+    # where the OpenAI SDK timeout already bounds individual calls).
+    llm_node_timeout_seconds: float = 0.0
+
     # ClickHouse
     clickhouse_host: str = "clickhouse"
     clickhouse_port: int = 8123
@@ -209,6 +250,29 @@ class Settings(BaseSettings):
             raise ValueError("OPENAI_API_MODE must be either 'chat' or 'responses'")
         self.openai_api_mode = mode
         self.openai_base_url = self.openai_base_url.rstrip("/")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_rate_limit_policy(self) -> "Settings":
+        policy = self.rate_limit_redis_unavailable_policy.lower().strip()
+        if policy not in {"fail_open", "local_fallback", "fail_closed"}:
+            raise ValueError(
+                "RATE_LIMIT_REDIS_UNAVAILABLE_POLICY must be "
+                "'fail_open', 'local_fallback', or 'fail_closed'"
+            )
+        self.rate_limit_redis_unavailable_policy = policy
+        return self
+
+    @model_validator(mode="after")
+    def _validate_internal_auth_mode(self) -> "Settings":
+        mode = self.internal_auth_mode.lower().strip()
+        if mode not in {"static", "signed", "both"}:
+            raise ValueError("INTERNAL_AUTH_MODE must be 'static', 'signed', or 'both'")
+        self.internal_auth_mode = mode
+        replay = self.internal_token_replay_redis_policy.lower().strip()
+        if replay not in {"fail_open", "fail_closed"}:
+            raise ValueError("INTERNAL_TOKEN_REPLAY_REDIS_POLICY must be 'fail_open' or 'fail_closed'")
+        self.internal_token_replay_redis_policy = replay
         return self
 
     @model_validator(mode="after")

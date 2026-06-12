@@ -30,7 +30,15 @@ class FakeRedisDown:
         raise redis.ConnectionError("nope")
 
 
-def test_under_limit_passes():
+def test_under_limit_passes(monkeypatch):
+    monkeypatch.setattr(
+        "app.middleware.rate_limit.get_settings",
+        lambda: type("S", (), {
+            "rate_limit_redis_unavailable_policy": "fail_open",
+            "rate_limit_per_minute": 20,
+            "rate_limit_per_hour": 200,
+        })(),
+    )
     check_and_increment(FakeRedisOk(per_min=5, per_hour=10), user_id=1)
 
 

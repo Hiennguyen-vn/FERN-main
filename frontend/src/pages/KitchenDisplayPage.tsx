@@ -66,6 +66,20 @@ function elapsedSeconds(fromIso: string, now: number): number {
   return Math.max(0, Math.floor((now - start) / 1000));
 }
 
+// Earliest Deadline First: deadline = createdAt + prepSlaSeconds. Mirrors the backend policy
+// (KitchenScheduling.earliestDeadlineFirst) so client-inserted tickets keep the same ordering.
+function deadlineMs(ticket: KitchenTicket): number {
+  const created = new Date(ticket.createdAt).getTime();
+  const sla = Number(ticket.prepSlaSeconds || 0);
+  return created + Math.max(0, sla) * 1000;
+}
+
+function byEarliestDeadline(a: KitchenTicket, b: KitchenTicket): number {
+  const d = deadlineMs(a) - deadlineMs(b);
+  if (d !== 0) return d;
+  return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+}
+
 function formatMinutes(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -147,8 +161,7 @@ export default function KitchenDisplayPage() {
           if (msg.type === 'kitchen.ticket.created' && msg.ticket) {
             setTickets((prev) => {
               if (prev.some((t) => t.id === msg.ticket!.id)) return prev;
-              return [...prev, msg.ticket!].sort((a, b) =>
-                new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+              return [...prev, msg.ticket!].sort(byEarliestDeadline);
             });
           } else if (msg.type === 'kitchen.ticket.updated' && msg.ticket) {
             const updated = msg.ticket;
@@ -217,8 +230,7 @@ export default function KitchenDisplayPage() {
   }, [token]);
 
   const sortedTickets = useMemo(
-    () => [...tickets].sort((a, b) =>
-      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+    () => [...tickets].sort(byEarliestDeadline),
     [tickets],
   );
 
@@ -364,7 +376,7 @@ export default function KitchenDisplayPage() {
           <Utensils className="h-12 w-12 text-zinc-600" />
           <h2 className="mt-4 text-xl font-semibold text-zinc-100">Không có ticket trong hàng này</h2>
           <p className="mt-2 max-w-md text-sm text-zinc-500">
-            Khi POS gửi order mới, ticket sẽ xuất hiện theo thứ tự cũ nhất trước.
+            Khi POS gửi order mới, ticket sẽ xuất hiện theo deadline gần nhất trước (EDF).
           </p>
         </div>
       ) : (

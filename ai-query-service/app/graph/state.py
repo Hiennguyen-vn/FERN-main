@@ -35,6 +35,10 @@ class GraphState(TypedDict, total=False):
     escalation_reason: str | None
     escalation_target: str | None
     needs_sql_writer: bool
+    llm_degraded: bool
+    llm_degraded_stage: str | None
+    llm_degraded_reason: str | None
+    llm_provider_meta: dict[str, Any] | None
 
     # Lightweight planner (structured outline / decision for matcher prompt)
     reasoning_outline: dict[str, Any] | None

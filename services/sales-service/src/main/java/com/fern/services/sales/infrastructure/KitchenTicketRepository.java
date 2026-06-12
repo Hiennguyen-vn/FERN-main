@@ -261,6 +261,43 @@ public class KitchenTicketRepository extends BaseRepository {
     });
   }
 
+  /**
+   * Cancel the kitchen ticket bound to a sale when the sale is cancelled/voided/refunded.
+   * Idempotent and safe: no-op when no ticket exists or the ticket is already terminal
+   * (served/cancelled). Also cancels any non-terminal items so all-day rollups stay
+   * consistent. Returns the affected ticket id, or empty when nothing changed.
+   */
+  public Optional<Long> cancelTicketBySale(long saleId) {
+    return executeInTransaction(conn -> {
+      Long ticketId = null;
+      String status = null;
+      try (PreparedStatement ps = conn.prepareStatement(
+          "SELECT id, status FROM core.kitchen_ticket WHERE sale_id = ? FOR UPDATE")) {
+        ps.setLong(1, saleId);
+        try (ResultSet rs = ps.executeQuery()) {
+          if (rs.next()) {
+            ticketId = rs.getLong(1);
+            status = rs.getString(2);
+          }
+        }
+      }
+      if (ticketId == null) return Optional.<Long>empty();
+      if ("served".equals(status) || "cancelled".equals(status)) return Optional.<Long>empty();
+      try (PreparedStatement ps = conn.prepareStatement(
+          "UPDATE core.kitchen_ticket SET status = 'cancelled', updated_at = NOW() WHERE id = ?")) {
+        ps.setLong(1, ticketId);
+        ps.executeUpdate();
+      }
+      try (PreparedStatement ps = conn.prepareStatement(
+          "UPDATE core.kitchen_ticket_item SET status = 'cancelled', updated_at = NOW()"
+          + " WHERE ticket_id = ? AND status NOT IN ('served','cancelled')")) {
+        ps.setLong(1, ticketId);
+        ps.executeUpdate();
+      }
+      return Optional.of(ticketId);
+    });
+  }
+
   private String rollupTicket(Connection conn, long ticketId) throws Exception {
     String statusSql = """
         WITH s AS (

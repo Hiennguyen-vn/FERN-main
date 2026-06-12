@@ -1,9 +1,20 @@
 import pytest
 
 from app.auth.context import AuthError, parse_auth_headers
+from app.config import get_settings
 
 
 VALID_TOKEN = "secret-123"
+
+
+@pytest.fixture(autouse=True)
+def _reset_settings_cache(monkeypatch):
+    monkeypatch.delenv("INTERNAL_AUTH_MODE", raising=False)
+    monkeypatch.delenv("INTERNAL_TOKEN_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("INTERNAL_TOKEN_SIGNING_KEY_ID", raising=False)
+    monkeypatch.delenv("INTERNAL_TOKEN_VERIFY_KEYS", raising=False)
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", VALID_TOKEN)
+    get_settings.cache_clear()
 
 
 def _h(**kwargs):

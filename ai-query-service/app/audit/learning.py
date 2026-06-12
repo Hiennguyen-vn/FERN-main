@@ -5,7 +5,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from app.audit.events import _hash_sql, _redact_pii, _truncate, graph_outcome
+from app.audit.events import _hash_sql, _truncate, graph_outcome
+from app.audit.pii import redact_pii
 from app.clients.kafka import publish_json
 from app.config import get_settings
 from app.graph.state import GraphState
@@ -78,7 +79,7 @@ def _sql_writer_candidate_from_state(state: GraphState, *, sql_hash: str) -> dic
 def build_learning_event(state: GraphState) -> dict[str, Any]:
     auth = state["auth"]
     norm = state.get("normalized_question") or ""
-    norm_safe = _truncate(_redact_pii(norm), 400)
+    norm_safe = _truncate(redact_pii(norm), 400)
     digest = hashlib.sha256(norm.encode("utf-8")).hexdigest()
     sql = state.get("corrected_sql") or state.get("final_sql") or ""
 

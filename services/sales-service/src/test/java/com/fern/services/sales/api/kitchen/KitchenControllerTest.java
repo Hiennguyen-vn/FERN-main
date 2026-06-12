@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -148,5 +149,58 @@ class KitchenControllerTest {
 
     assertEquals(Optional.empty(), service.createFromSale(900L));
     verify(ticketRepository, never()).createTicket(any());
+  }
+
+  @Test
+  void listOpenTicketsReturnsEarliestDeadlineFirst() {
+    KitchenTicketRepository ticketRepository = mock(KitchenTicketRepository.class);
+    SalesRepository salesRepository = mock(SalesRepository.class);
+    KitchenSyncPublisher syncPublisher = mock(KitchenSyncPublisher.class);
+    KitchenTicketService service = new KitchenTicketService(
+        mock(DataSource.class), ticketRepository, salesRepository, syncPublisher);
+
+    // Ticket 1 arrives first with a long SLA; ticket 2 arrives later with a short SLA.
+    KitchenDtos.TicketView longSla = new KitchenDtos.TicketView(1L, 901L, 10L, null, null, null,
+        "dine_in", "new", 600, null, false, Instant.parse("2026-05-17T10:00:00Z"),
+        null, null, null, List.of());
+    KitchenDtos.TicketView shortSla = new KitchenDtos.TicketView(2L, 902L, 10L, null, null, null,
+        "dine_in", "new", 120, null, false, Instant.parse("2026-05-17T10:01:00Z"),
+        null, null, null, List.of());
+    when(ticketRepository.listOpenTickets(10L)).thenReturn(List.of(longSla, shortSla));
+
+    var tickets = service.listOpenTickets(10L).tickets();
+    assertEquals(2L, tickets.get(0).id());
+    assertEquals(1L, tickets.get(1).id());
+  }
+
+  @Test
+  void cancelBySaleBroadcastsWhenTicketCancelled() {
+    KitchenTicketRepository ticketRepository = mock(KitchenTicketRepository.class);
+    SalesRepository salesRepository = mock(SalesRepository.class);
+    KitchenSyncPublisher syncPublisher = mock(KitchenSyncPublisher.class);
+    KitchenTicketService service = new KitchenTicketService(
+        mock(DataSource.class), ticketRepository, salesRepository, syncPublisher);
+
+    when(ticketRepository.cancelTicketBySale(900L)).thenReturn(Optional.of(55L));
+    when(ticketRepository.findTicket(55L)).thenReturn(Optional.of(ticket(55L, 10L, "cancelled")));
+
+    var result = service.cancelBySale(900L);
+    assertEquals("cancelled", result.orElseThrow().status());
+    verify(syncPublisher).publishTicketUpdated(any());
+  }
+
+  @Test
+  void cancelBySaleNoOpsWhenNoActiveTicket() {
+    KitchenTicketRepository ticketRepository = mock(KitchenTicketRepository.class);
+    SalesRepository salesRepository = mock(SalesRepository.class);
+    KitchenSyncPublisher syncPublisher = mock(KitchenSyncPublisher.class);
+    KitchenTicketService service = new KitchenTicketService(
+        mock(DataSource.class), ticketRepository, salesRepository, syncPublisher);
+
+    when(ticketRepository.cancelTicketBySale(900L)).thenReturn(Optional.empty());
+
+    assertEquals(Optional.empty(), service.cancelBySale(900L));
+    verify(ticketRepository, never()).findTicket(anyLong());
+    verify(syncPublisher, never()).publishTicketUpdated(any());
   }
 }

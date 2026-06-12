@@ -17,20 +17,16 @@ sql_writer_agent = sql_writer_module.sql_writer_agent
 @pytest.fixture(autouse=True)
 def _sql_writer_chat_mode(monkeypatch):
     """Fake OpenAI clients here only implement Chat Completions, not Responses."""
-    import app.config as cfg
     from app.config import get_settings
 
-    s = get_settings()
-    monkeypatch.setattr(
-        cfg,
-        "_settings",
-        s.model_copy(
-            update={
-                "openai_api_mode": "chat",
-                "openai_responses_previous_response_id_enabled": True,
-            }
-        ),
+    s = get_settings().model_copy(
+        update={
+            "openai_api_mode": "chat",
+            "openai_responses_previous_response_id_enabled": True,
+        }
     )
+    monkeypatch.setattr("app.config.get_settings", lambda: s)
+    monkeypatch.setattr("app.agents.sql_writer_agent.get_settings", lambda: s)
 
 
 def _auth() -> AuthContext:
@@ -175,20 +171,16 @@ async def test_sql_writer_agent_skips_when_template_key_present(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_sql_writer_agent_uses_chat_when_response_chaining_disabled(monkeypatch):
-    import app.config as cfg
     from app.config import get_settings
 
-    s = get_settings()
-    monkeypatch.setattr(
-        cfg,
-        "_settings",
-        s.model_copy(
-            update={
-                "openai_api_mode": "responses",
-                "openai_responses_previous_response_id_enabled": False,
-            }
-        ),
+    s = get_settings().model_copy(
+        update={
+            "openai_api_mode": "responses",
+            "openai_responses_previous_response_id_enabled": False,
+        }
     )
+    monkeypatch.setattr("app.config.get_settings", lambda: s)
+    monkeypatch.setattr("app.agents.sql_writer_agent.get_settings", lambda: s)
     monkeypatch.setattr(sql_writer_module, "get_client", lambda: object())
 
     async def fail_responses(**_kwargs):

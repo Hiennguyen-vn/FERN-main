@@ -45,6 +45,7 @@ from app.graph.nodes.social_reply import social_reply
 from app.graph.nodes.visualizer import visualizer
 from app.graph.state import GraphState
 from app.agents.reviewer_agent import reviewer_agent
+from app.agents.resilience import with_node_timeout
 from app.agents.suggestions import suggestions_node
 from app.query_modes.codegen.routing import sql_writer_preconditions_ok
 
@@ -136,22 +137,25 @@ def build_agent_graph(
 
     g.add_node("preprocess", preprocess)
     g.add_node("kb_retriever", kb_retriever)
-    g.add_node("supervisor_agent", supervisor_agent)
-    g.add_node("social_reply", social_reply)
-    g.add_node("doc_reader", doc_reader)
+    # Supervisor feeds routing; a timeout there means we cannot continue safely.
+    g.add_node("supervisor_agent", with_node_timeout("supervisor_agent", supervisor_agent, on_timeout="routing"))
+    g.add_node("social_reply", with_node_timeout("social_reply", social_reply))
+    g.add_node("doc_reader", with_node_timeout("doc_reader", doc_reader, on_timeout="routing"))
     g.add_node("entity_resolver", entity_resolver)
     g.add_node("data_coverage", data_coverage)
-    g.add_node("hr_query", make_hr_query(all_outlet_ids_provider))
+    # Data lanes: a timeout becomes execution_error → graceful formatter message.
+    g.add_node("hr_query", with_node_timeout("hr_query", make_hr_query(all_outlet_ids_provider), on_timeout="data"))
     g.add_node("template_path", template_path_node)
-    g.add_node("sql_writer_agent", sql_writer_node)
+    g.add_node("sql_writer_agent", with_node_timeout("sql_writer_agent", sql_writer_node, on_timeout="data"))
     g.add_node("export_builder", export_builder)
-    g.add_node("analysis_brief", analysis_brief)
-    g.add_node("visualizer", visualizer)
-    g.add_node("answer_formatter", answer_formatter)
-    g.add_node("reviewer_agent", reviewer_agent)
-    g.add_node("suggestions", suggestions_node)
-    g.add_node("session_enricher", session_enricher)
-    g.add_node("kb_writer", kb_writer)
+    # Enrichment / post-answer nodes degrade softly (skip, keep the answer).
+    g.add_node("analysis_brief", with_node_timeout("analysis_brief", analysis_brief))
+    g.add_node("visualizer", with_node_timeout("visualizer", visualizer))
+    g.add_node("answer_formatter", with_node_timeout("answer_formatter", answer_formatter))
+    g.add_node("reviewer_agent", with_node_timeout("reviewer_agent", reviewer_agent))
+    g.add_node("suggestions", with_node_timeout("suggestions", suggestions_node))
+    g.add_node("session_enricher", with_node_timeout("session_enricher", session_enricher))
+    g.add_node("kb_writer", with_node_timeout("kb_writer", kb_writer))
 
     g.set_entry_point("preprocess")
     g.add_edge("preprocess", "kb_retriever")

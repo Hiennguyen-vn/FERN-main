@@ -44,7 +44,8 @@ from app.graph.nodes.preprocess import detect_standalone_social
 from app.graph.nodes.supervisor import _install_planning_frame, _make_planning_frame
 from app.graph.question_frame import build_question_frame
 from app.graph.state import GraphState
-from app.llm.openai_client import llm_call_json
+from app.llm.degraded import mark_llm_degraded
+from app.llm.openai_client import LLMUnavailableError, get_last_provider_meta, llm_call_json
 from app.query_policy import intent_for_route_and_template, intent_for_template, select_verified_query
 from app.rbac.policy import check_template_access
 from app.templates.registry import TEMPLATES, list_templates
@@ -1371,6 +1372,42 @@ async def supervisor_agent(state: GraphState) -> GraphState:
                 temperature=0.1,
                 max_tokens=600,
                 agent="supervisor",
+            )
+        except LLMUnavailableError as exc:
+            logger.warning("supervisor_agent all LLM providers unavailable: %s", exc)
+            mark_llm_degraded(
+                state,
+                stage="supervisor_agent",
+                reason=str(exc),
+                provider_meta=get_last_provider_meta(),
+            )
+            parsed, usage = (
+                {
+                    "route": "clarification" if not verified else "data_query",
+                    "intent": intent_hint or "unknown",
+                    "confidence": 0.0,
+                    "time_range": deterministic_time,
+                    "raw_entities": {
+                        "outlet_names": [],
+                        "product_names": [],
+                        "categories": [],
+                        "employee_names": [],
+                    },
+                    "template_key": verified["template_key"] if verified else None,
+                    "template_params": verified["template_params"] if verified else {},
+                    "needs_sql_writer": False,
+                    "clarification_question": None if verified else (
+                        "Dịch vụ AI tạm thời không khả dụng. "
+                        "Bạn vui lòng thử lại sau giây lát hoặc làm rõ thêm câu hỏi."
+                    ),
+                },
+                {
+                    "error": "LLMUnavailable",
+                    "latency_ms": 0,
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    **(get_last_provider_meta() or {}),
+                },
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("supervisor_agent LLM failed, falling back to verified-only: %s", exc)

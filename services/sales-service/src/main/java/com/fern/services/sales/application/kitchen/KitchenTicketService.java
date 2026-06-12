@@ -24,11 +24,17 @@ import org.springframework.stereotype.Service;
 public class KitchenTicketService extends BaseRepository {
 
   private static final Logger log = LoggerFactory.getLogger(KitchenTicketService.class);
-  private static final int DEFAULT_PREP_SLA_SECONDS = 900;
 
   private final KitchenTicketRepository ticketRepository;
   private final SalesRepository salesRepository;
   private final KitchenSyncPublisher syncPublisher;
+
+  // Linear prep-SLA model: sla = base + perItem * totalUnits. Tunable per deployment.
+  @org.springframework.beans.factory.annotation.Value("${fern.kitchen.sla.base-seconds:120}")
+  private int slaBaseSeconds = 120;
+
+  @org.springframework.beans.factory.annotation.Value("${fern.kitchen.sla.per-item-seconds:60}")
+  private int slaPerItemSeconds = 60;
 
   public KitchenTicketService(
       DataSource dataSource,
@@ -68,6 +74,11 @@ public class KitchenTicketService extends BaseRepository {
             line.note()
         ));
       }
+      int prepSlaSeconds = KitchenScheduling.computePrepSlaSeconds(
+          ticketItems.stream().map(KitchenTicketRepository.NewTicketItem::qty).toList(),
+          slaBaseSeconds,
+          slaPerItemSeconds
+      );
       KitchenTicketRepository.NewTicket newTicket = new KitchenTicketRepository.NewTicket(
           saleId,
           sale.outletId(),
@@ -76,7 +87,7 @@ public class KitchenTicketService extends BaseRepository {
           sale.orderingTableName(),
           sale.orderType(),
           sale.note(),
-          DEFAULT_PREP_SLA_SECONDS,
+          prepSlaSeconds,
           ticketItems
       );
       long ticketId = ticketRepository.createTicket(newTicket);
@@ -89,8 +100,29 @@ public class KitchenTicketService extends BaseRepository {
     }
   }
 
+  /**
+   * Cancel the kitchen ticket for a sale that was cancelled/voided/refunded. Idempotent —
+   * no-op when no active ticket exists. Mirrors {@link #createFromSale}: never throws to the
+   * caller so a kitchen-side failure cannot block sale cancellation. Broadcasts the updated
+   * (cancelled) ticket so KDS screens drop it immediately.
+   */
+  public Optional<KitchenDtos.TicketView> cancelBySale(long saleId) {
+    try {
+      Optional<Long> ticketId = ticketRepository.cancelTicketBySale(saleId);
+      if (ticketId.isEmpty()) return Optional.empty();
+      Optional<KitchenDtos.TicketView> view = ticketRepository.findTicket(ticketId.get());
+      view.ifPresent(syncPublisher::publishTicketUpdated);
+      return view;
+    } catch (RuntimeException e) {
+      log.warn("kitchen ticket cancel failed for sale {}: {}", saleId, e.getMessage());
+      return Optional.empty();
+    }
+  }
+
   public KitchenDtos.TicketListResponse listOpenTickets(long outletId) {
-    List<KitchenDtos.TicketView> tickets = ticketRepository.listOpenTickets(outletId);
+    List<KitchenDtos.TicketView> tickets = new ArrayList<>(ticketRepository.listOpenTickets(outletId));
+    // Earliest Deadline First: show the ticket whose (createdAt + prepSla) deadline is nearest.
+    tickets.sort(KitchenScheduling.earliestDeadlineFirst());
     return new KitchenDtos.TicketListResponse(outletId, tickets);
   }
 

@@ -490,6 +490,20 @@ public class SalesService {
     }
   }
 
+  /**
+   * Cancel any open kitchen ticket for a sale that was cancelled/voided/refunded, so the
+   * kitchen stops preparing items for an order that is no longer valid. Mirrors
+   * {@link #emitKitchenTicket}: no-op when KDS isn't wired and never throws to the caller.
+   */
+  private void cancelKitchenTicket(long saleId) {
+    if (kitchenTicketService == null) return;
+    try {
+      kitchenTicketService.cancelBySale(saleId);
+    } catch (RuntimeException e) {
+      log.warn("kitchen ticket cancel failed for sale {}: {}", saleId, e.getMessage());
+    }
+  }
+
   public SalesDtos.SaleView markPaymentDone(long saleId, SalesDtos.MarkPaymentDoneRequest request) {
     RequestUserContext context = RequestUserContextHolder.get();
     SalesDtos.SaleView existing = salesRepository.findSale(saleId)
@@ -516,6 +530,7 @@ public class SalesService {
     SalesDtos.SaleView cancelled = salesRepository.cancelSale(
         saleId, reason, reasonCode, managerUserId, voidNote, context.userId());
     evictMonthlyRevenueCache();
+    cancelKitchenTicket(saleId);
     return cancelled;
   }
 
@@ -528,6 +543,7 @@ public class SalesService {
   public void voidSaleFromSync(long saleId, String reason) {
     salesRepository.cancelSale(saleId, reason, null);
     evictMonthlyRevenueCache();
+    cancelKitchenTicket(saleId);
   }
 
   // ── Sync push handlers (W4) ───────────────────────────────────────────────
@@ -808,6 +824,7 @@ public class SalesService {
     if ("submitted".equalsIgnoreCase(status) || "approved".equalsIgnoreCase(status)) {
       salesRepository.cancelSale(saleId, reason, null);
       evictMonthlyRevenueCache();
+      cancelKitchenTicket(saleId);
     }
     // If already cancelled/completed accept silently (MVP: log and move on)
   }

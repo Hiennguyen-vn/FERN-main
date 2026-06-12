@@ -103,6 +103,12 @@ fern:
   loyalty:
     mock-otp: ${FERN_LOYALTY_MOCK_OTP:true}
     mock-otp-code: ${FERN_LOYALTY_MOCK_OTP_CODE:123456}
+  kitchen:
+    # Kitchen display ordering uses Earliest Deadline First (EDF) over a linear prep-SLA model:
+    # prepSla = base-seconds + per-item-seconds * total-units.
+    sla:
+      base-seconds: ${FERN_KITCHEN_SLA_BASE_SECONDS:120}
+      per-item-seconds: ${FERN_KITCHEN_SLA_PER_ITEM_SECONDS:60}
 
 promotion:
   engine:

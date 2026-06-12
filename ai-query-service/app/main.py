@@ -166,32 +166,57 @@ async def lifespan(app: FastAPI):
     # Lazy: only init what we need at startup; heavy clients are lazy singletons.
     app.state.settings = s
 
-    # Build graph (without checkpointer for initial bring-up; add Sentinel saver in prod)
+    # Redis for rate limit / signed-token jti store
+    try:
+        from app.clients.redis_sentinel import make_redis_client
+
+        app.state.redis = make_redis_client()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Redis init deferred: %s", e)
+        app.state.redis = None
+
+    checkpointer = None
+    if getattr(s, "langgraph_checkpoint_enabled", False):
+        try:
+            from app.clients.redis_sentinel import make_langgraph_saver
+
+            checkpointer = make_langgraph_saver()
+            logger.info("LangGraph checkpoint enabled (RedisSaver)")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("LangGraph checkpoint init failed: %s", e)
+
+    # Build graph (checkpointer optional — off by default for backward compatibility)
     try:
         from app.clients.clickhouse import fetch_all_outlet_ids
 
         if getattr(s, "agent_mode_enabled", False):
             from app.agents import build_agent_graph
 
-            app.state.graph = build_agent_graph(all_outlet_ids_provider=fetch_all_outlet_ids)
+            app.state.graph = build_agent_graph(
+                all_outlet_ids_provider=fetch_all_outlet_ids,
+                checkpointer=checkpointer,
+            )
             logger.info("Using Finch-style agent graph (AGENT_MODE_ENABLED=true)")
         else:
             from app.graph.builder import build_graph
 
-            app.state.graph = build_graph(all_outlet_ids_provider=fetch_all_outlet_ids)
+            app.state.graph = build_graph(
+                all_outlet_ids_provider=fetch_all_outlet_ids,
+                checkpointer=checkpointer,
+            )
     except Exception as e:  # noqa: BLE001
         logger.warning("Graph build deferred: %s", e)
         app.state.graph = None
 
-    # Redis for rate limit
-    try:
-        from app.clients.redis_sentinel import make_redis_client
-        app.state.redis = make_redis_client()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Redis init deferred: %s", e)
-        app.state.redis = None
-
     yield
+
+    if checkpointer is not None:
+        try:
+            close = getattr(checkpointer, "close", None)
+            if callable(close):
+                close()
+        except Exception:
+            pass
 
     # Shutdown
     try:
@@ -277,10 +302,14 @@ async def ready(request: Request):
 @app.post("/api/v1/ai-query/query", response_model=QueryResponse)
 async def query(request: Request, body: QueryRequest) -> QueryResponse:
     s = get_settings()
-    auth = parse_auth_headers(dict(request.headers), s.internal_service_token)
+    redis_client = getattr(request.app.state, "redis", None)
+    auth = parse_auth_headers(
+        dict(request.headers),
+        s.internal_service_token,
+        redis_client=redis_client,
+    )
 
-    if request.app.state.redis is not None:
-        check_and_increment(request.app.state.redis, auth.user_id)
+    check_and_increment(redis_client, auth.user_id)
 
     graph = request.app.state.graph
     if graph is None:
@@ -406,7 +435,11 @@ async def query(request: Request, body: QueryRequest) -> QueryResponse:
 async def download_export(artifact_id: str, request: Request):
     """Authenticated artifact download — CSV or JSON; verifies caller owns the artifact and TTL is alive."""
     s = get_settings()
-    auth = parse_auth_headers(dict(request.headers), s.internal_service_token)
+    auth = parse_auth_headers(
+        dict(request.headers),
+        s.internal_service_token,
+        redis_client=getattr(request.app.state, "redis", None),
+    )
 
     # Best-effort cleanup; cheap and bounded.
     try:
@@ -444,7 +477,11 @@ async def download_export(artifact_id: str, request: Request):
 @app.post("/api/v1/ai-query/review-request", response_model=ReviewRequestResponse)
 async def review_request(request: Request, body: ReviewRequestBody) -> ReviewRequestResponse:
     s = get_settings()
-    auth = parse_auth_headers(dict(request.headers), s.internal_service_token)
+    auth = parse_auth_headers(
+        dict(request.headers),
+        s.internal_service_token,
+        redis_client=getattr(request.app.state, "redis", None),
+    )
     review_id = str(uuid.uuid4())
     rows = body.rows_preview or []
     sanitized_rows = rows[:50]

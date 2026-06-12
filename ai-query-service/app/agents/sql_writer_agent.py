@@ -37,8 +37,11 @@ from app.agents.tools import (
 from app.config import get_settings
 from app.graph.outlet_scope import requested_outlet_ids_for_rbac
 from app.graph.state import GraphState
+from app.llm.degraded import apply_sql_writer_llm_degraded
 from app.llm.openai_client import (
+    LLMUnavailableError,
     get_client,
+    get_last_provider_meta,
     llm_call_chat_with_tools,
     llm_call_responses_with_tools,
 )
@@ -513,6 +516,11 @@ async def _run_chat_loop(
                 tools=tools_schema,
                 model=model,
             )
+        except LLMUnavailableError as exc:
+            logger.warning("sql_writer_agent all LLM providers unavailable at step %s: %s", step, exc)
+            usage["error"] = "LLMUnavailable"
+            usage.update(get_last_provider_meta() or {})
+            break
         except Exception as exc:  # noqa: BLE001
             logger.warning("sql_writer_agent chat failed at step %s: %s", step, exc)
             usage["error"] = type(exc).__name__
@@ -813,7 +821,7 @@ async def sql_writer_agent(
     model = (
         getattr(s, "openai_model_sql_generator", "")
         or getattr(s, "openai_model", "")
-        or "gpt-5.3-codex"
+        or "codex/gpt-5.5"
     ).strip()
 
     max_steps = max(4, int(s.max_codegen_attempts or 2) * 4 + 2)
@@ -861,10 +869,17 @@ async def sql_writer_agent(
             n=n_self_consistency,
             runner=_runner,
         )
+    except LLMUnavailableError as exc:
+        logger.warning("sql_writer_agent LLM unavailable: %s", exc)
+        return apply_sql_writer_llm_degraded(
+            state,
+            reason=str(exc),
+            provider_meta=get_last_provider_meta(),
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception("sql_writer_agent crashed: %s", exc)
-        state["execution_error"] = f"sql_writer_agent crashed: {exc}"
-        state["trace"].append({"node": "sql_writer_agent", "error": str(exc)[:200]})
+        state["execution_error"] = "sql_writer_agent_failed"
+        state["trace"].append({"node": "sql_writer_agent", "error": type(exc).__name__})
         return state
 
     state["trace"].append(
@@ -884,6 +899,16 @@ async def sql_writer_agent(
         final_sql = (final.get("final_sql") or "").strip()
 
     if not final_sql:
+        if usage.get("error") == "LLMUnavailable":
+            return apply_sql_writer_llm_degraded(
+                state,
+                reason="LLM providers unavailable during SQL writer loop",
+                provider_meta={
+                    k: usage.get(k)
+                    for k in ("llm_provider", "llm_fallback_used", "llm_providers_tried")
+                    if usage.get(k) is not None
+                },
+            )
         state["execution_error"] = (
             (final.get("error") if isinstance(final, dict) else None)
             or captured.get("execute_error")

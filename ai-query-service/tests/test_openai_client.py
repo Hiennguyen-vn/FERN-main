@@ -26,7 +26,7 @@ class _FakeClient:
 async def test_llm_call_json_uses_responses_api(monkeypatch):
     settings = SimpleNamespace(
         openai_api_mode="responses",
-        openai_model="codex/gpt-5.3-codex",
+        openai_model="codex/gpt-5.5",
     )
     fake_client = _FakeClient()
 
@@ -51,7 +51,7 @@ async def test_llm_call_json_uses_responses_api(monkeypatch):
     call = fake_client.responses.calls[0]
     assert parsed == {"ok": True}
     assert usage["tokens_in"] == 3
-    assert call["model"] == "codex/gpt-5.3-codex"
+    assert call["model"] == "codex/gpt-5.5"
     assert call["instructions"] == "system"
     assert call["input"] == "user"
     assert call["text"]["format"]["type"] == "json_schema"

@@ -18,6 +18,10 @@ This folder explains how the backend is structured, how the frontend integrates 
   - root layout, ownership boundaries, and reactor structure
 - `erp-microservices-architecture.md`
   - target-state ERP microservices architecture, gateway, control-plane, caching, Kafka, and rollout design
+- `kds-scheduling-comparison.md`
+  - so sánh thuật toán lập lịch hiển thị bếp (FIFO, EDF, Round-Robin, EDF+RR) kèm ví dụ số và khuyến nghị
+- `kds-current-system-report.md`
+  - báo cáo hệ thống bếp đã hoàn thiện và so sánh FIFO với kiến trúc hiện tại (Dynamic SLA + EDF)
 - `common-modules.md`
   - detailed guide to the imported common libraries
 - `testing-and-running.md`
