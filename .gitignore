@@ -3,6 +3,7 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 .env
+infra/env/services.env
 infra/logs/*
 !infra/logs/.gitkeep
 infra/pids/*
