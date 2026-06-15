@@ -2,9 +2,6 @@ name: Deploy Production
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 concurrency:
   group: production
@@ -28,6 +25,26 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
+      - name: Backup current server source
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/home/nh468068/FERN-main' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "mkdir -p ~/deploy-backups && tar -C '${DEPLOY_PATH}' \
+              --exclude='.git' \
+              --exclude='target' \
+              --exclude='*/target' \
+              --exclude='frontend/node_modules' \
+              --exclude='frontend/dist' \
+              --exclude='node_modules' \
+              --exclude='infra/logs' \
+              --exclude='infra/pids' \
+              --exclude='simulator-output' \
+              -czf ~/deploy-backups/fern-source-\$(date -u +%Y%m%dT%H%M%SZ).tgz ."
+
       - name: Sync repository to server
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -48,6 +65,7 @@ jobs:
             --exclude='infra/logs/' \
             --exclude='infra/pids/' \
             --exclude='simulator-output/' \
+            --exclude='tools/data-simulator-app/simulator-output/' \
             ./ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
 
       - name: Run deploy script

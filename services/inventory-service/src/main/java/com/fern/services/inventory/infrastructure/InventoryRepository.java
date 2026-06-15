@@ -163,8 +163,47 @@ public class InventoryRepository extends BaseRepository {
       int offset
   ) {
     return executeInTransaction(conn -> {
-      StringBuilder sql = new StringBuilder(
+      StringBuilder fromSql = new StringBuilder(
           """
+          FROM core.inventory_transaction it
+          LEFT JOIN core.item i ON i.id = it.item_id
+          LEFT JOIN core.waste_record wr ON wr.inventory_transaction_id = it.id
+          WHERE it.outlet_id = ?
+          """
+      );
+      List<Object> params = new ArrayList<>();
+      params.add(outletId);
+      if (itemId != null) {
+        fromSql.append(" AND it.item_id = ?");
+        params.add(itemId);
+      }
+      if (dateFrom != null) {
+        fromSql.append(" AND it.business_date >= ?");
+        params.add(Date.valueOf(dateFrom));
+      }
+      if (dateTo != null) {
+        fromSql.append(" AND it.business_date <= ?");
+        params.add(Date.valueOf(dateTo));
+      }
+      appendTransactionTypeFilter(fromSql, params, txnType);
+      if (q != null && !q.isBlank()) {
+        fromSql.append(" AND (i.code ILIKE ? OR i.name ILIKE ? OR COALESCE(it.note, '') ILIKE ? OR COALESCE(wr.reason, '') ILIKE ?)");
+        String pattern = "%" + q + "%";
+        params.add(pattern);
+        params.add(pattern);
+        params.add(pattern);
+        params.add(pattern);
+      }
+
+      long totalCount;
+      try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) " + fromSql)) {
+        bind(ps, params);
+        try (ResultSet rs = ps.executeQuery()) {
+          totalCount = rs.next() ? rs.getLong(1) : 0;
+        }
+      }
+
+      String sql = """
           SELECT
             it.id,
             it.outlet_id,
@@ -179,49 +218,18 @@ public class InventoryRepository extends BaseRepository {
             it.created_by_user_id,
             wr.reason AS waste_reason,
             it.note,
-            it.created_at,
-            COUNT(*) OVER() AS total_count
-          FROM core.inventory_transaction it
-          LEFT JOIN core.item i ON i.id = it.item_id
-          LEFT JOIN core.waste_record wr ON wr.inventory_transaction_id = it.id
-          WHERE it.outlet_id = ?
+            it.created_at
           """
-      );
-      List<Object> params = new ArrayList<>();
-      params.add(outletId);
-      if (itemId != null) {
-        sql.append(" AND it.item_id = ?");
-        params.add(itemId);
-      }
-      if (dateFrom != null) {
-        sql.append(" AND it.business_date >= ?");
-        params.add(Date.valueOf(dateFrom));
-      }
-      if (dateTo != null) {
-        sql.append(" AND it.business_date <= ?");
-        params.add(Date.valueOf(dateTo));
-      }
-      appendTransactionTypeFilter(sql, params, txnType);
-      if (q != null && !q.isBlank()) {
-        sql.append(" AND (i.code ILIKE ? OR i.name ILIKE ? OR COALESCE(it.note, '') ILIKE ? OR COALESCE(wr.reason, '') ILIKE ?)");
-        String pattern = "%" + q + "%";
-        params.add(pattern);
-        params.add(pattern);
-        params.add(pattern);
-        params.add(pattern);
-      }
-      sql.append(" ORDER BY ").append(resolveTransactionSortClause(sortBy, sortDir)).append(" LIMIT ? OFFSET ?");
-      params.add(limit);
-      params.add(offset);
-      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-        bind(ps, params);
+          + fromSql
+          + " ORDER BY " + resolveTransactionSortClause(sortBy, sortDir) + " LIMIT ? OFFSET ?";
+      List<Object> pageParams = new ArrayList<>(params);
+      pageParams.add(limit);
+      pageParams.add(offset);
+      try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        bind(ps, pageParams);
         try (ResultSet rs = ps.executeQuery()) {
           List<InventoryDtos.InventoryTransactionView> rows = new ArrayList<>();
-          long totalCount = 0;
-          while (rs.next()) {
-            totalCount = rs.getLong("total_count");
-            rows.add(mapTransaction(rs));
-          }
+          while (rs.next()) rows.add(mapTransaction(rs));
           return PagedResult.of(rows, limit, offset, totalCount);
         }
       }
