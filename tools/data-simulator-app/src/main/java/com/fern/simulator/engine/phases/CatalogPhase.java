@@ -201,7 +201,7 @@ public class CatalogPhase implements PhaseHandler {
             long groupId = ctx.getIdGen().nextId();
             idsByCode.put(mg[0], groupId);
             ctx.addModifierGroupEvent(new SimulationContext.ModifierGroupEvent(
-                    groupId, mg[0], mg[1], mg[2],
+                    groupId, ctx.getNamespace() + "-" + mg[0], mg[1], mg[2],
                     Integer.parseInt(mg[3]), Integer.parseInt(mg[4])));
             ctx.incrementRowCount("modifier_group", 1);
         }

@@ -49,30 +49,6 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
-    build: {
-      rollupOptions: {
-        output: {
-          manualChunks(id) {
-            if (!id.includes("node_modules")) {
-              return undefined;
-            }
-            if (id.includes("/react/") || id.includes("/react-dom/")) return "vendor-react";
-            if (id.includes("/recharts/")) return "vendor-charts";
-            if (id.includes("/@radix-ui/")) return "vendor-radix";
-            if (id.includes("/@tanstack/")) return "vendor-query";
-            if (id.includes("/react-router-dom/") || id.includes("/@remix-run/")) return "vendor-router";
-            if (id.includes("/react-hook-form/") || id.includes("/@hookform/")) return "vendor-forms";
-            if (id.includes("/react-day-picker/") || id.includes("/date-fns/")) return "vendor-calendar";
-            if (id.includes("/next-themes/") || id.includes("/sonner/")) return "vendor-shell";
-            if (id.includes("/@supabase/")) return "vendor-supabase";
-            if (id.includes("/cmdk/") || id.includes("/vaul/") || id.includes("/embla-carousel-react/")) return "vendor-interactions";
-            if (id.includes("/class-variance-authority/") || id.includes("/clsx/") || id.includes("/tailwind-merge/")) return "vendor-ui";
-            if (id.includes("/lucide-react/")) return "vendor-icons";
-            return "vendor";
-          },
-        },
-      },
-    },
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

@@ -60,10 +60,13 @@ public class CrmPhase implements PhaseHandler {
     /** Public so SalesPhase có thể tạo customer organic at sale time. */
     public static SimCustomer createCustomer(SimulationContext ctx, SimulationRandom rng,
                                              LocalDate day, SimulationConfig.CrmConfig cfg) {
-        String phone = nextPhone(ctx, rng);
-        if (ctx.findCustomerByPhone(phone) != null) return null;
-
         long id = ctx.getIdGen().nextId();
+        String phone = phoneForCustomerId(id);
+        if (ctx.findCustomerByPhone(phone) != null) {
+            phone = nextPhone(ctx, rng);
+            if (ctx.findCustomerByPhone(phone) != null) return null;
+        }
+
         String name = FIRST_NAMES[rng.intBetween(0, FIRST_NAMES.length - 1)]
                 + " " + LAST_NAMES[rng.intBetween(0, LAST_NAMES.length - 1)];
         LocalDate birthday = day.minusYears(rng.intBetween(18, 60))
@@ -98,5 +101,10 @@ public class CrmPhase implements PhaseHandler {
             if (ctx.findCustomerByPhone(phone) == null) return phone;
         }
         return "+849" + System.nanoTime() % 100_000_000L;
+    }
+
+    private static String phoneForCustomerId(long customerId) {
+        long suffix = Math.floorMod(customerId, 100_000_000L);
+        return "+849" + String.format("%08d", suffix);
     }
 }
