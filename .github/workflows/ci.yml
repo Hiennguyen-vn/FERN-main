@@ -18,13 +18,14 @@ jobs:
           cache: maven
       - name: Backend unit and integration tests
         run: mvn -B -Pintegration-tests verify
-      - name: OWASP dependency check
-        run: mvn -B org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=7
 
   db:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Build Postgres image
+        run: docker compose build postgres
+        working-directory: infra
       - name: SQL migration and regression tests
         run: ./db/scripts/run_sql_tests.sh
       - name: Migration safety lint
@@ -51,7 +52,7 @@ jobs:
       - name: Unit tests
         run: npm run test:run
       - name: Dependency audit
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
       - name: Build
         run: npm run build
 

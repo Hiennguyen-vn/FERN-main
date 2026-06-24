@@ -1,0 +1,134 @@
+digraph G {
+  graph [
+    rankdir=LR,
+    bgcolor="white",
+    pad="0.25",
+    nodesep="0.45",
+    ranksep="0.80",
+    fontname="Arial",
+    splines=polyline
+  ];
+  node [
+    shape=box,
+    style="rounded,filled",
+    fillcolor="#F7FAFC",
+    color="#2B4C7E",
+    fontcolor="#16324F",
+    fontname="Arial",
+    fontsize=12,
+    margin="0.12,0.08"
+  ];
+  edge [
+    color="#425466",
+    fontname="Arial",
+    fontsize=10,
+    arrowsize=0.75
+  ];
+
+  subgraph cluster_frontend {
+    label="Frontend Application <<boundary>>";
+    color="#2B4C7E";
+    style="rounded";
+    FrontendScreens [label="Routing and Feature Screens <<boundary>>"];
+    FrontendApi [label="Auth State and API Client <<interface>>"];
+  }
+
+  subgraph cluster_gateway {
+    label="API Gateway <<boundary>>";
+    color="#2B4C7E";
+    style="rounded";
+    GatewayRouting [label="Routing Catalog <<control>>"];
+    GatewaySecurity [label="Security and Sync Gateway <<control>>"];
+  }
+
+  subgraph cluster_identity {
+    label="Identity and Reference <<layer>>";
+    color="#2B4C7E";
+    style="rounded";
+    AuthIAM [label="Auth / IAM <<service>>"];
+    Organization [label="Organization <<service>>"];
+  }
+
+  subgraph cluster_commercial {
+    label="Commercial Operations <<layer>>";
+    color="#2B4C7E";
+    style="rounded";
+    CatalogMenu [label="Catalog and Menu <<service>>"];
+    SalesPOS [label="Sales / POS <<service>>"];
+    Inventory [label="Inventory <<service>>"];
+  }
+
+  subgraph cluster_backoffice {
+    label="Back Office Operations <<layer>>";
+    color="#2B4C7E";
+    style="rounded";
+    Procurement [label="Procurement <<service>>"];
+    WorkforceHR [label="Workforce / HR <<service>>"];
+    Payroll [label="Payroll <<service>>"];
+    Finance [label="Finance <<service>>"];
+  }
+
+  subgraph cluster_insight {
+    label="Insight and Platform <<layer>>";
+    color="#2B4C7E";
+    style="rounded";
+    Reporting [label="Reporting <<service>>"];
+    Audit [label="Audit <<service>>"];
+    ControlPlane [label="Control Plane <<service>>"];
+  }
+
+  subgraph cluster_external {
+    label="External Infrastructure <<external>>";
+    color="#2B4C7E";
+    style="rounded";
+    PostgreSQL [label="PostgreSQL", shape=cylinder];
+    Kafka [label="Kafka"];
+    Redis [label="Redis", shape=cylinder];
+    ClickHouse [label="ClickHouse", shape=cylinder];
+    ObjectStorage [label="Object Storage"];
+  }
+
+  FrontendApi -> GatewayRouting [label="HTTP / WebSocket"];
+
+  GatewayRouting -> AuthIAM [label="routes"];
+  GatewayRouting -> Organization [label="routes"];
+  GatewayRouting -> CatalogMenu [label="routes"];
+  GatewayRouting -> SalesPOS [label="routes"];
+  GatewayRouting -> Inventory [label="routes"];
+  GatewayRouting -> Procurement [label="routes"];
+  GatewayRouting -> WorkforceHR [label="routes"];
+  GatewayRouting -> Payroll [label="routes"];
+  GatewayRouting -> Finance [label="routes"];
+  GatewayRouting -> Reporting [label="routes"];
+  GatewayRouting -> Audit [label="routes"];
+  GatewayRouting -> ControlPlane [label="routes"];
+
+  SalesPOS -> Inventory [label="REST stock", color="#006400", fontcolor="#006400", style=dashed, penwidth=1.4];
+  Payroll -> WorkforceHR [label="REST workforce", color="#006400", fontcolor="#006400", style=dashed, penwidth=1.4];
+  Finance -> SalesPOS [label="REST sale details", color="#006400", fontcolor="#006400", style=dashed, penwidth=1.4];
+  CatalogMenu -> ObjectStorage [label="stores images", color="#006400", fontcolor="#006400", style=dashed, penwidth=1.4];
+
+  SalesPOS -> Kafka [label="publishes", color="#1F77B4", fontcolor="#1F77B4", style=dotted, penwidth=1.3];
+  Procurement -> Kafka [label="publishes", color="#1F77B4", fontcolor="#1F77B4", style=dotted, penwidth=1.3];
+  Payroll -> Kafka [label="publishes", color="#1F77B4", fontcolor="#1F77B4", style=dotted, penwidth=1.3];
+  Kafka -> Inventory [label="delivers", color="#1F77B4", fontcolor="#1F77B4", style=dotted, penwidth=1.3];
+  Kafka -> Finance [label="delivers", color="#1F77B4", fontcolor="#1F77B4", style=dotted, penwidth=1.3];
+  Kafka -> Audit [label="delivers", color="#1F77B4", fontcolor="#1F77B4", style=dotted, penwidth=1.3];
+  Kafka -> AuthIAM [label="delivers", color="#1F77B4", fontcolor="#1F77B4", style=dotted, penwidth=1.3];
+
+  AuthIAM -> PostgreSQL [label="persists", style=dashed];
+  Organization -> PostgreSQL [label="persists", style=dashed];
+  CatalogMenu -> PostgreSQL [label="persists", style=dashed];
+  SalesPOS -> PostgreSQL [label="persists", style=dashed];
+  Inventory -> PostgreSQL [label="persists", style=dashed];
+  Procurement -> PostgreSQL [label="persists", style=dashed];
+  WorkforceHR -> PostgreSQL [label="persists", style=dashed];
+  Payroll -> PostgreSQL [label="persists", style=dashed];
+  Finance -> PostgreSQL [label="persists", style=dashed];
+  Reporting -> PostgreSQL [label="reads", style=dashed];
+  Audit -> PostgreSQL [label="persists", style=dashed];
+  ControlPlane -> PostgreSQL [label="persists", style=dashed];
+  Reporting -> ClickHouse [label="analytics reads", color="#8A2BE2", fontcolor="#8A2BE2", style=dashed, penwidth=1.3];
+  GatewaySecurity -> Redis [label="auth/session cache", color="#B8860B", fontcolor="#B8860B", style=dashed, penwidth=1.3];
+  ControlPlane -> Redis [label="registry/cache", color="#B8860B", fontcolor="#B8860B", style=dashed, penwidth=1.3];
+}

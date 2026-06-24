@@ -1,4 +1,3 @@
--- Grain ngày giống T10/T21; dùng rollup analytics (không dựa fern.fact_sale legacy).
 SELECT
     business_date,
     sum(net_revenue) / nullIf(sum(txn_count), 0) AS avg_basket_size,

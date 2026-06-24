@@ -26,6 +26,7 @@ import {
   normalizeQualityVerdict,
   qualityIssuesTitle,
 } from '@/lib/ai-query-quality';
+import { getEscalationInfo } from '@/components/ai-query/ai-query-escalation';
 
 const AI_QUERY_PREVIEW_MAX_ROWS_DEFAULT = 25;
 const AI_QUERY_PREVIEW_MAX_ROWS_EXPORT = 50;
@@ -116,55 +117,16 @@ function buildPreviewCsv(rows: Record<string, unknown>[]): string {
   return [header, ...lines].join('\r\n');
 }
 
-function collectDescendantOutletIds(nodes: ScopeOption[] | undefined, bucket: string[]): void {
-  for (const node of nodes ?? []) {
-    if (node.level === 'outlet') {
-      const outletId = String(node.id ?? '').trim();
-      if (/^\d+$/.test(outletId) && !bucket.includes(outletId)) bucket.push(outletId);
-    }
-    if (node.children?.length) collectDescendantOutletIds(node.children, bucket);
-  }
-}
-
 function resolveRequestedOutletIds(
   scope: { level: 'system' | 'region' | 'outlet'; outletId?: string; regionId?: string },
-  scopeTree: ScopeOption[] = [],
+  _scopeTree: ScopeOption[] = [],
 ): string[] | undefined {
-  if (scope.level === 'system') return undefined;
+  if (scope.level === 'system' || scope.level === 'region') return undefined;
   if (scope.level === 'outlet') {
     const outletId = String(scope.outletId ?? '').trim();
     return /^\d+$/.test(outletId) ? [outletId] : undefined;
   }
-  if (scope.level !== 'region' || !scope.regionId) return undefined;
-
-  const stack = [...scopeTree];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (!node) continue;
-    if (node.level === 'region' && String(node.id) === String(scope.regionId)) {
-      const outletIds: string[] = [];
-      collectDescendantOutletIds(node.children, outletIds);
-      return outletIds.length > 0 ? outletIds : undefined;
-    }
-    if (node.children?.length) stack.push(...node.children);
-  }
   return undefined;
-}
-
-export function getEscalationInfo(meta?: AiQueryResponse | null): { candidate: boolean; reason: string | null } {
-  const summary = meta?.workflow_summary;
-  if (!summary || typeof summary !== 'object') return { candidate: false, reason: null };
-  const candidate = summary['escalation_candidate'] === true;
-  const rawReason = typeof summary['escalation_reason'] === 'string' ? summary['escalation_reason'] : null;
-  if (!candidate) return { candidate: false, reason: rawReason };
-  switch (rawReason) {
-    case 'still_missing_slots_after_followup':
-      return { candidate: true, reason: 'Câu hỏi vẫn còn thiếu thông tin quan trọng sau lượt hỏi tiếp theo.' };
-    case 'no_safe_supported_route':
-      return { candidate: true, reason: 'Backend chưa tìm được tuyến xử lý an toàn cho yêu cầu này.' };
-    default:
-      return { candidate: true, reason: rawReason ?? 'Cần kiểm tra thêm trước khi dùng cho quyết định quan trọng.' };
-  }
 }
 
 function formatFileSize(bytes?: number | null): string {
@@ -186,6 +148,106 @@ function renderInlineMarkdown(text: string): ReactNode[] {
   }
   if (last < text.length) out.push(text.slice(last));
   return out.length ? out : [text];
+}
+
+type ParsedMarkdownTable = { columns: string[]; rows: string[][] };
+type MessageContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'table'; table: ParsedMarkdownTable };
+
+function parseMarkdownTableRow(line: string): string[] {
+  const trimmed = line.trim();
+  const bounded = trimmed.startsWith('|') && trimmed.endsWith('|')
+    ? trimmed.slice(1, -1)
+    : trimmed;
+  return bounded.split('|').map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  const cells = parseMarkdownTableRow(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')));
+}
+
+function parseMdTable(md: string): ParsedMarkdownTable | null {
+  const lines = md.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length < 3 || !isMarkdownTableSeparator(lines[1])) return null;
+  const columns = parseMarkdownTableRow(lines[0]);
+  if (columns.length < 2 || columns.some((col) => !col)) return null;
+  const rows = lines.slice(2)
+    .map(parseMarkdownTableRow)
+    .filter((row) => row.length > 0 && row.some((cell) => cell.length > 0))
+    .map((row) => columns.map((_, idx) => row[idx] ?? ''));
+  if (!rows.length) return null;
+  return { columns, rows };
+}
+
+function splitMessageContentIntoBlocks(content: string): MessageContentBlock[] {
+  const lines = content.split(/\r?\n/);
+  const blocks: MessageContentBlock[] = [];
+  const textBuffer: string[] = [];
+
+  const flushText = () => {
+    const text = textBuffer.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+    if (text.trim()) blocks.push({ type: 'text', text });
+    textBuffer.length = 0;
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const header = lines[i]?.trim() ?? '';
+    const separator = lines[i + 1]?.trim() ?? '';
+    if (header.includes('|') && isMarkdownTableSeparator(separator)) {
+      const tableLines = [header, separator];
+      let j = i + 2;
+      while (j < lines.length) {
+        const line = lines[j]?.trim() ?? '';
+        if (!line || !line.includes('|') || isMarkdownTableSeparator(line)) break;
+        tableLines.push(line);
+        j += 1;
+      }
+      const table = parseMdTable(tableLines.join('\n'));
+      if (table) {
+        flushText();
+        blocks.push({ type: 'table', table });
+        i = j - 1;
+        continue;
+      }
+    }
+    textBuffer.push(lines[i] ?? '');
+  }
+
+  flushText();
+  return blocks.length ? blocks : [{ type: 'text', text: content }];
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item)).filter(Boolean);
+}
+
+function formatCacheSource(source: unknown): string {
+  const raw = String(source ?? '').trim();
+  if (!raw) return 'Không rõ nguồn';
+  const labels: Record<string, string> = {
+    unknown: 'Template nội bộ',
+    deterministic_shortcut: 'Luật định tuyến nội bộ',
+    verified_query: 'Verified query',
+    verified_query_llm_unavailable: 'Verified query khi LLM không khả dụng',
+    blocked_llm_unavailable_low_confidence: 'Chặn tự trả lời khi LLM lỗi và cache chưa đủ tin cậy',
+    learned_scenario: 'Learned scenario',
+  };
+  return labels[raw] ?? raw.replace(/_/g, ' ');
+}
+
+function formatPercent(value: unknown): string {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return `${Math.round(n * 100)}%`;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -550,55 +612,51 @@ function TrendChart({ spec }: { spec?: ChartSpec | null }) {
   );
 }
 
-function parseMdTable(md: string): { columns: string[]; rows: string[][] } | null {
-  const lines = md.trim().split('\n').filter(Boolean);
-  if (lines.length < 3) return null;
-  const parseRow = (line: string) =>
-    line.split('|').map(c => c.trim()).filter((_, i, a) => i > 0 && i < a.length - 1);
-  const columns = parseRow(lines[0]);
-  if (!columns.length) return null;
-  const rows = lines.slice(2).map(parseRow).filter(r => r.length > 0);
-  return { columns, rows };
-}
-
-function PresentationPanel({ presentation }: { presentation?: Record<string, unknown> | null }) {
-  const [open, setOpen] = useState(false);
-  if (!presentation) return null;
-  const md = presentation.markdown_table as string | undefined;
-  if (!md) return null;
-  const parsed = parseMdTable(md);
-  if (!parsed) return null;
-  const truncated = presentation.table_truncated as boolean | undefined;
-  const fullCount = presentation.full_row_count as number | undefined;
-
+function MarkdownTableBlock({
+  table,
+  title = 'Bảng dữ liệu',
+  defaultOpen = true,
+  truncated,
+  fullCount,
+}: {
+  table: ParsedMarkdownTable;
+  title?: string;
+  defaultOpen?: boolean;
+  truncated?: boolean;
+  fullCount?: number;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const showHeader = title.trim().length > 0;
   return (
     <div className="mt-2.5 border rounded-lg overflow-hidden text-xs">
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-3 py-1.5 bg-sky-50/60 hover:bg-sky-50 dark:bg-sky-950/20 dark:hover:bg-sky-950/30 transition-colors"
-      >
-        <div className="flex items-center gap-1.5">
-          <Table2 className="h-3 w-3 text-sky-500" />
-          <span className="text-[10px] font-medium text-sky-700 dark:text-sky-300 uppercase tracking-wide">
-            Bảng dữ liệu{truncated && fullCount ? ` (${parsed.rows.length}/${fullCount} dòng)` : ` (${parsed.rows.length} dòng)`}
-          </span>
-        </div>
-        {open ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
-      </button>
+      {showHeader && (
+        <button
+          onClick={() => setOpen(v => !v)}
+          className="w-full flex items-center justify-between px-3 py-1.5 bg-sky-50/60 hover:bg-sky-50 dark:bg-sky-950/20 dark:hover:bg-sky-950/30 transition-colors"
+        >
+          <div className="flex items-center gap-1.5">
+            <Table2 className="h-3 w-3 text-sky-500" />
+            <span className="text-[10px] font-medium text-sky-700 dark:text-sky-300 uppercase tracking-wide">
+              {title}{truncated && fullCount ? ` (${table.rows.length}/${fullCount} dòng)` : ` (${table.rows.length} dòng)`}
+            </span>
+          </div>
+          {open ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+        </button>
+      )}
       {open && (
         <div className="max-h-[300px] overflow-auto bg-background/80">
-          <table className="w-full border-collapse font-mono text-[11px]">
+          <table className="w-full border-collapse font-mono text-[11px]" aria-label={showHeader ? title : 'Bảng trong câu trả lời'}>
             <thead className="sticky top-0 bg-muted/90 shadow-[inset_0_-1px_0_0_hsl(var(--border))]">
               <tr>
-                {parsed.columns.map((col) => (
+                {table.columns.map((col) => (
                   <th key={col} className="text-left whitespace-nowrap px-2.5 py-1.5 font-semibold">{col}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {parsed.rows.map((row, ri) => (
+              {table.rows.map((row, ri) => (
                 <tr key={ri} className="even:bg-muted/20 hover:bg-muted/40 transition-colors">
-                  {parsed.columns.map((_, ci) => (
+                  {table.columns.map((_, ci) => (
                     <td key={ci} className="px-2.5 py-1.5 border-t border-muted/30 max-w-[180px] truncate" title={row[ci] ?? ''}>
                       {row[ci] ?? ''}
                     </td>
@@ -618,31 +676,23 @@ function PresentationPanel({ presentation }: { presentation?: Record<string, unk
   );
 }
 
-function SuggestionsPanel({ suggestions, onSelect }: { suggestions?: string[] | null; onSelect: (q: string) => void }) {
-  if (!suggestions || suggestions.length === 0) return null;
+function PresentationPanel({ presentation }: { presentation?: Record<string, unknown> | null }) {
+  if (!presentation) return null;
+  const md = presentation.markdown_table as string | undefined;
+  if (!md) return null;
+  const parsed = parseMdTable(md);
+  if (!parsed) return null;
+  const truncated = presentation.table_truncated as boolean | undefined;
+  const fullCount = presentation.full_row_count as number | undefined;
+
   return (
-    <div className="mt-3">
-      <div className="flex items-center gap-1.5 mb-1.5">
-        <Sparkles className="h-3 w-3 text-violet-500" />
-        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Câu hỏi tiếp theo</span>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {suggestions.map((q, idx) => (
-          <button
-            key={idx}
-            onClick={() => onSelect(q)}
-            className={cn(
-              'inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs text-foreground/80',
-              'bg-background hover:bg-violet-50 hover:text-violet-700 hover:border-violet-300',
-              'dark:hover:bg-violet-950/30 dark:hover:text-violet-300 dark:hover:border-violet-700',
-              'transition-colors cursor-pointer',
-            )}
-          >
-            <span>{q}</span>
-          </button>
-        ))}
-      </div>
-    </div>
+    <MarkdownTableBlock
+      table={parsed}
+      title="Bảng dữ liệu"
+      defaultOpen={false}
+      truncated={truncated}
+      fullCount={fullCount}
+    />
   );
 }
 
@@ -678,7 +728,7 @@ function RowsPreviewTable({ rows, previewCap }: { rows: Record<string, unknown>[
         tabIndex={0}
         onClick={() => setCollapsed(v => !v)}
         onKeyDown={(e) => e.key === 'Enter' && setCollapsed(v => !v)}
-        className="w-full flex items-center justify-between px-3 py-2 bg-muted/40 hover:bg-muted/60 transition-colors cursor-pointer select-none"
+        className="w-full flex items-center justify-between px-3 py-2 bg-background hover:bg-muted/40 transition-colors cursor-pointer select-none"
       >
         <div className="flex items-center gap-1.5">
           <Database className="h-3 w-3 text-muted-foreground" />
@@ -731,6 +781,103 @@ function RowsPreviewTable({ rows, previewCap }: { rows: Record<string, unknown>[
   );
 }
 
+function CacheInfoPanel({ meta }: { meta: AiQueryResponse }) {
+  const [open, setOpen] = useState(false);
+  const summary = asRecord(meta.workflow_summary);
+  const templateCache = asRecord(summary?.template_cache);
+  const verifiedQuery = asRecord(summary?.verified_query);
+  const learnedScenario = asRecord(summary?.learned_scenario);
+  const learnedSqlWriter = asRecord(summary?.learned_sql_writer_scenario);
+  const planningDecision = asRecord(summary?.planning_decision);
+  const selectedDatasets = asStringList(planningDecision?.selected_dataset_candidates).slice(0, 4);
+  const verifiedMetrics = asStringList(verifiedQuery?.metric_ids).slice(0, 6);
+  const learnedMetrics = asStringList(learnedScenario?.metric_ids ?? learnedSqlWriter?.metric_ids).slice(0, 6);
+  const hasCacheInfo = Boolean(templateCache || verifiedQuery || learnedScenario || learnedSqlWriter || meta.template_key);
+
+  if (!hasCacheInfo) return null;
+
+  const cacheUsed = Boolean(templateCache?.used ?? (meta.template_key && summary?.llm_used === false));
+  const source = templateCache?.source
+    ?? (verifiedQuery?.template_key ? 'verified_query' : undefined)
+    ?? (learnedScenario?.scenario_key ? 'learned_scenario' : undefined)
+    ?? (learnedSqlWriter?.scenario_key ? 'learned_scenario' : undefined)
+    ?? 'unknown';
+  const confidence = templateCache?.confidence ?? meta.confidence;
+  const templateKey = String(
+    meta.template_key
+      ?? verifiedQuery?.template_key
+      ?? learnedScenario?.template_key
+      ?? '',
+  ).trim();
+  const scenarioKey = String(learnedScenario?.scenario_key ?? learnedSqlWriter?.scenario_key ?? '').trim();
+  const metrics = verifiedMetrics.length ? verifiedMetrics : learnedMetrics;
+
+  return (
+    <div className="mt-2.5 border rounded-xl overflow-hidden text-xs bg-background shadow-sm">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-background hover:bg-muted/40 transition-colors"
+      >
+        <div className="flex items-center gap-1.5">
+          <Database className="h-3 w-3 text-sky-600 dark:text-sky-400" />
+          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+            Cache truy vấn
+          </span>
+          <span className={cn(
+            'rounded-full px-1.5 py-0 text-[9px] font-medium border',
+            cacheUsed
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800/60'
+              : 'bg-muted text-muted-foreground border-border',
+          )}>
+            {cacheUsed ? 'Đã dùng' : 'Theo dõi'}
+          </span>
+        </div>
+        {open ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+      </button>
+      {open && (
+        <div className="px-3 py-2.5 bg-muted/10">
+          <div className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1.5 text-[10px]">
+            <span className="text-muted-foreground">Nguồn cache</span>
+            <span className="font-medium">{formatCacheSource(source)}</span>
+
+            <span className="text-muted-foreground">Độ tin cậy</span>
+            <span className="font-mono">{formatPercent(confidence)}</span>
+
+            {templateKey && (
+              <>
+                <span className="text-muted-foreground">Template</span>
+                <span className="font-mono break-all">{templateKey}</span>
+              </>
+            )}
+
+            {scenarioKey && (
+              <>
+                <span className="text-muted-foreground">Scenario</span>
+                <span className="font-mono break-all">{scenarioKey}</span>
+              </>
+            )}
+
+            {metrics.length > 0 && (
+              <>
+                <span className="text-muted-foreground">Metric cache</span>
+                <span className="font-mono break-words">{metrics.join(', ')}</span>
+              </>
+            )}
+
+            {selectedDatasets.length > 0 && (
+              <>
+                <span className="text-muted-foreground">Dataset gợi ý</span>
+                <span className="font-mono break-words">{selectedDatasets.join(', ')}</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TechDetailsPanel({ meta }: { meta: AiQueryResponse }) {
   const [open, setOpen] = useState(false);
   const source: AiDataSourceContext | null | undefined = meta.data_source_context;
@@ -749,10 +896,10 @@ function TechDetailsPanel({ meta }: { meta: AiQueryResponse }) {
   );
 
   return (
-    <div className="mt-2 border rounded-lg overflow-hidden text-xs">
+    <div className="mt-2 border rounded-xl overflow-hidden text-xs bg-background">
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-3 py-1.5 bg-muted/30 hover:bg-muted/50 transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2 bg-background hover:bg-muted/40 transition-colors"
       >
         <div className="flex items-center gap-1.5">
           {open ? <EyeOff className="h-3 w-3 text-muted-foreground" /> : <Eye className="h-3 w-3 text-muted-foreground" />}
@@ -846,8 +993,8 @@ function TechDetailsPanel({ meta }: { meta: AiQueryResponse }) {
   );
 }
 
-function FormattedMessageContent({ content }: { content: string }) {
-  const lines = content.split(/\r?\n/);
+function FormattedTextBlock({ text }: { text: string }) {
+  const lines = text.split(/\r?\n/);
   return (
     <div className="whitespace-pre-wrap break-words space-y-0.5">
       {lines.map((line, idx) => {
@@ -865,6 +1012,27 @@ function FormattedMessageContent({ content }: { content: string }) {
             {renderInlineMarkdown(isFootnote ? trimmed.slice(1, -1) : line)}
           </div>
         );
+      })}
+    </div>
+  );
+}
+
+function FormattedMessageContent({ content }: { content: string }) {
+  const blocks = splitMessageContentIntoBlocks(content);
+  return (
+    <div className="space-y-2">
+      {blocks.map((block, idx) => {
+        if (block.type === 'table') {
+          return (
+            <MarkdownTableBlock
+              key={`table-${idx}`}
+              table={block.table}
+              title=""
+              defaultOpen
+            />
+          );
+        }
+        return <FormattedTextBlock key={`text-${idx}`} text={block.text} />;
       })}
     </div>
   );
@@ -939,13 +1107,7 @@ function ChatBubble({
 
         {/* Below-bubble rich panels (assistant only) */}
         {!isUser && !isError && meta && (
-          <div className="w-full mt-1 space-y-0">
-
-            {/* Workflow pipeline */}
-            {meta.workflow_steps && meta.workflow_steps.length > 0 && (
-              <WorkflowPipeline steps={meta.workflow_steps} />
-            )}
-
+          <div className="w-full max-w-[min(100%,42rem)] mt-2 space-y-2">
             {/* Export artifacts (CSV + JSON) */}
             {meta.exports && meta.exports.length > 0 && (
               <ExportsPanel exports={meta.exports} />
@@ -968,18 +1130,17 @@ function ChatBubble({
               <RowsPreviewTable rows={meta.rows_preview} previewCap={meta.preview_max_rows} />
             )}
 
+            {/* Query/template cache provenance */}
+            <CacheInfoPanel meta={meta} />
+
             {/* Long-term memory hits */}
             {meta.relevant_memories && meta.relevant_memories.length > 0 && (
               <MemoriesPanel memories={meta.relevant_memories as AiKnowledgeNugget[]} />
             )}
 
-            {/* Suggestions */}
-            {onSuggestionSelect && meta.suggestions && meta.suggestions.length > 0 && (
-              <SuggestionsPanel suggestions={meta.suggestions} onSelect={onSuggestionSelect} />
-            )}
-
             {/* Action row */}
-            <div className="mt-2 flex flex-wrap items-center gap-2">
+            {(escalation.candidate || onReview || reviewId) && (
+            <div className="flex flex-wrap items-center gap-2">
               {escalation.candidate && (
                 <div className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-300">
                   <AlertTriangle className="h-3 w-3" />
@@ -1001,6 +1162,7 @@ function ChatBubble({
               )}
               {reviewId && <span className="text-[10px] text-muted-foreground/60 font-mono">{reviewId.slice(0, 8)}</span>}
             </div>
+            )}
 
             {/* Technical details (collapsible) */}
             <TechDetailsPanel meta={meta} />
@@ -1030,7 +1192,6 @@ function TypingIndicator() {
             <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
             <span className="font-medium">Đang đọc câu hỏi và truy vấn dữ liệu…</span>
           </div>
-          <WorkflowPipeline steps={PENDING_WORKFLOW_STEPS.map((s, i) => ({ ...s, status: i < 2 ? 'done' : 'skipped' }))} pending />
         </div>
       </div>
     </div>

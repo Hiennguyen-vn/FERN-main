@@ -130,7 +130,13 @@ class Settings(BaseSettings):
     query_reasoning_enabled: bool = True
     sql_logical_check_enabled: bool = True
     deterministic_supervisor_enabled: bool = True
+    template_response_enabled: bool = True
     template_fast_path_enabled: bool = True
+    # When the supervisor cannot reach an LLM, verified templates are allowed
+    # to answer only as a high-confidence cache. Lower-confidence matches must
+    # surface an AI-service error instead of pretending the template is enough.
+    template_cache_on_llm_unavailable_enabled: bool = True
+    template_cache_min_confidence: float = 0.95
 
     # Optional ClickHouse catalog hints for matcher/reasoner (extra latency when enabled)
     catalog_digest_enabled: bool = False
@@ -284,6 +290,12 @@ class Settings(BaseSettings):
                 "'no_template_or_low_confidence', or 'always_try'"
             )
         self.codegen_route_mode = mode
+        return self
+
+    @model_validator(mode="after")
+    def _validate_template_cache_policy(self) -> "Settings":
+        if not 0.0 <= self.template_cache_min_confidence <= 1.0:
+            raise ValueError("TEMPLATE_CACHE_MIN_CONFIDENCE must be between 0 and 1")
         return self
 
     @property

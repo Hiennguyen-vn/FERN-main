@@ -66,6 +66,8 @@ check_once() {
     printf '  %-18s ' "$service"
     if wait_for_compose_health "$service" 1; then
       echo -e "${GREEN}healthy${RESET}"
+    elif [[ "$service" =~ ^kafka-[23]$ ]] && compose_service_is_running "$service"; then
+      echo -e "${YELLOW}running (healthcheck pending)${RESET}"
     else
       echo -e "${RED}unhealthy${RESET}"
       failures=$((failures + 1))

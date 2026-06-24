@@ -19,6 +19,7 @@ const STATUS_CONFIG: Record<POSSessionStatus, { label: string; className: string
 interface Props {
   sessions: POSSession[];
   totalSessions?: number;
+  periodLabel?: string;
   page?: number;
   pageSize?: number;
   onPageChange?: (page: number) => void;
@@ -34,7 +35,7 @@ interface Props {
 }
 
 export function POSSessionList({
-  sessions, totalSessions, page = 0, pageSize = sessions.length || 100, onPageChange,
+  sessions, totalSessions, periodLabel, page = 0, pageSize = sessions.length || 100, onPageChange,
   onOpenSession, onViewSession, onCloseSession, onReconcile,
   onEditSession, onDeleteSession, onCustomers, onOutletStats, onTables,
 }: Props) {
@@ -70,7 +71,7 @@ export function POSSessionList({
         <div>
           <h2 className="text-lg font-semibold text-foreground">POS Sessions</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {effectiveTotal} session{effectiveTotal !== 1 ? 's' : ''} · Showing {pageStart}-{pageEnd} · Manage point-of-sale sessions
+            {effectiveTotal} session{effectiveTotal !== 1 ? 's' : ''} in {periodLabel || 'this month'} · Showing {pageStart}-{pageEnd} · Manage point-of-sale sessions
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -98,7 +99,7 @@ export function POSSessionList({
       {/* KPI strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Total Sessions', value: counts.all, accent: 'default' },
+          { label: 'Sessions This Month', value: counts.all, accent: 'default' },
           { label: 'Open This Page', value: counts.open, accent: 'success' },
           { label: 'Closed This Page', value: counts.closed, accent: 'warning' },
           { label: 'Reconciled This Page', value: counts.reconciled, accent: 'default' },

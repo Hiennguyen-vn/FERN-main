@@ -35,7 +35,7 @@ import org.testcontainers.utility.DockerImageName;
 public class PostgresContainerExtension implements BeforeAllCallback, AfterAllCallback {
 
   private static final Logger log = LoggerFactory.getLogger(PostgresContainerExtension.class);
-  private static final String IMAGE = "postgres:16-alpine";
+  private static final String IMAGE = "pgvector/pgvector:pg16";
 
   private static volatile PostgreSQLContainer<?> container;
   private static volatile HikariDataSource dataSource;
@@ -96,6 +96,9 @@ public class PostgresContainerExtension implements BeforeAllCallback, AfterAllCa
     try (Connection conn = dataSource.getConnection();
          var st = conn.createStatement()) {
       st.execute("CREATE SCHEMA IF NOT EXISTS core");
+      st.execute("CREATE SCHEMA IF NOT EXISTS crm");
+      st.execute("CREATE SCHEMA IF NOT EXISTS finance");
+      st.execute("CREATE SCHEMA IF NOT EXISTS ai");
       st.execute("ALTER DATABASE " + container.getDatabaseName() + " SET search_path TO core, public");
     } catch (Exception ex) {
       throw new IllegalStateException("Failed to set search_path", ex);
@@ -105,6 +108,7 @@ public class PostgresContainerExtension implements BeforeAllCallback, AfterAllCa
     try (Connection conn = dataSource.getConnection();
          var st = conn.createStatement()) {
       st.execute("CREATE SCHEMA IF NOT EXISTS partman");
+      st.execute("CREATE EXTENSION IF NOT EXISTS vector");
       try (var rs = st.executeQuery(
           "SELECT 1 FROM pg_available_extensions WHERE name = 'pg_partman'")) {
         partmanAvailable = rs.next();
@@ -131,7 +135,7 @@ public class PostgresContainerExtension implements BeforeAllCallback, AfterAllCa
     var flywayConfig = Flyway.configure()
         .dataSource(dataSource)
         .locations("filesystem:" + migrations.toAbsolutePath())
-        .schemas("core", "crm")
+        .schemas("core", "crm", "finance", "ai")
         .defaultSchema("core")
         .cleanDisabled(false);
     if (!target.isBlank()) {

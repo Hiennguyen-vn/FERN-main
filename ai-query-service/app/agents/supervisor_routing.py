@@ -70,6 +70,76 @@ def deterministic_category_template_shortcut(question: str, time_range: dict[str
     }
 
 
+def deterministic_top_products_shortcut(question: str, time_range: dict[str, str]) -> dict[str, Any] | None:
+    q = _fold_text(question)
+    if any(
+        token in q
+        for token in (
+            "bieu do",
+            "do thi",
+            "chart",
+            "visual",
+            "ve ",
+            "loi nhuan",
+            "profit",
+            "margin",
+            "cogs",
+        )
+    ):
+        return None
+    productish = any(
+        token in q
+        for token in (
+            "san pham",
+            "mat hang",
+            "product",
+            "menu item",
+            "mon",
+            "do uong",
+            "nuoc uong",
+            "drink",
+            "beverage",
+        )
+    )
+    drinkish = any(token in q for token in ("do uong", "nuoc uong", "drink", "beverage"))
+    rankish = any(
+        token in q
+        for token in (
+            "ban chay",
+            "ban duoc nhieu",
+            "ban nhieu",
+            "so luong ban",
+            "nhieu nhat",
+            "cao nhat",
+            "top",
+            "best seller",
+            "best-selling",
+        )
+    )
+    if not (productish and rankish):
+        return None
+    limit = 1 if any(token in q for token in ("nhat", "cao nhat", "nhieu nhat", "best")) else 10
+    sort_by = "revenue" if any(token in q for token in ("doanh thu", "revenue", "sales")) else "qty"
+    return {
+        "route": "data_query",
+        "intent": "product_mix",
+        "confidence": 0.99,
+        "time_range": dict(time_range),
+        "raw_entities": deterministic_template_entities(question),
+        "template_key": "T04_top_products",
+        "template_params": {
+            "from_date": time_range["from_date"],
+            "to_date": time_range["to_date"],
+            "limit": limit,
+            "threshold": None,
+            "sort_by": sort_by,
+            **({"category_codes": ["DRINK", "beverage"]} if drinkish else {}),
+        },
+        "needs_sql_writer": False,
+        "clarification_question": None,
+    }
+
+
 def is_ai_sales_daily_outlet_list_question(question: str) -> bool:
     q = _fold_text(question)
     if not _AI_SALES_DAILY_DATASET_RE.search(q):
@@ -142,12 +212,17 @@ def rank_direction_from_question(question: str) -> str | None:
 
 
 def apply_question_derived_template_params(template_key: str | None, params: dict[str, Any], question: str) -> dict[str, Any]:
-    if template_key != "T22_outlet_rank":
-        return params
-    rank_direction = rank_direction_from_question(question)
-    if not rank_direction:
-        return params
-    return {**params, "rank_direction": rank_direction}
+    q = _fold_text(question)
+    out = dict(params)
+    if template_key == "T22_outlet_rank":
+        rank_direction = rank_direction_from_question(question)
+        if rank_direction:
+            out["rank_direction"] = rank_direction
+    if template_key == "T04_top_products" and any(
+        token in q for token in ("do uong", "drink", "drinks", "beverage", "beverages", "nuoc uong")
+    ):
+        out["category_codes"] = ["DRINK", "beverage"]
+    return out
 
 
 def verified_query_shortcut(*, question: str, intent: str | None, time_range: dict[str, str]) -> dict[str, Any] | None:

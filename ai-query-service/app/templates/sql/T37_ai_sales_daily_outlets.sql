@@ -1,5 +1,3 @@
--- Outlets with at least one row in analytics.ai_sales_daily, scoped by RBAC.
--- This is a dataset-coverage lookup, not a time-period revenue report.
 SELECT
     s.outlet_id,
     any(o.code) AS outlet_code,

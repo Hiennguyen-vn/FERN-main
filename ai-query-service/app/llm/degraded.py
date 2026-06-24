@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.config import get_settings
 from app.graph.state import GraphState
 
 logger = logging.getLogger(__name__)
@@ -59,11 +60,19 @@ def apply_supervisor_llm_degraded(
     mark_llm_degraded(state, stage="supervisor_agent", reason=reason, provider_meta=provider_meta)
     state["needs_sql_writer"] = False
 
-    if verified and verified.get("template_key"):
+    settings = get_settings()
+    verified_confidence = float(verified.get("confidence") or 0.0) if verified else 0.0
+    verified_cache_allowed = (
+        bool(settings.template_cache_on_llm_unavailable_enabled)
+        and verified_confidence >= float(settings.template_cache_min_confidence)
+    )
+    if verified and verified.get("template_key") and verified_cache_allowed:
         state["agent_route"] = "data_query"
         state["template_key"] = verified["template_key"]
         state["template_params"] = dict(verified.get("template_params") or {})
-        state["template_confidence"] = 1.0
+        state["template_confidence"] = verified_confidence
+        state["template_cache_source"] = "verified_query_llm_unavailable"
+        state["llm_used"] = False
         state["response_kind"] = "answer"
         state["clarification_question"] = None
         if intent_hint:
@@ -75,6 +84,9 @@ def apply_supervisor_llm_degraded(
     state["agent_route"] = "clarification"
     state["response_kind"] = "clarification"
     state["template_key"] = None
+    state["template_confidence"] = verified_confidence
+    state["template_cache_source"] = "blocked_llm_unavailable_low_confidence"
+    state["llm_used"] = False
     state["clarification_question"] = _SAFE_CLARIFICATION
     return state
 

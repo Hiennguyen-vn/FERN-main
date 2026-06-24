@@ -53,6 +53,19 @@ def route_after_template_matcher(state: GraphState) -> str:
         return "answer_formatter"
     if rk == "unsupported":
         return "answer_formatter"
+    if not getattr(s, "template_response_enabled", True) and state.get("template_key"):
+        state.setdefault("trace", []).append(
+            {
+                "node": "template_matcher",
+                "template_response_disabled": True,
+                "template_key": state.get("template_key"),
+            }
+        )
+        state["template_key"] = None
+        state["template_params"] = {}
+        if s.codegen_sql_enabled and s.codegen_route_mode != "off" and _codegen_can_take_over_unmatched(state):
+            return "codegen_entry"
+        return "answer_formatter" if rk == "clarification" else "validator"
     if not s.codegen_sql_enabled or s.codegen_route_mode == "off":
         if rk == "clarification":
             return "answer_formatter"

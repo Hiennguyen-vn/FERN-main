@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import type { UseQueryResult } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { SaleListItemView } from '@/api/sales-api';
 import {
@@ -21,14 +22,16 @@ interface Props {
   outletName: string;
   menu: PosMenuItem[];
   onRequestPayment: (order: SaleListItemView) => void;
+  ordersQuery?: UseQueryResult<SaleListItemView[], Error>;
 }
 
-export function QrQueueView({ outletId, outletName, menu, onRequestPayment }: Props) {
+export function QrQueueView({ outletId, outletName, menu, onRequestPayment, ordersQuery: providedOrdersQuery }: Props) {
   const [filter, setFilter] = useState<CustomerOrderQueueFilter>('waiting');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
-  const ordersQuery = useQrOrders(outletId);
+  const localOrdersQuery = useQrOrders(outletId, !providedOrdersQuery);
+  const ordersQuery = providedOrdersQuery ?? localOrdersQuery;
   const detailQuery = useQrOrderDetail(selectedId);
   const approveMutation = useApproveQrOrder();
   const cancelMutation = useCancelQrOrder();

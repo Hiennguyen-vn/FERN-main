@@ -68,6 +68,47 @@ def test_route_after_coverage_blocks_sql_writer_when_gate_fails():
     assert state["clarification_question"]
 
 
+def test_route_after_coverage_disables_template_response(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.agents import graph_builder
+
+    monkeypatch.setattr(
+        graph_builder,
+        "get_settings",
+        lambda: SimpleNamespace(template_response_enabled=False),
+    )
+
+    state = {
+        "agent_route": "data_query",
+        "intent": "revenue",
+        "template_key": "T32_period_revenue_summary",
+        "template_params": {"from_date": "2026-05-01", "to_date": "2026-05-19"},
+        "needs_sql_writer": False,
+        "time_range": {"from_date": "2026-05-01", "to_date": "2026-05-19"},
+        "planning_frame": {"next_action": "template_match", "ambiguities": [], "task_type": "metric_summary"},
+        "sql_writer_contract": {
+            "comparison_periods": {
+                "period_a": {"from_date": "2026-04-01", "to_date": "2026-04-30"},
+                "period_b": {"from_date": "2026-03-01", "to_date": "2026-03-31"},
+            },
+            "time_range": {"from_date": "2026-03-01", "to_date": "2026-03-31"},
+        },
+        "matcher_missing_info": [],
+        "response_hints": [],
+        "ambiguities": [],
+        "trace": [],
+    }
+
+    assert graph_builder._route_after_coverage(state) == "sql_writer_agent"
+    assert state["template_key"] is None
+    assert state["template_params"] == {}
+    assert state["needs_sql_writer"] is True
+    assert state["time_range"] == {"from_date": "2026-03-01", "to_date": "2026-04-30"}
+    assert state["sql_writer_contract"]["time_range"] == {"from_date": "2026-03-01", "to_date": "2026-04-30"}
+    assert state["trace"][-1]["template_response_disabled"] is True
+
+
 def test_finch_graph_routes_unsupported_directly_to_formatter():
     from app.agents.graph_builder import _route_after_coverage, _route_after_supervisor
 

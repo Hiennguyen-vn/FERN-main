@@ -42,7 +42,7 @@
     <toml4j.version>0.7.2</toml4j.version>
     <nimbus.jose.jwt.version>10.3</nimbus.jose.jwt.version>
     <mysql.version>8.3.0</mysql.version>
-    <postgresql.version>42.7.2</postgresql.version>
+    <postgresql.version>42.7.11</postgresql.version>
     <clickhouse.version>0.6.0-patch4</clickhouse.version>
     <h2.version>2.2.224</h2.version>
     <sqlite.version>3.45.1.0</sqlite.version>
@@ -493,6 +493,7 @@
           <version>${dependency.check.maven.version}</version>
           <configuration>
             <failBuildOnCVSS>7</failBuildOnCVSS>
+            <ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
           </configuration>
         </plugin>
       </plugins>

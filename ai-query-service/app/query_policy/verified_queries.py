@@ -232,7 +232,9 @@ VERIFIED_QUERY_ASSETS: tuple[VerifiedQueryAsset, ...] = (
     VerifiedQueryAsset(
         "T02_revenue_by_outlet",
         ("net_revenue", "txn_count"),
-        (r"\b(doanh thu|doanh so|revenue|sales|gmv)\b.*\b(theo cua hang|theo outlet|theo chi nhanh|so sanh)\b",),
+        (
+            r"\b(doanh thu|doanh so|revenue|sales|gmv)\b.*\b(theo cua hang|theo outlet|theo chi nhanh|tung cua hang|moi cua hang|by outlet|per outlet|so sanh)\b",
+        ),
         ("from_date", "to_date"),
         "business_date",
         "outlet_id",
@@ -352,6 +354,19 @@ VERIFIED_QUERY_ASSETS: tuple[VerifiedQueryAsset, ...] = (
         ("outlet_directory",),
         0.95,
     ),
+    VerifiedQueryAsset(
+        "T38_product_directory",
+        ("product_directory",),
+        (
+            r"\b(co nhung|có những|danh sach|danh sách|liet ke|liệt kê)\b.*\b(san pham|sản phẩm|product|menu item)\b",
+            r"\b(san pham|sản phẩm|product|menu item)\b.*\b(nao|nào|trong he thong|trong hệ thống|list|directory)\b",
+        ),
+        (),
+        None,
+        "outlet_id",
+        ("product_directory",),
+        0.95,
+    ),
 )
 _RUNTIME_LOCK = threading.RLock()
 _RUNTIME_VERSION: int | None = None
@@ -427,6 +442,16 @@ def _is_product_revenue_ranking_question(question_folded: str) -> bool:
     return productish and revenueish and rankish
 
 
+def _is_product_quantity_ranking_question(question_folded: str) -> bool:
+    productish = any(x in question_folded for x in ("san pham", "mat hang", "product", "mon "))
+    qtyish = any(
+        x in question_folded
+        for x in ("ban duoc nhieu", "ban nhieu", "ban chay", "so luong ban", "qty", "quantity", "units sold")
+    )
+    rankish = any(x in question_folded for x in ("nhieu nhat", "cao nhat", "top", "xep hang", "ranking", "rank", "nhat"))
+    return productish and qtyish and rankish
+
+
 def _params_from_slots(
     asset: VerifiedQueryAsset,
     time_range: dict[str, Any],
@@ -442,7 +467,10 @@ def _params_from_slots(
         params["to_date"] = td
     if asset.template_key == "T04_top_products":
         limit_match = re.search(r"\b(?:top|limit)\s+(\d{1,3})\b", question_folded)
-        params["limit"] = max(1, min(int(limit_match.group(1)), 100)) if limit_match else 10
+        default_limit = 1 if any(x in question_folded for x in ("cao nhat", "nhieu nhat", "best", "nhat")) else 10
+        params["limit"] = max(1, min(int(limit_match.group(1)), 100)) if limit_match else default_limit
+        if any(x in question_folded for x in ("doanh thu", "revenue", "sales")):
+            params["sort_by"] = "revenue"
     if asset.template_key == "T22_outlet_rank":
         rank_direction = _rank_direction_from_question(question_folded)
         if rank_direction:
@@ -459,7 +487,10 @@ def select_verified_query(
     ensure_runtime_verified_queries_loaded()
     folded = _fold(question)
     intent_key = (intent or "").strip().lower()
-    product_ranking_q = _is_product_revenue_ranking_question(folded)
+    product_ranking_q = _is_product_revenue_ranking_question(folded) or _is_product_quantity_ranking_question(folded)
+    outlet_breakdown_q = bool(
+        re.search(r"\b(theo cua hang|theo outlet|theo chi nhanh|tung cua hang|moi cua hang|by outlet|per outlet)\b", folded)
+    )
     if intent_key in {"greeting", "thanks", "hr_staff"}:
         return None
     # Raw CDC / ingestion-table requests must not shortcut into golden metric templates.
@@ -471,7 +502,11 @@ def select_verified_query(
             continue
         if asset.template_key == "T31_outlet_directory" and intent_key not in {"lookup", "unknown"}:
             continue
+        if asset.template_key == "T38_product_directory" and product_ranking_q:
+            continue
         if asset.template_key in {"T22_outlet_rank", "T02_revenue_by_outlet"} and (intent_key == "product_mix" or product_ranking_q):
+            continue
+        if asset.template_key == "T32_period_revenue_summary" and (outlet_breakdown_q or product_ranking_q):
             continue
         if not any(re.search(pattern, folded) for pattern in asset.question_patterns):
             continue

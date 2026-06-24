@@ -90,7 +90,7 @@ def _metric_totals(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def _top_product_findings(rows: list[dict[str, Any]], *, slow: bool) -> list[dict[str, Any]]:
+def _top_product_findings(rows: list[dict[str, Any]], *, slow: bool, sort_by: str = "qty") -> list[dict[str, Any]]:
     if not rows:
         return []
     qty_ranked = sorted(rows, key=lambda r: (_num(r.get("qty")), _num(r.get("revenue"))), reverse=not slow)
@@ -104,6 +104,17 @@ def _top_product_findings(rows: list[dict[str, Any]], *, slow: bool) -> list[dic
             {
                 "claim": f"{qty_label} là sản phẩm có lượng bán thấp nhất trong kết quả.",
                 "evidence": [f"{qty_label}: {_fmt_number(_num(lead_qty.get('qty')))} đơn vị"],
+            }
+        ]
+
+    if sort_by == "revenue":
+        return [
+            {
+                "claim": f"{rev_label} tạo doanh thu cao nhất trong kết quả.",
+                "evidence": [
+                    f"{rev_label}: {_fmt_vnd(_num(lead_rev.get('revenue')))}",
+                    f"Số lượng bán: {_fmt_number(_num(lead_rev.get('qty')))} đơn vị",
+                ],
             }
         ]
 
@@ -168,8 +179,10 @@ def _inventory_findings(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _findings_for(state: GraphState, rows: list[dict[str, Any]], subject: str) -> list[dict[str, Any]]:
+    params = state.get("template_params") if isinstance(state.get("template_params"), dict) else {}
+    sort_by = str((params or {}).get("sort_by") or "").strip()
     if subject == "top_selling_products":
-        return _top_product_findings(rows, slow=False)
+        return _top_product_findings(rows, slow=False, sort_by=sort_by)
     if subject == "slow_moving_products":
         return _top_product_findings(rows, slow=True)
     if subject == "outlet_performance":

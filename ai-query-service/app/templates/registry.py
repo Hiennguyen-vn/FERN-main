@@ -23,7 +23,7 @@ TEMPLATES: dict[str, TemplateMeta] = {
     "T01_daily_revenue": TemplateMeta("T01_daily_revenue", ("from_date", "to_date"), ()),
     "T02_revenue_by_outlet": TemplateMeta("T02_revenue_by_outlet", ("from_date", "to_date"), ()),
     "T03_revenue_by_category": TemplateMeta("T03_revenue_by_category", ("from_date", "to_date"), ()),
-    "T04_top_products": TemplateMeta("T04_top_products", ("from_date", "to_date"), ("limit",)),
+    "T04_top_products": TemplateMeta("T04_top_products", ("from_date", "to_date"), ("limit", "category_codes", "sort_by")),
     "T05_revenue_trend_7d": TemplateMeta("T05_revenue_trend_7d", (), ()),
     "T06_revenue_trend_30d": TemplateMeta("T06_revenue_trend_30d", (), ()),
     "T07_revenue_comparison_yoy": TemplateMeta("T07_revenue_comparison_yoy", ("from_date", "to_date"), ()),
@@ -40,6 +40,7 @@ TEMPLATES: dict[str, TemplateMeta] = {
         (),
     ),
     "T37_ai_sales_daily_outlets": TemplateMeta("T37_ai_sales_daily_outlets", (), ()),
+    "T38_product_directory": TemplateMeta("T38_product_directory", (), ("limit",)),
     # Core deterministic insights.
     "INS_SALES_DRIVER": TemplateMeta("INS_SALES_DRIVER", ("from_date", "to_date"), ("limit",)),
     "ANOM_SALES": TemplateMeta("ANOM_SALES", ("from_date", "to_date"), ("limit",)),

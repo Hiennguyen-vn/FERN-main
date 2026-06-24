@@ -333,7 +333,7 @@ def _maybe_clamp_time_range_to_available_coverage(state: GraphState, ctx: dict[s
         )
     else:
         span_days = max(1, (rt - rf).days + 1)
-        if _is_implicit_default_time_range(state) and rf > mx:
+        if rf > mx and _is_implicit_default_time_range(state):
             fallback = _fallback_window_fully_after_available(mn, mx, span_days=span_days)
             new_from, new_to = fallback["from_date"], fallback["to_date"]
             caveats.append(
@@ -341,7 +341,7 @@ def _maybe_clamp_time_range_to_available_coverage(state: GraphState, ctx: dict[s
                 f"Hệ thống dùng kỳ dữ liệu gần nhất {new_from}–{new_to} trong coverage hiện có "
                 f"({mn_s}–{mx_s})."
             )
-        elif _is_implicit_default_time_range(state) and rt < mn:
+        elif rt < mn and _is_implicit_default_time_range(state):
             fallback = _fallback_window_fully_before_available(mn, mx, span_days=span_days)
             new_from, new_to = fallback["from_date"], fallback["to_date"]
             caveats.append(

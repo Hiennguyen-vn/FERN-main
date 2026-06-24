@@ -180,9 +180,9 @@ VALUES (
 );
 
 INSERT INTO core.waste_record (
-  inventory_transaction_id, reason, approved_by_user_id
+  inventory_transaction_id, txn_time, reason, approved_by_user_id
 )
-VALUES (970304, 'Spoiled beans', 970100);
+VALUES (970304, TIMESTAMPTZ '2025-03-15 11:00:00+07', 'Spoiled beans', 970100);
 
 SELECT test_support.assert_row_count(
   $$SELECT 1 FROM core.waste_record WHERE inventory_transaction_id = 970304$$,
@@ -239,9 +239,9 @@ VALUES (
 );
 
 INSERT INTO core.goods_receipt_transaction (
-  inventory_transaction_id, goods_receipt_item_id
+  inventory_transaction_id, goods_receipt_item_id, txn_time
 )
-VALUES (970305, 970501);
+VALUES (970305, 970501, TIMESTAMPTZ '2025-03-02 09:30:00+07');
 
 DO $$
 BEGIN
@@ -258,9 +258,9 @@ BEGIN
     );
 
     INSERT INTO core.goods_receipt_transaction (
-      inventory_transaction_id, goods_receipt_item_id
+      inventory_transaction_id, goods_receipt_item_id, txn_time
     )
-    VALUES (970306, 970501);
+    VALUES (970306, 970501, TIMESTAMPTZ '2025-03-02 09:35:00+07');
 
     RAISE EXCEPTION 'expected goods_receipt_transaction unique violation';
   EXCEPTION
@@ -292,9 +292,9 @@ VALUES (
 );
 
 INSERT INTO core.manufacturing_transaction (
-  inventory_transaction_id, manufacturing_batch_id
+  inventory_transaction_id, manufacturing_batch_id, txn_time
 )
-VALUES (970307, 970600);
+VALUES (970307, 970600, TIMESTAMPTZ '2025-03-15 14:00:00+07');
 
 SELECT test_support.assert_row_count(
   $$SELECT 1 FROM core.manufacturing_transaction WHERE inventory_transaction_id = 970307$$,
@@ -350,24 +350,25 @@ SELECT test_support.assert_row_count(
 
 INSERT INTO core.sale_record (
   id, outlet_id, currency_code, order_type, status, payment_status,
-  subtotal, discount, tax_amount, total_amount
+  subtotal, discount, tax_amount, total_amount, created_at
 )
 VALUES (
   970800, 970001, 'IL0', 'dine_in', 'payment_done', 'paid',
-  25.00, 0.00, 0.00, 25.00
+  25.00, 0.00, 0.00, 25.00,
+  TIMESTAMPTZ '2025-03-10 08:30:00+07'
 );
 
 INSERT INTO core.sale_item (
-  sale_id, product_id, unit_price, qty, discount_amount, tax_amount, line_total
+  sale_id, sale_created_at, outlet_id, product_id, unit_price, qty, discount_amount, tax_amount, line_total
 )
 VALUES (
-  970800, 970201, 25.00, 1.0000, 0.00, 0.00, 25.00
+  970800, TIMESTAMPTZ '2025-03-10 08:30:00+07', 970001, 970201, 25.00, 1.0000, 0.00, 0.00, 25.00
 );
 
 INSERT INTO core.sale_item_transaction (
-  inventory_transaction_id, sale_id, product_id, item_id
+  inventory_transaction_id, sale_id, sale_created_at, product_id, item_id, txn_time
 )
-VALUES (970302, 970800, 970201, 970200);
+VALUES (970302, 970800, TIMESTAMPTZ '2025-03-10 08:30:00+07', 970201, 970200, TIMESTAMPTZ '2025-03-15 10:00:00+07');
 
 SELECT test_support.assert_row_count(
   $$SELECT 1 FROM core.sale_item_transaction WHERE sale_id = 970800 AND product_id = 970201 AND item_id = 970200$$,
@@ -379,9 +380,9 @@ DO $$
 BEGIN
   BEGIN
     INSERT INTO core.sale_item_transaction (
-      inventory_transaction_id, sale_id, product_id, item_id
+      inventory_transaction_id, sale_id, sale_created_at, product_id, item_id, txn_time
     )
-    VALUES (970307, 970800, 970201, 970200);
+    VALUES (970307, 970800, TIMESTAMPTZ '2025-03-10 08:30:00+07', 970201, 970200, TIMESTAMPTZ '2025-03-15 14:00:00+07');
 
     RAISE EXCEPTION 'expected sale_item_transaction unique violation';
   EXCEPTION

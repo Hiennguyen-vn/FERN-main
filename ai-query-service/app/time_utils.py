@@ -28,6 +28,10 @@ def fold_text(text: str) -> str:
 
 
 _ISO_DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
+_IDENTIFIER_WITH_DATE_RE = re.compile(
+    r"\b[A-Z0-9]+(?:-[A-Z0-9]+)*-20\d{2}-\d{2}-\d{2}(?:-[A-Z0-9]+)*\b",
+    re.IGNORECASE,
+)
 _NUMERIC_DATE_RE = re.compile(
     r"(?<![\d/-])"
     r"(?P<day>0?[1-9]|[12]\d|3[01])\s*[/-]\s*"
@@ -163,6 +167,34 @@ def parse_two_quarter_ranges_in_order(text: str) -> tuple[dict[str, str], dict[s
     return _quarter_range(y1, q1), _quarter_range(y2, q2)
 
 
+def parse_two_month_ranges_for_comparison(text: str, today: date | None = None) -> tuple[dict[str, str], dict[str, str]] | None:
+    """Extract two explicit calendar months for period comparison.
+
+    Returns ``(period_a, period_b)`` where A is the later month and B is the
+    earlier month, matching T36's "A compared with B" formatter.
+    """
+    base = today or today_local()
+    folded = fold_text(text or "")
+    pair = re.search(
+        r"\bthang\s*(0?[1-9]|1[0-2])\s*(?:[,.;/&-]|va|voi|den|toi)\s*"
+        r"(?:doanh\s+thu\s+|doanh\s+so\s+|revenue\s+|sales\s+)?(?:thang\s*)?(0?[1-9]|1[0-2])"
+        r"(?:\s*(?:/|nam)?\s*(20\d{2}|nay|truoc|ngoai|roi))?\b",
+        folded,
+    )
+    if not pair:
+        return None
+    m1 = int(pair.group(1))
+    m2 = int(pair.group(2))
+    if m1 == m2:
+        return None
+    year = _year_from_relative_token(pair.group(3), base)
+    r1 = _month_range(year, m1)
+    r2 = _month_range(year, m2)
+    d1 = date.fromisoformat(r1["from_date"])
+    d2 = date.fromisoformat(r2["from_date"])
+    return (r2, r1) if d2 >= d1 else (r1, r2)
+
+
 def _current_quarter(today: date) -> int:
     return ((today.month - 1) // 3) + 1
 
@@ -286,14 +318,16 @@ def parse_time_range(text: str, *, today: date | None = None, context_text: str 
     base = today or today_local()
     original = text or ""
     folded = fold_text(original)
+    date_source = _IDENTIFIER_WITH_DATE_RE.sub(" ", original)
+    folded_date_source = fold_text(date_source)
 
-    dates = _ISO_DATE_RE.findall(original)
+    dates = _ISO_DATE_RE.findall(date_source)
     if len(dates) >= 2:
         return {"from_date": dates[0], "to_date": dates[1]}
     if len(dates) == 1:
         return {"from_date": dates[0], "to_date": dates[0]}
 
-    numeric_dates = _numeric_dates(original, base)
+    numeric_dates = _numeric_dates(date_source, base)
     if len(numeric_dates) >= 2:
         return {"from_date": _iso(numeric_dates[0]), "to_date": _iso(numeric_dates[1])}
     if len(numeric_dates) == 1:
@@ -388,7 +422,7 @@ def parse_time_range(text: str, *, today: date | None = None, context_text: str 
     if re.search(r"\b(nam\s*nay|this\s*year)\b", folded):
         return {"from_date": _iso(base.replace(month=1, day=1)), "to_date": _iso(base)}
 
-    year_match = re.search(r"\b(?:nam\s*)?(20\d{2})\b", folded)
+    year_match = re.search(r"\b(?:nam\s*)?(20\d{2})\b", folded_date_source)
     if year_match:
         year = int(year_match.group(1))
         return {"from_date": date(year, 1, 1).isoformat(), "to_date": date(year, 12, 31).isoformat()}

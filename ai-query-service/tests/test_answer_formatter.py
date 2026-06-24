@@ -201,8 +201,9 @@ async def test_answer_formatter_uses_actual_range_when_rows_have_no_date_and_cov
     out = await af.answer_formatter(state)
 
     first_line = out["answer_text"].splitlines()[0]
-    assert "2026-04-30 đến 2026-05-02" in first_line
-    assert "2026-05-06" not in first_line
+    assert first_line.startswith("_Lưu ý:")
+    assert "bạn hỏi đến 2026-05-06" in first_line
+    assert "2026-04-30 đến 2026-05-02" in out["answer_text"]
     assert "bạn hỏi đến 2026-05-06" in out["answer_text"]
 
 
@@ -419,6 +420,154 @@ async def test_answer_formatter_uses_deterministic_top_products(monkeypatch):
     assert "16 đơn vị" in out["answer_text"]
     assert "Trà sữa" in out["answer_text"]
     assert out["trace"][-1]["source"] == "deterministic_top_products"
+
+
+@pytest.mark.asyncio
+async def test_answer_formatter_product_directory_uses_total_products(monkeypatch):
+    async def fail_if_called(**_kwargs):
+        raise AssertionError("formatter LLM should not be called for product directory")
+
+    monkeypatch.setattr(af, "llm_call_text", fail_if_called)
+
+    state = {
+        "normalized_question": "có bao nhiêu sản phẩm trong hệ thống",
+        "guard_passed": True,
+        "raw_result": [
+            {"product_id": 1, "product_name": "Cà phê sữa", "category_code": "DRINK", "outlet_count": 3, "total_products": 128},
+            {"product_id": 2, "product_name": "Trà đào", "category_code": "DRINK", "outlet_count": 2, "total_products": 128},
+        ],
+        "template_key": "T38_product_directory",
+        "trace": [],
+    }
+
+    out = await af.answer_formatter(state)
+
+    assert "Có 128 sản phẩm" in out["answer_text"]
+    assert "Cà phê sữa" in out["answer_text"]
+    assert out["trace"][-1]["source"] == "deterministic_product_directory"
+
+
+@pytest.mark.asyncio
+async def test_answer_formatter_top_products_revenue_sort_uses_revenue_wording(monkeypatch):
+    async def fail_if_called(**_kwargs):
+        raise AssertionError("formatter LLM should not be called for top product revenue")
+
+    monkeypatch.setattr(af, "llm_call_text", fail_if_called)
+
+    state = {
+        "normalized_question": "sản phẩm nào tháng 4 có doanh thu cao nhất",
+        "time_range": {"from_date": "2026-04-01", "to_date": "2026-04-30"},
+        "guard_passed": True,
+        "raw_result": [
+            {"product_id": 1, "product_name": "Chao Long", "revenue": 54700360, "qty": 1233},
+        ],
+        "template_key": "T04_top_products",
+        "template_params": {"from_date": "2026-04-01", "to_date": "2026-04-30", "limit": 1, "sort_by": "revenue"},
+        "analysis_brief": {
+            "findings": [
+                {
+                    "claim": "Chao Long tạo doanh thu cao nhất trong kết quả.",
+                    "evidence": ["Chao Long: 54.700.360 đ", "Số lượng bán: 1.233 đơn vị"],
+                }
+            ]
+        },
+        "trace": [],
+    }
+
+    out = await af.answer_formatter(state)
+
+    assert "Sản phẩm có doanh thu cao nhất" in out["answer_text"]
+    assert "Chao Long tạo doanh thu cao nhất" in out["answer_text"]
+    assert "bán chạy" not in out["answer_text"]
+    assert "dẫn đầu theo số lượng" not in out["answer_text"]
+
+
+@pytest.mark.asyncio
+async def test_answer_formatter_formats_codegen_product_revenue_by_outlet(monkeypatch):
+    async def fail_if_called(**_kwargs):
+        raise AssertionError("formatter LLM should not be called for codegen product outlet revenue")
+
+    monkeypatch.setattr(af, "llm_call_text", fail_if_called)
+
+    state = {
+        "normalized_question": "doanh thu Com Tam Bi tháng 5 năm nay của các cửa hàng",
+        "time_range": {"from_date": "2026-05-01", "to_date": "2026-05-19"},
+        "allowed_outlet_ids": [1, 2],
+        "guard_passed": True,
+        "executed_sql_source": "codegen",
+        "sql_writer_contract": {"output_shape": "product_revenue_by_outlet_table"},
+        "raw_result": [
+            {
+                "outlet_id": 3491812036998348800,
+                "outlet_name": "Outlet VN-HCM-5",
+                "product_id": 3491811094513074249,
+                "product_name": "Com Tam Bi",
+                "revenue": 2772000,
+                "qty": 56,
+            },
+            {
+                "outlet_id": 3491812500481523713,
+                "outlet_name": "Outlet VN-DN-1",
+                "product_id": 3491811094513074249,
+                "product_name": "Com Tam Bi",
+                "revenue": 1930500,
+                "qty": 39,
+            },
+        ],
+        "template_key": None,
+        "trace": [],
+    }
+
+    out = await af.answer_formatter(state)
+
+    text = out["answer_text"]
+    assert "Doanh thu Com Tam Bi" in text
+    assert "theo 2 cửa hàng" in text
+    assert "4.702.500 đ" in text
+    assert "| # | Cửa hàng | Doanh thu | Số lượng bán |" in text
+    assert "|---|---|---|---|" in text
+    assert "| 1 | Outlet VN-HCM-5 | 2.772.000 đ | 56 |" in text
+    assert "outlet_id" not in text
+    assert "product_id" not in text
+    assert "Có 2 dòng dữ liệu phù hợp" not in text
+    assert out["trace"][-1]["source"] == "deterministic_codegen_product_revenue_by_outlet"
+
+
+@pytest.mark.asyncio
+async def test_answer_formatter_formats_codegen_product_revenue_summary(monkeypatch):
+    async def fail_if_called(**_kwargs):
+        raise AssertionError("formatter LLM should not be called for codegen product revenue summary")
+
+    monkeypatch.setattr(af, "llm_call_text", fail_if_called)
+
+    state = {
+        "normalized_question": "doanh thu Ca Phe Den tháng 5",
+        "time_range": {"from_date": "2026-05-01", "to_date": "2026-05-19"},
+        "guard_passed": True,
+        "executed_sql_source": "codegen",
+        "sql_writer_contract": {"output_shape": "product_metric_summary"},
+        "raw_result": [
+            {
+                "product_id": 1,
+                "product_name": "Ca Phe Den",
+                "revenue": 892336260,
+                "qty": 13453,
+                "outlet_count": 12,
+            }
+        ],
+        "template_key": None,
+        "trace": [],
+    }
+
+    out = await af.answer_formatter(state)
+
+    text = out["answer_text"]
+    assert "Doanh thu Ca Phe Den" in text
+    assert "892.336.260 đ" in text
+    assert "13.453 đơn vị" in text
+    assert "12 cửa hàng" in text
+    assert "product_id" not in text
+    assert out["trace"][-1]["source"] == "deterministic_codegen_product_revenue_summary"
 
 
 @pytest.mark.asyncio

@@ -47,6 +47,7 @@ from app.graph.state import GraphState
 from app.agents.reviewer_agent import reviewer_agent
 from app.agents.resilience import with_node_timeout
 from app.agents.suggestions import suggestions_node
+from app.config import get_settings
 from app.query_modes.codegen.routing import sql_writer_preconditions_ok
 
 
@@ -86,11 +87,63 @@ def _route_after_supervisor(state: GraphState) -> str:
     return "entity_resolver"
 
 
+def _period_comparison_union_range(state: GraphState) -> dict[str, str] | None:
+    contract = state.get("sql_writer_contract") if isinstance(state.get("sql_writer_contract"), dict) else {}
+    periods = contract.get("comparison_periods") if isinstance(contract.get("comparison_periods"), dict) else None
+    if not periods:
+        return None
+    ranges: list[tuple[str, str]] = []
+    for key in ("period_a", "period_b"):
+        period = periods.get(key) if isinstance(periods.get(key), dict) else {}
+        from_date = str(period.get("from_date") or "").strip()
+        to_date = str(period.get("to_date") or "").strip()
+        if from_date and to_date:
+            ranges.append((from_date, to_date))
+    if len(ranges) < 2:
+        return None
+    return {"from_date": min(item[0] for item in ranges), "to_date": max(item[1] for item in ranges)}
+
+
+def _disable_template_response_if_needed(state: GraphState) -> GraphState:
+    if state.get("template_key"):
+        if not getattr(get_settings(), "template_response_enabled", True):
+            state.setdefault("trace", []).append(
+                {
+                    "node": "data_coverage",
+                    "template_response_disabled": True,
+                    "template_key": state.get("template_key"),
+                }
+            )
+            state["template_key"] = None
+            state["template_params"] = {}
+            state["needs_sql_writer"] = True
+            union_range = _period_comparison_union_range(state)
+            if union_range:
+                state["time_range"] = union_range
+                state["time_context"] = {**(state.get("time_context") or {}), **union_range}
+                contract = state.get("sql_writer_contract")
+                if isinstance(contract, dict):
+                    contract["time_range"] = dict(union_range)
+            if isinstance(state.get("planning_frame"), dict):
+                state["planning_frame"] = {
+                    **state["planning_frame"],
+                    "next_action": "gensql_candidate",
+                    "router_layer": "template_response_disabled",
+                }
+    return state
+
+
+def _data_coverage_node(state: GraphState) -> GraphState:
+    state = data_coverage(state)
+    return _disable_template_response_if_needed(state)
+
+
 def _route_after_coverage(state: GraphState) -> str:
     if state.get("response_kind") in {"clarification", "unsupported"}:
         return "answer_formatter"
     if state.get("agent_route") == "hr_staff" or state.get("intent") == "hr_staff":
         return "hr_query"
+    _disable_template_response_if_needed(state)
     if state.get("template_key"):
         return "template_path"
     if state.get("needs_sql_writer"):
@@ -142,7 +195,7 @@ def build_agent_graph(
     g.add_node("social_reply", with_node_timeout("social_reply", social_reply))
     g.add_node("doc_reader", with_node_timeout("doc_reader", doc_reader, on_timeout="routing"))
     g.add_node("entity_resolver", entity_resolver)
-    g.add_node("data_coverage", data_coverage)
+    g.add_node("data_coverage", _data_coverage_node)
     # Data lanes: a timeout becomes execution_error → graceful formatter message.
     g.add_node("hr_query", with_node_timeout("hr_query", make_hr_query(all_outlet_ids_provider), on_timeout="data"))
     g.add_node("template_path", template_path_node)

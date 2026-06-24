@@ -60,6 +60,48 @@ async def test_outlet_list_shortcut_unaccented_variant():
 
 
 @pytest.mark.asyncio
+async def test_product_list_shortcut_matches_vietnamese_question(monkeypatch):
+    async def fail_llm(**_kwargs):
+        raise AssertionError("LLM matcher should not be called for product directory lookup")
+
+    monkeypatch.setattr(tm, "llm_call_json", fail_llm)
+
+    state = {
+        "normalized_question": "có những sản phẩm nào trong hệ thống",
+        "intent": "lookup",
+        "time_range": {},
+        "resolved_entities": {},
+        "conversation_context": "",
+        "trace": [],
+    }
+    out = await tm.template_matcher(state)
+    assert out["template_key"] == "T38_product_directory"
+    assert out["template_params"] == {"limit": 50}
+    assert out["response_kind"] == "answer"
+
+
+@pytest.mark.asyncio
+async def test_product_count_shortcut_matches_vietnamese_question(monkeypatch):
+    async def fail_llm(**_kwargs):
+        raise AssertionError("LLM matcher should not be called for product count lookup")
+
+    monkeypatch.setattr(tm, "llm_call_json", fail_llm)
+
+    state = {
+        "normalized_question": "có bao nhiêu sản phẩm trong hệ thống",
+        "intent": "lookup",
+        "time_range": {},
+        "resolved_entities": {},
+        "conversation_context": "",
+        "trace": [],
+    }
+    out = await tm.template_matcher(state)
+    assert out["template_key"] == "T38_product_directory"
+    assert out["template_params"] == {"limit": 50}
+    assert out["response_kind"] == "answer"
+
+
+@pytest.mark.asyncio
 async def test_ai_sales_daily_outlet_list_shortcut_avoids_llm(monkeypatch):
     async def fail_llm(**_kwargs):
         raise AssertionError("LLM matcher should not be called for ai_sales_daily outlet lookup")

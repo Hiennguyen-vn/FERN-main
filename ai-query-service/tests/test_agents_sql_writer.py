@@ -51,6 +51,90 @@ def _state() -> dict[str, Any]:
     }
 
 
+def test_sql_writer_prompt_includes_supervisor_contract():
+    state = _state()
+    state["sql_writer_contract"] = {
+        "version": 1,
+        "normalized_intent": "product_mix",
+        "metric_ids": ["product_revenue", "qty", "txn_count"],
+        "grain": "outlet_product",
+        "time_range": {"from_date": "2026-05-01", "to_date": "2026-05-19"},
+        "preferred_tables": ["analytics.ai_product_daily", "cdc.product"],
+        "output_shape": "product_revenue_by_outlet_table",
+    }
+    prompt = sql_writer_module._build_user_prompt(state, ["analytics.ai_product_daily", "cdc.product"])
+
+    assert "SQL_WRITER_CONTRACT" in prompt
+    assert '"grain": "outlet_product"' in prompt
+    assert '"preferred_tables": ["analytics.ai_product_daily", "cdc.product"]' in prompt
+    assert "ưu tiên hơn câu hỏi thô" in prompt
+
+
+def test_sql_writer_prompt_includes_full_graph_context():
+    state = _state()
+    state.update(
+        {
+            "conversation_context": "User trước đó hỏi về Ca Phe Den tháng 5.",
+            "contextualized_question": "doanh thu Ca Phe Den tháng 5 theo cửa hàng",
+            "question_frame": {
+                "current_question": "theo cửa hàng thì sao",
+                "effective_question": "doanh thu Ca Phe Den tháng 5 theo cửa hàng",
+            },
+            "raw_entities": {"product_names": ["Ca Phe Den"], "outlet_names": []},
+            "resolved_entities": {"outlet_ids": [1], "product_ids": [99]},
+            "data_source_context": {
+                "primary_dataset": "analytics.ai_product_daily",
+                "coverage_status": "full",
+                "available_range": {"min_date": "2026-05-01", "max_date": "2026-05-19"},
+            },
+            "planning_decision": {
+                "recommended_template_keys": [],
+                "report_spec": {"grain": "outlet_product"},
+            },
+            "metadata_context": "Metric product_revenue dùng analytics.ai_product_daily.revenue.",
+            "catalog_digest": "analytics.ai_product_daily columns: business_date,outlet_id,product_id,revenue,qty",
+            "relevant_memories": [{"summary": "User hay hỏi theo outlet."}],
+        }
+    )
+
+    prompt = sql_writer_module._build_user_prompt(state, ["analytics.ai_product_daily", "cdc.product"])
+
+    assert "FULL_GRAPH_CONTEXT" in prompt
+    assert "doanh thu Ca Phe Den tháng 5 theo cửa hàng" in prompt
+    assert "analytics.ai_product_daily" in prompt
+    assert "Metric product_revenue" in prompt
+    assert "coverage_status" in prompt
+    assert "Nếu câu hỏi hiện tại là follow-up" in prompt
+
+
+def test_sql_writer_deterministic_period_comparison_uses_both_contract_periods():
+    state = _state()
+    state["raw_question"] = "so sánh doanh thu tháng 3 với tháng 4"
+    state["normalized_question"] = state["raw_question"]
+    state["time_range"] = {"from_date": "2026-03-01", "to_date": "2026-04-30"}
+    state["sql_writer_contract"] = {
+        "version": 1,
+        "normalized_intent": "revenue",
+        "metric_ids": ["net_revenue", "txn_count", "outlet_count"],
+        "grain": "period_comparison",
+        "time_range": {"from_date": "2026-03-01", "to_date": "2026-04-30"},
+        "preferred_tables": ["analytics.ai_sales_daily"],
+        "output_shape": "period_comparison_table",
+        "comparison_periods": {
+            "period_a": {"from_date": "2026-04-01", "to_date": "2026-04-30", "label": "Kỳ A"},
+            "period_b": {"from_date": "2026-03-01", "to_date": "2026-03-31", "label": "Kỳ B"},
+        },
+    }
+
+    pattern, sql = sql_writer_module._deterministic_sql_for_question(state) or ("", "")
+
+    assert pattern == "revenue_period_comparison"
+    assert "FROM analytics.ai_sales_daily" in sql
+    assert "sumIf(net_revenue, business_date BETWEEN toDate('2026-04-01') AND toDate('2026-04-30'))" in sql
+    assert "sumIf(net_revenue, business_date BETWEEN toDate('2026-03-01') AND toDate('2026-03-31'))" in sql
+    assert "WHERE business_date BETWEEN toDate('2026-03-01') AND toDate('2026-04-30')" in sql
+
+
 @pytest.mark.asyncio
 async def test_sql_writer_agent_uses_deterministic_mom_outlet_growth(monkeypatch):
     state = _state()
@@ -111,6 +195,130 @@ async def test_sql_writer_agent_uses_deterministic_mom_outlet_growth(monkeypatch
     assert out["final_sql"]
     assert out["execution_error"] is None
     assert out["codegen_tables_used"] == ["analytics.ai_sales_daily"]
+
+
+@pytest.mark.asyncio
+async def test_sql_writer_agent_generates_product_revenue_by_outlet(monkeypatch):
+    state = _state()
+    state["raw_question"] = "doanh thu tháng 5 của ca phe den là bao nhiêu trên các cửa hàng"
+    state["normalized_question"] = state["raw_question"]
+    state["intent"] = "product_mix"
+    state["time_range"] = {"from_date": "2026-05-01", "to_date": "2026-05-19"}
+
+    def fail_get_client():
+        raise AssertionError("LLM should not be called for deterministic product revenue by outlet")
+
+    monkeypatch.setattr(sql_writer_module, "get_client", fail_get_client)
+
+    captured = {"sql": ""}
+
+    def fake_validate_and_inject_factory(ctx):
+        def _exec(sql: str):
+            captured["sql"] = sql
+            return {
+                "ok": True,
+                "errors": [],
+                "final_sql": sql + " AND outlet_id IN (1,2,3) LIMIT 1000",
+                "allowed_outlet_ids": sorted(ctx.auth_outlet_ids),
+                "tables_used": ["analytics.ai_product_daily"],
+            }
+
+        return sql_writer_module.search_schema_tool.__class__(
+            name="validate_and_inject",
+            schema={"type": "function", "function": {"name": "validate_and_inject"}},
+            execute=_exec,
+        )
+
+    monkeypatch.setattr(
+        sql_writer_module,
+        "make_validate_and_inject_tool",
+        fake_validate_and_inject_factory,
+    )
+
+    def fake_execute_query_factory(ctx):
+        def _exec(sql: str):
+            return {
+                "ok": True,
+                "row_count": 1,
+                "rows": [{"outlet_id": 1, "product_name": "Ca Phe Den", "revenue": 13499200}],
+            }
+
+        return sql_writer_module.search_schema_tool.__class__(
+            name="execute_query",
+            schema={"type": "function", "function": {"name": "execute_query"}},
+            execute=_exec,
+        )
+
+    monkeypatch.setattr(
+        sql_writer_module,
+        "make_execute_query_tool",
+        fake_execute_query_factory,
+    )
+
+    out = await sql_writer_agent(state)
+
+    assert "analytics.ai_product_daily" in captured["sql"]
+    assert "FROM cdc.product FINAL" in captured["sql"]
+    assert "lowerUTF8(name) LIKE '%ca phe den%'" in captured["sql"]
+    assert "GROUP BY outlet_id, product_id" in captured["sql"]
+    assert out["final_sql"]
+    assert out["execution_error"] is None
+    assert out["codegen_tables_used"] == ["analytics.ai_product_daily"]
+
+
+@pytest.mark.asyncio
+async def test_sql_writer_agent_generates_named_product_revenue_summary(monkeypatch):
+    state = _state()
+    state["raw_question"] = "doanh thu Ca Phe Den tháng 5"
+    state["normalized_question"] = state["raw_question"]
+    state["intent"] = "product_mix"
+    state["time_range"] = {"from_date": "2026-05-01", "to_date": "2026-05-19"}
+
+    def fail_get_client():
+        raise AssertionError("LLM should not be called for deterministic product revenue summary")
+
+    monkeypatch.setattr(sql_writer_module, "get_client", fail_get_client)
+
+    captured = {"sql": ""}
+
+    def fake_validate_and_inject_factory(ctx):
+        def _exec(sql: str):
+            captured["sql"] = sql
+            return {
+                "ok": True,
+                "errors": [],
+                "final_sql": sql + " AND outlet_id IN (1,2,3) LIMIT 1000",
+                "allowed_outlet_ids": sorted(ctx.auth_outlet_ids),
+                "tables_used": ["analytics.ai_product_daily"],
+            }
+
+        return sql_writer_module.search_schema_tool.__class__(
+            name="validate_and_inject",
+            schema={"type": "function", "function": {"name": "validate_and_inject"}},
+            execute=_exec,
+        )
+
+    monkeypatch.setattr(sql_writer_module, "make_validate_and_inject_tool", fake_validate_and_inject_factory)
+
+    def fake_execute_query_factory(ctx):
+        def _exec(sql: str):
+            return {"ok": True, "row_count": 1, "rows": [{"product_name": "Ca Phe Den", "revenue": 216227396}]}
+
+        return sql_writer_module.search_schema_tool.__class__(
+            name="execute_query",
+            schema={"type": "function", "function": {"name": "execute_query"}},
+            execute=_exec,
+        )
+
+    monkeypatch.setattr(sql_writer_module, "make_execute_query_tool", fake_execute_query_factory)
+
+    out = await sql_writer_agent(state)
+
+    assert "analytics.ai_product_daily" in captured["sql"]
+    assert "lowerUTF8(name) LIKE '%ca phe den%'" in captured["sql"]
+    assert "GROUP BY product_id" in captured["sql"]
+    assert "GROUP BY outlet_id" not in captured["sql"]
+    assert out["execution_error"] is None
 
 
 def test_previous_response_id_unsupported_detection():
@@ -205,6 +413,36 @@ async def test_sql_writer_agent_uses_chat_when_response_chaining_disabled(monkey
     assert out["sql_source"] == "codegen"
     assert out["executed_sql_source"] == "codegen"
     assert out["trace"][-1]["api_mode"] == "chat"
+
+
+@pytest.mark.asyncio
+async def test_sql_writer_agent_rejects_unvalidated_final_sql(monkeypatch):
+    async def fake_chat_loop(**_kwargs):
+        return (
+            {
+                "final_sql": "SELECT sum(net_revenue) AS revenue FROM analytics.ai_sales_daily",
+                "row_count": 1,
+                "rationale_vi": "Model claimed SQL without tool validation.",
+                "tables_used": ["analytics.ai_sales_daily"],
+            },
+            {"api_mode": "chat", "tokens_in": 1, "tokens_out": 1, "tokens_cached": 0},
+            {
+                "validated_sql": None,
+                "tables_used": None,
+                "rows": None,
+                "execute_error": None,
+            },
+        )
+
+    monkeypatch.setattr(sql_writer_module, "get_client", lambda: object())
+    monkeypatch.setattr(sql_writer_module, "_run_chat_loop", fake_chat_loop)
+
+    out = await sql_writer_agent(_state())
+
+    assert not out.get("final_sql")
+    assert out["response_kind"] == "unsupported"
+    assert out["escalation_reason"] == "sql_writer_agent_no_safe_query"
+    assert "not validated" in out["execution_error"]
 
 
 @pytest.mark.asyncio

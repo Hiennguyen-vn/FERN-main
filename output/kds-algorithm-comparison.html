@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KDS Algorithm Comparison</title>
+  <style>
+    :root {
+      --bg: #0a0d12;
+      --panel: #111722;
+      --panel-2: #161e2b;
+      --ink: #eef3f8;
+      --muted: #95a3b5;
+      --line: rgba(255,255,255,.1);
+      --amber: #f2bd43;
+      --green: #34d399;
+      --red: #ef4444;
+      --blue: #60a5fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+    header {
+      height: 76px;
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      padding: 0 28px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(10,13,18,.96);
+    }
+    .mark {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      background: var(--amber);
+      color: #14110a;
+      font-weight: 900;
+      font-size: 18px;
+    }
+    .title { min-width: 0; flex: 1; }
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.1;
+      font-weight: 760;
+    }
+    .sub {
+      margin-top: 6px;
+      display: flex;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .algo-badge {
+      min-width: 190px;
+      height: 44px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: flex-end;
+      padding-right: 4px;
+    }
+    .algo-badge strong {
+      color: var(--amber);
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .algo-badge span {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 292px 1fr;
+      gap: 20px;
+      padding: 20px;
+      min-height: 0;
+    }
+    aside {
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 14px;
+      min-height: 0;
+    }
+    .section {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--amber);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .14em;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .metric {
+      background: rgba(255,255,255,.055);
+      border-radius: 8px;
+      padding: 12px 8px;
+      text-align: center;
+    }
+    .metric b {
+      display: block;
+      font-size: 26px;
+      line-height: 1;
+    }
+    .metric span {
+      display: block;
+      margin-top: 7px;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .all-day-list {
+      margin-top: 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .all-day-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .all-day-row:last-child { border-bottom: 0; }
+    .all-day-row span {
+      min-width: 0;
+      font-size: 13px;
+      color: #dce5ef;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .all-day-row b {
+      color: var(--amber);
+      font-size: 22px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .rank-list {
+      margin-top: 12px;
+      display: grid;
+      gap: 9px;
+    }
+    .rank-row {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 9px;
+      border-radius: 8px;
+      background: rgba(255,255,255,.045);
+    }
+    .rank-row i {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: rgba(242,189,67,.18);
+      color: var(--amber);
+      font-style: normal;
+      font-weight: 800;
+      font-size: 12px;
+    }
+    .rank-row span {
+      color: #dce5ef;
+      font-size: 13px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .rank-row b {
+      color: var(--muted);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+    main {
+      min-width: 0;
+    }
+    .board {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .ticket {
+      overflow: hidden;
+      min-height: 328px;
+      border-radius: 12px;
+      background: #f8fafc;
+      color: #111827;
+      box-shadow: 0 20px 45px rgba(0,0,0,.25);
+    }
+    .ticket.warning { outline: 2px solid rgba(242,189,67,.8); }
+    .ticket.breached { outline: 2px solid rgba(239,68,68,.9); }
+    .ticket-head {
+      padding: 14px 15px 12px;
+      background: #e8edf3;
+    }
+    .ticket.warning .ticket-head { background: var(--amber); color: #14110a; }
+    .ticket.breached .ticket-head { background: var(--red); color: #fff; }
+    .ticket.ready .ticket-head { background: var(--green); color: #062118; }
+    .head-top {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: start;
+    }
+    .ticket-rank {
+      display: inline-flex;
+      align-items: center;
+      height: 22px;
+      padding: 0 8px;
+      border-radius: 6px;
+      background: rgba(0,0,0,.14);
+      font-size: 12px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+    }
+    .ticket-title {
+      margin-top: 6px;
+      font-size: 23px;
+      line-height: 1;
+      font-weight: 900;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ticket-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 8px;
+      font-size: 11px;
+      text-transform: uppercase;
+      font-weight: 800;
+      opacity: .76;
+    }
+    .timer {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .timer strong {
+      display: block;
+      font-size: 28px;
+      line-height: 1;
+      font-weight: 950;
+    }
+    .timer span {
+      display: block;
+      margin-top: 5px;
+      font-size: 10px;
+      text-transform: uppercase;
+      font-weight: 800;
+      opacity: .7;
+    }
+    .bar {
+      margin-top: 12px;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(0,0,0,.14);
+      overflow: hidden;
+    }
+    .bar div {
+      height: 100%;
+      background: rgba(17,24,39,.78);
+      border-radius: inherit;
+    }
+    .ticket.breached .bar div { background: #fff; }
+    .items {
+      display: grid;
+      border-top: 1px solid #d7dce3;
+    }
+    .item {
+      display: grid;
+      grid-template-columns: 44px 1fr auto;
+      gap: 10px;
+      align-items: start;
+      padding: 13px 15px;
+      border-bottom: 1px solid #e2e8f0;
+      background: #fff;
+    }
+    .item:last-child { border-bottom: 0; }
+    .qty {
+      height: 36px;
+      min-width: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #111827;
+      color: #fff;
+      font-size: 17px;
+      font-weight: 950;
+      font-variant-numeric: tabular-nums;
+    }
+    .item-name {
+      font-size: 16px;
+      line-height: 1.12;
+      font-weight: 850;
+    }
+    .mods {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 7px;
+    }
+    .mods span {
+      padding: 3px 7px;
+      border-radius: 6px;
+      background: #eef2f7;
+      color: #4b5563;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .note {
+      margin-top: 8px;
+      padding: 7px 8px;
+      border: 1px dashed #cbd5e1;
+      border-radius: 7px;
+      color: #475569;
+      background: #f8fafc;
+      font-size: 12px;
+      font-weight: 700;
+      font-style: italic;
+    }
+    .status {
+      padding: 5px 8px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      color: #374151;
+      text-transform: uppercase;
+      font-size: 10px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .status.preparing { background: #fef3c7; color: #92400e; }
+    .status.ready { background: #d1fae5; color: #047857; }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      padding: 0 20px 16px;
+      color: rgba(238,243,248,.55);
+      font-size: 11px;
+    }
+    @media (max-width: 1100px) {
+      .layout { grid-template-columns: 1fr; }
+      .board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      aside { grid-template-columns: repeat(3, 1fr); grid-template-rows: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="mark">KDS</div>
+      <div class="title">
+        <h1 id="title">Kitchen Display</h1>
+        <div class="sub">
+          <span>Outlet HCM-01</span>
+          <span>Station: Hot line + Drinks</span>
+          <span>Snapshot 18:42:30</span>
+        </div>
+      </div>
+      <div class="algo-badge">
+        <strong id="algoName"></strong>
+        <span id="algoRule"></span>
+      </div>
+    </header>
+    <div class="layout">
+      <aside>
+        <section class="section">
+          <div class="section-title"><span>Service Pace</span><span id="algorithmCode"></span></div>
+          <div class="metrics">
+            <div class="metric"><b id="newCount">0</b><span>Mới</span></div>
+            <div class="metric"><b id="progressCount">0</b><span>Đang làm</span></div>
+            <div class="metric"><b id="riskCount">0</b><span>Rủi ro</span></div>
+          </div>
+        </section>
+        <section class="section">
+          <div class="section-title"><span>All Day</span><span>x</span></div>
+          <div class="all-day-list" id="allDay"></div>
+        </section>
+        <section class="section">
+          <div class="section-title"><span>Dispatch Order</span><span>Top 5</span></div>
+          <div class="rank-list" id="rankList"></div>
+        </section>
+      </aside>
+      <main>
+        <div class="board" id="board"></div>
+      </main>
+    </div>
+  </div>
+  <div class="footer">
+    <span>Same kitchen workload rendered with different dispatch ordering.</span>
+    <span id="footerAlgo"></span>
+  </div>
+  <script>
+    const now = new Date('2026-06-20T18:42:30+07:00').getTime();
+    const tickets = [
+      {
+        id: 'T-101',
+        saleId: '3501227996016558080',
+        title: 'Bàn A12',
+        channel: 'Dine-in',
+        status: 'in_progress',
+        createdAt: '2026-06-20T18:22:30+07:00',
+        prepSlaSeconds: 2100,
+        items: [
+          { name: 'Phở bò tái', qty: 2, status: 'preparing', mods: ['Ít hành', 'Nước béo'], note: 'Ra cùng lúc' },
+          { name: 'Gỏi cuốn tôm', qty: 1, status: 'new', mods: ['Không rau răm'] },
+          { name: 'Trà đào cam sả', qty: 2, status: 'ready' }
+        ]
+      },
+      {
+        id: 'T-102',
+        saleId: '3501227996016558091',
+        title: 'Takeaway 48',
+        channel: 'Takeaway',
+        status: 'new',
+        createdAt: '2026-06-20T18:25:10+07:00',
+        prepSlaSeconds: 900,
+        items: [
+          { name: 'Bánh mì bò nướng', qty: 3, status: 'new', mods: ['Cay vừa'] },
+          { name: 'Cà phê sữa đá', qty: 3, status: 'new' }
+        ]
+      },
+      {
+        id: 'T-103',
+        saleId: '3501227996016558102',
+        title: 'Delivery 19',
+        channel: 'Delivery',
+        status: 'new',
+        createdAt: '2026-06-20T18:31:00+07:00',
+        prepSlaSeconds: 780,
+        items: [
+          { name: 'Cơm tấm sườn', qty: 2, status: 'new', mods: ['Thêm bì', 'Nước mắm riêng'] },
+          { name: 'Canh chua cá', qty: 1, status: 'new', note: 'Shipper đến sau 6 phút' }
+        ]
+      },
+      {
+        id: 'T-104',
+        saleId: '3501227996016558116',
+        title: 'Bàn C04',
+        channel: 'Dine-in',
+        status: 'in_progress',
+        createdAt: '2026-06-20T18:33:40+07:00',
+        prepSlaSeconds: 1020,
+        items: [
+          { name: 'Bún bò Huế', qty: 1, status: 'preparing', mods: ['Không giò'] },
+          { name: 'Chả giò', qty: 2, status: 'new' }
+        ]
+      },
+      {
+        id: 'T-105',
+        saleId: '3501227996016558127',
+        title: 'Bàn B07',
+        channel: 'Dine-in',
+        status: 'new',
+        createdAt: '2026-06-20T18:36:20+07:00',
+        prepSlaSeconds: 1500,
+        items: [
+          { name: 'Lẩu thái nhỏ', qty: 1, status: 'new', mods: ['Ít cay'] },
+          { name: 'Nấm kim châm', qty: 2, status: 'new' },
+          { name: 'Mì trứng', qty: 2, status: 'new' }
+        ]
+      },
+      {
+        id: 'T-106',
+        saleId: '3501227996016558138',
+        title: 'Takeaway 51',
+        channel: 'Takeaway',
+        status: 'ready',
+        createdAt: '2026-06-20T18:38:50+07:00',
+        prepSlaSeconds: 540,
+        items: [
+          { name: 'Sinh tố xoài', qty: 2, status: 'ready' },
+          { name: 'Bạc xỉu', qty: 1, status: 'ready' }
+        ]
+      }
+    ];
+
+    const params = new URLSearchParams(location.search);
+    const algorithm = params.get('algorithm') === 'priority' ? 'priority' : 'fifo';
+
+    function elapsedSeconds(ticket) {
+      return Math.max(0, Math.floor((now - new Date(ticket.createdAt).getTime()) / 1000));
+    }
+    function deadlineMs(ticket) {
+      return new Date(ticket.createdAt).getTime() + ticket.prepSlaSeconds * 1000;
+    }
+    function channelWeight(ticket) {
+      if (ticket.channel === 'Delivery') return 240;
+      if (ticket.channel === 'Takeaway') return 120;
+      return 0;
+    }
+    function itemUnits(ticket) {
+      return ticket.items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+    }
+    function risk(ticket) {
+      const elapsed = elapsedSeconds(ticket);
+      return ticket.prepSlaSeconds > 0 ? elapsed / ticket.prepSlaSeconds : 0;
+    }
+    function priorityScore(ticket) {
+      const slackSeconds = Math.floor((deadlineMs(ticket) - now) / 1000);
+      const urgency = Math.max(0, 900 - slackSeconds);
+      const statusBoost = ticket.status === 'in_progress' ? 80 : ticket.status === 'ready' ? -220 : 0;
+      return urgency + channelWeight(ticket) + itemUnits(ticket) * 18 + statusBoost;
+    }
+    function sortedTickets() {
+      const copy = [...tickets];
+      if (algorithm === 'fifo') {
+        return copy.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      }
+      return copy.sort((a, b) => priorityScore(b) - priorityScore(a) || new Date(a.createdAt) - new Date(b.createdAt));
+    }
+    function minutes(seconds) {
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      return `${m}:${String(s).padStart(2, '0')}`;
+    }
+    function tone(ticket) {
+      if (ticket.status === 'ready') return 'ready';
+      const r = risk(ticket);
+      if (r >= 1) return 'breached';
+      if (r >= .75) return 'warning';
+      return '';
+    }
+    function statusLabel(status) {
+      return {
+        new: 'Mới',
+        in_progress: 'Đang làm',
+        ready: 'Sẵn sàng',
+        preparing: 'Đang làm'
+      }[status] || status;
+    }
+    function render() {
+      const ordered = sortedTickets();
+      const isPriority = algorithm === 'priority';
+      document.getElementById('title').textContent = `Kitchen Display - ${isPriority ? 'Priority Queue' : 'FIFO'}`;
+      document.getElementById('algoName').textContent = isPriority ? 'Priority Queue' : 'FIFO';
+      document.getElementById('algoRule').textContent = isPriority ? 'SLA risk, channel, workload' : 'Created time ascending';
+      document.getElementById('algorithmCode').textContent = isPriority ? 'PQ' : 'FIFO';
+      document.getElementById('footerAlgo').textContent = isPriority ? 'Priority score = urgency + channel + item load' : 'FIFO = oldest ticket first';
+      document.getElementById('newCount').textContent = tickets.filter(t => t.status === 'new').length;
+      document.getElementById('progressCount').textContent = tickets.filter(t => t.status === 'in_progress').length;
+      document.getElementById('riskCount').textContent = tickets.filter(t => risk(t) >= .75 && t.status !== 'ready').length;
+
+      const allDay = new Map();
+      for (const ticket of tickets) {
+        for (const item of ticket.items) {
+          if (item.status === 'ready') continue;
+          allDay.set(item.name, (allDay.get(item.name) || 0) + item.qty);
+        }
+      }
+      document.getElementById('allDay').innerHTML = [...allDay.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 8)
+        .map(([name, qty]) => `<div class="all-day-row"><span>${name}</span><b>x${qty}</b></div>`)
+        .join('');
+
+      document.getElementById('rankList').innerHTML = ordered.slice(0, 5).map((ticket, index) => {
+        const meta = isPriority ? Math.round(priorityScore(ticket)) : minutes(elapsedSeconds(ticket));
+        return `<div class="rank-row"><i>${index + 1}</i><span>${ticket.title}</span><b>${meta}</b></div>`;
+      }).join('');
+
+      document.getElementById('board').innerHTML = ordered.map((ticket, index) => {
+        const elapsed = elapsedSeconds(ticket);
+        const progress = Math.min(100, Math.round((elapsed / ticket.prepSlaSeconds) * 100));
+        const itemCount = ticket.items.length;
+        return `
+          <article class="ticket ${tone(ticket)}">
+            <header class="ticket-head">
+              <div class="head-top">
+                <div>
+                  <span class="ticket-rank">#${index + 1}</span>
+                  <div class="ticket-title">${ticket.title}</div>
+                  <div class="ticket-meta"><span>${ticket.channel}</span><span>${statusLabel(ticket.status)}</span><span>${itemCount} món</span></div>
+                </div>
+                <div class="timer"><strong>${minutes(elapsed)}</strong><span>Đã chờ</span></div>
+              </div>
+              <div class="bar"><div style="width:${progress}%"></div></div>
+            </header>
+            <div class="items">
+              ${ticket.items.map(item => `
+                <div class="item">
+                  <div class="qty">x${item.qty}</div>
+                  <div>
+                    <div class="item-name">${item.name}</div>
+                    ${item.mods ? `<div class="mods">${item.mods.map(mod => `<span>${mod}</span>`).join('')}</div>` : ''}
+                    ${item.note ? `<div class="note">${item.note}</div>` : ''}
+                  </div>
+                  <div class="status ${item.status}">${statusLabel(item.status)}</div>
+                </div>
+              `).join('')}
+            </div>
+          </article>
+        `;
+      }).join('');
+    }
+    render();
+  </script>
+</body>
+</html>

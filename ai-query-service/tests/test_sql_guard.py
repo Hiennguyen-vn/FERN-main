@@ -88,6 +88,35 @@ def test_union_rejected():
     assert not result.passed
 
 
+def test_comment_injection_rejected():
+    sql = """
+    SELECT outlet_id, sum(net_revenue)
+    FROM analytics.fct_sales_daily
+    WHERE outlet_id IN (1) -- bypass
+      AND business_date = today()
+    GROUP BY outlet_id
+    """
+    result = validate_sql(sql)
+    assert not result.passed
+    assert any("comments" in v.lower() for v in result.violations)
+
+
+def test_future_date_beyond_tomorrow_rejected(monkeypatch):
+    from datetime import date
+
+    monkeypatch.setattr("app.guard.sql_ast.today_local", lambda: date(2026, 6, 24))
+    sql = """
+    SELECT outlet_id, sum(net_revenue)
+    FROM analytics.fct_sales_daily
+    WHERE outlet_id IN (1)
+      AND business_date BETWEEN toDate('2026-06-01') AND toDate('2026-06-30')
+    GROUP BY outlet_id
+    """
+    result = validate_sql(sql)
+    assert not result.passed
+    assert any("Future date" in v for v in result.violations)
+
+
 def test_parse_error_rejected():
     sql = "SELECT FROM WHERE"
     result = validate_sql(sql)

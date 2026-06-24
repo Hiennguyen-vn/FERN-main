@@ -1,5 +1,3 @@
--- Master outlet list trong phạm vi RBAC (outlet_ids inject). Outer WHERE dùng outlet_id để thỏa sql_ast.
--- Không select address/phone vì policy chặn các cột liên hệ nhạy cảm của outlet.
 SELECT
     o.outlet_id,
     o.code AS outlet_code,

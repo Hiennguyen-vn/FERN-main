@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { isApiError } from '@/api/client';
-import { inventoryApi, type StockBalanceView } from '@/api/inventory-api';
+import type { StockBalanceView } from '@/api/inventory-api';
 import {
   productApi,
   type AvailabilityView,
@@ -171,72 +170,6 @@ export function mergeMenu(
   };
 }
 
-async function loadRecipes(
-  token: string,
-  productIds: string[],
-): Promise<Map<string, RecipeView | null | undefined>> {
-  const recipesByProduct = new Map<string, RecipeView | null | undefined>();
-  const batchSize = 24;
-
-  for (let index = 0; index < productIds.length; index += batchSize) {
-    const batch = productIds.slice(index, index + batchSize);
-    const settled = await Promise.allSettled(
-      batch.map(async (productId) => {
-        try {
-          return await productApi.recipe(token, productId);
-        } catch (error) {
-          if (isApiError(error) && error.status === 404) {
-            return null;
-          }
-          return undefined;
-        }
-      }),
-    );
-
-    settled.forEach((result, batchIndex) => {
-      recipesByProduct.set(
-        batch[batchIndex],
-        result.status === 'fulfilled' ? result.value : undefined,
-      );
-    });
-  }
-
-  return recipesByProduct;
-}
-
-async function loadModifierGroupsByProduct(
-  token: string,
-  productIds: string[],
-): Promise<Map<string, ModifierGroupView[]>> {
-  const groupsByProduct = new Map<string, ModifierGroupView[]>();
-  const batchSize = 24;
-
-  for (let index = 0; index < productIds.length; index += batchSize) {
-    const batch = productIds.slice(index, index + batchSize);
-    const settled = await Promise.allSettled(
-      batch.map(async (productId) => {
-        try {
-          return await productApi.modifierGroupsForProduct(token, productId);
-        } catch (error) {
-          if (isApiError(error) && error.status === 404) {
-            return [] as ModifierGroupView[];
-          }
-          return [] as ModifierGroupView[];
-        }
-      }),
-    );
-
-    settled.forEach((result, batchIndex) => {
-      groupsByProduct.set(
-        batch[batchIndex],
-        result.status === 'fulfilled' ? result.value : [],
-      );
-    });
-  }
-
-  return groupsByProduct;
-}
-
 export function usePosMenu(outletId: string | null) {
   const { session } = useAuth();
   const token = session?.accessToken;
@@ -244,31 +177,10 @@ export function usePosMenu(outletId: string | null) {
     queryKey: ['pos-order-menu', outletId, token],
     enabled: !!token && !!outletId,
     queryFn: async () => {
-      const [products, prices, outletAvailability, stockBalances] = await Promise.all([
+      const [products, prices, outletAvailability] = await Promise.all([
         productApi.products(token!),
         productApi.prices(token!, outletId!),
         productApi.availability(token!, { outletId: outletId! }).catch(() => [] as AvailabilityView[]),
-        inventoryApi.balances(token!, outletId!).catch((): StockBalanceView[] => []),
-      ]);
-
-      const priceByProduct = new Map(
-        prices.map((price) => [
-          String(price.productId || ''),
-          toFiniteNumber(price.priceValue ?? price.priceAmount),
-        ]),
-      );
-      const activePricedProductIds = products
-        .filter((product) => (product.status ?? 'active') === 'active')
-        .map((product) => ({
-          id: product.id,
-          price: priceByProduct.get(product.id) ?? 0,
-        }))
-        .filter((product) => toFiniteNumber(product.price) > 0)
-        .map((product) => product.id);
-
-      const [recipesByProduct, modifierGroupsByProduct] = await Promise.all([
-        loadRecipes(token!, activePricedProductIds),
-        loadModifierGroupsByProduct(token!, activePricedProductIds),
       ]);
 
       return mergeMenu(
@@ -276,12 +188,13 @@ export function usePosMenu(outletId: string | null) {
         prices,
         [],
         buildAvailabilityLookup(outletAvailability),
-        recipesByProduct,
-        buildStockLookup(stockBalances),
-        modifierGroupsByProduct,
+        new Map(),
+        null,
+        new Map(),
       );
     },
-    staleTime: 15_000,
-    refetchInterval: 60_000,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
   });
 }

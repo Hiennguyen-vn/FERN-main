@@ -11,6 +11,13 @@ from app.query_policy.learned_scenarios import LearnedScenarioAsset, LearnedScen
         ("xin chào", "greeting"),
         ("Xin chào!", "greeting"),
         ("chào bạn", "greeting"),
+        ("chào bạn ạ", "greeting"),
+        ("chào anh nhé", "greeting"),
+        ("alo bạn ơi", "greeting"),
+        ("bạn ơi", "greeting"),
+        ("cho mình hỏi", "greeting"),
+        ("ok ạ", "greeting"),
+        ("dạ", "greeting"),
         ("hello", "greeting"),
         ("Hi!!", "greeting"),
         ("cảm ơn", "thanks"),
@@ -29,6 +36,8 @@ def test_detect_standalone_social_positive(text: str, expected: str):
     [
         "chào cửa hàng cho mình xem doanh thu",
         "xin chào cho em hỏi doanh thu hôm nay",
+        "bạn ơi xem doanh thu hôm nay",
+        "ok xem top sản phẩm tháng này",
         "doanh thu hôm nay",
         "",
     ],
@@ -160,7 +169,75 @@ async def test_template_matcher_fast_path_product_revenue_ranking_uses_top_produ
     out = await template_matcher(state)
 
     assert out["template_key"] == "T04_top_products"
-    assert out["template_params"] == {"from_date": "2026-01-01", "to_date": "2026-05-19", "limit": 10}
+    assert out["template_params"] == {
+        "from_date": "2026-01-01",
+        "to_date": "2026-05-19",
+        "limit": 1,
+        "sort_by": "revenue",
+    }
+
+
+@pytest.mark.asyncio
+async def test_template_matcher_product_revenue_ranking_all_outlets_is_not_outlet_rank(monkeypatch):
+    async def fail_llm(*_args, **_kwargs):
+        raise AssertionError("LLM should not be called for obvious product revenue ranking")
+
+    monkeypatch.setattr("app.graph.nodes.template_matcher.llm_call_json", fail_llm)
+    monkeypatch.setattr("app.graph.nodes.template_matcher.embed", fail_llm)
+    monkeypatch.setattr(
+        "app.graph.nodes.template_matcher.get_settings",
+        lambda: type("S", (), {"template_fast_path_enabled": True, "openai_embeddings_enabled": False})(),
+    )
+
+    state = {
+        "normalized_question": "sản phẩm nào trong tháng 4 ở tất cả các cửa hàng có doanh thu cao nhất",
+        "intent": "product_mix",
+        "time_range": {"from_date": "2026-04-01", "to_date": "2026-04-30"},
+        "resolved_entities": {},
+        "conversation_context": "",
+        "trace": [],
+    }
+
+    out = await template_matcher(state)
+
+    assert out["template_key"] == "T04_top_products"
+    assert out["template_params"] == {
+        "from_date": "2026-04-01",
+        "to_date": "2026-04-30",
+        "limit": 1,
+        "sort_by": "revenue",
+    }
+
+
+@pytest.mark.asyncio
+async def test_template_matcher_product_quantity_ranking_all_outlets_is_not_directory(monkeypatch):
+    async def fail_llm(*_args, **_kwargs):
+        raise AssertionError("LLM should not be called for obvious product quantity ranking")
+
+    monkeypatch.setattr("app.graph.nodes.template_matcher.llm_call_json", fail_llm)
+    monkeypatch.setattr("app.graph.nodes.template_matcher.embed", fail_llm)
+    monkeypatch.setattr(
+        "app.graph.nodes.template_matcher.get_settings",
+        lambda: type("S", (), {"template_fast_path_enabled": True, "openai_embeddings_enabled": False})(),
+    )
+
+    state = {
+        "normalized_question": "Sản phẩm nào trong tháng 4 ở tất cả các cửa hàng bán được nhiều sản phẩm nhất",
+        "intent": "product_mix",
+        "time_range": {"from_date": "2026-04-01", "to_date": "2026-04-30"},
+        "resolved_entities": {},
+        "conversation_context": "",
+        "trace": [],
+    }
+
+    out = await template_matcher(state)
+
+    assert out["template_key"] == "T04_top_products"
+    assert out["template_params"] == {
+        "from_date": "2026-04-01",
+        "to_date": "2026-04-30",
+        "limit": 1,
+    }
 
 
 @pytest.mark.asyncio

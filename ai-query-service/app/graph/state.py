@@ -43,6 +43,8 @@ class GraphState(TypedDict, total=False):
     # Lightweight planner (structured outline / decision for matcher prompt)
     reasoning_outline: dict[str, Any] | None
     planning_decision: dict[str, Any] | None
+    """Structured Supervisor -> SQL Writer handoff used when template response is disabled or GenSQL is required."""
+    sql_writer_contract: dict[str, Any] | None
 
     """Allow-listed ClickHouse column snapshot text for prompts (optional)."""
     catalog_digest: str | None

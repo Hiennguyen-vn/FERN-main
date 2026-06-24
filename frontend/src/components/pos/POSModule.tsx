@@ -112,6 +112,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
   const {
     sessions: dbSessions,
     totalSessions,
+    visibleMonthLabel,
     page: sessionsPage,
     pageSize: sessionsPageSize,
     setPage: setSessionsPage,
@@ -177,11 +178,11 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       const outstandingAmount = hasLoadedOrders ? Math.max(0, totalRevenue - totalCollected) : 0;
       return {
         id: session.id,
-        code: `POS-${session.opened_at.slice(0, 10).replace(/-/g, '')}-${session.id.slice(0, 3).toUpperCase()}`,
+        code: `POS-${session.business_date.replace(/-/g, '')}-${session.id.slice(0, 3).toUpperCase()}`,
         outletId: session.outlet_id,
         outletName: session.outlet_name || 'Unknown',
         currencyCode: session.currency_code || undefined,
-        businessDate: session.opened_at.slice(0, 10),
+        businessDate: session.business_date,
         openedBy: 'Operator',
         openedAt: session.opened_at,
         status: session.status as POSSession['status'],
@@ -206,7 +207,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     const sessionCodeById = new Map(
       dbSessions.map((session) => [
         session.id,
-        `POS-${session.opened_at.slice(0, 10).replace(/-/g, '')}-${session.id.slice(0, 3).toUpperCase()}`,
+        `POS-${session.business_date.replace(/-/g, '')}-${session.id.slice(0, 3).toUpperCase()}`,
       ]),
     );
 
@@ -761,6 +762,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       <POSSessionList
         sessions={sessions}
         totalSessions={totalSessions}
+        periodLabel={visibleMonthLabel}
         page={sessionsPage}
         pageSize={sessionsPageSize}
         onPageChange={setSessionsPage}

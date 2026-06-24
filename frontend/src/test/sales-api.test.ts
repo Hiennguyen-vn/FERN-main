@@ -119,6 +119,38 @@ describe('salesApi POS payloads', () => {
     });
   });
 
+  it('serializes POS session month range filters', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        items: [],
+        limit: 100,
+        offset: 0,
+        total: 0,
+        hasMore: false,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await salesApi.posSessions('token', {
+      outletId: '3477603326876991488',
+      startDate: '2026-06-01',
+      endDate: '2026-06-30',
+      limit: 100,
+      offset: 0,
+    });
+
+    const [url] = fetchMock.mock.calls[0];
+    const parsed = new URL(String(url), 'http://localhost');
+    expect(parsed.pathname).toBe('/api/v1/sales/pos-sessions');
+    expect(parsed.searchParams.get('outletId')).toBe('3477603326876991488');
+    expect(parsed.searchParams.get('startDate')).toBe('2026-06-01');
+    expect(parsed.searchParams.get('endDate')).toBe('2026-06-30');
+    expect(parsed.searchParams.get('limit')).toBe('100');
+  });
+
   it('preserves bigint-safe string ids when creating a POS order', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ id: '3477605000000000000' }), {

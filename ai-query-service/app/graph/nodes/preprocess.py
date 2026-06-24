@@ -5,16 +5,24 @@ import unicodedata
 
 from app.config import get_settings
 from app.graph.state import GraphState
+from app.utils.text import fold_text
 
 
 VIETNAMESE_DIACRITICS = re.compile(r"[ÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]")
 # Whole-message social utterances (collapsed whitespace); avoids bypass on "chào + câu hỏi dài".
 _SOCIAL_THANKS = re.compile(
-    r"^(cảm\s+ơn(\s+(bạn|nhé|nha|ạ))?|cam\s+on(\s+(ban|nhe|nha|a))?|thanks|thank\s+you)(\s*[!.]*)?$",
+    r"^(cam\s+on(\s+(ban|anh|chi|em|nhe|nha|a))?|thanks|thank\s+you)(\s*[!.]*)?$",
     re.IGNORECASE,
 )
 _SOCIAL_GREETING = re.compile(
-    r"^(xin\s+chào|chào(\s+(bạn|anh|chị|em|ad))?|hello|hi|hey)(\s*[!.]*)?$",
+    r"^(xin\s+chao|chao(\s+(ban|anh|chi|em|ad|admin|bot)(\s+(a|nhe|nha))?)?|"
+    r"hello|hi|hey|alo+|alo+\s+(ban|ad|admin|bot)\s+oi|"
+    r"(ban|ad|admin|bot)\s+oi|cho\s+minh\s+hoi|cho\s+em\s+hoi|em\s+hoi\s+chut)(\s*[!.?]*)?$",
+    re.IGNORECASE,
+)
+_SOCIAL_ACK = re.compile(
+    r"^(ok|oke|okay|oki|vang|da|duoc|duoc\s+roi|ro|ro\s+roi|uh|uhm|um|yes|yeah|yep)"
+    r"(\s+(ban|anh|chi|em|nhe|nha|a))*\s*[!.]*$",
     re.IGNORECASE,
 )
 
@@ -34,12 +42,12 @@ class PreprocessError(Exception):
 
 def detect_standalone_social(text: str, *, max_len: int = 120) -> str | None:
     """Return greeting | thanks when the message is only smalltalk (no analytics mixed in)."""
-    collapsed = " ".join(text.strip().split())
+    collapsed = fold_text(text)
     if len(collapsed) > max_len:
         return None
     if _SOCIAL_THANKS.match(collapsed):
         return "thanks"
-    if _SOCIAL_GREETING.match(collapsed):
+    if _SOCIAL_GREETING.match(collapsed) or _SOCIAL_ACK.match(collapsed):
         return "greeting"
     return None
 

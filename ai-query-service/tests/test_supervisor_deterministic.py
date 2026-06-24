@@ -139,6 +139,50 @@ async def test_supervisor_deterministic_product_revenue_ranking(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_supervisor_deterministic_product_revenue_ranking_all_outlets(monkeypatch):
+    async def fail_llm(*_args, **_kwargs):
+        raise AssertionError("LLM should not be called for obvious product revenue ranking query")
+
+    monkeypatch.setattr(sup, "llm_call_json", fail_llm)
+    monkeypatch.setattr(sup, "get_settings", lambda: type("S", (), {"deterministic_supervisor_enabled": True})())
+    state = {
+        "normalized_question": "sản phẩm nào trong tháng 4 ở tất cả các cửa hàng có doanh thu cao nhất",
+        "trace": [],
+    }
+
+    out = await sup.supervisor(state)
+
+    assert out["agent_route"] == "data_query"
+    assert out["intent"] == "product_mix"
+    assert out["time_range"] == {
+        "from_date": f"{date.today().year}-04-01",
+        "to_date": f"{date.today().year}-04-30",
+    }
+
+
+@pytest.mark.asyncio
+async def test_supervisor_deterministic_product_quantity_ranking_all_outlets(monkeypatch):
+    async def fail_llm(*_args, **_kwargs):
+        raise AssertionError("LLM should not be called for obvious product quantity ranking query")
+
+    monkeypatch.setattr(sup, "llm_call_json", fail_llm)
+    monkeypatch.setattr(sup, "get_settings", lambda: type("S", (), {"deterministic_supervisor_enabled": True})())
+    state = {
+        "normalized_question": "Sản phẩm nào trong tháng 4 ở tất cả các cửa hàng bán được nhiều sản phẩm nhất",
+        "trace": [],
+    }
+
+    out = await sup.supervisor(state)
+
+    assert out["agent_route"] == "data_query"
+    assert out["intent"] == "product_mix"
+    assert out["time_range"] == {
+        "from_date": f"{date.today().year}-04-01",
+        "to_date": f"{date.today().year}-04-30",
+    }
+
+
+@pytest.mark.asyncio
 async def test_supervisor_deterministic_hr_work_hours_without_employee_keyword(monkeypatch):
     async def fail_llm(*_args, **_kwargs):
         raise AssertionError("LLM should not be called for obvious HR work-hours query")

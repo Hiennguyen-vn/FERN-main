@@ -23,6 +23,7 @@ _TRACE_KEYS_FOR_CLIENT = frozenset(
         "tokens_out",
         "model",
         "provider",
+        "llm_degraded",
         "hits",
         "chars",
         "shortcut",
@@ -117,6 +118,11 @@ def build_workflow_summary(state: dict[str, Any], *, graph_cpu_ms: int | None = 
     """
     trace = state.get("trace") or []
     seq = workflow_node_sequence(trace)
+    trace_llm_used = any(
+        isinstance(e, dict) and (int(e.get("tokens_in") or 0) > 0 or int(e.get("tokens_out") or 0) > 0)
+        for e in trace
+    )
+    llm_used = bool(state.get("llm_used")) or trace_llm_used
 
     lane = "analytics"
     if state.get("social_kind"):
@@ -164,7 +170,20 @@ def build_workflow_summary(state: dict[str, Any], *, graph_cpu_ms: int | None = 
         "guard_passed": state.get("guard_passed"),
         "correction_attempts": int(state.get("correction_attempts") or 0),
         "codegen_attempt_last": int(state.get("codegen_attempt") or 0),
+        "llm_used": llm_used,
+        "llm_degraded": bool(state.get("llm_degraded")),
     }
+
+    if state.get("llm_degraded_stage"):
+        summary["llm_degraded_stage"] = state.get("llm_degraded_stage")
+
+    template_cache_source = state.get("template_cache_source")
+    if template_cache_source or (state.get("template_key") and not llm_used):
+        summary["template_cache"] = {
+            "used": bool(state.get("template_key") and not llm_used),
+            "source": template_cache_source or "unknown",
+            "confidence": state.get("template_confidence"),
+        }
 
     if state.get("contextualized_question"):
         summary["contextualized"] = {

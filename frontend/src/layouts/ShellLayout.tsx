@@ -85,6 +85,7 @@ const ROUTE_META: Record<string, { title: string; breadcrumbs: string[] }> = {
   '/promotions': { title: 'Promotions', breadcrumbs: ['Sales', 'Promotions'] },
   '/scheduling': { title: 'Scheduling', breadcrumbs: ['People', 'Scheduling'] },
   '/workforce': { title: 'Workforce', breadcrumbs: ['People', 'Workforce'] },
+  '/kitchen': { title: 'Kitchen Display', breadcrumbs: ['Operations', 'Kitchen'] },
   '/profile': { title: 'My Account', breadcrumbs: ['Account', 'Profile'] },
 };
 

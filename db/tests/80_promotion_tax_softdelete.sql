@@ -81,27 +81,29 @@ VALUES (
 INSERT INTO core.sale_record (
   id, outlet_id, pos_session_id, currency_code,
   order_type, status, payment_status,
-  subtotal, discount, tax_amount, total_amount
+  subtotal, discount, tax_amount, total_amount,
+  created_at
 )
 VALUES (
   980500, 980001, 980400, 'PT0',
   'dine_in', 'completed', 'paid',
-  65000.00, 6500.00, 5850.00, 64350.00
+  65000.00, 6500.00, 5850.00, 64350.00,
+  TIMESTAMPTZ '2025-06-15 08:30:00+07'
 );
 
 INSERT INTO core.sale_item (
-  sale_id, product_id, unit_price, qty,
+  sale_id, sale_created_at, outlet_id, product_id, unit_price, qty,
   discount_amount, tax_amount, line_total
 )
 VALUES (
-  980500, 980201, 65000.00, 1.0000,
+  980500, TIMESTAMPTZ '2025-06-15 08:30:00+07', 980001, 980201, 65000.00, 1.0000,
   6500.00, 5850.00, 64350.00
 );
 
 INSERT INTO core.sale_item_promotion (
-  sale_id, product_id, promotion_id
+  sale_id, sale_created_at, product_id, promotion_id
 )
-VALUES (980500, 980201, 980300);
+VALUES (980500, TIMESTAMPTZ '2025-06-15 08:30:00+07', 980201, 980300);
 
 SELECT test_support.assert_row_count(
   $$SELECT 1 FROM core.sale_item_promotion WHERE sale_id = 980500 AND product_id = 980201 AND promotion_id = 980300$$,

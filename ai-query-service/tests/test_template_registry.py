@@ -15,8 +15,8 @@ def test_all_templates_have_sql_file():
     assert not missing, f"Missing SQL files: {missing}"
 
 
-def test_forty_six_templates_registered():
-    assert len(TEMPLATES) == 46
+def test_forty_seven_templates_registered():
+    assert len(TEMPLATES) == 47
 
 
 def test_render_t01():
@@ -69,6 +69,16 @@ def test_render_t37_ai_sales_daily_outlets():
     assert "business_date BETWEEN" not in sql
 
 
+def test_render_t38_product_directory_is_outlet_scoped():
+    sql = render("T38_product_directory", outlet_ids=[1, 2], limit=25)
+
+    assert "FROM analytics.ai_product_daily" in sql
+    assert "outlet_id IN (1,2)" in sql
+    assert "GROUP BY product_id" in sql
+    assert "LIMIT 25" in sql
+    assert validate_sql(sql).passed
+
+
 def test_render_missing_required_param():
     with pytest.raises(ValueError, match="Missing required params"):
         render("T01_daily_revenue", outlet_ids=[1])
@@ -106,6 +116,31 @@ def test_render_optional_param_default():
         limit=5,
     )
     assert "LIMIT 5" in sql2
+
+    sql3 = render(
+        "T04_top_products",
+        outlet_ids=[1],
+        from_date="2026-01-01",
+        to_date="2026-01-31",
+        limit=5,
+        sort_by="revenue",
+    )
+    assert "ORDER BY revenue DESC" in sql3
+
+
+def test_render_top_products_can_filter_category_codes():
+    sql = render(
+        "T04_top_products",
+        outlet_ids=[1],
+        from_date="2026-01-01",
+        to_date="2026-01-31",
+        limit=5,
+        category_codes=["DRINK", "beverage"],
+    )
+
+    assert "category_code IN ('DRINK','beverage')" in sql
+    assert "any(category_code) AS product_category_code" in sql
+    assert validate_sql(sql).passed
 
 
 def test_inventory_current_stock_templates_use_latest_scope_snapshot():

@@ -62,6 +62,13 @@ Trả lời như analyst gửi sếp: nêu kết luận chính trước, sau đ�
 - Nếu preview_includes_all_rows là false: có thể tóm tắt, nhưng phải nêu rõ còn bao nhiêu dòng ngoài preview và không suy diễn chi tiết dòng chưa có trong facts.
 - KHÔNG lộ SQL, template key, pipeline, reviewer, hoặc tên bảng kỹ thuật.
 - Format số tiền: 1.234.567 đ (dấu chấm phân tách hàng nghìn). Percent: 12,34%.
+- Khi câu trả lời có dữ liệu nhiều dòng dạng top/xếp hạng/danh sách theo outlet/sản phẩm/nhân viên, hoặc so sánh nhiều kỳ/nhiều chỉ số, PHẢI đặt phần chi tiết trong markdown table chuẩn để UI parse được:
+  | Cột A | Cột B |
+  |---|---|
+  | Giá trị A | Giá trị B |
+- Bảng phải là một block riêng: có dòng trống trước và sau bảng; không trộn prose vào cùng dòng với bảng; không đặt bảng trong code fence.
+- Header, separator và mọi dòng dữ liệu phải có cùng số cột. Separator chỉ dùng dấu gạch ngang chuẩn (`---`, có thể căn trái/phải bằng `:---` hoặc `---:`).
+- Không dùng numbered list/bullet để thay thế bảng khi đang trình bày ranking, breakdown theo cửa hàng/sản phẩm, hoặc so sánh tháng/kỳ. Bullet chỉ dùng cho 1–2 chỉ số tổng hợp hoặc nhận xét sau bảng.
 - Kết thúc bằng dòng nguồn dữ liệu/khoảng thời gian rõ ràng.
 """
 
@@ -205,6 +212,24 @@ def _scope_recap_vi(state: GraphState) -> str:
     return "_Phạm vi: " + "; ".join(bits) + "._"
 
 
+def _scope_recap_business_vi(state: GraphState) -> str:
+    """Business-facing scope recap without internal identifiers."""
+    tr = state.get("time_range") or {}
+    fd = str(tr.get("from_date") or "").strip()
+    td = str(tr.get("to_date") or "").strip()
+    date_part = ""
+    if fd and td:
+        date_part = fd if fd == td else f"{fd} đến {td}"
+    outlets = state.get("allowed_outlet_ids") or []
+    scope_part = ""
+    if isinstance(outlets, list) and outlets:
+        scope_part = f"{len(outlets)} cửa hàng trong phạm vi quyền của bạn"
+    bits = [x for x in (date_part, scope_part) if x]
+    if not bits:
+        return ""
+    return "_Phạm vi: " + "; ".join(bits) + "._"
+
+
 def _stock_cover_recap_vi(state: GraphState, rows: list[dict[str, Any]]) -> str:
     ctx = ensure_data_source_context(state) or {}
     requested = ctx.get("requested_range") if isinstance(ctx.get("requested_range"), dict) else {}
@@ -260,6 +285,8 @@ def _parse_iso_date(value: object) -> date | None:
 def _data_asof_footer(state: GraphState, now: str) -> str:
     if state.get("template_key") == "T31_outlet_directory":
         return f"_Nguồn: danh mục cửa hàng master hiện tại; trả lời lúc {now}._"
+    if state.get("template_key") == "T38_product_directory":
+        return f"_Nguồn: analytics.ai_product_daily trong phạm vi outlet được phép xem; trả lời lúc {now}._"
     ctx = ensure_data_source_context(state) or {}
     dataset = str(ctx.get("primary_dataset") or "").strip()
     time_column = str(ctx.get("time_column") or "").strip()
@@ -349,10 +376,10 @@ def _export_footer(state: GraphState) -> str:
 
 
 def _append_common_footer(lines: list[str], state: GraphState, now: str, *, recap: str | None = None) -> None:
-    lines.append(_data_asof_footer(state, now))
     caveat = _coverage_caveat_vi(state)
-    if caveat:
-        lines.append(caveat)
+    if caveat and caveat not in lines:
+        lines.insert(0, caveat)
+    lines.append(_data_asof_footer(state, now))
     if recap:
         lines.append(recap)
     export_line = _export_footer(state)
@@ -668,6 +695,38 @@ def _format_ai_sales_daily_outlets_answer(state: GraphState, rows: list[dict[str
     if len(sorted_rows) > 20:
         lines.append(f"Còn {len(sorted_rows) - 20} cửa hàng khác trong kết quả.")
     _append_common_footer(lines, state, now, recap=recap)
+    return "\n".join(lines)
+
+
+def _format_product_directory_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
+    if not rows:
+        lines = ["Không tìm thấy sản phẩm nào có phát sinh trong phạm vi outlet bạn được xem."]
+        _append_common_footer(lines, state, now)
+        return "\n".join(lines)
+
+    sorted_rows = sorted(
+        rows,
+        key=lambda r: (
+            str(r.get("category_code") or ""),
+            str(r.get("product_name") or r.get("product_code") or r.get("product_id") or ""),
+        ),
+    )
+    total_from_rows = max((_numeric(row.get("total_products")) for row in sorted_rows), default=0)
+    total = int(total_from_rows) if total_from_rows else len(sorted_rows)
+    lines = [f"Có {total} sản phẩm có phát sinh trong phạm vi outlet bạn được xem."]
+    for idx, row in enumerate(sorted_rows[:50], start=1):
+        name = str(row.get("product_name") or "Không rõ tên")
+        code = str(row.get("product_code") or row.get("product_id") or "").strip()
+        category = str(row.get("category_code") or "").strip()
+        outlets = row.get("outlet_count")
+        code_text = f" ({code})" if code else ""
+        category_text = f" - nhóm {category}" if category else ""
+        outlet_text = f" - {outlets} outlet" if outlets is not None else ""
+        lines.append(f"{idx}. {name}{code_text}{category_text}{outlet_text}")
+    shown = min(len(sorted_rows), 50)
+    if total > shown:
+        lines.append(f"Còn {total - shown} sản phẩm khác trong kết quả.")
+    _append_common_footer(lines, state, now)
     return "\n".join(lines)
 
 
@@ -1090,14 +1149,25 @@ def _format_top_products_answer(state: GraphState, rows: list[dict[str, Any]], n
         _append_common_footer(lines, state, now, recap=recap)
         return "\n\n".join(lines)
 
-    sorted_rows = sorted(rows, key=lambda r: (_numeric(r.get("qty")), _numeric(r.get("revenue"))), reverse=True)
+    params = state.get("template_params") if isinstance(state.get("template_params"), dict) else {}
+    sort_by = str((params or {}).get("sort_by") or "").strip()
+    sort_revenue = sort_by == "revenue"
+    sorted_rows = sorted(
+        rows,
+        key=lambda r: (
+            _numeric(r.get("revenue")) if sort_revenue else _numeric(r.get("qty")),
+            _numeric(r.get("qty")) if sort_revenue else _numeric(r.get("revenue")),
+        ),
+        reverse=True,
+    )
     period = _period_from_rows_or_scope(state, sorted_rows)
     total_qty = _sum_numeric(sorted_rows, "qty")
     total_rev = _sum_numeric(sorted_rows, "revenue")
     cap = max(1, int(get_settings().answer_facts_max_rows))
     shown = sorted_rows[:cap]
+    headline = "Sản phẩm có doanh thu cao nhất" if sort_revenue else "Top sản phẩm bán chạy"
     lines = [
-        f"Top sản phẩm bán chạy trong {period}:",
+        f"{headline} trong {period}:",
         f"Tổng trong kết quả: {_format_count(total_qty)} đơn vị, doanh thu {_format_vnd(total_rev)}.",
     ]
     brief = state.get("analysis_brief") if isinstance(state.get("analysis_brief"), dict) else {}
@@ -1110,19 +1180,224 @@ def _format_top_products_answer(state: GraphState, rows: list[dict[str, Any]], n
             claim = str(item.get("claim") or "").strip()
             evidence = [str(x).strip() for x in (item.get("evidence") or []) if str(x).strip()]
             if claim:
+                claim = claim.rstrip(".。!！?？")
                 suffix = f" Minh chứng: {'; '.join(evidence[:2])}." if evidence else ""
                 lines.append(f"- {claim}.{suffix}")
+    lines.extend(["", "| # | Sản phẩm | Số lượng bán | Doanh thu |", "|---|---|---|---|"])
     for idx, row in enumerate(shown, start=1):
-        lines.append(
-            f"{idx}. {_product_name(row)} - {_format_count(row.get('qty'))} đơn vị, "
-            f"{_format_vnd(row.get('revenue'))}"
-        )
+        lines.append(f"| {idx} | {_product_name(row)} | {_format_count(row.get('qty'))} | {_format_vnd(row.get('revenue'))} |")
     if len(sorted_rows) > cap:
         lines.append(
             f"Còn {len(sorted_rows) - cap} dòng trong kết quả (đang giới hạn hiển thị {cap} mục); dùng xuất file nếu cần đủ."
         )
     _append_common_footer(lines, state, now, recap=recap)
     return "\n".join(lines) + _sql_verdict_footnote(state)
+
+
+def _codegen_output_shape(state: GraphState) -> str:
+    contract = state.get("sql_writer_contract")
+    if not isinstance(contract, dict):
+        return ""
+    return str(contract.get("output_shape") or "").strip()
+
+
+def _codegen_pattern(state: GraphState) -> str:
+    plan = state.get("codegen_sql_plan")
+    if not isinstance(plan, dict):
+        return ""
+    return str(plan.get("pattern") or "").strip()
+
+
+def _is_codegen_product_revenue_by_outlet(state: GraphState, rows: list[dict[str, Any]]) -> bool:
+    if not rows or not isinstance(rows[0], dict):
+        return False
+    if _codegen_pattern(state) in {
+        "top_product_revenue_by_outlet",
+        "top_qty_product_not_top_revenue_proxy",
+        "top_category_revenue_by_region",
+        "product_share_of_beverage_by_outlet",
+    }:
+        return False
+    shape = _codegen_output_shape(state)
+    if shape == "product_revenue_by_outlet_table":
+        return True
+    if state.get("executed_sql_source") != "codegen":
+        return False
+    keys = set(rows[0])
+    return {"outlet_name", "product_name", "revenue", "qty"}.issubset(keys)
+
+
+def _is_codegen_product_revenue_summary(state: GraphState, rows: list[dict[str, Any]]) -> bool:
+    if not rows or not isinstance(rows[0], dict):
+        return False
+    if _codegen_pattern(state) in {
+        "top_product_revenue_by_outlet",
+        "top_qty_product_not_top_revenue_proxy",
+        "top_category_revenue_by_region",
+        "product_share_of_beverage_by_outlet",
+    }:
+        return False
+    shape = _codegen_output_shape(state)
+    if shape == "product_metric_summary":
+        return True
+    if state.get("executed_sql_source") != "codegen":
+        return False
+    keys = set(rows[0])
+    return {"product_name", "revenue", "qty"}.issubset(keys) and "outlet_name" not in keys
+
+
+def _format_codegen_product_revenue_by_outlet_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
+    recap = _scope_recap_business_vi(state)
+    sorted_rows = sorted(rows, key=lambda r: _numeric(r.get("revenue")), reverse=True)
+    period = _period_from_rows_or_scope(state, sorted_rows)
+    product = _product_name(sorted_rows[0])
+    total_rev = _sum_numeric(sorted_rows, "revenue")
+    total_qty = _sum_numeric(sorted_rows, "qty")
+    total_txn = _sum_numeric(sorted_rows, "txn_count")
+    has_txn = any(isinstance(row, dict) and row.get("txn_count") is not None for row in sorted_rows)
+    outlet_count = len(sorted_rows)
+
+    totals = [f"tổng doanh thu {_format_vnd(total_rev)}", f"số lượng bán {_format_count(total_qty)}"]
+    if has_txn:
+        totals.append(f"giao dịch {_format_count(total_txn)}")
+
+    lines = [
+        f"Doanh thu {product} trong {period} theo {outlet_count} cửa hàng:",
+        "; ".join(totals) + ".",
+    ]
+    if sorted_rows:
+        leader = sorted_rows[0]
+        lines.append(f"Cửa hàng cao nhất: {_outlet_label(leader)} với {_format_vnd(leader.get('revenue'))}.")
+
+    cap = max(12, int(get_settings().answer_facts_max_rows))
+    shown = sorted_rows[:cap]
+    headers = "| # | Cửa hàng | Doanh thu | Số lượng bán |"
+    separator = "|---|---|---|---|"
+    if has_txn:
+        headers = "| # | Cửa hàng | Doanh thu | Số lượng bán | Giao dịch |"
+        separator = "|---|---|---|---|---|"
+    lines.extend(["", headers, separator])
+    for idx, row in enumerate(shown, start=1):
+        cells = [str(idx), _outlet_label(row), _format_vnd(row.get("revenue")), _format_count(row.get("qty"))]
+        if has_txn:
+            cells.append(_format_count(row.get("txn_count")))
+        lines.append("| " + " | ".join(cells) + " |")
+    if len(sorted_rows) > cap:
+        lines.append(f"Còn {len(sorted_rows) - cap} cửa hàng khác trong kết quả; dùng xuất file nếu cần đủ.")
+
+    _append_common_footer(lines, state, now, recap=recap)
+    return "\n".join(lines) + _codegen_assumption_footer(state) + _sql_verdict_footnote(state)
+
+
+def _format_top_product_revenue_by_outlet_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
+    recap = _scope_recap_business_vi(state)
+    best_by_outlet: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        outlet_key = str(row.get("outlet_id") or row.get("outlet_name") or "")
+        if not outlet_key:
+            continue
+        current = best_by_outlet.get(outlet_key)
+        if current is None or _numeric(row.get("revenue")) > _numeric(current.get("revenue")):
+            best_by_outlet[outlet_key] = row
+
+    winners = sorted(best_by_outlet.values(), key=lambda r: _numeric(r.get("revenue")), reverse=True)
+    period = _period_from_rows_or_scope(state, winners or rows)
+    lines = [f"Sản phẩm có doanh thu cao nhất trong {period} theo {len(winners)} cửa hàng:"]
+    if winners:
+        leader = winners[0]
+        lines.append(
+            f"Cao nhất toàn hệ thống: {_product_name(leader)} tại {_outlet_label(leader)} với {_format_vnd(leader.get('revenue'))}."
+        )
+    lines.extend(["", "| # | Cửa hàng | Sản phẩm | Doanh thu | Số lượng bán |", "|---|---|---|---|---|"])
+    cap = max(12, int(get_settings().answer_facts_max_rows))
+    for idx, row in enumerate(winners[:cap], start=1):
+        lines.append(
+            f"| {idx} | {_outlet_label(row)} | {_product_name(row)} | {_format_vnd(row.get('revenue'))} | {_format_count(row.get('qty'))} |"
+        )
+    if len(winners) > cap:
+        lines.append(f"Còn {len(winners) - cap} cửa hàng khác trong kết quả; dùng xuất file nếu cần đủ.")
+    _append_common_footer(lines, state, now, recap=recap)
+    return "\n".join(lines) + _sql_verdict_footnote(state)
+
+
+def _format_top_category_revenue_by_region_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
+    recap = _scope_recap_business_vi(state)
+    best_by_region: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        region = str(row.get("region") or "").strip() or "OTHER"
+        current = best_by_region.get(region)
+        if current is None or _numeric(row.get("revenue")) > _numeric(current.get("revenue")):
+            best_by_region[region] = row
+
+    winners = sorted(best_by_region.values(), key=lambda r: str(r.get("region") or ""))
+    period = _period_from_rows_or_scope(state, winners or rows)
+    lines = [f"Nhóm sản phẩm đóng góp doanh thu cao nhất trong {period} theo từng khu vực:"]
+    lines.extend(["", "| Khu vực | Nhóm sản phẩm | Doanh thu | Số lượng bán | Giao dịch |", "|---|---|---|---|---|"])
+    for row in winners:
+        lines.append(
+            f"| {row.get('region') or 'OTHER'} | {row.get('category_code') or '-'} | {_format_vnd(row.get('revenue'))} | {_format_count(row.get('qty'))} | {_format_count(row.get('txn_count'))} |"
+        )
+    _append_common_footer(lines, state, now, recap=recap)
+    return "\n".join(lines) + _sql_verdict_footnote(state)
+
+
+def _format_top_qty_not_top_revenue_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
+    recap = _scope_recap_business_vi(state)
+    valid_rows = [row for row in rows if isinstance(row, dict)]
+    revenue_rank: dict[str, int] = {}
+    for idx, row in enumerate(sorted(valid_rows, key=lambda r: _numeric(r.get("revenue")), reverse=True), start=1):
+        product_key = str(row.get("product_id") or row.get("product_name") or idx)
+        revenue_rank[product_key] = idx
+
+    candidate: dict[str, Any] | None = None
+    for row in sorted(valid_rows, key=lambda r: _numeric(r.get("qty")), reverse=True):
+        product_key = str(row.get("product_id") or row.get("product_name") or "")
+        if revenue_rank.get(product_key, 999999) > 5:
+            candidate = row
+            break
+
+    period = _period_from_rows_or_scope(state, valid_rows)
+    if candidate is None:
+        lines = [f"Trong {period}, không tìm thấy sản phẩm bán nhiều nhưng nằm ngoài top 5 doanh thu trong phạm vi dữ liệu trả về."]
+        _append_common_footer(lines, state, now, recap=recap)
+        return "\n".join(lines) + _sql_verdict_footnote(state)
+
+    product_key = str(candidate.get("product_id") or candidate.get("product_name") or "")
+    rank = revenue_rank.get(product_key)
+    lines = [
+        f"Sản phẩm bán nhiều nhất nhưng không nằm trong top 5 doanh thu trong {period}: {_product_name(candidate)}.",
+        f"Số lượng bán: {_format_count(candidate.get('qty'))} đơn vị; doanh thu: {_format_vnd(candidate.get('revenue'))}; xếp hạng doanh thu: #{rank}.",
+        "",
+        "| Chỉ số | Giá trị |",
+        "|---|---|",
+        f"| Sản phẩm | {_product_name(candidate)} |",
+        f"| Số lượng bán | {_format_count(candidate.get('qty'))} |",
+        f"| Doanh thu | {_format_vnd(candidate.get('revenue'))} |",
+        f"| Hạng doanh thu | #{rank} |",
+    ]
+    _append_common_footer(lines, state, now, recap=recap)
+    return "\n".join(lines) + _sql_verdict_footnote(state)
+
+
+def _format_codegen_product_revenue_summary_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
+    recap = _scope_recap_business_vi(state)
+    row = rows[0] if rows and isinstance(rows[0], dict) else {}
+    period = _period_from_rows_or_scope(state, rows)
+    product = _product_name(row)
+    lines = [
+        f"Doanh thu {product} trong {period}: {_format_vnd(row.get('revenue'))}.",
+        f"Số lượng bán: {_format_count(row.get('qty'))} đơn vị.",
+    ]
+    if row.get("outlet_count") is not None:
+        lines.append(f"Phạm vi kết quả có {_format_count(row.get('outlet_count'))} cửa hàng.")
+    if row.get("txn_count") is not None:
+        lines.append(f"Số giao dịch: {_format_count(row.get('txn_count'))}.")
+    _append_common_footer(lines, state, now, recap=recap)
+    return "\n".join(lines) + _codegen_assumption_footer(state) + _sql_verdict_footnote(state)
 
 
 def _format_yoy_revenue_answer(state: GraphState, rows: list[dict[str, Any]], now: str) -> str:
@@ -1667,7 +1942,7 @@ async def answer_formatter(state: GraphState) -> GraphState:
     if state.get("validation_errors") or not state.get("guard_passed", True) or state.get("execution_error"):
         execution_error = str(state.get("execution_error") or "")
         if execution_error and (
-            state.get("correction_attempts", 0) >= 2 or not is_self_correction_candidate(execution_error)
+            state.get("correction_attempts", 0) >= 3 or not is_self_correction_candidate(execution_error)
         ):
             state["answer_text"] = "Có lỗi khi truy xuất dữ liệu. Vui lòng thử lại sau."
             state["response_kind"] = "answer"
@@ -1882,11 +2157,54 @@ async def answer_formatter(state: GraphState) -> GraphState:
         state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_ai_sales_daily_outlets"})
         return state
 
+    if state.get("template_key") == "T38_product_directory":
+        state["answer_text"] = _format_product_directory_answer(state, rows, now)
+        state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+        state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_product_directory"})
+        return state
+
     if state.get("template_key") == "T31_outlet_directory":
         state["answer_text"] = _format_outlet_directory_answer(state, rows, now)
         state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
         state["response_kind"] = "answer"
         state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_outlet_directory"})
+        return state
+
+    codegen_pattern = _codegen_pattern(state)
+    if codegen_pattern == "top_product_revenue_by_outlet":
+        state["answer_text"] = _format_top_product_revenue_by_outlet_answer(state, rows, now)
+        state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+        state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_top_product_revenue_by_outlet"})
+        return state
+
+    if codegen_pattern == "top_category_revenue_by_region":
+        state["answer_text"] = _format_top_category_revenue_by_region_answer(state, rows, now)
+        state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+        state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_top_category_revenue_by_region"})
+        return state
+
+    if codegen_pattern == "top_qty_product_not_top_revenue_proxy":
+        state["answer_text"] = _format_top_qty_not_top_revenue_answer(state, rows, now)
+        state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+        state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_top_qty_not_top_revenue"})
+        return state
+
+    if _is_codegen_product_revenue_by_outlet(state, rows):
+        state["answer_text"] = _format_codegen_product_revenue_by_outlet_answer(state, rows, now)
+        state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+        state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_codegen_product_revenue_by_outlet"})
+        return state
+
+    if _is_codegen_product_revenue_summary(state, rows):
+        state["answer_text"] = _format_codegen_product_revenue_summary_answer(state, rows, now)
+        state["citations"] = [{"row_count": len(rows), "template": state.get("template_key")}]
+        state["response_kind"] = "answer"
+        state.setdefault("trace", []).append({"node": "answer_formatter", "source": "deterministic_codegen_product_revenue_summary"})
         return state
 
     s_fmt = get_settings()
@@ -1929,6 +2247,7 @@ Answer facts JSON (căn cứ duy nhất cho số liệu — không thêm số ng
 {json.dumps(facts, ensure_ascii=False, default=str)}
 
 Hãy phân tích dữ liệu trên và trả lời câu hỏi bằng tiếng Việt. Mở đầu bằng kết luận chính, sau đó nêu số liệu minh chứng và giới hạn dữ liệu nếu có.
+Nếu Answer facts có nhiều dòng chi tiết, hoặc câu hỏi yêu cầu "top", "cao nhất", "bán chạy", "từng cửa hàng", "theo sản phẩm", "so sánh tháng/kỳ", hãy render phần số liệu chi tiết bằng markdown table parseable với header + separator + rows có cùng số cột. Không trả chi tiết dạng "1. key=value; ..." nếu dữ liệu phù hợp để đưa vào bảng.
 Nếu dòng dữ liệu có `outlet_name`, luôn dùng tên cửa hàng làm nhãn chính; không dùng `outlet_id` trần làm tên cửa hàng. Chỉ nêu ID trong ngoặc khi cần đối chiếu kỹ thuật.
 Với câu hỏi xếp hạng/đóng góp doanh thu theo outlet, gọi rõ là "cửa hàng dẫn đầu/doanh thu cao nhất" thay vì "yếu tố" nếu không có phân rã nguyên nhân thực sự.
 Thời gian hiện tại: {now}.

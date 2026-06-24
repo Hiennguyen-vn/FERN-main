@@ -1297,19 +1297,18 @@ public class SalesRepository extends BaseRepository {
 
       // Resolve reason metadata if a structured code is supplied; enforce manager approval.
       VoidReasonRecord reasonRecord = null;
-      String resolvedReasonCode = reasonCode;
-      if (resolvedReasonCode != null && !resolvedReasonCode.isBlank()) {
-        reasonRecord = loadVoidReason(conn, resolvedReasonCode)
-            .orElseThrow(() -> ServiceException.badRequest("Unknown void reason: " + resolvedReasonCode));
-        if (reasonRecord.requiresManagerApproval && managerUserId == null) {
-          throw ServiceException.badRequest("Manager approval required for reason: " + resolvedReasonCode);
-        }
-        if (reasonRecord.requiresManagerApproval
-            && actorUserId != null
-            && managerUserId != null
-            && managerUserId.equals(actorUserId)) {
-          throw ServiceException.badRequest("Manager approver must differ from cashier");
-        }
+      final String resolvedReasonCode =
+          (reasonCode == null || reasonCode.isBlank()) ? "CUSTOMER_REFUSED" : reasonCode;
+      reasonRecord = loadVoidReason(conn, resolvedReasonCode)
+          .orElseThrow(() -> ServiceException.badRequest("Unknown void reason: " + resolvedReasonCode));
+      if (reasonRecord.requiresManagerApproval && managerUserId == null) {
+        throw ServiceException.badRequest("Manager approval required for reason: " + resolvedReasonCode);
+      }
+      if (reasonRecord.requiresManagerApproval
+          && actorUserId != null
+          && managerUserId != null
+          && managerUserId.equals(actorUserId)) {
+        throw ServiceException.badRequest("Manager approver must differ from cashier");
       }
 
       String cancellationNote = buildCancellationNote(lockedSale.note(), reason, actorUserId);

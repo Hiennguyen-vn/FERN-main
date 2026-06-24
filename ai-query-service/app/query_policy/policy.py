@@ -1047,6 +1047,7 @@ TEMPLATE_DATASETS: dict[str, str] = {
     "T29_stock_low_events": "fern.events_stock_low",
     # Lookup and controlled HR lane.
     "T31_outlet_directory": "cdc.outlet",
+    "T38_product_directory": "analytics.ai_product_daily",
     "HR_employee_work_hours": "core.work_shift",
     "HR_work_hours_total": "core.work_shift",
     "HR_attendance_top": "core.work_shift",

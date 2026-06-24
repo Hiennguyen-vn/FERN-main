@@ -26,8 +26,16 @@ until docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGR
 done
 
 docker compose run --rm -T db-tools psql -v ON_ERROR_STOP=1 <<SQL
+DROP SCHEMA IF EXISTS ai CASCADE;
+DROP SCHEMA IF EXISTS crm CASCADE;
+DROP SCHEMA IF EXISTS finance CASCADE;
 DROP SCHEMA IF EXISTS ${POSTGRES_SCHEMA} CASCADE;
 CREATE SCHEMA IF NOT EXISTS ${POSTGRES_SCHEMA};
+DELETE FROM partman.part_config
+ WHERE parent_table LIKE 'core.%'
+    OR parent_table LIKE 'crm.%'
+    OR parent_table LIKE 'finance.%'
+    OR parent_table LIKE 'ai.%';
 SQL
 
 docker compose run --rm flyway migrate

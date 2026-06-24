@@ -149,3 +149,16 @@ def search_outlets(term: str, *, limit: int = 5) -> list[dict[str, Any]]:
         """,
         {"term": cleaned, "pattern": f"%{cleaned}%", "limit": int(limit)},
     )
+
+
+def fetch_all_outlet_ids() -> list[int]:
+    """Return active Postgres outlet IDs for HR/RBAC queries."""
+    rows = execute_readonly(
+        """
+        SELECT id AS outlet_id
+        FROM core.outlet
+        WHERE deleted_at IS NULL
+        ORDER BY id
+        """,
+    )
+    return [int(row["outlet_id"]) for row in rows]

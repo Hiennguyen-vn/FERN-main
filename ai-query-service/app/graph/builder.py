@@ -103,7 +103,7 @@ def _route_after_rbac(state: GraphState) -> str:
 def _route_after_executor(state: GraphState) -> str:
     if (
         state.get("execution_error")
-        and state.get("correction_attempts", 0) < 2
+        and state.get("correction_attempts", 0) < 3
         and is_self_correction_candidate(state.get("execution_error"))
     ):
         return "self_correction"

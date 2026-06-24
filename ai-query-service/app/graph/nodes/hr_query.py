@@ -21,7 +21,7 @@ from app.graph.nodes.data_coverage import coverage_window_for_template, ensure_d
 from app.graph.outlet_scope import resolved_outlet_ids, scope_outlet_ids
 from app.graph.question_frame import question_text
 from app.graph.state import GraphState
-from app.rbac.policy import compute_allowed_outlets
+from app.rbac.policy import compute_allowed_outlets, has_global_scope
 from app.time_utils import has_time_expression, is_time_followup, parse_time_range, today_local
 
 logger = logging.getLogger(__name__)
@@ -1284,17 +1284,18 @@ def _allowed_outlets(
         if outlet_id not in requested:
             requested.append(outlet_id)
 
-    if _outlet_terms(state) and not explicit_requested:
+    if _outlet_terms(state) and not requested:
         return None, "Không tìm thấy outlet phù hợp trong phạm vi quyền của bạn. Bạn kiểm tra lại mã/tên outlet giúp tôi."
     if not requested:
         requested = scope_outlet_ids(state)
 
     try:
+        outlet_provider = pg.fetch_all_outlet_ids if has_global_scope(auth.roles) else all_outlet_ids_provider
         allowed = compute_allowed_outlets(
             auth_outlet_ids=auth.outlet_ids,
             requested_outlet_ids=requested or None,
             roles=auth.roles,
-            all_outlet_ids_provider=all_outlet_ids_provider,
+            all_outlet_ids_provider=outlet_provider,
         )
     except ValueError:
         return None, "Bạn không có quyền xem dữ liệu HR cho outlet đã yêu cầu."

@@ -1,6 +1,7 @@
 import contextvars
 import json
 import logging
+import re
 import time
 from typing import Any, Awaitable, Callable
 
@@ -239,6 +240,72 @@ def _response_output_text(resp: Any) -> str:
     return "".join(chunks)
 
 
+def _loads_json_object(text: str) -> dict:
+    raw = (text or "").strip()
+    if not raw:
+        raise json.JSONDecodeError("empty LLM output", raw, 0)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.IGNORECASE | re.DOTALL)
+        if fenced:
+            parsed = json.loads(fenced.group(1))
+        else:
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start < 0 or end <= start:
+                raise
+            parsed = json.loads(raw[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise json.JSONDecodeError("LLM output is not a JSON object", raw, 0)
+    return parsed
+
+
+def _validate_required_json_fields(parsed: dict, json_schema: dict[str, Any]) -> None:
+    schema = json_schema.get("schema") if isinstance(json_schema, dict) else None
+    if not isinstance(schema, dict):
+        return
+    required = schema.get("required") or []
+    if not isinstance(required, list):
+        return
+    missing = [field for field in required if field not in parsed]
+    if missing:
+        raise ValueError(f"LLM JSON output missing required fields: {', '.join(map(str, missing))}")
+
+
+async def _llm_call_json_text_retry(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    json_schema: dict[str, Any],
+    temperature: float,
+    max_tokens: int,
+    agent: str | None,
+    reason: Exception,
+) -> tuple[dict, dict]:
+    schema_text = json.dumps(json_schema.get("schema") or json_schema, ensure_ascii=False)
+    retry_system = (
+        f"{system_prompt}\n\n"
+        "The previous structured-output call failed because the provider did not return parseable JSON "
+        f"({type(reason).__name__}: {reason}). Return exactly one JSON object and no prose, no markdown. "
+        "The JSON object must satisfy this JSON Schema:\n"
+        f"{schema_text}"
+    )
+    text, usage = await llm_call_text(
+        system_prompt=retry_system,
+        user_prompt=user_prompt,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        agent=agent,
+    )
+    parsed = _loads_json_object(text)
+    _validate_required_json_fields(parsed, json_schema)
+    usage = dict(usage)
+    usage["structured_json_text_retry"] = True
+    usage["structured_json_retry_reason"] = type(reason).__name__
+    return parsed, usage
+
+
 def _responses_json_format(json_schema: dict[str, Any]) -> dict[str, Any]:
     return {
         "format": {
@@ -288,8 +355,20 @@ async def llm_call_json(
             return await client.responses.create(**kwargs)
 
         resp = await _with_fallback(model, _op)
-        parsed = json.loads(_response_output_text(resp) or "{}")
-        return parsed, _usage_with_model(_usage_from_response(resp, t0), model=model, agent=agent)
+        try:
+            parsed = _loads_json_object(_response_output_text(resp))
+            _validate_required_json_fields(parsed, json_schema)
+            return parsed, _usage_with_model(_usage_from_response(resp, t0), model=model, agent=agent)
+        except (json.JSONDecodeError, ValueError) as exc:
+            return await _llm_call_json_text_retry(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                json_schema=json_schema,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                agent=agent,
+                reason=exc,
+            )
 
     async def _op(client: AsyncOpenAI, m: str) -> Any:
         return await client.chat.completions.create(
@@ -307,8 +386,20 @@ async def llm_call_json(
         )
 
     resp = await _with_fallback(model, _op)
-    parsed = json.loads(resp.choices[0].message.content or "{}")
-    return parsed, _usage_with_model(_usage_from_chat(resp, t0), model=model, agent=agent)
+    try:
+        parsed = _loads_json_object(resp.choices[0].message.content or "")
+        _validate_required_json_fields(parsed, json_schema)
+        return parsed, _usage_with_model(_usage_from_chat(resp, t0), model=model, agent=agent)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return await _llm_call_json_text_retry(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            json_schema=json_schema,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            agent=agent,
+            reason=exc,
+        )
 
 
 async def llm_call_text(

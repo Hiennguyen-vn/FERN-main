@@ -2,13 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { salesApi, type SaleDetailView, type SaleListItemView } from '@/api/sales-api';
 import { useAuth } from '@/auth/use-auth';
 
-export function useQrOrders(outletId: string | null) {
+export function useQrOrders(outletId: string | null, enabled = true) {
   const { session } = useAuth();
   const token = session?.accessToken ?? '';
   return useQuery<SaleListItemView[]>({
     queryKey: ['qr-orders', outletId],
-    enabled: !!token && !!outletId,
+    enabled: !!token && !!outletId && enabled,
     refetchInterval: 10000,
+    staleTime: 5000,
     queryFn: async () => {
       const page = await salesApi.orders(token, {
         outletId: String(outletId),

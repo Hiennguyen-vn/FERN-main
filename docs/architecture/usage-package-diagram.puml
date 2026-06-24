@@ -1,0 +1,93 @@
+' FERN functional package diagram.
+' Three-layer package view: Presentation -> Core Business -> External Systems.
+
+@startuml
+title FERN ERP - System Functional Package Diagram
+top to bottom direction
+
+skinparam shadowing false
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam ArrowColor #425466
+skinparam ArrowFontSize 10
+skinparam package {
+  BackgroundColor #F7FAFC
+  BorderColor #2B4C7E
+  FontColor #16324F
+}
+skinparam frame {
+  BackgroundColor #FFFFFF
+  BorderColor #2B4C7E
+  FontColor #16324F
+}
+skinparam note {
+  BackgroundColor #FFF8DC
+  BorderColor #C9A227
+}
+
+frame "PRESENTATION PACKAGES" as PresentationLayer {
+  package "GUI_PublicOrdering\n<<boundary>>" as GUI_PublicOrdering
+  package "GUI_POSStaff\n<<boundary>>" as GUI_POSStaff
+  package "GUI_BackOffice\n<<boundary>>" as GUI_BackOffice
+  package "GUI_WorkforceFinance\n<<boundary>>" as GUI_WorkforceFinance
+  package "GUI_AdminAudit\n<<boundary>>" as GUI_AdminAudit
+  package "API_Gateway\n<<boundary>>" as API_Gateway
+}
+
+frame "CORE BUSINESS PACKAGES" as CoreLayer {
+  package "Core_AccessOrganization\n<<control/entity>>" as Core_AccessOrganization
+  package "Core_CatalogMenu\n<<entity>>" as Core_CatalogMenu
+  package "Core_SalesInventory\n<<control/entity>>" as Core_SalesInventory
+  package "Core_Procurement\n<<control>>" as Core_Procurement
+  package "Core_WorkforcePayroll\n<<control/entity>>" as Core_WorkforcePayroll
+  package "Core_FinanceReportingAudit\n<<control>>" as Core_FinanceReportingAudit
+  package "Core_ControlPlane\n<<control>>" as Core_ControlPlane
+}
+
+frame "EXTERNAL SYSTEMS AND DATA" as ExternalLayer {
+  package "DataStore_PostgreSQL\n<<external>>" as DataStore_PostgreSQL
+  package "EventBus_Kafka\n<<external>>" as EventBus_Kafka
+  package "Cache_Redis\n<<external>>" as Cache_Redis
+  package "Analytics_ClickHouse\n<<external>>" as Analytics_ClickHouse
+  package "Storage_ObjectStore\n<<external>>" as Storage_ObjectStore
+}
+
+GUI_PublicOrdering ..> API_Gateway : calls public APIs
+GUI_POSStaff ..> API_Gateway : calls POS APIs
+GUI_BackOffice ..> API_Gateway : calls back-office APIs
+GUI_WorkforceFinance ..> API_Gateway : calls workforce/finance APIs
+GUI_AdminAudit ..> API_Gateway : calls admin/audit APIs
+
+API_Gateway ..> Core_AccessOrganization : routes
+API_Gateway ..> Core_CatalogMenu : routes
+API_Gateway ..> Core_SalesInventory : routes
+API_Gateway ..> Core_Procurement : routes
+API_Gateway ..> Core_WorkforcePayroll : routes
+API_Gateway ..> Core_FinanceReportingAudit : routes
+API_Gateway ..> Core_ControlPlane : routes
+
+Core_SalesInventory ..> Core_CatalogMenu : uses menu/prices
+Core_Procurement ..> Core_SalesInventory : updates stock
+Core_WorkforcePayroll ..> Core_AccessOrganization : uses staff/outlet scope
+Core_FinanceReportingAudit ..> Core_SalesInventory : reads sales
+Core_FinanceReportingAudit ..> Core_Procurement : reads invoices
+Core_FinanceReportingAudit ..> Core_WorkforcePayroll : reads payroll
+Core_ControlPlane ..> Core_AccessOrganization : validates nodes/users
+
+CoreLayer ..> DataStore_PostgreSQL : persists operational data
+CoreLayer ..> EventBus_Kafka : publishes/consumes domain events
+API_Gateway ..> Cache_Redis : session/cache
+Core_ControlPlane ..> Cache_Redis : registry/cache
+Core_FinanceReportingAudit ..> Analytics_ClickHouse : analytics reads
+Core_CatalogMenu ..> Storage_ObjectStore : stores product images
+
+legend bottom
+Layering rule:
+Presentation packages depend on API/Core packages.
+Core packages may depend on other core packages only in one direction.
+Core packages depend downward on external systems/data.
+External packages do not depend back on the application.
+endlegend
+
+@enduml

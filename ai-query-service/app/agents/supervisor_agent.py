@@ -35,6 +35,7 @@ from app.agents.supervisor_routing import (
     apply_question_derived_template_params,
     deterministic_ai_sales_daily_outlet_shortcut,
     deterministic_category_template_shortcut,
+    deterministic_top_products_shortcut,
     ensure_template_params,
     normalise_template_key,
     verified_query_shortcut as _routing_verified_query_shortcut,
@@ -53,6 +54,7 @@ from app.time_utils import (
     build_time_context,
     has_time_expression,
     parse_time_range,
+    parse_two_month_ranges_for_comparison,
     parse_two_quarter_ranges_in_order,
     today_local,
 )
@@ -620,6 +622,7 @@ def _finance_template_for_question(question: str) -> str | None:
         "expense" in q
         or "chi phi theo loai" in q
         or "tong chi phi" in q
+        or "chi phi kinh doanh" in q
         or "chi phi hoat dong" in q
         or "bao cao finance" in q
     ):
@@ -651,6 +654,18 @@ def _unsupported_scope_for_question(question: str) -> tuple[str, str, str, str] 
     """
 
     q = _fold_text(question)
+
+    if any(token in q for token in ("thoi tiet", "weather", "nhiet do", "du bao mua", "mua ngay mai")):
+        return (
+            "unsupported:outside_business_domain",
+            (
+                "Hệ thống chỉ hỗ trợ truy vấn dữ liệu vận hành kinh doanh "
+                "(doanh thu, tồn kho, nhân sự, chi phí, sản phẩm). "
+                "Câu hỏi này nằm ngoài phạm vi hỗ trợ."
+            ),
+            "unsupported_outside_business_domain",
+            "unknown",
+        )
 
     cash_context = any(token in q for token in ("tien mat", "cash", "kiem quy", "quy tien"))
     cash_control = any(
@@ -845,15 +860,25 @@ def _is_hr_staff_question(question: str) -> bool:
 def _deterministic_template_override(question: str) -> str | None:
     q = _fold_text(question)
     category_template = _category_template_for_question(question)
+    product_ranking = (
+        any(token in q for token in ("san pham", "mat hang", "product", "mon "))
+        and (
+            any(token in q for token in ("doanh thu", "revenue", "sales", "ban duoc nhieu", "ban nhieu", "ban chay", "so luong ban"))
+        )
+        and any(token in q for token in ("cao nhat", "nhieu nhat", "top", "xep hang", "ranking", "rank", "nhat"))
+    )
     if re.search(r"\b(bao cao ban hang|cho xem doanh thu tuan nay)\b", q):
         return "T01_daily_revenue"
     if "xu huong doanh thu 30 ngay qua" in q or "daily revenue trend" in q:
         return "T01_daily_revenue"
-    if "ban duoc bao nhieu" in q:
+    if not product_ranking and "ban duoc bao nhieu" in q:
         return "T32_period_revenue_summary"
     if (
-        ("top cua hang" in q or "outlet tot nhat" in q or "cua hang tot nhat" in q or "cua hang yeu nhat" in q)
-        or (("outlet" in q or "cua hang" in q) and "doanh thu" in q and ("cao nhat" in q or "thap nhat" in q))
+        not product_ranking
+        and (
+            ("top cua hang" in q or "outlet tot nhat" in q or "cua hang tot nhat" in q or "cua hang yeu nhat" in q)
+            or (("outlet" in q or "cua hang" in q) and "doanh thu" in q and ("cao nhat" in q or "thap nhat" in q))
+        )
     ):
         return "T22_outlet_rank"
     if category_template:
@@ -998,6 +1023,113 @@ def _custom_sql_writer_override(question: str) -> tuple[bool, str | None]:
     template phrase ("theo outlet") but still needs SQL Writer logic.
     """
     q = _fold_text(question)
+    if (
+        ("ca phe den" in q or "cafe den" in q or "coffee den" in q)
+        and ("phan tram" in q or "ti le" in q or "ty le" in q or "%" in q)
+        and ("do uong" in q or "beverage" in q or "drink" in q)
+    ):
+        return True, "product_mix"
+    named_product_revenue = (
+        ("doanh thu" in q or "revenue" in q or "sales" in q)
+        and re.search(
+            r"\b(?:doanh thu|revenue|sales)\s+(?:cua\s+)?(?!cua\b|cua hang\b|outlet\b|store\b|tat ca\b|tong\b|tung\b|moi\b|cac\b|theo\b)([a-z0-9][a-z0-9 ]{2,80}?)\s+(?:thang|nam|tu ngay|trong nam|trong thang|hom nay|today)\b",
+            q,
+        )
+        and not any(
+            token in q
+            for token in (
+                "danh muc",
+                "nhom san pham",
+                "nhom mon",
+                "payment",
+                "thanh toan",
+                "phuong thuc",
+                "tung cua hang",
+                "theo cua hang",
+                "growth",
+                "tang truong",
+                "so sanh",
+                "o sanh",
+                "so voi",
+                "compare",
+                "thu trong tuan",
+                "ngay trong tuan",
+                "weekday",
+                "cao nhat",
+                "thap nhat",
+                "top ",
+                "xep hang",
+            )
+        )
+    )
+    named_product_revenue_by_outlet = (
+        ("doanh thu" in q or "revenue" in q or "sales" in q)
+        and (
+            "tung cua hang" in q
+            or "theo cua hang" in q
+            or "cac cua hang" in q
+            or "theo outlet" in q
+            or "per outlet" in q
+            or "by outlet" in q
+        )
+        and re.search(
+            r"\b(?:doanh thu|revenue|sales)\s+(?:cua\s+)?(?!cua\b|cua hang\b|outlet\b|store\b|tat ca\b|tong\b|tung\b|moi\b|cac\b|theo\b)([a-z0-9][a-z0-9 ]{2,80}?)\s+(?:thang|nam|tu ngay|trong nam|trong thang|hom nay|today)\b",
+            q,
+        )
+        and not any(
+            token in q
+            for token in (
+                "danh muc",
+                "nhom san pham",
+                "nhom mon",
+                "payment",
+                "thanh toan",
+                "growth",
+                "tang truong",
+                "so sanh",
+                "o sanh",
+                "so voi",
+                "compare",
+                "thu trong tuan",
+                "ngay trong tuan",
+                "weekday",
+                "cao nhat",
+                "thap nhat",
+                "top ",
+                "xep hang",
+            )
+        )
+    )
+    if named_product_revenue_by_outlet or named_product_revenue:
+        return True, "product_mix"
+    product_revenue_by_outlet = (
+        ("doanh thu" in q or "revenue" in q or "sales" in q)
+        and ("cua hang" in q or "outlet" in q or "store" in q)
+        and re.search(r"\bcua\s+(?!hang\b|cac\b|tat ca\b)([a-z0-9][a-z0-9 ]{2,80}?)\s+(?:la|dat|tren|theo)\b", q)
+        and not any(
+            token in q
+            for token in (
+                "danh muc",
+                "nhom san pham",
+                "nhom mon",
+                "payment",
+                "thanh toan",
+                "phuong thuc",
+            )
+        )
+    )
+    if product_revenue_by_outlet:
+        return True, "product_mix"
+    if (
+        ("doanh thu" in q or "revenue" in q or "sales" in q)
+        and (
+            "thu trong tuan" in q
+            or "ngay trong tuan" in q
+            or "weekday" in q
+            or "day of week" in q
+        )
+    ):
+        return True, "revenue"
     if (
         ("doanh thu" in q or "revenue" in q)
         and re.search(r"\b(gio|hour|hourly)\b", q)
@@ -1160,6 +1292,166 @@ def _revenue_driver_bridge_verified(question: str, ctx: str) -> dict[str, Any] |
     }
 
 
+def _revenue_month_comparison_verified(question: str) -> dict[str, Any] | None:
+    if "T36_revenue_period_driver_bridge" not in TEMPLATES:
+        return None
+    q = _fold_text(question)
+    if not any(x in q for x in ("so sanh", "o sanh", "so voi", "compare")):
+        return None
+    if not any(x in q for x in ("doanh thu", "doanh so", "revenue", "sales")):
+        return None
+    pair = parse_two_month_ranges_for_comparison(question, today=today_local())
+    if not pair:
+        return None
+    ra, rb = pair
+    params = {
+        "from_date_a": ra["from_date"],
+        "to_date_a": ra["to_date"],
+        "from_date_b": rb["from_date"],
+        "to_date_b": rb["to_date"],
+    }
+    return {
+        "template_key": "T36_revenue_period_driver_bridge",
+        "template_params": params,
+        "confidence": 0.99,
+        "asset": {
+            "template_key": "T36_revenue_period_driver_bridge",
+            "metric_ids": ["net_revenue", "txn_count", "outlet_count", "aov"],
+            "time_column": "business_date",
+            "outlet_column": "outlet_id",
+            "golden_cases": ["month_over_month_revenue_comparison"],
+        },
+    }
+
+
+def _comparison_periods_from_template_params(template_params: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(template_params, dict):
+        return None
+    if not {
+        "from_date_a",
+        "to_date_a",
+        "from_date_b",
+        "to_date_b",
+    }.issubset(template_params):
+        return None
+    return {
+        "period_a": {
+            "from_date": str(template_params.get("from_date_a") or ""),
+            "to_date": str(template_params.get("to_date_a") or ""),
+            "label": "Kỳ A",
+        },
+        "period_b": {
+            "from_date": str(template_params.get("from_date_b") or ""),
+            "to_date": str(template_params.get("to_date_b") or ""),
+            "label": "Kỳ B",
+        },
+    }
+
+
+def _sql_writer_contract(
+    *,
+    question: str,
+    route: str,
+    intent: str,
+    time_range: dict[str, Any],
+    raw_entities: dict[str, Any],
+    planning_frame: dict[str, Any] | None,
+    comparison_periods: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Structured handoff from Supervisor to SQL Writer.
+
+    The SQL Writer may still use an LLM for SQL synthesis, but it must not infer
+    the business task from the raw user sentence alone. This contract pins the
+    normalized task, metric, grain, time, entities, candidate datasets, and
+    expected result shape.
+    """
+
+    q = _fold_text(question)
+    frame = planning_frame if isinstance(planning_frame, dict) else {}
+    metric_ids: list[str] = []
+    preferred_tables: list[str] = []
+    grain = str(frame.get("grain") or "").strip()
+    output_shape = "table"
+    result_intent = intent
+
+    if intent in {"revenue", "outlet_compare", "trend"} or "doanh thu" in q or "revenue" in q:
+        metric_ids = ["net_revenue", "gross_revenue", "txn_count"]
+        preferred_tables = ["analytics.ai_sales_daily"]
+        if any(token in q for token in ("tung cua hang", "theo cua hang", "theo outlet", "moi cua hang")):
+            grain = "outlet"
+            output_shape = "outlet_rank_table"
+            result_intent = "outlet_compare"
+        elif not grain:
+            grain = "period_summary"
+            output_shape = "metric_summary"
+
+    if intent == "product_mix" or any(token in q for token in ("san pham", "mat hang", "product", "mon ")):
+        metric_ids = ["product_revenue", "qty", "txn_count"]
+        preferred_tables = ["analytics.ai_product_daily", "cdc.product"]
+        result_intent = "product_mix"
+        if any(token in q for token in ("tung cua hang", "theo cua hang", "cac cua hang", "theo outlet")):
+            grain = "outlet_product"
+            output_shape = "product_revenue_by_outlet_table"
+        else:
+            grain = "product"
+            output_shape = "product_metric_summary"
+
+    if intent in {"pnl", "finance"} or any(token in q for token in ("chi phi", "expense", "pnl", "loi nhuan")):
+        metric_ids = ["expense_amount"]
+        preferred_tables = ["fern.events_expense_created"]
+        result_intent = "pnl"
+        grain = "outlet" if any(token in q for token in ("tung cua hang", "theo cua hang", "theo outlet")) else (grain or "period_summary")
+        output_shape = "expense_by_outlet_table" if grain == "outlet" else "expense_summary"
+
+    if not grain:
+        grain = str(frame.get("task_type") or "metric_summary")
+
+    contract = {
+        "version": 1,
+        "source": "supervisor_agent",
+        "user_question": question,
+        "normalized_route": route,
+        "normalized_intent": result_intent,
+        "metric_ids": metric_ids,
+        "grain": grain,
+        "time_range": {
+            "from_date": str(time_range.get("from_date") or ""),
+            "to_date": str(time_range.get("to_date") or ""),
+        },
+        "entities": {
+            "outlet_names": list((raw_entities or {}).get("outlet_names") or []),
+            "product_names": list((raw_entities or {}).get("product_names") or []),
+            "categories": list((raw_entities or {}).get("categories") or []),
+            "employee_names": list((raw_entities or {}).get("employee_names") or []),
+        },
+        "preferred_tables": preferred_tables,
+        "output_shape": output_shape,
+        "must": [
+            "Use this contract as the source of truth over the raw user sentence.",
+            "Use exactly the contract time_range for business date filters unless a table policy requires another time column.",
+            "Preserve RBAC outlet scope; do not invent outlet filters outside validate_and_inject.",
+            "Return rows at the contract grain; do not collapse outlet/product breakdowns into a global summary.",
+        ],
+        "avoid": [
+            "Do not switch to a generic revenue summary when product_names/product-like text or product grain is present.",
+            "Do not query fallback/raw tables when a preferred analytics mart covers the metric and grain.",
+            "Do not substitute another period when coverage is empty; return an empty result with rationale.",
+        ],
+    }
+    if comparison_periods:
+        contract["comparison_periods"] = comparison_periods
+        contract["grain"] = "period_comparison"
+        contract["output_shape"] = "period_comparison_table"
+        contract["must"].extend(
+            [
+                "For comparison_periods, query BOTH period_a and period_b in the same SQL using conditional aggregation.",
+                "Do not filter only one period. WHERE must cover the union from min(period_a.from_date, period_b.from_date) to max(period_a.to_date, period_b.to_date).",
+                "Return one row with separate columns for period_a and period_b metrics plus delta/pct_delta when possible.",
+            ]
+        )
+    return contract
+
+
 def _investigative_revenue_driver_bridge(
     question: str,
     ctx: str,
@@ -1231,12 +1523,19 @@ def _apply_question_derived_template_params(
     params: dict[str, Any],
     question: str,
 ) -> dict[str, Any]:
-    if template_key != "T22_outlet_rank":
-        return params
-    rank_direction = _rank_direction_from_question(question)
-    if not rank_direction:
-        return params
-    return {**params, "rank_direction": rank_direction}
+    q = _fold_text(question)
+    out = dict(params)
+    if template_key == "T22_outlet_rank":
+        rank_direction = _rank_direction_from_question(question)
+        if rank_direction:
+            out["rank_direction"] = rank_direction
+    if template_key == "T04_top_products" and any(
+        token in q for token in ("do uong", "drink", "drinks", "beverage", "beverages", "nuoc uong")
+    ):
+        out["category_codes"] = ["DRINK", "beverage"]
+    if template_key == "T04_top_products" and any(token in q for token in ("doanh thu", "revenue", "sales")):
+        out["sort_by"] = "revenue"
+    return out
 
 
 def _verified_query_shortcut(
@@ -1263,6 +1562,132 @@ def _verified_query_shortcut(
             "outlet_column": match.asset.outlet_column,
             "golden_cases": list(match.asset.golden_cases),
         },
+    }
+
+
+def _verified_template_cache_allowed(verified: dict[str, Any] | None) -> bool:
+    """Allow a verified template to answer without LLM only as high-confidence cache."""
+    if not verified:
+        return False
+    settings = get_settings()
+    if not settings.template_cache_on_llm_unavailable_enabled:
+        return False
+    return float(verified.get("confidence") or 0.0) >= float(settings.template_cache_min_confidence)
+
+
+def _llm_unavailable_supervisor_fallback(
+    *,
+    verified: dict[str, Any] | None,
+    intent_hint: str | None,
+    deterministic_time: dict[str, str],
+    message: str,
+) -> dict[str, Any]:
+    if _verified_template_cache_allowed(verified):
+        return {
+            "route": "data_query",
+            "intent": intent_hint or "unknown",
+            "confidence": float(verified.get("confidence") or 0.0),
+            "time_range": deterministic_time,
+            "raw_entities": {
+                "outlet_names": [],
+                "product_names": [],
+                "categories": [],
+                "employee_names": [],
+            },
+            "template_key": verified["template_key"],
+            "template_params": verified["template_params"],
+            "needs_sql_writer": False,
+            "clarification_question": None,
+            "template_cache_source": "verified_query_llm_unavailable",
+        }
+
+    return {
+        "route": "clarification",
+        "intent": intent_hint or "unknown",
+        "confidence": 0.0,
+        "time_range": deterministic_time,
+        "raw_entities": {
+            "outlet_names": [],
+            "product_names": [],
+            "categories": [],
+            "employee_names": [],
+        },
+        "template_key": None,
+        "template_params": {},
+        "needs_sql_writer": False,
+        "clarification_question": message,
+        "template_cache_source": "blocked_llm_unavailable_low_confidence",
+    }
+
+
+def _sql_writer_fallback_when_llm_unavailable(
+    *,
+    question: str,
+    deterministic_time: dict[str, str],
+    forced_intent: str | None,
+    verified: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    folded_question = _fold_text(question)
+    if invalid_time_reason(question) or invalid_time_reason(folded_question):
+        return None
+    q = folded_question
+    data_terms = (
+        "doanh thu",
+        "doanh so",
+        "revenue",
+        "sales",
+        "san pham",
+        "mat hang",
+        "product",
+        "nhom san pham",
+        "aov",
+        "so giao dich",
+        "cuoi tuan",
+        "ngay thuong",
+    )
+    if not any(term in q for term in data_terms):
+        return None
+    hard_sql_writer_shape = any(
+        term in q
+        for term in (
+            "aov",
+            "cuoi tuan",
+            "ngay thuong",
+            "phan tram",
+            "ti le",
+            "ty le",
+            "so giao dich cao nhat",
+            "so luong ban tang",
+            "ban tang",
+            "khong nam trong top 5",
+            "khong trong top 5",
+        )
+    )
+    if verified is not None and not (
+        not getattr(get_settings(), "template_response_enabled", True) and hard_sql_writer_shape
+    ):
+        return None
+    if any(term in q for term in ("san pham", "mat hang", "product", "nhom san pham", "mon ")):
+        intent = "product_mix"
+    elif any(term in q for term in ("chi phi", "expense", "pnl", "loi nhuan")):
+        intent = "pnl"
+    else:
+        intent = forced_intent or "revenue"
+    return {
+        "route": "data_query",
+        "intent": intent,
+        "confidence": 0.62,
+        "time_range": dict(deterministic_time),
+        "raw_entities": {
+            "outlet_names": [],
+            "product_names": [],
+            "categories": [],
+            "employee_names": [],
+        },
+        "template_key": None,
+        "template_params": {},
+        "needs_sql_writer": True,
+        "clarification_question": None,
     }
 
 
@@ -1333,16 +1758,20 @@ async def supervisor_agent(state: GraphState) -> GraphState:
     deterministic_shortcut = (
         deterministic_ai_sales_daily_outlet_shortcut(current)
         or deterministic_category_template_shortcut(current, deterministic_time)
+        or deterministic_top_products_shortcut(current, deterministic_time)
     )
 
     # ---- Pre-flight: verified-query asset (regex) → bypass LLM matching ----
     intent_hint = state.get("intent")
-    driver_v = None if deterministic_shortcut else _revenue_driver_bridge_verified(current, ctx)
-    verified = None if deterministic_shortcut else (
+    force_codegen, forced_codegen_intent = _custom_sql_writer_override(current)
+    driver_v = None if deterministic_shortcut or force_codegen else _revenue_driver_bridge_verified(current, ctx)
+    month_compare_v = None if deterministic_shortcut or force_codegen else _revenue_month_comparison_verified(current)
+    verified = None if deterministic_shortcut or force_codegen else (
         driver_v
+        or month_compare_v
         or _verified_query_shortcut(question=current, intent=intent_hint, time_range=deterministic_time)
     )
-    template_override = _deterministic_template_override(current)
+    template_override = None if force_codegen else _deterministic_template_override(current)
 
     # ---- LLM call (always run for route + entities + intent normalisation) ----
     if deterministic_shortcut:
@@ -1381,26 +1810,24 @@ async def supervisor_agent(state: GraphState) -> GraphState:
                 reason=str(exc),
                 provider_meta=get_last_provider_meta(),
             )
+            fallback_message = (
+                "Dịch vụ AI tạm thời không khả dụng nên tôi không tự trả lời bằng template "
+                "khi độ tin cậy chưa đủ cao. Bạn vui lòng thử lại sau giây lát."
+            )
+            sql_writer_fallback = _sql_writer_fallback_when_llm_unavailable(
+                question=current,
+                deterministic_time=deterministic_time,
+                forced_intent=forced_codegen_intent,
+                verified=verified,
+            )
             parsed, usage = (
-                {
-                    "route": "clarification" if not verified else "data_query",
-                    "intent": intent_hint or "unknown",
-                    "confidence": 0.0,
-                    "time_range": deterministic_time,
-                    "raw_entities": {
-                        "outlet_names": [],
-                        "product_names": [],
-                        "categories": [],
-                        "employee_names": [],
-                    },
-                    "template_key": verified["template_key"] if verified else None,
-                    "template_params": verified["template_params"] if verified else {},
-                    "needs_sql_writer": False,
-                    "clarification_question": None if verified else (
-                        "Dịch vụ AI tạm thời không khả dụng. "
-                        "Bạn vui lòng thử lại sau giây lát hoặc làm rõ thêm câu hỏi."
-                    ),
-                },
+                sql_writer_fallback
+                or _llm_unavailable_supervisor_fallback(
+                    verified=verified,
+                    intent_hint=intent_hint,
+                    deterministic_time=deterministic_time,
+                    message=fallback_message,
+                ),
                 {
                     "error": "LLMUnavailable",
                     "latency_ms": 0,
@@ -1411,25 +1838,24 @@ async def supervisor_agent(state: GraphState) -> GraphState:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("supervisor_agent LLM failed, falling back to verified-only: %s", exc)
+            fallback_message = (
+                "Dịch vụ AI tạm thời gặp lỗi nên tôi không tự trả lời bằng template "
+                "khi độ tin cậy chưa đủ cao. Bạn vui lòng thử lại sau giây lát."
+            )
+            sql_writer_fallback = _sql_writer_fallback_when_llm_unavailable(
+                question=current,
+                deterministic_time=deterministic_time,
+                forced_intent=forced_codegen_intent,
+                verified=verified,
+            )
             parsed, usage = (
-                {
-                    "route": "clarification" if not verified else "data_query",
-                    "intent": intent_hint or "unknown",
-                    "confidence": 0.0,
-                    "time_range": deterministic_time,
-                    "raw_entities": {
-                        "outlet_names": [],
-                        "product_names": [],
-                        "categories": [],
-                        "employee_names": [],
-                    },
-                    "template_key": verified["template_key"] if verified else None,
-                    "template_params": verified["template_params"] if verified else {},
-                    "needs_sql_writer": False,
-                    "clarification_question": None
-                    if verified
-                    else "Bạn vui lòng diễn đạt lại câu hỏi với khoảng thời gian rõ hơn nhé.",
-                },
+                sql_writer_fallback
+                or _llm_unavailable_supervisor_fallback(
+                    verified=verified,
+                    intent_hint=intent_hint,
+                    deterministic_time=deterministic_time,
+                    message=fallback_message,
+                ),
                 {"error": type(exc).__name__, "latency_ms": 0, "tokens_in": 0, "tokens_out": 0},
             )
 
@@ -1445,9 +1871,10 @@ async def supervisor_agent(state: GraphState) -> GraphState:
             pass
 
     # ---- Normalise template_key against registry ----
+    verified_cache_blocked = parsed.get("template_cache_source") == "blocked_llm_unavailable_low_confidence"
     raw_template = parsed.get("template_key")
     template_key = normalise_template_key(raw_template)
-    verified_key = verified["template_key"] if verified else None
+    verified_key = verified["template_key"] if verified and not verified_cache_blocked else None
     verified_is_core_insight = bool(
         verified_key
         and (
@@ -1458,14 +1885,14 @@ async def supervisor_agent(state: GraphState) -> GraphState:
     )
     if verified_is_core_insight:
         template_key = verified["template_key"]
-    elif template_override:
+    elif template_override and not verified_cache_blocked:
         template_key = template_override
-    elif verified:
+    elif verified and not verified_cache_blocked:
         template_key = verified["template_key"]
 
     template_params = ensure_template_params(
         template_key,
-        verified["template_params"] if verified else parsed.get("template_params"),
+        verified["template_params"] if verified and not verified_cache_blocked else parsed.get("template_params"),
         parsed.get("time_range") or deterministic_time,
     )
 
@@ -1531,7 +1958,6 @@ async def supervisor_agent(state: GraphState) -> GraphState:
         needs_sql_writer = True
     if route in {"social", "hr_staff", "docs_question", "clarification"}:
         needs_sql_writer = False
-    force_codegen, forced_codegen_intent = _custom_sql_writer_override(current)
     if force_codegen and route == "clarification":
         route = "data_query"
     if force_codegen and route in {"data_query", "export_request", "visualization_request"}:
@@ -1553,11 +1979,18 @@ async def supervisor_agent(state: GraphState) -> GraphState:
         template_params = {}
         needs_sql_writer = True
 
+    if route in {"data_query", "export_request", "visualization_request"} and not template_key:
+        # Safety net: a data lane without a verified template must not end at a
+        # blank formatter just because the LLM forgot to set needs_sql_writer.
+        # The slot gate below still converts genuinely underspecified requests
+        # into a clarification before SQL generation.
+        needs_sql_writer = True
+
     clar = parsed.get("clarification_question") or None
     if route != "clarification":
         clar = None
 
-    investigative = _detect_investigative_intent(current) and route in {
+    investigative = (not force_codegen) and _detect_investigative_intent(current) and route in {
         "data_query",
         "export_request",
         "visualization_request",
@@ -1618,6 +2051,17 @@ async def supervisor_agent(state: GraphState) -> GraphState:
                 template_params = {}
                 needs_sql_writer = True
 
+    if verified_cache_blocked:
+        route = "clarification"
+        template_key = None
+        template_params = {}
+        needs_sql_writer = False
+        investigative_mode_flag = False
+        clar = parsed.get("clarification_question") or (
+            "Dịch vụ AI tạm thời không khả dụng nên tôi không tự trả lời bằng template "
+            "khi độ tin cậy chưa đủ cao. Bạn vui lòng thử lại sau giây lát."
+        )
+
     template_params = apply_question_derived_template_params(template_key, template_params, current)
 
     # ---- Commit to state ----
@@ -1641,7 +2085,12 @@ async def supervisor_agent(state: GraphState) -> GraphState:
     state["visualization_requested"] = route == "visualization_request"
     state["response_kind"] = "clarification" if route == "clarification" else "answer"
     state["clarification_question"] = clar
-    if verified:
+    state["llm_used"] = bool(int(usage.get("tokens_in") or 0) or int(usage.get("tokens_out") or 0))
+    if template_key and not state["llm_used"]:
+        state["template_cache_source"] = parsed.get("template_cache_source") or "deterministic_shortcut"
+    elif parsed.get("template_cache_source"):
+        state["template_cache_source"] = parsed.get("template_cache_source")
+    if verified and not verified_cache_blocked:
         state["verified_query_asset"] = verified["asset"]
 
     # Align Finch with legacy supervisor: structured planning_frame + slot gate before SQL writer.
@@ -1666,6 +2115,15 @@ async def supervisor_agent(state: GraphState) -> GraphState:
                 "Không sinh báo cáo khác ngoài template đã ghim trừ khi matcher từ chối.",
             ],
         }
+        state["sql_writer_contract"] = _sql_writer_contract(
+            question=current,
+            route=route,
+            intent=intent,
+            time_range=state["time_range"],
+            raw_entities=state["raw_entities"],
+            planning_frame=state["planning_frame"],
+            comparison_periods=_comparison_periods_from_template_params(template_params),
+        )
     elif route == "clarification":
         state["planning_frame"] = {
             "next_action": "ask_clarification",
@@ -1703,6 +2161,15 @@ async def supervisor_agent(state: GraphState) -> GraphState:
             state=state,
         )
         state["planning_frame"] = planning
+        state["sql_writer_contract"] = _sql_writer_contract(
+            question=current,
+            route=route,
+            intent=intent,
+            time_range=state["time_range"],
+            raw_entities=state["raw_entities"],
+            planning_frame=planning,
+            comparison_periods=_comparison_periods_from_template_params(template_params),
+        )
         if planning.get("next_action") == "ask_clarification" and not skip_slot_gate:
             _install_planning_frame(state, planning)
             state["needs_sql_writer"] = False
@@ -1741,6 +2208,7 @@ async def supervisor_agent(state: GraphState) -> GraphState:
             "verified_hit": bool(verified),
             "forced_codegen": bool(force_codegen),
             "planning_next_action": (state.get("planning_frame") or {}).get("next_action"),
+            "sql_writer_contract": bool(state.get("sql_writer_contract")),
             **(usage if isinstance(usage, dict) else {}),
         }
     )

@@ -35,6 +35,7 @@ TIÊU CHÍ KIỂM TRA:
 4. leak: Nếu DRAFT lộ tên template_key (T01_*, T22_*), từ "SQL", "prompt", "reviewer", "pipeline" → flag.
 5. tone: Câu trả lời có rõ ràng, có kết luận đầu, có nguồn dữ liệu cuối không.
 6. list_completeness: Nếu answer_facts có preview_includes_all_rows=true (hoặc row_count == len(preview_rows)) và câu hỏi là xếp hạng/danh sách — DRAFT không được bỏ bớt hạng so với preview_rows trừ khi đang sửa lỗi số liệu sai.
+7. table_format: Nếu DRAFT_ANSWER có bảng markdown, hoặc answer_facts là danh sách/xếp hạng/so sánh nhiều dòng, bảng phải parseable: header row, separator row `|---|---|`, mọi dòng cùng số cột, bảng đứng riêng, không nằm trong code fence. Nếu junior dùng numbered list kiểu `key=value` cho dữ liệu nhiều dòng có thể thành bảng → flag table_format mức low/medium và sửa thành bảng.
 
 QUYẾT ĐỊNH (verdict):
 - "approve": không có issue nào hoặc chỉ có issue severity=low không ảnh hưởng dữ liệu.
@@ -46,6 +47,7 @@ QUY TẮC TUYỆT ĐỐI:
 - ID/phạm vi trong scope_facts/source_context (outlet_id, ngày, row_count, allowed_outlet_count) là nguồn hợp lệ; không flag chỉ vì số đó không nằm trong preview_rows.
 - Nếu không chắc → để verdict="approve" và note severity=low.
 - revised_answer_vi (nếu có) phải hoàn chỉnh, sẵn sàng gửi user — không được dạng diff/patch.
+- Khi revised_answer_vi có dữ liệu dạng bảng/ranking/breakdown, phải giữ hoặc chuyển sang markdown table chuẩn parseable; không phá header/separator của bảng.
 - confidence là độ tự tin vào verdict, không phải vào câu trả lời.
 """
 
@@ -73,6 +75,7 @@ _REVIEWER_SCHEMA: dict[str, Any] = {
                                 "wrong_metric",
                                 "leak",
                                 "tone",
+                                "table_format",
                                 "other",
                             ],
                         },
@@ -90,7 +93,14 @@ _REVIEWER_SCHEMA: dict[str, Any] = {
 
 
 _DETERMINISTIC_INSIGHT_PREFIXES = ("INS_", "ANOM_", "FORECAST_")
-_DETERMINISTIC_LOOKUP_TEMPLATES = {"T31_outlet_directory", "T37_ai_sales_daily_outlets"}
+_DETERMINISTIC_LOOKUP_TEMPLATES = {"T31_outlet_directory", "T37_ai_sales_daily_outlets", "T38_product_directory"}
+_DETERMINISTIC_FORMATTER_SOURCES = {
+    "deterministic_top_product_revenue_by_outlet",
+    "deterministic_top_category_revenue_by_region",
+    "deterministic_top_qty_not_top_revenue",
+    "deterministic_codegen_product_revenue_by_outlet",
+    "deterministic_codegen_product_revenue_summary",
+}
 
 
 def _should_skip(state: GraphState) -> tuple[bool, str]:
@@ -102,6 +112,14 @@ def _should_skip(state: GraphState) -> tuple[bool, str]:
         return True, "deterministic_insight"
     if template_key in _DETERMINISTIC_LOOKUP_TEMPLATES or state.get("intent") == "lookup":
         return True, "deterministic_lookup"
+    trace = state.get("trace") or []
+    if any(
+        isinstance(item, dict)
+        and item.get("node") == "answer_formatter"
+        and str(item.get("source") or "") in _DETERMINISTIC_FORMATTER_SOURCES
+        for item in trace
+    ):
+        return True, "deterministic_formatter"
     rk = state.get("response_kind")
     if rk in {"clarification", "unsupported"}:
         return True, "non_data_response"

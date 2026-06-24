@@ -101,6 +101,9 @@ api_service_name_for_path() {
     /api/v1/report/*|/api/v1/reports/*)
       printf 'report-service'
       ;;
+    /api/v1/ai-query/*)
+      printf 'ai-query-service'
+      ;;
     *)
       return 1
       ;;

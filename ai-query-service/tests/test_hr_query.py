@@ -28,6 +28,8 @@ def _settings(**overrides):
 def test_hr_staff_list_runs_static_scoped_query(monkeypatch):
     monkeypatch.setattr(hr, "get_settings", lambda: _settings())
 
+    monkeypatch.setattr(hr.pg, "fetch_all_outlet_ids", lambda: [outlet_id])
+
     def fake_execute(sql, params):
         assert sql == hr._STAFF_LIST_SQL
         assert params["outlet_ids"] == [2000]
@@ -62,6 +64,102 @@ def test_hr_staff_list_runs_static_scoped_query(monkeypatch):
     assert out["raw_result"][0]["user_id"] == 3013
     assert "Workflow HCM Cashier" in out["answer_text"]
     assert out["skip_answer_formatter_llm"] is True
+
+
+def test_hr_staff_list_resolves_named_outlet_when_entity_resolver_misses(monkeypatch):
+    monkeypatch.setattr(hr, "get_settings", lambda: _settings())
+    outlet_id = 3501467778118336512
+    monkeypatch.setattr(
+        hr.pg,
+        "search_outlets",
+        lambda term, *, limit=3: [
+            {"outlet_id": outlet_id, "outlet_code": "SIM-SMALL-OUT-0002", "outlet_name": "Outlet VN-HCM-2"}
+        ]
+        if "VN-HCM-2" in term
+        else [],
+    )
+    monkeypatch.setattr(hr.pg, "fetch_all_outlet_ids", lambda: [outlet_id])
+
+    def fake_execute(sql, params):
+        assert sql == hr._STAFF_LIST_SQL
+        assert params["outlet_ids"] == [outlet_id]
+        return [
+            {
+                "user_id": 3020,
+                "full_name": "Outlet Two Staff",
+                "username": "outlet.two.staff",
+                "employee_code": "SIM-SMALL-EMP-3020",
+                "status": "active",
+                "outlet_id": outlet_id,
+                "outlet_code": "SIM-SMALL-OUT-0002",
+                "outlet_name": "Outlet VN-HCM-2",
+                "last_work_date": None,
+            }
+        ]
+
+    monkeypatch.setattr(hr.pg, "execute_readonly", fake_execute)
+    node = hr.make_hr_query(lambda: [outlet_id])
+    state = {
+        "auth": _auth({"superadmin"}, {outlet_id}),
+        "normalized_question": "cửa hàng Outlet VN-HCM-2 có mấy nhân viên",
+        "raw_entities": {"outlet_names": ["Outlet VN-HCM-2"], "product_names": [], "categories": [], "employee_names": []},
+        "resolved_entities": {},
+        "trace": [],
+    }
+
+    out = node(state)
+
+    assert out["response_kind"] == "answer"
+    assert out["template_key"] == "HR_staff_list"
+    assert out["allowed_outlet_ids"] == [outlet_id]
+    assert "Outlet Two Staff" in out["answer_text"]
+
+
+def test_hr_global_scope_uses_postgres_outlet_provider(monkeypatch):
+    monkeypatch.setattr(hr, "get_settings", lambda: _settings())
+    outlet_id = 3501467778118336512
+    monkeypatch.setattr(hr.pg, "fetch_all_outlet_ids", lambda: [outlet_id])
+    monkeypatch.setattr(
+        hr.pg,
+        "search_outlets",
+        lambda term, *, limit=3: [
+            {"outlet_id": outlet_id, "outlet_code": "SIM-SMALL-OUT-0002", "outlet_name": "Outlet VN-HCM-2"}
+        ],
+    )
+
+    def fake_execute(sql, params):
+        assert sql == hr._STAFF_LIST_SQL
+        assert params["outlet_ids"] == [outlet_id]
+        return [
+            {
+                "user_id": 3020,
+                "full_name": "Outlet Two Staff",
+                "username": "outlet.two.staff",
+                "employee_code": "SIM-SMALL-EMP-3020",
+                "status": "active",
+                "outlet_id": outlet_id,
+                "outlet_code": "SIM-SMALL-OUT-0002",
+                "outlet_name": "Outlet VN-HCM-2",
+                "last_work_date": None,
+            }
+        ]
+
+    monkeypatch.setattr(hr.pg, "execute_readonly", fake_execute)
+    node = hr.make_hr_query(lambda: [3491811224679104512])
+    state = {
+        "auth": _auth({"superadmin"}, {2000, 2001}),
+        "normalized_question": "cửa hàng Outlet VN-HCM-2 có mấy nhân viên",
+        "raw_entities": {"outlet_names": ["Outlet VN-HCM-2"], "product_names": [], "categories": [], "employee_names": []},
+        "resolved_entities": {},
+        "trace": [],
+    }
+
+    out = node(state)
+
+    assert out["response_kind"] == "answer"
+    assert out["template_key"] == "HR_staff_list"
+    assert out["allowed_outlet_ids"] == [outlet_id]
+    assert "Outlet Two Staff" in out["answer_text"]
 
 
 def test_hr_staff_list_small_result_lists_every_employee(monkeypatch):

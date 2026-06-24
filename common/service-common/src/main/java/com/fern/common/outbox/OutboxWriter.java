@@ -1,6 +1,8 @@
 package com.fern.common.outbox;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
@@ -15,7 +17,10 @@ public class OutboxWriter {
     private final IdGenerator idGenerator;
 
     public OutboxWriter(ObjectMapper objectMapper, IdGenerator idGenerator) {
-        this.objectMapper = objectMapper;
+        ObjectMapper mapper = objectMapper.copy();
+        mapper.registerModule(new JavaTimeModule());
+        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        this.objectMapper = mapper;
         this.idGenerator = idGenerator;
     }
 

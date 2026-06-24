@@ -60,6 +60,15 @@ def test_parse_time_range_common_phrases(text, expected):
     assert parse_time_range(text, today=TODAY) == expected
 
 
+def test_parse_time_range_ignores_dates_inside_outlet_codes():
+    question = "Outlet VN-DN-2 (SIM-2Y-2026-05-19-OUT-0011) doanh thu của cửa hàng này trong năm nay"
+
+    assert parse_time_range(question, today=date(2026, 6, 21)) == {
+        "from_date": "2026-01-01",
+        "to_date": "2026-06-21",
+    }
+
+
 @pytest.mark.parametrize(
     ("context_text", "expected"),
     [

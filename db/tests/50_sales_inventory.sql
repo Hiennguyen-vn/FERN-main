@@ -128,7 +128,8 @@ INSERT INTO core.sale_record (
   subtotal,
   discount,
   tax_amount,
-  total_amount
+  total_amount,
+  created_at
 )
 VALUES (
   950400,
@@ -141,11 +142,14 @@ VALUES (
   65000.00,
   5000.00,
   6000.00,
-  66000.00
+  66000.00,
+  TIMESTAMPTZ '2025-03-10 08:30:00+07'
 );
 
 INSERT INTO core.sale_item (
   sale_id,
+  sale_created_at,
+  outlet_id,
   product_id,
   unit_price,
   qty,
@@ -155,6 +159,8 @@ INSERT INTO core.sale_item (
 )
 VALUES (
   950400,
+  TIMESTAMPTZ '2025-03-10 08:30:00+07',
+  950001,
   950201,
   65000.00,
   1.0000,
@@ -168,6 +174,8 @@ BEGIN
   BEGIN
     INSERT INTO core.sale_item (
       sale_id,
+      sale_created_at,
+      outlet_id,
       product_id,
       unit_price,
       qty,
@@ -177,6 +185,8 @@ BEGIN
     )
     VALUES (
       950400,
+      TIMESTAMPTZ '2025-03-10 08:30:00+07',
+      950001,
       950201,
       65000.00,
       2.0000,
@@ -195,6 +205,8 @@ $$;
 
 INSERT INTO core.payment (
   sale_id,
+  sale_created_at,
+  outlet_id,
   pos_session_id,
   payment_method,
   amount,
@@ -203,6 +215,8 @@ INSERT INTO core.payment (
 )
 VALUES (
   950400,
+  TIMESTAMPTZ '2025-03-10 08:30:00+07',
+  950001,
   950300,
   'card',
   66000.00,
@@ -215,6 +229,8 @@ BEGIN
   BEGIN
     INSERT INTO core.payment (
       sale_id,
+      sale_created_at,
+      outlet_id,
       pos_session_id,
       payment_method,
       amount,
@@ -223,6 +239,8 @@ BEGIN
     )
     VALUES (
       950400,
+      TIMESTAMPTZ '2025-03-10 08:30:00+07',
+      950001,
       950300,
       'cash',
       66000.00,

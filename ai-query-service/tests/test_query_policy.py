@@ -337,7 +337,7 @@ def test_verified_query_selector_prefers_top_products_for_product_revenue_rankin
     )
     assert top_product is not None
     assert top_product.template_key == "T04_top_products"
-    assert top_product.params == {**time_range, "limit": 10}
+    assert top_product.params == {**time_range, "limit": 1, "sort_by": "revenue"}
 
 
 def test_verified_query_selector_picks_core_insight_assets():
@@ -404,3 +404,10 @@ def test_verified_query_t32_matches_toan_bo_with_revenue_nearby():
     m = select_verified_query(question="doanh thu toàn bộ tháng này", intent="revenue", time_range=tr)
     assert m is not None
     assert m.template_key == "T32_period_revenue_summary"
+
+
+def test_verified_query_tung_cua_hang_prefers_outlet_breakdown():
+    tr = {"from_date": "2026-01-01", "to_date": "2026-05-19"}
+    m = select_verified_query(question="doanh thu của từng cửa hàng trong năm 2026", intent="revenue", time_range=tr)
+    assert m is not None
+    assert m.template_key == "T02_revenue_by_outlet"

@@ -14,8 +14,11 @@ def test_self_correction_classifier_is_strict():
 
 def test_route_after_executor_only_retries_fixable_errors():
     assert builder._route_after_executor(  # noqa: SLF001
-        {"execution_error": "Syntax error: failed at position 9", "correction_attempts": 1}
+        {"execution_error": "Syntax error: failed at position 9", "correction_attempts": 2}
     ) == "self_correction"
+    assert builder._route_after_executor(  # noqa: SLF001
+        {"execution_error": "Syntax error: failed at position 9", "correction_attempts": 3}
+    ) == "answer_formatter"
     assert builder._route_after_executor(  # noqa: SLF001
         {"execution_error": "Unknown table analytics.nope", "correction_attempts": 1}
     ) == "answer_formatter"
@@ -65,3 +68,50 @@ async def test_self_correction_skips_non_fixable_error(monkeypatch):
 
     assert out["self_correction_applied"] is False
     assert out["trace"][-1]["reason"] == "non_fixable_error"
+
+
+@pytest.mark.asyncio
+async def test_self_correction_deterministically_fixes_clickhouse_syntax(monkeypatch):
+    async def fail_llm(*_args, **_kwargs):
+        raise AssertionError("LLM should not run when deterministic ClickHouse fix applies")
+
+    monkeypatch.setattr(sc, "llm_call_json", fail_llm)
+    state = {
+        "execution_error": "Code: 62. DB::Exception: Syntax error: failed at position 14",
+        "final_sql": """
+        SELECT DATE_FORMAT(order_date, '%Y-%m'), SUM(revenue)
+        FROM revenue WHERE YEAR(order_date) = 2026
+        GROUP BY 1
+        """,
+        "correction_attempts": 1,
+        "trace": [],
+    }
+
+    out = await sc.self_correction(state)
+
+    assert out["self_correction_applied"] is True
+    assert out["self_correction_status"] == "FIXED"
+    assert 'toStartOfMonth(order_date) AS "Tháng"' in out["corrected_sql"]
+    assert 'SUM(revenue) AS "Doanh thu"' in out["corrected_sql"]
+    assert "toYear(order_date) = 2026" in out["corrected_sql"]
+    assert "GROUP BY toStartOfMonth(order_date)" in out["corrected_sql"]
+
+
+@pytest.mark.asyncio
+async def test_self_correction_returns_cannot_fix_at_retry_limit(monkeypatch):
+    async def fail_llm(*_args, **_kwargs):
+        raise AssertionError("LLM should not run after retry limit")
+
+    monkeypatch.setattr(sc, "llm_call_json", fail_llm)
+    state = {
+        "execution_error": "Syntax error: failed at position 9",
+        "final_sql": "SELECT bad FROM analytics.ai_sales_daily",
+        "correction_attempts": 3,
+        "trace": [],
+    }
+
+    out = await sc.self_correction(state)
+
+    assert out["self_correction_applied"] is False
+    assert out["self_correction_status"] == "CANNOT_FIX"
+    assert out["escalation_reason"] == "self_correction_attempt_limit"

@@ -276,7 +276,7 @@ def test_data_coverage_clamps_partial_after_range_to_available_max(monkeypatch):
     assert any("thu hẹp" in (c or "") for c in (out.get("data_source_context") or {}).get("caveats") or [])
 
 
-def test_data_coverage_keeps_fully_outside_future_range(monkeypatch):
+def test_data_coverage_keeps_explicit_fully_outside_future_range(monkeypatch):
     def fake_cache(ds):
         return _coverage()
 

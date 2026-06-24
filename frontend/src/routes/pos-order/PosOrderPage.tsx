@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { ClipboardList, Clock, History, ListChecks, LogOut, Plus, Power, QrCode } from 'lucide-react';
-import { useCustomerWaitingCount } from './hooks/use-customer-waiting-count';
 import { QrQueueView } from './components/QrQueueView';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import type { ScopeOutlet } from '@/api/org-api';
 import { salesApi, type SaleListItemView } from '@/api/sales-api';
+import { productApi } from '@/api/product-api';
 import { useAuth } from '@/auth/use-auth';
 import { useNavigate } from 'react-router-dom';
 import './pos-order.css';
@@ -27,6 +27,8 @@ import { usePosMenu, type PosMenuItem } from './hooks/use-pos-menu';
 import { DraftPickerDialog } from './components/DraftPickerDialog';
 import { usePosSession } from './hooks/use-pos-session';
 import { useSubmitOrder } from './hooks/use-submit-order';
+import { useQrOrders } from './hooks/use-qr-orders';
+import { isWaitingCustomerOrder } from '@/components/pos/customer-order-queue';
 
 interface Props {
   outletId: string;
@@ -57,14 +59,14 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
   const [drawerScope, setDrawerScope] = useState<OrderScope | null>(null);
   const [view, setView] = useState<'menu' | 'qr-queue'>('menu');
   const [draftPickerOpen, setDraftPickerOpen] = useState(false);
-  const customerWaitingQuery = useCustomerWaitingCount(outletId);
-  const customerWaitingCount = customerWaitingQuery.data ?? 0;
   const qc = useQueryClient();
   const token = session?.accessToken;
   const posSessionId = sessionHook.session?.id ?? null;
   const feed = useOrdersFeed(outletId, drawerScope ?? 'today', drawerScope !== null, posSessionId);
-  const todayFeed = useOrdersFeed(outletId, 'today', true, posSessionId);
+  const todayFeed = useOrdersFeed(outletId, 'today', drawerScope === 'today', posSessionId);
   const pendingFeed = useOrdersFeed(outletId, 'pending', true, posSessionId);
+  const qrOrdersQuery = useQrOrders(outletId);
+  const customerWaitingCount = (qrOrdersQuery.data ?? []).filter(isWaitingCustomerOrder).length;
   const todayCount = todayFeed.data?.length ?? history.orders.length;
   const pendingCount = pendingFeed.data?.length ?? 0;
   const isPaymentProcessing =
@@ -171,13 +173,22 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
   const menu = menuQuery.data?.menu ?? [];
   const categories = menuQuery.data?.categories ?? [];
 
-  const handlePick = (item: PosMenuItem) => {
+  const handlePick = async (item: PosMenuItem) => {
     if (!item.isAvailable) return;
-    if (!item.hasModifiers || item.modifierGroups.length === 0) {
+    const modifierGroups = item.modifierGroups.length > 0
+      ? item.modifierGroups
+      : await qc.fetchQuery({
+          queryKey: ['pos-order-modifier-groups', item.id],
+          queryFn: () => productApi.modifierGroupsForProduct(token!, item.id),
+          staleTime: 10 * 60_000,
+          gcTime: 30 * 60_000,
+        }).catch((): PosMenuItem['modifierGroups'] => []);
+
+    if (modifierGroups.length === 0) {
       cart.addLine({ itemId: item.id, name: item.name, basePrice: item.price, toppings: [], quantity: 1 });
       return;
     }
-    setPickedItem(item);
+    setPickedItem({ ...item, hasModifiers: true, modifierGroups });
     setOptionsOpen(true);
   };
 
@@ -337,6 +348,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
             outletName={outletName}
             menu={menu}
             onRequestPayment={(order) => setResumeTarget(order)}
+            ordersQuery={qrOrdersQuery}
           />
         ) : (
           <>

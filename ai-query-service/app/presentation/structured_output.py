@@ -209,6 +209,7 @@ def build_presentation_bundle(
     lookup_output = str(state.get("intent") or "") == "lookup" or template_key in {
         "T31_outlet_directory",
         "T37_ai_sales_daily_outlets",
+        "T38_product_directory",
     }
     if spec and not lookup_output:
         out["chart_spec"] = spec

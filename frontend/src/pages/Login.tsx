@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/use-auth';
-import { ApiError } from '@/api/client';
+import { isApiError } from '@/api/client';
 import { effectiveRolesByOutletRecord, sessionRolesSet } from '@/auth/authorization';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -51,6 +51,25 @@ const AUTH_ERROR_MESSAGES: Record<AuthErrorType, { title: string; message: strin
   },
 };
 
+function getLoginAuthError(error: unknown): AuthErrorType {
+  const status = isApiError(error)
+    ? error.status
+    : typeof error === 'object' && error !== null && 'status' in error
+      ? Number((error as { status?: unknown }).status)
+      : undefined;
+
+  if (status === 400 || status === 401) {
+    return 'invalid_credentials';
+  }
+  if (status === 403) {
+    return 'account_suspended';
+  }
+  if (status === 404) {
+    return 'gateway_misconfigured';
+  }
+  return 'service_unavailable';
+}
+
 export default function Login() {
   const navigate = useNavigate();
   const { login } = useAuth();
@@ -66,14 +85,15 @@ export default function Login() {
     const run = async () => {
       setLoading(true);
       setAuthError(null);
-      if (!email || !password) {
+      const username = email.trim();
+      if (!username || !password) {
         setAuthError('invalid_credentials');
         setLoading(false);
         return;
       }
 
       try {
-        const session = await login(email.trim(), password);
+        const session = await login(username, password);
         // Role-aware landing per business rules.
         const roleByOutlet = effectiveRolesByOutletRecord(session ?? null);
         const allRoles = sessionRolesSet(session ?? null);
@@ -86,19 +106,7 @@ export default function Login() {
         }
         navigate(landing);
       } catch (error) {
-        if (error instanceof ApiError) {
-          if (error.status === 401) {
-            setAuthError('invalid_credentials');
-          } else if (error.status === 403) {
-            setAuthError('account_suspended');
-          } else if (error.status === 404) {
-            setAuthError('gateway_misconfigured');
-          } else {
-            setAuthError('service_unavailable');
-          }
-          return;
-        }
-        setAuthError('service_unavailable');
+        setAuthError(getLoginAuthError(error));
       } finally {
         setLoading(false);
       }

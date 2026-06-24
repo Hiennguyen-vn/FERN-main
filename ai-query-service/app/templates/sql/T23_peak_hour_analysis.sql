@@ -1,5 +1,3 @@
--- Giờ cao điểm: gộp theo giờ tạo đơn (sale header). Dùng cdc.sale_record thay vì fact_sale
--- để vẫn có kết quả khi CDC chỉ sink header đơn mà chưa có dòng sale_item trong fact_sale.
 SELECT
     toHour(sr.created_at) AS hour_of_day,
     count()              AS txn_count,

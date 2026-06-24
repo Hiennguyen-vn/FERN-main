@@ -16,8 +16,10 @@ call budget. No reviewer LLM — structural correctness is enforced by
 from __future__ import annotations
 
 import asyncio
+import calendar
 import json
 import logging
+import re
 import time
 import unicodedata
 from typing import Any, Callable
@@ -46,7 +48,7 @@ from app.llm.openai_client import (
     llm_call_responses_with_tools,
 )
 from app.query_policy import candidate_tables_for_prompt, format_domain_contract
-from app.time_utils import format_time_context_for_prompt
+from app.time_utils import format_time_context_for_prompt, parse_two_month_ranges_for_comparison, today_local
 from app.utils.text import fold_text as _fold_text
 
 logger = logging.getLogger(__name__)
@@ -89,7 +91,7 @@ BƯỚC 4 — VALIDATE:
 - Lỗi thường gặp: thiếu time filter, bảng ngoài allow-list, cột không tồn tại.
 
 BƯỚC 5 — EXECUTE:
-- Khi `ok=true`: gọi `execute_query(sql=final_sql)` với exact SQL từ validate output.
+- Khi `ok=true`: gọi `execute_query(sql=final_sql)` với exact SQL từ validate output; backend luôn áp giới hạn row/time khi chạy.
 
 BƯỚC 6 — KẾT THÚC bằng JSON:
 Khi execute_query ok=true:
@@ -134,6 +136,27 @@ def _final_message_schema() -> dict[str, Any]:
     }
 
 
+def _explicit_two_month_ranges(question: str) -> tuple[dict[str, str], dict[str, str]] | None:
+    q = _fold_text(question)
+    year_match = re.search(r"\b(20\d{2})\b", q)
+    year = int(year_match.group(1)) if year_match else today_local().year
+    matches = re.findall(r"\bthang\s*(1[0-2]|[1-9])(?:\s*/\s*(20\d{2}))?", q)
+    if len(matches) < 2:
+        return None
+    first_month = int(matches[0][0])
+    second_month = int(matches[1][0])
+    first_year = int(matches[0][1] or year)
+    second_year = int(matches[1][1] or year)
+
+    def _range(month: int, y: int) -> dict[str, str]:
+        last_day = calendar.monthrange(y, month)[1]
+        return {
+            "from_date": f"{y:04d}-{month:02d}-01",
+            "to_date": f"{y:04d}-{month:02d}-{last_day:02d}",
+        }
+
+    return _range(first_month, first_year), _range(second_month, second_year)
+
 
 def _deterministic_sql_for_question(state: GraphState) -> tuple[str, str] | None:
     """Known-hard L4 shapes where deterministic SQL is safer than retrying.
@@ -147,6 +170,390 @@ def _deterministic_sql_for_question(state: GraphState) -> tuple[str, str] | None
     time_range = state.get("time_range") or {}
     from_date = str(time_range.get("from_date") or "2026-05-01")
     to_date = str(time_range.get("to_date") or from_date)
+    contract = state.get("sql_writer_contract") if isinstance(state.get("sql_writer_contract"), dict) else {}
+    comparison_periods = contract.get("comparison_periods") if isinstance(contract.get("comparison_periods"), dict) else None
+    if comparison_periods and ("doanh thu" in q or "revenue" in q or "sales" in q):
+        period_a = comparison_periods.get("period_a") if isinstance(comparison_periods.get("period_a"), dict) else {}
+        period_b = comparison_periods.get("period_b") if isinstance(comparison_periods.get("period_b"), dict) else {}
+        a_from = str(period_a.get("from_date") or "").strip()
+        a_to = str(period_a.get("to_date") or "").strip()
+        b_from = str(period_b.get("from_date") or "").strip()
+        b_to = str(period_b.get("to_date") or "").strip()
+        if a_from and a_to and b_from and b_to:
+            union_from = min(a_from, b_from)
+            union_to = max(a_to, b_to)
+            return (
+                "revenue_period_comparison",
+                f"""
+                SELECT
+                    sumIf(net_revenue, business_date BETWEEN toDate('{a_from}') AND toDate('{a_to}')) AS net_revenue_a,
+                    sumIf(net_revenue, business_date BETWEEN toDate('{b_from}') AND toDate('{b_to}')) AS net_revenue_b,
+                    sumIf(txn_count, business_date BETWEEN toDate('{a_from}') AND toDate('{a_to}')) AS txn_count_a,
+                    sumIf(txn_count, business_date BETWEEN toDate('{b_from}') AND toDate('{b_to}')) AS txn_count_b,
+                    uniqExactIf(outlet_id, business_date BETWEEN toDate('{a_from}') AND toDate('{a_to}')) AS outlet_count_a,
+                    uniqExactIf(outlet_id, business_date BETWEEN toDate('{b_from}') AND toDate('{b_to}')) AS outlet_count_b,
+                    net_revenue_a - net_revenue_b AS net_revenue_delta,
+                    if(net_revenue_b = 0, NULL, (net_revenue_a - net_revenue_b) / net_revenue_b) AS net_revenue_pct_delta
+                FROM analytics.ai_sales_daily
+                WHERE business_date BETWEEN toDate('{union_from}') AND toDate('{union_to}')
+                """,
+            )
+
+    month_pair = parse_two_month_ranges_for_comparison(question, today=today_local()) or _explicit_two_month_ranges(question)
+    if (
+        not comparison_periods
+        and month_pair
+        and any(token in q for token in ("so sanh", "o sanh", "so voi", "compare"))
+        and ("doanh thu" in q or "revenue" in q or "sales" in q)
+        and not ("aov" in q and "giam" in q and "tang" in q)
+    ):
+        period_a, period_b = month_pair
+        a_from = str(period_a["from_date"])
+        a_to = str(period_a["to_date"])
+        b_from = str(period_b["from_date"])
+        b_to = str(period_b["to_date"])
+        union_from = min(a_from, b_from)
+        union_to = max(a_to, b_to)
+        return (
+            "revenue_period_comparison",
+            f"""
+            SELECT
+                sumIf(net_revenue, business_date BETWEEN toDate('{a_from}') AND toDate('{a_to}')) AS net_revenue_a,
+                sumIf(net_revenue, business_date BETWEEN toDate('{b_from}') AND toDate('{b_to}')) AS net_revenue_b,
+                sumIf(txn_count, business_date BETWEEN toDate('{a_from}') AND toDate('{a_to}')) AS txn_count_a,
+                sumIf(txn_count, business_date BETWEEN toDate('{b_from}') AND toDate('{b_to}')) AS txn_count_b,
+                uniqExactIf(outlet_id, business_date BETWEEN toDate('{a_from}') AND toDate('{a_to}')) AS outlet_count_a,
+                uniqExactIf(outlet_id, business_date BETWEEN toDate('{b_from}') AND toDate('{b_to}')) AS outlet_count_b,
+                net_revenue_a / nullIf(txn_count_a, 0) AS aov_a,
+                net_revenue_b / nullIf(txn_count_b, 0) AS aov_b,
+                net_revenue_a - net_revenue_b AS net_revenue_delta,
+                if(net_revenue_b = 0, NULL, (net_revenue_a - net_revenue_b) / net_revenue_b) AS net_revenue_pct_delta
+            FROM analytics.ai_sales_daily
+            WHERE business_date BETWEEN toDate('{union_from}') AND toDate('{union_to}')
+            """,
+        )
+
+    if (
+        ("san pham" in q or "product" in q or "mon " in q)
+        and ("doanh thu cao nhat" in q or "revenue cao nhat" in q)
+        and ("tung cua hang" in q or "moi cua hang" in q or "o tung cua hang" in q)
+    ):
+        return (
+            "top_product_revenue_by_outlet",
+            f"""
+            SELECT
+                outlet_id,
+                any(outlet_name) AS outlet_name,
+                product_id,
+                any(product_name) AS product_name,
+                sum(revenue) AS revenue,
+                sum(qty) AS qty,
+                sum(txn_count) AS txn_count
+            FROM analytics.ai_product_daily
+            WHERE business_date BETWEEN toDate('{from_date}') AND toDate('{to_date}')
+            GROUP BY outlet_id, product_id
+            ORDER BY outlet_id ASC, revenue DESC
+            LIMIT 600
+            """,
+        )
+
+    if (
+        ("san pham" in q or "product" in q)
+        and ("so luong ban tang" in q or "ban tang" in q or "qty tang" in q)
+        and month_pair
+    ):
+        period_a, period_b = month_pair
+        a_from = str(period_a["from_date"])
+        a_to = str(period_a["to_date"])
+        b_from = str(period_b["from_date"])
+        b_to = str(period_b["to_date"])
+        union_from = min(a_from, b_from)
+        union_to = max(a_to, b_to)
+        return (
+            "top_product_qty_growth",
+            f"""
+            SELECT
+                product_id,
+                any(product_name) AS product_name,
+                sumIf(qty, business_date BETWEEN toDate('{a_from}') AND toDate('{a_to}')) AS qty_a,
+                sumIf(qty, business_date BETWEEN toDate('{b_from}') AND toDate('{b_to}')) AS qty_b,
+                qty_a - qty_b AS qty_delta,
+                sumIf(revenue, business_date BETWEEN toDate('{a_from}') AND toDate('{a_to}')) AS revenue_a,
+                sumIf(revenue, business_date BETWEEN toDate('{b_from}') AND toDate('{b_to}')) AS revenue_b
+            FROM analytics.ai_product_daily
+            WHERE business_date BETWEEN toDate('{union_from}') AND toDate('{union_to}')
+            GROUP BY product_id
+            ORDER BY qty_delta DESC, qty_a DESC
+            LIMIT 5
+            """,
+        )
+
+    if (
+        ("aov" in q or "trung binh moi giao dich" in q)
+        and "giam" in q
+        and ("doanh thu tang" in q or ("doanh thu" in q and "tang" in q))
+        and month_pair
+    ):
+        period_a, period_b = month_pair
+        a_from = str(period_a["from_date"])
+        a_to = str(period_a["to_date"])
+        b_from = str(period_b["from_date"])
+        b_to = str(period_b["to_date"])
+        union_from = min(a_from, b_from)
+        union_to = max(a_to, b_to)
+        return (
+            "outlets_revenue_up_aov_down",
+            f"""
+            SELECT
+                outlet_id,
+                any(outlet_name) AS outlet_name,
+                sumIf(net_revenue, business_date BETWEEN toDate('{a_from}') AND toDate('{a_to}')) AS revenue_a,
+                sumIf(net_revenue, business_date BETWEEN toDate('{b_from}') AND toDate('{b_to}')) AS revenue_b,
+                sumIf(txn_count, business_date BETWEEN toDate('{a_from}') AND toDate('{a_to}')) AS txn_count_a,
+                sumIf(txn_count, business_date BETWEEN toDate('{b_from}') AND toDate('{b_to}')) AS txn_count_b,
+                revenue_a / nullIf(txn_count_a, 0) AS aov_a,
+                revenue_b / nullIf(txn_count_b, 0) AS aov_b,
+                revenue_a - revenue_b AS revenue_delta,
+                aov_a - aov_b AS aov_delta
+            FROM analytics.ai_sales_daily
+            WHERE business_date BETWEEN toDate('{union_from}') AND toDate('{union_to}')
+            GROUP BY outlet_id
+            HAVING revenue_delta > 0 AND aov_delta < 0
+            ORDER BY revenue_delta DESC
+            LIMIT 25
+            """,
+        )
+
+    if (
+        ("nhom san pham" in q or "category" in q or "danh muc" in q)
+        and ("khu vuc" in q or "region" in q)
+        and ("doanh thu" in q or "revenue" in q)
+    ):
+        return (
+            "top_category_revenue_by_region",
+            f"""
+            SELECT
+                multiIf(position(outlet_name, 'HCM') > 0, 'HCM', position(outlet_name, 'HN') > 0, 'HN', position(outlet_name, 'DN') > 0, 'DN', 'OTHER') AS region,
+                category_code,
+                sum(revenue) AS revenue,
+                sum(qty) AS qty,
+                sum(txn_count) AS txn_count
+            FROM analytics.ai_product_daily
+            WHERE business_date BETWEEN toDate('{from_date}') AND toDate('{to_date}')
+            GROUP BY region, category_code
+            ORDER BY region ASC, revenue DESC
+            LIMIT 100
+            """,
+        )
+
+    if (
+        ("cuoi tuan" in q or "weekend" in q)
+        and ("ngay thuong" in q or "weekday" in q)
+        and ("doanh thu" in q or "revenue" in q)
+    ):
+        return (
+            "weekend_vs_weekday_revenue",
+            f"""
+            SELECT
+                sumIf(net_revenue, toDayOfWeek(business_date) IN (6, 7)) AS weekend_revenue,
+                sumIf(net_revenue, toDayOfWeek(business_date) NOT IN (6, 7)) AS weekday_revenue,
+                sumIf(txn_count, toDayOfWeek(business_date) IN (6, 7)) AS weekend_txn_count,
+                sumIf(txn_count, toDayOfWeek(business_date) NOT IN (6, 7)) AS weekday_txn_count,
+                weekend_revenue - weekday_revenue AS revenue_delta
+            FROM analytics.ai_sales_daily
+            WHERE business_date BETWEEN toDate('{from_date}') AND toDate('{to_date}')
+            """,
+        )
+
+    if (
+        ("san pham" in q or "product" in q)
+        and ("ban nhieu nhat" in q or "so luong" in q)
+        and ("khong nam trong top 5" in q or "khong trong top 5" in q)
+    ):
+        return (
+            "top_qty_product_not_top_revenue_proxy",
+            f"""
+            SELECT
+                product_id,
+                any(product_name) AS product_name,
+                sum(qty) AS qty,
+                sum(revenue) AS revenue,
+                sum(txn_count) AS txn_count
+            FROM analytics.ai_product_daily
+            WHERE business_date BETWEEN toDate('{from_date}') AND toDate('{to_date}')
+            GROUP BY product_id
+            ORDER BY qty DESC, revenue DESC
+            LIMIT 200
+            """,
+        )
+
+    if (
+        ("so giao dich cao nhat" in q or "giao dich cao nhat" in q)
+        and ("trung binh moi giao dich" in q or "aov" in q)
+        and ("thap nhat" in q or "lowest" in q)
+    ):
+        return (
+            "outlet_highest_txn_lowest_aov",
+            f"""
+            SELECT
+                outlet_id,
+                any(outlet_name) AS outlet_name,
+                sum(txn_count) AS txn_count_total,
+                sum(net_revenue) AS revenue,
+                revenue / nullIf(txn_count_total, 0) AS aov
+            FROM analytics.ai_sales_daily
+            WHERE business_date BETWEEN toDate('{from_date}') AND toDate('{to_date}')
+            GROUP BY outlet_id
+            ORDER BY txn_count_total DESC, aov ASC
+            LIMIT 1
+            """,
+        )
+
+    if (
+        ("ca phe den" in q or "cafe den" in q or "coffee den" in q)
+        and ("phan tram" in q or "%" in q or "ti le" in q or "ty le" in q)
+        and ("do uong" in q or "beverage" in q or "drink" in q)
+        and ("tung cua hang" in q or "moi cua hang" in q or "o tung cua hang" in q)
+    ):
+        return (
+            "product_share_of_beverage_by_outlet",
+            f"""
+            SELECT
+                outlet_id,
+                any(outlet_name) AS outlet_name,
+                sumIf(revenue, lowerUTF8(product_name) LIKE '%ca phe den%') AS product_revenue,
+                sumIf(revenue, category_code IN ('DRINK', 'beverage')) AS beverage_revenue,
+                product_revenue / nullIf(beverage_revenue, 0) AS revenue_share
+            FROM analytics.ai_product_daily
+            WHERE business_date BETWEEN toDate('{from_date}') AND toDate('{to_date}')
+            GROUP BY outlet_id
+            ORDER BY revenue_share DESC NULLS LAST, product_revenue DESC
+            LIMIT 100
+            """,
+        )
+
+    named_product_match = re.search(
+        r"\b(?:doanh thu|revenue|sales)\s+(?:cua\s+)?(?!cua\b|cua hang\b|outlet\b|store\b|tat ca\b|tong\b|tung\b|moi\b|cac\b|theo\b)([a-z0-9][a-z0-9 ]{2,80}?)\s+(?:thang|nam|tu ngay|trong nam|trong thang|hom nay|today)\b",
+        q,
+    )
+    named_product_by_outlet = bool(
+        named_product_match
+        and (
+            "tung cua hang" in q
+            or "theo cua hang" in q
+            or "cac cua hang" in q
+            or "theo outlet" in q
+            or "per outlet" in q
+            or "by outlet" in q
+        )
+    )
+    named_product_excluded = any(
+        token in q
+        for token in (
+            "growth",
+            "tang truong",
+            "so sanh",
+            "so voi",
+            "compare",
+            "thu trong tuan",
+            "ngay trong tuan",
+            "weekday",
+            "cao nhat",
+            "thap nhat",
+            "top ",
+            "xep hang",
+        )
+    )
+    if named_product_match and not named_product_excluded and ("doanh thu" in q or "revenue" in q or "sales" in q):
+        product_like = re.sub(r"\s+", " ", named_product_match.group(1)).strip()
+        product_like = product_like.replace("\\", "\\\\").replace("'", "\\'")
+        if named_product_by_outlet:
+            return (
+                "product_revenue_by_outlet",
+                f"""
+                SELECT
+                    outlet_id,
+                    any(outlet_name) AS outlet_name,
+                    product_id,
+                    any(product_name) AS product_name,
+                    sum(revenue) AS revenue,
+                    sum(qty) AS qty,
+                    sum(txn_count) AS txn_count
+                FROM analytics.ai_product_daily
+                WHERE business_date BETWEEN toDate('{from_date}') AND toDate('{to_date}')
+                  AND product_id IN (
+                      SELECT id
+                      FROM cdc.product FINAL
+                      WHERE coalesce(__deleted, 'false') = 'false'
+                        AND lowerUTF8(name) LIKE '%{product_like}%'
+                  )
+                GROUP BY outlet_id, product_id
+                ORDER BY revenue DESC
+                LIMIT 100
+                """,
+            )
+        return (
+            "product_revenue_summary",
+            f"""
+            SELECT
+                product_id,
+                any(product_name) AS product_name,
+                sum(revenue) AS revenue,
+                sum(qty) AS qty,
+                sum(txn_count) AS txn_count,
+                uniqExact(outlet_id) AS outlet_count,
+                min(business_date) AS first_business_date,
+                max(business_date) AS last_business_date,
+                countDistinct(business_date) AS business_days
+            FROM analytics.ai_product_daily
+            WHERE business_date BETWEEN toDate('{from_date}') AND toDate('{to_date}')
+              AND product_id IN (
+                  SELECT id
+                  FROM cdc.product FINAL
+                  WHERE coalesce(__deleted, 'false') = 'false'
+                    AND lowerUTF8(name) LIKE '%{product_like}%'
+              )
+            GROUP BY product_id
+            ORDER BY revenue DESC
+            LIMIT 25
+            """,
+        )
+
+    product_revenue_match = re.search(
+        r"\bcua\s+(?!hang\b|cac\b|tat ca\b)([a-z0-9][a-z0-9 ]{2,80}?)\s+(?:la|bao nhieu|dat|tren|theo)\b",
+        q,
+    )
+    if (
+        product_revenue_match
+        and ("doanh thu" in q or "revenue" in q or "sales" in q)
+        and ("cua hang" in q or "outlet" in q or "store" in q)
+    ):
+        product_like = re.sub(r"\s+", " ", product_revenue_match.group(1)).strip()
+        product_like = product_like.replace("\\", "\\\\").replace("'", "\\'")
+        return (
+            "product_revenue_by_outlet",
+            f"""
+            SELECT
+                outlet_id,
+                any(outlet_name) AS outlet_name,
+                product_id,
+                any(product_name) AS product_name,
+                sum(revenue) AS revenue,
+                sum(qty) AS qty,
+                sum(txn_count) AS txn_count
+            FROM analytics.ai_product_daily
+            WHERE business_date BETWEEN toDate('{from_date}') AND toDate('{to_date}')
+              AND product_id IN (
+                  SELECT id
+                  FROM cdc.product FINAL
+                  WHERE coalesce(__deleted, 'false') = 'false'
+                    AND lowerUTF8(name) LIKE '%{product_like}%'
+              )
+            GROUP BY outlet_id, product_id
+            ORDER BY revenue DESC
+            LIMIT 100
+            """,
+        )
 
     if (
         "doanh thu gio" in q
@@ -346,6 +753,7 @@ def _apply_deterministic_sql(
     state["final_sql"] = final_sql
     state["sql_source"] = "codegen"
     state["executed_sql_source"] = "codegen"
+    state["codegen_sql_plan"] = {"pattern": pattern}
     state["guard_passed"] = True
     state["codegen_tables_used"] = [str(x).lower() for x in (validate_out.get("tables_used") or [])]
     if isinstance(validate_out.get("allowed_outlet_ids"), list):
@@ -368,6 +776,17 @@ def _build_user_prompt(state: GraphState, candidate_tables: list[str]) -> str:
     time_range = state.get("time_range") or {}
     auth = state["auth"]
     resolved = state.get("resolved_entities") or {}
+    raw_entities = state.get("raw_entities") if isinstance(state.get("raw_entities"), dict) else {}
+    question_frame = state.get("question_frame") if isinstance(state.get("question_frame"), dict) else {}
+    conversation_context = str(state.get("conversation_context") or "").strip()
+    contextualized_question = str(state.get("contextualized_question") or "").strip()
+    data_source_context = state.get("data_source_context") if isinstance(state.get("data_source_context"), dict) else {}
+    planning_decision = state.get("planning_decision") if isinstance(state.get("planning_decision"), dict) else {}
+    metadata_context = str(state.get("metadata_context") or "").strip()
+    catalog_digest = str(state.get("catalog_digest") or "").strip()
+    learned_scenario = state.get("learned_sql_writer_scenario_asset")
+    learned_scenario = learned_scenario if isinstance(learned_scenario, dict) else {}
+    memories = state.get("relevant_memories") if isinstance(state.get("relevant_memories"), list) else []
     time_block = format_time_context_for_prompt(state.get("time_context"))
     pf = state.get("planning_frame") if isinstance(state.get("planning_frame"), dict) else {}
     brief = str(pf.get("executor_brief_vi") or "").strip()
@@ -385,6 +804,19 @@ def _build_user_prompt(state: GraphState, candidate_tables: list[str]) -> str:
                 "**Lệnh thực thi:**\n" + "\n".join(f"{i + 1}. {d}" for i, d in enumerate(dir_lines[:10]))
             )
         planning_handoff = "\n" + "\n".join(parts) + "\n"
+    contract = state.get("sql_writer_contract") if isinstance(state.get("sql_writer_contract"), dict) else {}
+    contract_block = ""
+    if contract:
+        contract_block = (
+            "\n**SQL_WRITER_CONTRACT (bắt buộc tuân thủ, ưu tiên hơn câu hỏi thô):**\n"
+            "```json\n"
+            + json.dumps(contract, ensure_ascii=False, sort_keys=True)
+            + "\n```\n"
+            "Nếu contract có preferred_tables/metric_ids/grain/output_shape, hãy sinh SQL đúng theo các trường đó. "
+            "Không đổi grain hoặc metric nếu user prompt thô có thể diễn giải mơ hồ. "
+            "Nếu có comparison_periods, PHẢI query đủ period_a và period_b trong cùng một SELECT bằng sumIf/countIf/uniqExactIf; "
+            "WHERE phải bao phủ toàn bộ union của hai kỳ, không chỉ lọc kỳ đầu tiên trong time_range.\n"
+        )
     domain_block = "\n" + format_domain_contract(
         intent=intent,
         question=question,
@@ -393,6 +825,29 @@ def _build_user_prompt(state: GraphState, candidate_tables: list[str]) -> str:
     ) + "\n"
 
     candidates_text = "\n".join(f"- {t}" for t in candidate_tables) or "(none)"
+
+    context_payload = {
+        "conversation_context": conversation_context,
+        "contextualized_question": contextualized_question,
+        "question_frame": question_frame,
+        "raw_entities": raw_entities,
+        "resolved_entities": resolved,
+        "data_source_context": data_source_context,
+        "planning_decision": planning_decision,
+        "metadata_context": metadata_context,
+        "catalog_digest": catalog_digest,
+        "learned_sql_writer_scenario": learned_scenario,
+        "relevant_memories": memories[:5],
+    }
+    context_block = (
+        "\n**FULL_GRAPH_CONTEXT (đọc trước khi chọn bảng/query; chỉ dùng phần user-safe, không lộ ra câu trả lời):**\n"
+        "```json\n"
+        + json.dumps(context_payload, ensure_ascii=False, default=str, sort_keys=True)[:20000]
+        + "\n```\n"
+        "- Nếu câu hỏi hiện tại là follow-up, ưu tiên `contextualized_question`, `conversation_context`, `question_frame` để giữ đúng đối tượng/kỳ trước đó.\n"
+        "- Nếu `data_source_context.coverage_status` không full hoặc có caveats, query chỉ trong `time_range` đã được graph cập nhật và nêu caveat ở rationale_vi.\n"
+        "- Nếu `metadata_context`/`catalog_digest` mâu thuẫn với ký ức hoặc câu hỏi thô, ưu tiên policy/catalog/coverage hiện tại.\n"
+    )
 
     investigative_block = ""
     if state.get("investigative_mode"):
@@ -413,7 +868,7 @@ def _build_user_prompt(state: GraphState, candidate_tables: list[str]) -> str:
         f"Resolved outlet_ids requested by user: {resolved.get('outlet_ids') or []}\n"
         f"User roles: {sorted(auth.roles)}\n"
         f"User outlet scope size: {len(auth.outlet_ids)}\n"
-        f"{planning_handoff}{time_block}{domain_block}{investigative_block}\n"
+        f"{planning_handoff}{contract_block}{time_block}{context_block}{domain_block}{investigative_block}\n"
         f"Candidate ALLOWED_TABLES (ưu tiên):\n{candidates_text}\n"
         f"\nHãy bắt đầu bằng search_schema/get_table_policy nếu chưa chắc bảng nào, "
         f"sau đó write SQL → validate_and_inject → execute_query. "
@@ -891,12 +1346,9 @@ async def sql_writer_agent(
     )
 
     # Prefer captured tool outputs over what the model echoed in its final
-    # JSON: validate_and_inject is the only authoritative source for the SQL
-    # actually executed. Falling back to ``final`` keeps tests with mocked
-    # LLM (no tool calls) functional.
+    # JSON: validate_and_inject is the only authoritative source for SQL safety.
+    # A model-claimed final_sql without validate_and_inject is not executable.
     final_sql = (captured.get("validated_sql") or "").strip()
-    if not final_sql and isinstance(final, dict):
-        final_sql = (final.get("final_sql") or "").strip()
 
     if not final_sql:
         if usage.get("error") == "LLMUnavailable":
@@ -909,10 +1361,15 @@ async def sql_writer_agent(
                     if usage.get(k) is not None
                 },
             )
+        claimed_sql = bool((final.get("final_sql") if isinstance(final, dict) else None))
         state["execution_error"] = (
-            (final.get("error") if isinstance(final, dict) else None)
-            or captured.get("execute_error")
-            or "sql_writer agent returned no SQL"
+            captured.get("execute_error")
+            or (final.get("error") if isinstance(final, dict) else None)
+            or (
+                "sql_writer final SQL was not validated by validate_and_inject"
+                if claimed_sql
+                else "sql_writer agent returned no SQL"
+            )
         )
         state["response_kind"] = "unsupported"
         state["clarification_question"] = (
@@ -940,7 +1397,7 @@ async def sql_writer_agent(
         state["allowed_outlet_ids"] = [int(x) for x in captured["allowed_outlet_ids"]]
 
     rows = captured.get("rows")
-    if isinstance(rows, list):
+    if isinstance(rows, list) and not captured.get("execute_error"):
         state["raw_result"] = rows
         state["execution_error"] = None
     elif captured.get("execute_error"):
@@ -949,9 +1406,16 @@ async def sql_writer_agent(
         # Agent never called execute_query (or call failed) — run it now,
         # bounded by the same executor settings the legacy graph used.
         try:
-            from app.clients.clickhouse import execute_query as _ch_execute
+            from app.clients.clickhouse import execute_query_with_settings as _ch_execute
 
-            state["raw_result"] = _ch_execute(final_sql)
+            state["raw_result"] = _ch_execute(
+                final_sql,
+                settings={
+                    "max_result_rows": int(s.max_rows_per_query),
+                    "max_execution_time": float(s.query_timeout_seconds),
+                    "result_overflow_mode": "break",
+                },
+            )
             state["execution_error"] = None
         except Exception as exc:  # noqa: BLE001
             state["execution_error"] = str(exc)[:400]

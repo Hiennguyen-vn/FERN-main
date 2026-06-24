@@ -8,6 +8,9 @@ import {
   type KitchenTicketItem,
   type KitchenTicketStatus,
 } from '@/api/kitchen-api';
+import { Button } from '@/components/ui/button';
+import { ServiceUnavailablePage } from '@/components/shell/PermissionStates';
+import { cn } from '@/lib/utils';
 import {
   AlertTriangle,
   ChefHat,
@@ -16,6 +19,7 @@ import {
   RefreshCw,
   TimerReset,
   Utensils,
+  Wifi,
   X,
 } from 'lucide-react';
 
@@ -272,87 +276,89 @@ export default function KitchenDisplayPage() {
 
   if (!outletId) {
     return (
-      <div className="min-h-[calc(100vh-4rem)] bg-zinc-950 text-zinc-50 p-8">
-        <div className="max-w-xl">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-amber-400 text-zinc-950">
-            <ChefHat className="h-6 w-6" />
-          </div>
-          <h1 className="mt-5 text-3xl font-semibold tracking-tight">Kitchen Display</h1>
-          <p className="mt-2 text-zinc-400">
-            Chọn một outlet cụ thể để xem ticket bếp.
-          </p>
-        </div>
-      </div>
+      <ServiceUnavailablePage
+        state="scope_mismatch"
+        moduleName="Kitchen Display"
+      />
     );
   }
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] bg-zinc-950 text-zinc-50">
-      <div className="sticky top-0 z-20 border-b border-white/10 bg-zinc-950/95 backdrop-blur">
-        <div className="flex flex-wrap items-center gap-3 px-5 py-4">
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-400 text-zinc-950">
-              <ChefHat className="h-6 w-6" />
+    <div className="p-6 space-y-5 animate-fade-in max-w-[1600px]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <ChefHat className="h-4 w-4" />
             </div>
-            <div className="min-w-0">
-              <h1 className="truncate text-2xl font-semibold tracking-tight">Kitchen Display</h1>
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-sm text-zinc-400">
-                <span className="truncate">{outletLabel}</span>
-                <span className="hidden sm:inline">•</span>
-                <span>{new Date(now).toLocaleTimeString('vi-VN', { hour12: false })}</span>
-              </div>
-            </div>
+            <h2 className="text-lg font-semibold text-foreground">Kitchen Display</h2>
           </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-3">
+            <span className="scope-chip scope-chip-outlet">{outletLabel}</span>
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Clock className="h-3 w-3" />
+              {new Date(now).toLocaleTimeString('vi-VN', { hour12: false })}
+            </span>
+            <span className="flex items-center gap-1 text-[10px] text-success">
+              <Wifi className="h-3 w-3" /> Live
+            </span>
+          </div>
+        </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto">
-            <FilterButton active={filter === 'all'} label="Tất cả" count={ticketCounts.all} onClick={() => setFilter('all')} />
-            <FilterButton active={filter === 'new'} label="Mới" count={ticketCounts.new} onClick={() => setFilter('new')} />
-            <FilterButton active={filter === 'in_progress'} label="Đang làm" count={ticketCounts.in_progress} onClick={() => setFilter('in_progress')} />
-            <FilterButton active={filter === 'ready'} label="Sẵn sàng" count={ticketCounts.ready} onClick={() => setFilter('ready')} />
-            <button
-              type="button"
-              onClick={() => void hydrate()}
-              className="inline-flex h-10 items-center gap-2 rounded-lg border border-white/10 px-3 text-sm font-medium text-zinc-300 transition hover:border-white/25 hover:bg-white/10"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Sync
-            </button>
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <FilterButton active={filter === 'all'} label="Tất cả" count={ticketCounts.all} onClick={() => setFilter('all')} />
+          <FilterButton active={filter === 'new'} label="Mới" count={ticketCounts.new} onClick={() => setFilter('new')} />
+          <FilterButton active={filter === 'in_progress'} label="Đang làm" count={ticketCounts.in_progress} onClick={() => setFilter('in_progress')} />
+          <FilterButton active={filter === 'ready'} label="Sẵn sàng" count={ticketCounts.ready} onClick={() => setFilter('ready')} />
+          <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={() => void hydrate()}>
+            <RefreshCw className="h-3 w-3" />
+            Sync
+          </Button>
         </div>
       </div>
 
-      <div className="grid min-h-[calc(100vh-9rem)] grid-cols-1 gap-5 p-5 xl:grid-cols-[280px_1fr]">
-        <aside className="space-y-4 xl:sticky xl:top-24 xl:self-start">
-          <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+      {error && (
+        <div className="permission-banner permission-banner-unavailable animate-fade-in">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          <div>
+            <p className="font-medium text-sm">Không thể đồng bộ ticket bếp</p>
+            <p className="text-xs mt-0.5 opacity-80">{error}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[280px_1fr]">
+        <aside className="space-y-4 xl:sticky xl:top-6 xl:self-start">
+          <section className="surface-elevated p-4">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300">All day</div>
-                <div className="mt-1 text-sm text-zinc-400">Tổng món đang cần bếp xử lý</div>
+                <div className="text-[11px] font-medium uppercase tracking-wide text-primary">All day</div>
+                <div className="mt-1 text-sm text-muted-foreground">Tổng món đang cần bếp xử lý</div>
               </div>
-              <ListChecks className="h-5 w-5 text-zinc-500" />
+              <ListChecks className="h-4 w-4 text-muted-foreground" />
             </div>
             <div className="mt-4 space-y-2">
               {allDayItems.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-white/10 px-3 py-6 text-center text-sm text-zinc-500">
+                <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
                   Chưa có món trong hàng đợi.
                 </div>
               ) : (
                 allDayItems.slice(0, 10).map((item) => (
-                  <div key={item.name} className="flex items-center justify-between gap-3 border-b border-white/10 py-2 last:border-0">
+                  <div key={item.name} className="flex items-center justify-between gap-3 border-b border-border py-2 last:border-0">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-zinc-100">{item.name}</div>
-                      <div className="text-xs text-zinc-500">{item.ready > 0 ? `${item.ready} sẵn sàng` : `${item.active} đang làm`}</div>
+                      <div className="truncate text-sm font-medium text-foreground">{item.name}</div>
+                      <div className="text-xs text-muted-foreground">{item.ready > 0 ? `${item.ready} sẵn sàng` : `${item.active} đang làm`}</div>
                     </div>
-                    <div className="text-2xl font-semibold tabular-nums text-amber-300">x{item.qty}</div>
+                    <div className="text-xl font-semibold tabular-nums text-primary">x{item.qty}</div>
                   </div>
                 ))
               )}
             </div>
           </section>
 
-          <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <div className="flex items-center gap-2 text-sm font-semibold text-zinc-200">
-              <TimerReset className="h-4 w-4 text-amber-300" />
+          <section className="surface-elevated p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <TimerReset className="h-4 w-4 text-primary" />
               Service pace
             </div>
             <div className="mt-4 grid grid-cols-3 gap-2 text-center">
@@ -364,35 +370,28 @@ export default function KitchenDisplayPage() {
         </aside>
 
         <main className="min-w-0">
-      {error && (
-        <div className="mb-4 flex items-center gap-2 rounded-xl border border-red-400/40 bg-red-500/10 p-3 text-sm text-red-200">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {visibleTickets.length === 0 ? (
-        <div className="flex min-h-[420px] flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/[0.03] p-8 text-center">
-          <Utensils className="h-12 w-12 text-zinc-600" />
-          <h2 className="mt-4 text-xl font-semibold text-zinc-100">Không có ticket trong hàng này</h2>
-          <p className="mt-2 max-w-md text-sm text-zinc-500">
-            Khi POS gửi order mới, ticket sẽ xuất hiện theo deadline gần nhất trước (EDF).
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
-          {visibleTickets.map((ticket, index) => (
-            <TicketCard
-              key={ticket.id}
-              ticket={ticket}
-              index={index}
-              now={now}
-              onAdvanceItem={advanceItem}
-              onCancelTicket={cancelTicket}
-            />
-          ))}
-        </div>
-      )}
+          {visibleTickets.length === 0 ? (
+            <div className="surface-elevated flex min-h-[420px] flex-col items-center justify-center p-8 text-center">
+              <Utensils className="h-10 w-10 text-muted-foreground/60" />
+              <h3 className="mt-4 text-sm font-semibold text-foreground">Không có ticket trong hàng này</h3>
+              <p className="mt-2 max-w-md text-sm text-muted-foreground">
+                Khi POS gửi order mới, ticket sẽ xuất hiện theo deadline gần nhất trước (EDF).
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+              {visibleTickets.map((ticket, index) => (
+                <TicketCard
+                  key={ticket.id}
+                  ticket={ticket}
+                  index={index}
+                  now={now}
+                  onAdvanceItem={advanceItem}
+                  onCancelTicket={cancelTicket}
+                />
+              ))}
+            </div>
+          )}
         </main>
       </div>
     </div>
@@ -414,16 +413,18 @@ function FilterButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-medium transition ${
+      className={cn(
+        'inline-flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium transition-colors',
         active
-          ? 'bg-amber-400 text-zinc-950'
-          : 'border border-white/10 text-zinc-300 hover:border-white/25 hover:bg-white/10'
-      }`}
+          ? 'bg-primary text-primary-foreground shadow-sm'
+          : 'border border-input bg-background text-muted-foreground hover:bg-accent hover:text-foreground',
+      )}
     >
       <span>{label}</span>
-      <span className={`rounded-md px-1.5 py-0.5 text-xs tabular-nums ${
-        active ? 'bg-black/15' : 'bg-white/10 text-zinc-300'
-      }`}>
+      <span className={cn(
+        'rounded px-1.5 py-0.5 text-[10px] tabular-nums',
+        active ? 'bg-primary-foreground/15' : 'bg-muted text-muted-foreground',
+      )}>
         {count}
       </span>
     </button>
@@ -432,9 +433,9 @@ function FilterButton({
 
 function Metric({ value, label }: { value: number; label: string }) {
   return (
-    <div className="rounded-xl bg-white/[0.06] px-2 py-3">
-      <div className="text-2xl font-semibold tabular-nums text-zinc-50">{value}</div>
-      <div className="mt-1 text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
+    <div className="rounded-lg bg-muted/60 px-2 py-3">
+      <div className="text-2xl font-semibold tabular-nums text-foreground">{value}</div>
+      <div className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
     </div>
   );
 }
@@ -458,28 +459,30 @@ function TicketCard({
   const progress = sla > 0 ? Math.min(100, Math.round((elapsed / sla) * 100)) : 0;
   const readyCount = ticket.items.filter((item) => item.status === 'ready' || item.status === 'served').length;
   const itemCount = ticket.items.length;
+
   const headerClass = tone === 'breached'
-    ? 'bg-red-500 text-white'
+    ? 'bg-destructive text-destructive-foreground'
     : tone === 'warning'
-      ? 'bg-amber-400 text-zinc-950'
+      ? 'bg-warning text-warning-foreground'
       : ticket.status === 'ready'
-        ? 'bg-emerald-400 text-emerald-950'
-        : 'bg-zinc-100 text-zinc-950';
+        ? 'bg-success text-success-foreground'
+        : 'bg-primary text-primary-foreground';
 
   return (
     <article
-      className={`overflow-hidden rounded-2xl border bg-zinc-100 text-zinc-950 shadow-2xl shadow-black/20 ${
-        tone === 'breached' ? 'border-red-400' : 'border-white/10'
-      }`}
+      className={cn(
+        'surface-elevated overflow-hidden',
+        tone === 'breached' && 'border-destructive/40',
+      )}
     >
-      <header className={`${headerClass} px-4 py-3`}>
+      <header className={cn('px-4 py-3', headerClass)}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="rounded-md bg-black/15 px-2 py-0.5 text-xs font-bold tabular-nums">#{index + 1}</span>
-              <span className="truncate text-xl font-black tracking-tight">{ticketTitle(ticket)}</span>
+              <span className="rounded-md bg-black/10 px-2 py-0.5 text-xs font-bold tabular-nums">#{index + 1}</span>
+              <span className="truncate text-lg font-semibold tracking-tight">{ticketTitle(ticket)}</span>
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide opacity-80">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-wide opacity-90">
               <span>{orderTypeLabel(ticket.orderType)}</span>
               <span>•</span>
               <span>{statusLabel(ticket.status)}</span>
@@ -488,46 +491,54 @@ function TicketCard({
             </div>
           </div>
           <div className="shrink-0 text-right">
-            <div className="flex items-center justify-end gap-1 text-2xl font-black tabular-nums">
-              <Clock className="h-5 w-5" />
+            <div className="flex items-center justify-end gap-1 text-xl font-semibold tabular-nums">
+              <Clock className="h-4 w-4" />
               {formatMinutes(elapsed)}
             </div>
-            <div className="text-[11px] font-semibold uppercase tracking-wide opacity-75">
+            <div className="text-[10px] font-medium uppercase tracking-wide opacity-80">
               Thời gian chờ
             </div>
           </div>
         </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-black/15">
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-black/10">
           <div
-            className={`h-full rounded-full ${tone === 'breached' ? 'bg-white' : 'bg-zinc-950/70'}`}
+            className="h-full rounded-full bg-current opacity-70"
             style={{ width: `${progress}%` }}
           />
         </div>
       </header>
 
-      <div className="divide-y divide-zinc-200">
+      <div className="divide-y divide-border">
         {ticket.items.map((item) => {
           const next = nextItemAction(item.status);
           const isReady = item.status === 'ready' || item.status === 'served';
           return (
-            <div key={item.id} className={`grid grid-cols-[1fr_auto] gap-3 px-4 py-3 ${isReady ? 'bg-emerald-50' : 'bg-white'}`}>
+            <div
+              key={item.id}
+              className={cn(
+                'grid grid-cols-[1fr_auto] gap-3 px-4 py-3',
+                isReady ? 'bg-success/5' : 'bg-card',
+              )}
+            >
               <div className="min-w-0">
                 <div className="flex items-start gap-3">
-                  <div className={`mt-0.5 flex h-9 min-w-9 items-center justify-center rounded-lg text-lg font-black tabular-nums ${
-                    isReady ? 'bg-emerald-500 text-white' : 'bg-zinc-950 text-white'
-                  }`}>
+                  <div className={cn(
+                    'mt-0.5 flex h-8 min-w-8 items-center justify-center rounded-md text-sm font-bold tabular-nums',
+                    isReady ? 'bg-success text-success-foreground' : 'bg-primary text-primary-foreground',
+                  )}>
                     x{item.qty}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-2">
-                      <div className="text-lg font-bold leading-tight">{item.productName}</div>
-                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${
+                      <div className="text-sm font-semibold leading-tight text-foreground">{item.productName}</div>
+                      <span className={cn(
+                        'rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide',
                         item.status === 'ready'
-                          ? 'bg-emerald-100 text-emerald-700'
+                          ? 'bg-success/10 text-success'
                           : item.status === 'preparing'
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-zinc-200 text-zinc-700'
-                      }`}>
+                            ? 'bg-warning/10 text-warning'
+                            : 'bg-muted text-muted-foreground',
+                      )}>
                         {statusLabel(item.status)}
                       </span>
                     </div>
@@ -535,7 +546,7 @@ function TicketCard({
                     {item.modifiers?.entries && item.modifiers.entries.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-1.5">
                         {item.modifiers.entries.map((m, i) => (
-                          <span key={i} className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">
+                          <span key={i} className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
                             {m.name}{m.value ? `: ${m.value}` : ''}
                           </span>
                         ))}
@@ -543,14 +554,14 @@ function TicketCard({
                     )}
 
                     {item.allergens && item.allergens.length > 0 && (
-                      <div className="mt-2 inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-1 text-xs font-bold text-red-700">
+                      <div className="mt-2 inline-flex items-center gap-1 rounded-md bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive">
                         <AlertTriangle className="h-3.5 w-3.5" />
                         {item.allergens.join(', ')}
                       </div>
                     )}
 
                     {item.notes && (
-                      <div className="mt-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-2.5 py-2 text-sm font-medium italic text-zinc-700">
+                      <div className="mt-2 rounded-lg border border-dashed border-border bg-muted/40 px-2.5 py-2 text-sm italic text-foreground">
                         {item.notes}
                       </div>
                     )}
@@ -559,21 +570,21 @@ function TicketCard({
               </div>
 
               {next ? (
-                <button
+                <Button
                   type="button"
+                  size="sm"
+                  variant={next === 'ready' ? 'default' : next === 'served' ? 'secondary' : 'default'}
+                  className={cn(
+                    'h-9 min-w-[100px] text-xs font-semibold uppercase tracking-wide',
+                    next === 'ready' && 'bg-success hover:bg-success/90 text-success-foreground',
+                    next === 'preparing' && 'bg-primary hover:bg-primary/90',
+                  )}
                   onClick={() => onAdvanceItem(ticket.id, item)}
-                  className={`h-12 min-w-[112px] rounded-xl px-4 text-sm font-black uppercase tracking-wide transition active:scale-[0.98] ${
-                    next === 'ready'
-                      ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-                      : next === 'served'
-                        ? 'bg-zinc-950 text-white hover:bg-zinc-800'
-                        : 'bg-amber-400 text-zinc-950 hover:bg-amber-300'
-                  }`}
                 >
                   {actionLabel(next)}
-                </button>
+                </Button>
               ) : (
-                <div className="flex h-12 min-w-[112px] items-center justify-center rounded-xl bg-zinc-100 text-xs font-bold uppercase text-zinc-400">
+                <div className="flex h-9 min-w-[100px] items-center justify-center rounded-md bg-muted text-xs font-medium uppercase text-muted-foreground">
                   Done
                 </div>
               )}
@@ -582,14 +593,14 @@ function TicketCard({
         })}
       </div>
 
-      <footer className="flex items-center justify-between gap-3 bg-zinc-200 px-4 py-3">
-        <div className="text-sm font-semibold text-zinc-700">
+      <footer className="flex items-center justify-between gap-3 border-t border-border bg-muted/40 px-4 py-3">
+        <div className="text-xs font-medium text-muted-foreground">
           {readyCount}/{itemCount} món ready
         </div>
         <button
           type="button"
           onClick={() => onCancelTicket(ticket.id)}
-          className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold uppercase tracking-wide text-red-700 transition hover:bg-red-100"
+          className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
         >
           <X className="h-3.5 w-3.5" />
           Hủy

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { todayLocalISO } from '@/lib/date-format';
+import { currentLocalMonthRange, todayLocalISO } from '@/lib/date-format';
 import { toast } from 'sonner';
 import { getErrorMessage } from '@/api/decoders';
 import { orgApi, salesApi, type PosSessionView } from '@/api/fern-api';
@@ -18,6 +18,7 @@ export interface DBPosSession {
   opening_float: number;
   closing_cash: number | null;
   notes: string | null;
+  business_date: string;
   opened_at: string;
   closed_at: string | null;
   created_at: string;
@@ -34,6 +35,7 @@ function toRecord(value: unknown): Record<string, unknown> | null {
 function mapPosSession(apiSession: PosSessionView, outletNameById: Map<string, string>): DBPosSession {
   const outletId = String(apiSession.outletId ?? '');
   const openedAt = String(apiSession.openedAt ?? new Date().toISOString());
+  const businessDate = String(apiSession.businessDate || openedAt.slice(0, 10));
   const closedAt = apiSession.closedAt ? String(apiSession.closedAt) : null;
 
   return {
@@ -45,6 +47,7 @@ function mapPosSession(apiSession: PosSessionView, outletNameById: Map<string, s
     opening_float: 0,
     closing_cash: null,
     notes: apiSession.note == null ? null : String(apiSession.note),
+    business_date: businessDate,
     opened_at: openedAt,
     closed_at: closedAt,
     created_at: openedAt,
@@ -62,6 +65,7 @@ export function usePOSSessions() {
   const [totalSessions, setTotalSessions] = useState(0);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
+  const visibleMonth = currentLocalMonthRange();
 
   const fetchSessions = useCallback(async () => {
     if (!token) {
@@ -73,10 +77,13 @@ export function usePOSSessions() {
     setLoading(true);
     try {
       const scopedOutletId = normalizeNumericId(scope.outletId);
+      const monthRange = currentLocalMonthRange();
       const [outlets, sessionsPage] = await Promise.all([
         orgApi.outlets(token),
         salesApi.posSessions(token, {
           outletId: scopedOutletId || undefined,
+          startDate: monthRange.startDate,
+          endDate: monthRange.endDate,
           limit: POS_SESSION_PAGE_SIZE,
           offset: page * POS_SESSION_PAGE_SIZE,
         }),
@@ -204,6 +211,7 @@ export function usePOSSessions() {
   return {
     sessions,
     totalSessions,
+    visibleMonthLabel: visibleMonth.label,
     page,
     pageSize: POS_SESSION_PAGE_SIZE,
     setPage,

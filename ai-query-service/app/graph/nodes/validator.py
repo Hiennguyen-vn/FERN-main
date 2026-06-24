@@ -81,6 +81,22 @@ def validator(state: GraphState) -> GraphState:
         except (ValueError, TypeError):
             params["threshold"] = 10
 
+    if "category_codes" in params:
+        raw_codes = params.get("category_codes")
+        if isinstance(raw_codes, str):
+            raw_codes = [raw_codes]
+        codes: list[str] = []
+        if isinstance(raw_codes, list):
+            for raw in raw_codes:
+                code = str(raw or "").strip()
+                if not code:
+                    continue
+                if not code.replace("_", "").isalnum():
+                    errors.append("Invalid category_codes format")
+                    continue
+                codes.append(code[:32])
+        params["category_codes"] = codes[:20]
+
     state["template_params"] = params
     state["validation_errors"] = errors
     return state

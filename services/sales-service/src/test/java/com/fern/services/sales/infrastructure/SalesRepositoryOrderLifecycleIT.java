@@ -289,6 +289,49 @@ class SalesRepositoryOrderLifecycleIT {
   }
 
   @Test
+  void listPosSessionsDateRangeUsesBusinessDateInsteadOfOpenedAt() {
+    repository.openPosSession(new SalesDtos.OpenPosSessionRequest(
+        "SHIFT-HCM-MARCH-BUSINESS",
+        TestFixtures.OUTLET_HCM_1,
+        "USD",
+        null,
+        null,
+        "REGISTER-MARCH",
+        "cashier-march",
+        LocalDate.parse("2026-03-31"),
+        "Backdated business day"));
+
+    PagedResult<SalesDtos.PosSessionListItemView> marchSessions = repository.listPosSessions(
+        Set.of(TestFixtures.OUTLET_HCM_1),
+        null,
+        LocalDate.parse("2026-03-01"),
+        LocalDate.parse("2026-03-31"),
+        null,
+        null,
+        null,
+        "openedAt",
+        "desc",
+        20,
+        0);
+    PagedResult<SalesDtos.PosSessionListItemView> aprilSessions = repository.listPosSessions(
+        Set.of(TestFixtures.OUTLET_HCM_1),
+        null,
+        LocalDate.parse("2026-04-01"),
+        LocalDate.parse("2026-04-30"),
+        null,
+        null,
+        null,
+        "openedAt",
+        "desc",
+        20,
+        0);
+
+    assertEquals(1, marchSessions.items().size());
+    assertEquals("2026-03-31", marchSessions.items().get(0).businessDate().toString());
+    assertEquals(0, aprilSessions.items().size());
+  }
+
+  @Test
   void reconcileOpenSessionClosesAndRecordsCashCloseCount() {
     SalesDtos.PosSessionView session = repository.openPosSession(new SalesDtos.OpenPosSessionRequest(
         "SHIFT-HCM-COUNT",

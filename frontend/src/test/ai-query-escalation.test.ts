@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getEscalationInfo } from '@/components/ai-query/AiQueryModule';
+import { getEscalationInfo } from '@/components/ai-query/ai-query-escalation';
 import type { AiQueryResponse } from '@/api/ai-query-api';
 
 function meta(summary: Record<string, unknown> | null): AiQueryResponse {

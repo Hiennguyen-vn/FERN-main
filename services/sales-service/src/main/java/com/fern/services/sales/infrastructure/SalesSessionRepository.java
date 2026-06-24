@@ -412,12 +412,12 @@ public class SalesSessionRepository extends BaseRepository {
         params.add(businessDate);
       }
       if (startDate != null) {
-        sql.append(" AND ps.opened_at >= ?");
-        params.add(Timestamp.from(startDate.atStartOfDay(java.time.ZoneOffset.UTC).toInstant()));
+        sql.append(" AND ps.business_date >= ?");
+        params.add(startDate);
       }
       if (endDate != null) {
-        sql.append(" AND ps.opened_at < ?");
-        params.add(Timestamp.from(endDate.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant()));
+        sql.append(" AND ps.business_date <= ?");
+        params.add(endDate);
       }
       if (status != null && !status.isBlank()) {
         sql.append(" AND ps.status = ?::pos_session_status_enum ");

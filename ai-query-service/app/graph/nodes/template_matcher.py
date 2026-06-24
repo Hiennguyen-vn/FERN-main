@@ -16,7 +16,7 @@ from app.graph.question_frame import question_text, question_time_range
 from app.knowledge.lexicon import format_lexicon_hints
 from app.llm.openai_client import embed, llm_call_json
 from app.templates.registry import TEMPLATES, ensure_runtime_templates_loaded, list_templates
-from app.time_utils import format_time_context_for_prompt, has_time_expression
+from app.time_utils import format_time_context_for_prompt, has_time_expression, parse_two_month_ranges_for_comparison
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,16 @@ _OUTLET_LIST_QUESTION = re.compile(
     r"(outlet|chi\s+nhánh|chi\s+nhanh)\s+(nào|có\s+gì|trong\s+hệ\s+thống|trong\s+he\s+thong)|"
     r"(hệ\s+thống|he\s+thong)\s+có\s+(những\s+)?(cửa\s*hàng|cua\s*hang|outlet)|"
     r"tất\s+cả\s+(cửa\s*hàng|cua\s*hang|outlet)|store\s+list|list\s+outlets?)",
+    re.IGNORECASE,
+)
+_PRODUCT_LIST_QUESTION = re.compile(
+    r"(có\s+những\s+(sản\s*phẩm|san\s*pham)|co\s+nhung\s+(sản\s*phẩm|san\s*pham)|"
+    r"có\s+bao\s+nhiêu\s+(sản\s*phẩm|san\s*pham|product)|co\s+bao\s+nhieu\s+(sản\s*phẩm|san\s*pham|product)|"
+    r"bao\s+nhiêu\s+(sản\s*phẩm|san\s*pham|product)|bao\s+nhieu\s+(sản\s*phẩm|san\s*pham|product)|"
+    r"những\s+(sản\s*phẩm|san\s*pham)\s+nào|(sản\s*phẩm|san\s*pham)\s+nào|"
+    r"danh\s*sách\s+(sản\s*phẩm|san\s*pham|product|menu)|liệt\s*kê\s+(sản\s*phẩm|san\s*pham|product|menu)|"
+    r"(hệ\s+thống|he\s+thong)\s+có\s+(những\s+)?(sản\s*phẩm|san\s*pham|product)|"
+    r"product\s+(list|directory)|list\s+products?)",
     re.IGNORECASE,
 )
 _AI_SALES_DAILY_DATASET_RE = re.compile(r"\b(?:analytics\.)?ai_sales_daily\b", re.IGNORECASE)
@@ -187,6 +197,33 @@ def _is_product_revenue_ranking_question(question_folded: str) -> bool:
     revenueish = any(x in question_folded for x in ("doanh thu", "revenue", "sales"))
     rankish = any(x in question_folded for x in ("cao nhat", "nhieu nhat", "top", "xep hang", "ranking", "rank"))
     return productish and revenueish and rankish
+
+
+def _is_product_quantity_ranking_question(question_folded: str) -> bool:
+    productish = any(x in question_folded for x in ("san pham", "mat hang", "product", "mon "))
+    qtyish = any(
+        x in question_folded
+        for x in (
+            "ban duoc nhieu",
+            "ban nhieu",
+            "ban chay",
+            "so luong ban",
+            "qty",
+            "quantity",
+            "units sold",
+        )
+    )
+    rankish = any(x in question_folded for x in ("nhieu nhat", "cao nhat", "top", "xep hang", "ranking", "rank", "nhat"))
+    return productish and qtyish and rankish
+
+
+def _top_products_params(params: dict[str, str | int], question_folded: str) -> dict[str, str | int]:
+    out = dict(params)
+    default_limit = 1 if any(x in question_folded for x in ("cao nhat", "nhieu nhat", "best", "nhat")) else 10
+    out["limit"] = _limit_from_question(question_folded, default=default_limit)
+    if any(x in question_folded for x in ("doanh thu", "revenue", "sales")):
+        out["sort_by"] = "revenue"
+    return out
 
 
 def _inventory_fast_match(question_folded: str) -> tuple[str, dict[str, str | int], float] | None:
@@ -439,9 +476,26 @@ def _fast_template_match(question: str, intent: str | None, time_range: dict) ->
         )
     )
 
+    product_ranking = _is_product_revenue_ranking_question(q) or _is_product_quantity_ranking_question(q)
+    if product_ranking:
+        return "T04_top_products", _top_products_params(params, q), 0.94
+
     if revenueish:
         if comparisonish and yoyish:
             return "T07_revenue_comparison_yoy", params, 0.94
+        month_pair = parse_two_month_ranges_for_comparison(q)
+        if comparisonish and month_pair:
+            period_a, period_b = month_pair
+            return (
+                "T36_revenue_period_driver_bridge",
+                {
+                    "from_date_a": period_a["from_date"],
+                    "to_date_a": period_a["to_date"],
+                    "from_date_b": period_b["from_date"],
+                    "to_date_b": period_b["to_date"],
+                },
+                0.94,
+            )
         if any(x in q for x in ("danh muc", "category", "nhom san pham", "nhom mon")):
             return "T03_revenue_by_category", params, 0.88
         if rankish:
@@ -481,10 +535,8 @@ def _fast_template_match(question: str, intent: str | None, time_range: dict) ->
             return "T01_daily_revenue", params, 0.93
         return "T32_period_revenue_summary", params, 0.9
 
-    if any(x in q for x in ("top san pham", "san pham ban chay", "best seller", "mat hang ban chay")) or _is_product_revenue_ranking_question(q):
-        out = dict(params)
-        out["limit"] = _limit_from_question(q, default=10)
-        return "T04_top_products", out, 0.92
+    if any(x in q for x in ("top san pham", "san pham ban chay", "best seller", "mat hang ban chay")) or _is_product_quantity_ranking_question(q):
+        return "T04_top_products", _top_products_params(params, q), 0.92
 
     if any(x in q for x in ("p&l", "lai lo", "loi nhuan", "profit", "margin")):
         return "T24_daily_pnl_summary", params, 0.88
@@ -567,10 +619,10 @@ def _template_from_planning_decision(
     if "operating_profit" in metric_focus:
         return "T24_daily_pnl_summary", out, 0.88
     if mode == "ranking" and group_by == "product":
-        out["limit"] = _limit_from_question(_fold(question), default=10)
+        out.update(_top_products_params(out, _fold(question)))
         return "T04_top_products", out, 0.88
     if _is_product_revenue_ranking_question(question_folded):
-        out["limit"] = _limit_from_question(question_folded, default=10)
+        out.update(_top_products_params(out, question_folded))
         return "T04_top_products", out, 0.88
     if (
         (intent or "").strip().lower() == "product_mix"
@@ -814,6 +866,23 @@ async def template_matcher(state: GraphState) -> GraphState:
         state["response_hints"] = []
         state["clarification_question"] = None
         state.setdefault("trace", []).append({"node": "template_matcher", "shortcut": "T31_outlet_directory"})
+        return state
+
+    product_ranking_question = _is_product_revenue_ranking_question(folded_question) or _is_product_quantity_ranking_question(folded_question)
+    if (
+        intent in ("lookup", "unknown", "product_mix")
+        and not business_data_question
+        and not product_ranking_question
+        and _PRODUCT_LIST_QUESTION.search(question)
+    ):
+        state["template_key"] = "T38_product_directory"
+        state["template_params"] = {"limit": 50}
+        state["template_confidence"] = 0.95
+        state["matcher_missing_info"] = []
+        state["response_kind"] = "answer"
+        state["response_hints"] = []
+        state["clarification_question"] = None
+        state.setdefault("trace", []).append({"node": "template_matcher", "shortcut": "T38_product_directory"})
         return state
 
     # HR không có trong registry template — không gọi LLM matcher để khỏi bị “hỏi lại chỉ số/thời gian” sai nghĩa.

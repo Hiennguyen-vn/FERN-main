@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FERN Platform — System Architecture Diagram</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0e1a;
+      --surface: #111827;
+      --surface-2: #1a2236;
+      --border: #1e293b;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent-blue: #3b82f6;
+      --accent-purple: #8b5cf6;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+      --accent-cyan: #06b6d4;
+      --accent-orange: #f97316;
+      --accent-pink: #ec4899;
+      --accent-lime: #84cc16;
+      --accent-indigo: #6366f1;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: auto;
+    }
+
+    .diagram-container {
+      width: 1600px;
+      margin: 0 auto;
+      padding: 40px 30px 60px;
+      position: relative;
+    }
+
+    /* ===== HEADER ===== */
+    .diagram-header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .diagram-header h1 {
+      font-size: 28px;
+      font-weight: 800;
+      background: linear-gradient(135deg, #10b981, #3b82f6, #8b5cf6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 6px;
+      letter-spacing: -0.5px;
+    }
+
+    .diagram-header .subtitle {
+      font-size: 13px;
+      color: var(--text-dim);
+      font-weight: 500;
+    }
+
+    /* ===== LAYER ===== */
+    .layer {
+      margin-bottom: 24px;
+      position: relative;
+    }
+
+    .layer-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .layer-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, var(--border), transparent);
+    }
+
+    .layer-content {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    /* ===== NODE (Service Box) ===== */
+    .node {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+      min-width: 155px;
+      max-width: 200px;
+      text-align: center;
+      position: relative;
+      transition: all 0.3s ease;
+      cursor: default;
+    }
+
+    .node:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+      border-color: var(--accent-blue);
+    }
+
+    .node-icon {
+      font-size: 28px;
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .node-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 2px;
+      line-height: 1.3;
+    }
+
+    .node-port {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+
+    .node-desc {
+      font-size: 9.5px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .node-badge {
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      font-size: 8px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Node color variants */
+    .node--client { border-color: rgba(59, 130, 246, 0.3); background: linear-gradient(135deg, rgba(59,130,246,0.08), var(--surface)); }
+    .node--client:hover { border-color: var(--accent-blue); box-shadow: 0 0 20px rgba(59,130,246,0.2); }
+
+    .node--gateway { border-color: rgba(139, 92, 246, 0.4); background: linear-gradient(135deg, rgba(139,92,246,0.12), var(--surface)); min-width: 280px; max-width: 400px; }
+    .node--gateway:hover { border-color: var(--accent-purple); box-shadow: 0 0 25px rgba(139,92,246,0.25); }
+
+    .node--core { border-color: rgba(16, 185, 129, 0.3); background: linear-gradient(135deg, rgba(16,185,129,0.06), var(--surface)); }
+    .node--core:hover { border-color: var(--accent-emerald); box-shadow: 0 0 20px rgba(16,185,129,0.2); }
+
+    .node--support { border-color: rgba(245, 158, 11, 0.3); background: linear-gradient(135deg, rgba(245,158,11,0.06), var(--surface)); }
+    .node--support:hover { border-color: var(--accent-amber); box-shadow: 0 0 20px rgba(245,158,11,0.2); }
+
+    .node--infra { border-color: rgba(244, 63, 94, 0.3); background: linear-gradient(135deg, rgba(244,63,94,0.06), var(--surface)); }
+    .node--infra:hover { border-color: var(--accent-rose); box-shadow: 0 0 20px rgba(244,63,94,0.2); }
+
+    .node--db { border-radius: 12px; }
+    .node--db .node-icon { font-size: 32px; }
+
+    .node--control { border-color: rgba(6, 182, 212, 0.3); background: linear-gradient(135deg, rgba(6,182,212,0.06), var(--surface)); }
+
+    /* ===== CONNECTOR ARROWS ===== */
+    .connectors-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ===== ARROW LABELS ===== */
+    .arrow-section {
+      display: flex;
+      justify-content: center;
+      margin: 6px 0;
+      position: relative;
+    }
+
+    .arrow-down {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+
+    .arrow-line {
+      width: 2px;
+      height: 20px;
+      background: linear-gradient(180deg, var(--accent-purple), var(--accent-blue));
+      opacity: 0.5;
+    }
+
+    .arrow-label {
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--text-dim);
+      background: var(--bg);
+      padding: 2px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    .arrow-head {
+      width: 0;
+      height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 6px solid var(--accent-blue);
+      opacity: 0.5;
+    }
+
+    /* ===== COMMUNICATION LEGEND ===== */
+    .comm-section {
+      margin: 8px 0 16px;
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .comm-tag {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 9px;
+      color: var(--text-muted);
+      background: var(--surface);
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+
+    .comm-line {
+      width: 20px;
+      height: 2px;
+      border-radius: 1px;
+    }
+
+    .comm-line--rest { background: var(--accent-emerald); }
+    .comm-line--kafka { background: var(--accent-amber); background: repeating-linear-gradient(90deg, var(--accent-amber) 0 4px, transparent 4px 8px); }
+    .comm-line--ws { background: var(--accent-cyan); background: repeating-linear-gradient(90deg, var(--accent-cyan) 0 2px, transparent 2px 5px); }
+    .comm-line--jdbc { background: var(--accent-rose); }
+
+    /* ===== SHARED DB INDICATOR ===== */
+    .shared-db-label {
+      text-align: center;
+      margin: 8px 0 4px;
+    }
+
+    .shared-db-label span {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--accent-rose);
+      background: rgba(244,63,94,0.1);
+      padding: 4px 14px;
+      border-radius: 8px;
+      border: 1px dashed rgba(244,63,94,0.3);
+    }
+
+    /* ===== GROUPS WITHIN LAYER ===== */
+    .service-group {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .group-wrapper {
+      background: rgba(255,255,255,0.02);
+      border: 1px dashed var(--border);
+      border-radius: 16px;
+      padding: 14px 14px 10px;
+      position: relative;
+    }
+
+    .group-label {
+      position: absolute;
+      top: -9px;
+      left: 16px;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 1px 10px;
+      border-radius: 6px;
+      background: var(--bg);
+    }
+
+    .group-label--core { color: var(--accent-emerald); border: 1px solid rgba(16,185,129,0.3); }
+    .group-label--support { color: var(--accent-amber); border: 1px solid rgba(245,158,11,0.3); }
+    .group-label--infra-db { color: var(--accent-rose); border: 1px solid rgba(244,63,94,0.3); }
+    .group-label--infra-msg { color: var(--accent-orange); border: 1px solid rgba(249,115,22,0.3); }
+    .group-label--infra-cache { color: var(--accent-cyan); border: 1px solid rgba(6,182,212,0.3); }
+    .group-label--infra-storage { color: var(--accent-pink); border: 1px solid rgba(236,72,153,0.3); }
+    .group-label--infra-obs { color: var(--accent-lime); border: 1px solid rgba(132,204,22,0.3); }
+
+    .group-nodes {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    /* ===== KAFKA EVENT FLOW MINI ===== */
+    .kafka-flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 9px;
+      color: var(--text-dim);
+      margin: 2px 0;
+    }
+
+    .kafka-flow .kf-arrow {
+      color: var(--accent-amber);
+      font-size: 12px;
+    }
+
+    /* ===== RESPONSIVE / PRINT ===== */
+    @media print {
+      body { background: white; color: #1a1a2e; }
+      .node { border-color: #ccc; background: #f8f8f8; }
+      .node-name { color: #1a1a2e; }
+      .node-desc { color: #555; }
+    }
+
+    /* ===== FOOTER ===== */
+    .diagram-footer {
+      text-align: center;
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .diagram-footer p {
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    .tech-stack-tag {
+      display: inline-block;
+      font-size: 9px;
+      color: var(--text-muted);
+      background: var(--surface);
+      padding: 3px 8px;
+      border-radius: 4px;
+      margin: 2px;
+      border: 1px solid var(--border);
+    }
+
+    /* flow connector lines between layers */
+    .flow-connector {
+      display: flex;
+      justify-content: center;
+      padding: 4px 0;
+    }
+    .flow-connector .vline {
+      width: 2px;
+      height: 18px;
+      background: linear-gradient(180deg, rgba(139,92,246,0.4), rgba(59,130,246,0.2));
+    }
+    .flow-arrows-group {
+      display: flex;
+      justify-content: center;
+      gap: 60px;
+      margin: 2px 0;
+    }
+    .flow-arrows-group .arrow-down {
+      opacity: 0.6;
+    }
+
+    /* service detail list */
+    .node-features {
+      text-align: left;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .node-features li {
+      font-size: 9px;
+      color: var(--text-muted);
+      list-style: none;
+      padding: 1px 0;
+    }
+
+    .node-features li::before {
+      content: '•';
+      color: var(--accent-emerald);
+      margin-right: 4px;
+      font-weight: bold;
+    }
+
+    .node--support .node-features li::before { color: var(--accent-amber); }
+    .node--infra .node-features li::before { color: var(--accent-rose); }
+
+    /* annotation callout */
+    .annotation {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 9px;
+      color: var(--text-dim);
+      background: rgba(139,92,246,0.08);
+      border: 1px solid rgba(139,92,246,0.2);
+      border-radius: 6px;
+      padding: 3px 10px;
+      margin: 0 4px;
+    }
+
+    .annotation--kafka { background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.25); color: var(--accent-amber); }
+    .annotation--rest { background: rgba(16,185,129,0.08); border-color: rgba(16,185,129,0.25); color: var(--accent-emerald); }
+
+    /* horizontal connector row */
+    .h-connector-row {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin: 6px 0;
+      gap: 0;
+    }
+    .h-line {
+      height: 2px;
+      flex: 1;
+      max-width: 800px;
+      opacity: 0.3;
+    }
+    .h-line--jdbc { background: linear-gradient(90deg, transparent, var(--accent-rose), var(--accent-rose), transparent); }
+    .h-line--kafka { background: repeating-linear-gradient(90deg, var(--accent-amber) 0 6px, transparent 6px 12px); }
+  </style>
+</head>
+<body>
+  <div class="diagram-container">
+
+    <!-- ===== HEADER ===== -->
+    <div class="diagram-header">
+      <h1>🌿 FERN Platform — System Architecture</h1>
+      <p class="subtitle">Service-Oriented Modular Architecture · Multi-Outlet F&B Management Platform</p>
+    </div>
+
+    <!-- ===== LEGEND ===== -->
+    <div class="comm-section">
+      <div class="comm-tag"><div class="comm-line comm-line--rest"></div> REST / HTTP (Synchronous)</div>
+      <div class="comm-tag"><div class="comm-line comm-line--kafka"></div> Kafka Events (Asynchronous)</div>
+      <div class="comm-tag"><div class="comm-line comm-line--ws"></div> WebSocket (Realtime Push)</div>
+      <div class="comm-tag"><div class="comm-line comm-line--jdbc"></div> JDBC / Database Connection</div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- LAYER 1: CLIENTS                                       -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="layer">
+      <div class="layer-label">👤 Client Layer</div>
+      <div class="layer-content">
+        <div class="node node--client">
+          <span class="node-icon">🖥️</span>
+          <div class="node-name">Web Dashboard</div>
+          <div class="node-desc">React · Vite · TailwindCSS<br>Admin & Manager Portal</div>
+        </div>
+        <div class="node node--client">
+          <span class="node-icon">📱</span>
+          <div class="node-name">POS Terminal</div>
+          <div class="node-desc">Thiết bị bán hàng<br>Offline-first + Sync</div>
+          <span class="node-badge" style="background:rgba(6,182,212,0.2);color:var(--accent-cyan)">WSS</span>
+        </div>
+        <div class="node node--client">
+          <span class="node-icon">📲</span>
+          <div class="node-name">Mobile / Public</div>
+          <div class="node-desc">Public Ordering API<br>Khách đặt hàng online</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Arrow: Clients → Gateway -->
+    <div class="arrow-section">
+      <div class="arrow-down">
+        <div class="arrow-line" style="height:12px"></div>
+        <div class="arrow-label">HTTPS / REST + WSS</div>
+        <div class="arrow-line" style="height:12px"></div>
+        <div class="arrow-head"></div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- LAYER 2: API GATEWAY                                   -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="layer">
+      <div class="layer-label">🛡️ Gateway Layer</div>
+      <div class="layer-content">
+        <div class="node node--gateway">
+          <span class="node-icon">🛡️</span>
+          <div class="node-name">API Gateway</div>
+          <div class="node-port">Spring Cloud Gateway · :8080</div>
+          <ul class="node-features" style="border-top-color:rgba(139,92,246,0.15)">
+            <li style="color:var(--text-muted)">JWT Authentication & Session Validation</li>
+            <li style="color:var(--text-muted)">Device Token Registry (POS)</li>
+            <li style="color:var(--text-muted)">Rate Limiting (Redis-backed, per-route tiers)</li>
+            <li style="color:var(--text-muted)">Circuit Breaker (Resilience4j per service)</li>
+            <li style="color:var(--text-muted)">Route Catalog → 13 downstream services</li>
+            <li style="color:var(--text-muted)">WebSocket /ws/sync/{outletId} (realtime push)</li>
+            <li style="color:var(--text-muted)">Internal JWT issuance (30s TTL, per-callee)</li>
+            <li style="color:var(--text-muted)">CORS + Correlation-ID propagation</li>
+          </ul>
+        </div>
+
+        <div class="node node--control" style="min-width:160px;max-width:180px;">
+          <span class="node-icon">🧠</span>
+          <div class="node-name">Master Node</div>
+          <div class="node-port">Control Plane · :8082</div>
+          <ul class="node-features" style="border-top-color:rgba(6,182,212,0.15)">
+            <li style="color:var(--text-muted)">Service Registry</li>
+            <li style="color:var(--text-muted)">Health Sweep</li>
+            <li style="color:var(--text-muted)">Control Plane API</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Arrow: Gateway → Services -->
+    <div class="arrow-section">
+      <div class="arrow-down">
+        <div class="arrow-line" style="height:10px"></div>
+        <div class="arrow-label">REST (Internal JWT + Headers: User-ID, Roles, Permissions, Outlet-IDs)</div>
+        <div class="arrow-line" style="height:10px"></div>
+        <div class="arrow-head"></div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- LAYER 3: CORE BUSINESS SERVICES                        -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="layer">
+      <div class="layer-label">⚙️ Application Services Layer</div>
+
+      <!-- Core Services Group -->
+      <div class="group-wrapper" style="margin-bottom:14px;">
+        <span class="group-label group-label--core">Core Business Services</span>
+        <div class="group-nodes">
+
+          <div class="node node--core">
+            <span class="node-icon">🔐</span>
+            <div class="node-name">Auth Service</div>
+            <div class="node-port">IAM · :8081</div>
+            <ul class="node-features">
+              <li>Login / Logout / JWT</li>
+              <li>JWKS Endpoint</li>
+              <li>Session Management</li>
+              <li>Device Registration</li>
+              <li>Scope-based Auth</li>
+            </ul>
+            <span class="node-badge" style="background:rgba(245,158,11,0.2);color:var(--accent-amber)">Consumer</span>
+          </div>
+
+          <div class="node node--core">
+            <span class="node-icon">🏢</span>
+            <div class="node-name">Org Service</div>
+            <div class="node-port">Organization · :8083</div>
+            <ul class="node-features">
+              <li>Region Hierarchy</li>
+              <li>Outlet Management</li>
+              <li>Closure Table + CTE</li>
+              <li>Scope Expansion</li>
+              <li>Redis Scope Cache</li>
+            </ul>
+            <span class="node-badge" style="background:rgba(245,158,11,0.2);color:var(--accent-amber)">Producer</span>
+          </div>
+
+          <div class="node node--core">
+            <span class="node-icon">📋</span>
+            <div class="node-name">Product Service</div>
+            <div class="node-port">Catalog · :8085</div>
+            <ul class="node-features">
+              <li>Products & Variants</li>
+              <li>Menu Builder</li>
+              <li>Recipe / BOM</li>
+              <li>Multi-level Pricing</li>
+              <li>Allergens & Modifiers</li>
+              <li>Catalog Publish</li>
+            </ul>
+            <span class="node-badge" style="background:rgba(245,158,11,0.2);color:var(--accent-amber)">Producer</span>
+          </div>
+
+          <div class="node node--core">
+            <span class="node-icon">💰</span>
+            <div class="node-name">Sales Service</div>
+            <div class="node-port">POS · :8087</div>
+            <ul class="node-features">
+              <li>POS Session Mgmt</li>
+              <li>Sale Orders CRUD</li>
+              <li>Payment State Machine</li>
+              <li>Promotion Engine</li>
+              <li>Kitchen Display (KDS)</li>
+              <li>CRM & Loyalty</li>
+              <li>Offline Sync</li>
+            </ul>
+            <span class="node-badge" style="background:rgba(245,158,11,0.2);color:var(--accent-amber)">Producer</span>
+          </div>
+
+          <div class="node node--core">
+            <span class="node-icon">📦</span>
+            <div class="node-name">Inventory Service</div>
+            <div class="node-port">Stock · :8088</div>
+            <ul class="node-features">
+              <li>Stock Balance</li>
+              <li>Stock Reservation</li>
+              <li>Stock Count</li>
+              <li>Waste Management</li>
+              <li>Manufacturing Batch</li>
+              <li>Lot Tracking</li>
+            </ul>
+            <span class="node-badge" style="background:rgba(245,158,11,0.2);color:var(--accent-amber)">Consumer</span>
+          </div>
+
+          <div class="node node--core">
+            <span class="node-icon">🚚</span>
+            <div class="node-name">Procurement Service</div>
+            <div class="node-port">Supply Chain · :8086</div>
+            <ul class="node-features">
+              <li>Supplier Master</li>
+              <li>Purchase Orders</li>
+              <li>Goods Receipt</li>
+              <li>3-Way Matching</li>
+              <li>Supplier Invoice</li>
+              <li>Tiered Approval</li>
+            </ul>
+            <span class="node-badge" style="background:rgba(245,158,11,0.2);color:var(--accent-amber)">Producer</span>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Sync REST calls between services -->
+      <div class="comm-section" style="margin:4px 0 10px">
+        <span class="annotation annotation--rest">Sales → Inventory: REST (Stock Reservation, Availability Check)</span>
+        <span class="annotation annotation--rest">Payroll → HR: REST (Fetch Shifts, Contracts)</span>
+      </div>
+
+      <!-- Supporting Services Group -->
+      <div class="group-wrapper">
+        <span class="group-label group-label--support">Supporting Services</span>
+        <div class="group-nodes">
+
+          <div class="node node--support" style="min-width:130px;">
+            <span class="node-icon">👥</span>
+            <div class="node-name">HR Service</div>
+            <div class="node-port">:8084</div>
+            <ul class="node-features">
+              <li>Shifts & Schedules</li>
+              <li>Employee Contracts</li>
+              <li>Attendance</li>
+            </ul>
+          </div>
+
+          <div class="node node--support" style="min-width:130px;">
+            <span class="node-icon">💵</span>
+            <div class="node-name">Payroll Service</div>
+            <div class="node-port">:8089</div>
+            <ul class="node-features">
+              <li>Payroll Periods</li>
+              <li>Salary Calculator</li>
+              <li>Overtime Rules</li>
+            </ul>
+            <span class="node-badge" style="background:rgba(245,158,11,0.2);color:var(--accent-amber);font-size:7px">Producer</span>
+          </div>
+
+          <div class="node node--support" style="min-width:130px;">
+            <span class="node-icon">🧾</span>
+            <div class="node-name">Finance Service</div>
+            <div class="node-port">:8090</div>
+            <ul class="node-features">
+              <li>Expense Records</li>
+              <li>Invoice Generation</li>
+              <li>PDF Rendering</li>
+            </ul>
+            <span class="node-badge" style="background:rgba(245,158,11,0.2);color:var(--accent-amber);font-size:7px">Consumer</span>
+          </div>
+
+          <div class="node node--support" style="min-width:130px;">
+            <span class="node-icon">📋</span>
+            <div class="node-name">Audit Service</div>
+            <div class="node-port">:8091</div>
+            <ul class="node-features">
+              <li>Centralized Logging</li>
+              <li>23-topic Consumer</li>
+              <li>Audit Trail</li>
+            </ul>
+            <span class="node-badge" style="background:rgba(244,63,94,0.2);color:var(--accent-rose);font-size:7px">ALL Topics</span>
+          </div>
+
+          <div class="node node--support" style="min-width:130px;">
+            <span class="node-icon">📊</span>
+            <div class="node-name">Report Service</div>
+            <div class="node-port">:8092</div>
+            <ul class="node-features">
+              <li>ClickHouse OLAP</li>
+              <li>Projection Lag</li>
+              <li>Analytics Queries</li>
+            </ul>
+          </div>
+
+          <div class="node node--support" style="min-width:130px;">
+            <span class="node-icon">🤖</span>
+            <div class="node-name">AI Query Service</div>
+            <div class="node-port">Python · :8093</div>
+            <ul class="node-features">
+              <li>NL-to-SQL</li>
+              <li>LLM Integration</li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Arrow: Services → Infrastructure -->
+    <div class="arrow-section">
+      <div class="arrow-down">
+        <div class="arrow-line" style="height:10px"></div>
+        <div class="arrow-label">JDBC · Kafka Producer/Consumer · Redis Client · S3 API</div>
+        <div class="arrow-line" style="height:10px"></div>
+        <div class="arrow-head"></div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- LAYER 4: INFRASTRUCTURE                                -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="layer">
+      <div class="layer-label">🗄️ Data & Messaging Infrastructure</div>
+
+      <div style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;">
+
+        <!-- Databases Group -->
+        <div class="group-wrapper">
+          <span class="group-label group-label--infra-db">Databases</span>
+          <div class="group-nodes">
+            <div class="node node--infra node--db">
+              <span class="node-icon">🐘</span>
+              <div class="node-name">PostgreSQL</div>
+              <div class="node-port">Shared DB · Schema: core</div>
+              <ul class="node-features">
+                <li>1 DB cho tất cả services</li>
+                <li>PgBouncer connection pool</li>
+                <li>58+ tables, 35+ enums</li>
+                <li>Outbox/Inbox tables</li>
+                <li>Business triggers</li>
+              </ul>
+              <span class="node-badge" style="background:rgba(244,63,94,0.25);color:var(--accent-rose);font-size:7px">Shared</span>
+            </div>
+            <div class="node node--infra node--db" style="min-width:120px;">
+              <span class="node-icon">📊</span>
+              <div class="node-name">ClickHouse</div>
+              <div class="node-port">OLAP Analytics</div>
+              <ul class="node-features">
+                <li>Report queries</li>
+                <li>CDC from PG</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Message Broker Group -->
+        <div class="group-wrapper">
+          <span class="group-label group-label--infra-msg">Message Broker</span>
+          <div class="group-nodes">
+            <div class="node node--infra node--db" style="border-color:rgba(249,115,22,0.3);min-width:180px;">
+              <span class="node-icon">📨</span>
+              <div class="node-name">Apache Kafka</div>
+              <div class="node-port">3 Brokers · KRaft Mode</div>
+              <ul class="node-features">
+                <li>23+ event topics</li>
+                <li>Outbox → Kafka → Inbox</li>
+                <li>fern.sales.* / fern.org.*</li>
+                <li>fern.procurement.* / ...</li>
+                <li>RetryableTopic + DLT</li>
+              </ul>
+            </div>
+            <div class="node node--infra node--db" style="border-color:rgba(249,115,22,0.3);min-width:120px;">
+              <span class="node-icon">🔌</span>
+              <div class="node-name">Kafka Connect</div>
+              <div class="node-port">CDC Connectors</div>
+              <ul class="node-features">
+                <li>PG → ClickHouse</li>
+                <li>Debezium CDC</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cache & Search Group -->
+        <div class="group-wrapper">
+          <span class="group-label group-label--infra-cache">Cache & Search</span>
+          <div class="group-nodes">
+            <div class="node node--infra node--db" style="border-color:rgba(6,182,212,0.3);min-width:140px;">
+              <span class="node-icon">⚡</span>
+              <div class="node-name">Redis</div>
+              <div class="node-port">Cache + Sessions</div>
+              <ul class="node-features">
+                <li>Scope Expansion Cache</li>
+                <li>Price Cache</li>
+                <li>Rate Limit Buckets</li>
+                <li>Idempotency Keys</li>
+                <li>Auth Sessions</li>
+              </ul>
+            </div>
+            <div class="node node--infra node--db" style="border-color:rgba(6,182,212,0.3);min-width:120px;">
+              <span class="node-icon">🔍</span>
+              <div class="node-name">OpenSearch</div>
+              <div class="node-port">Full-text Search</div>
+              <ul class="node-features">
+                <li>Sales Search Index</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Storage & Security Group -->
+        <div class="group-wrapper">
+          <span class="group-label group-label--infra-storage">Storage & Security</span>
+          <div class="group-nodes">
+            <div class="node node--infra node--db" style="border-color:rgba(236,72,153,0.3);min-width:120px;">
+              <span class="node-icon">📁</span>
+              <div class="node-name">MinIO</div>
+              <div class="node-port">S3-Compatible</div>
+              <ul class="node-features">
+                <li>Product Images</li>
+                <li>Invoice PDFs</li>
+                <li>Expense Docs</li>
+              </ul>
+            </div>
+            <div class="node node--infra node--db" style="border-color:rgba(236,72,153,0.3);min-width:120px;">
+              <span class="node-icon">🔒</span>
+              <div class="node-name">Vault</div>
+              <div class="node-port">HashiCorp</div>
+              <ul class="node-features">
+                <li>Secrets Mgmt</li>
+                <li>JWT Signing Keys</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- KAFKA EVENT FLOW SUMMARY                               -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="layer" style="margin-top:24px;">
+      <div class="layer-label">📨 Kafka Event Flow (Outbox → Kafka → Inbox Pattern)</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;max-width:1100px;margin:0 auto;">
+        <div style="display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:center;">
+          <!-- Header row -->
+          <div style="font-size:10px;font-weight:700;color:var(--accent-emerald);text-align:center;padding-bottom:6px;border-bottom:1px solid var(--border)">PRODUCERS (Outbox)</div>
+          <div style="font-size:10px;color:var(--text-dim);text-align:center;padding-bottom:6px;border-bottom:1px solid var(--border)">→</div>
+          <div style="font-size:10px;font-weight:700;color:var(--accent-amber);text-align:center;padding-bottom:6px;border-bottom:1px solid var(--border)">KAFKA TOPICS</div>
+          <div style="font-size:10px;color:var(--text-dim);text-align:center;padding-bottom:6px;border-bottom:1px solid var(--border)">→</div>
+          <div style="font-size:10px;font-weight:700;color:var(--accent-cyan);text-align:center;padding-bottom:6px;border-bottom:1px solid var(--border)">CONSUMERS (Inbox)</div>
+
+          <!-- Row 1 -->
+          <div style="font-size:9px;color:var(--text-muted);text-align:center">Sales Service</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-amber);text-align:center;font-weight:600">fern.sales.sale-approved / cancelled</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-cyan);text-align:center;font-weight:600">Inventory Service (trừ/hoàn kho)</div>
+
+          <!-- Row 2 -->
+          <div style="font-size:9px;color:var(--text-muted);text-align:center">Sales Service</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-amber);text-align:center;font-weight:600">fern.sales.payment-captured</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-cyan);text-align:center;font-weight:600">Finance Service (expense/invoice)</div>
+
+          <!-- Row 3 -->
+          <div style="font-size:9px;color:var(--text-muted);text-align:center">Procurement Service</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-amber);text-align:center;font-weight:600">fern.procurement.goods-receipt-posted</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-cyan);text-align:center;font-weight:600">Inventory Service (nhập kho)</div>
+
+          <!-- Row 4 -->
+          <div style="font-size:9px;color:var(--text-muted);text-align:center">Procurement Service</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-amber);text-align:center;font-weight:600">fern.procurement.invoice-approved</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-cyan);text-align:center;font-weight:600">Finance Service (expense)</div>
+
+          <!-- Row 5 -->
+          <div style="font-size:9px;color:var(--text-muted);text-align:center">Org Service</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-amber);text-align:center;font-weight:600">fern.org.outlet-created / updated</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-cyan);text-align:center;font-weight:600">Auth Service (sync scope)</div>
+
+          <!-- Row 6 -->
+          <div style="font-size:9px;color:var(--text-muted);text-align:center">Payroll Service</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-amber);text-align:center;font-weight:600">fern.payroll.payroll-approved</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-cyan);text-align:center;font-weight:600">Finance Service (expense lương)</div>
+
+          <!-- Row 7 -->
+          <div style="font-size:9px;color:var(--text-muted);text-align:center">ALL Services (8 producers)</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-amber);text-align:center;font-weight:600">fern.* (23 topics)</div>
+          <div style="font-size:11px;color:var(--accent-amber);text-align:center">→</div>
+          <div style="font-size:9px;color:var(--accent-rose);text-align:center;font-weight:600">Audit Service (ALL events → audit_log)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== FOOTER ===== -->
+    <div class="diagram-footer">
+      <p style="margin-bottom:8px;">
+        <strong style="color:var(--text)">Architecture Style:</strong>
+        <span class="tech-stack-tag">Service-Oriented Modular Architecture</span>
+        <span class="tech-stack-tag">Event-Driven Backbone</span>
+        <span class="tech-stack-tag">Shared Database (pre-microservice)</span>
+      </p>
+      <p style="margin-bottom:6px;">
+        <strong style="color:var(--text)">Tech Stack:</strong>
+        <span class="tech-stack-tag">Java 21</span>
+        <span class="tech-stack-tag">Spring Boot 3</span>
+        <span class="tech-stack-tag">Spring Cloud Gateway</span>
+        <span class="tech-stack-tag">Apache Kafka (KRaft)</span>
+        <span class="tech-stack-tag">PostgreSQL</span>
+        <span class="tech-stack-tag">Redis</span>
+        <span class="tech-stack-tag">ClickHouse</span>
+        <span class="tech-stack-tag">OpenSearch</span>
+        <span class="tech-stack-tag">MinIO</span>
+        <span class="tech-stack-tag">Docker</span>
+        <span class="tech-stack-tag">Python (AI Query)</span>
+      </p>
+      <p style="margin-top:8px;font-size:9px;">
+        FERN Multi-Outlet F&B Platform · 13 Services + 1 Gateway + 1 Control Plane · 23+ Kafka Event Types
+      </p>
+    </div>
+
+  </div>
+</body>
+</html>

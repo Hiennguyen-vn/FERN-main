@@ -50,6 +50,7 @@ _TEMPLATE_INTENTS: dict[str, str] = {
     "T31_outlet_directory": "lookup",
     "T33_zero_revenue_outlets": "lookup",
     "T37_ai_sales_daily_outlets": "lookup",
+    "T38_product_directory": "lookup",
 }
 _RUNTIME_LOCK = threading.RLock()
 _RUNTIME_VERSION: int | None = None

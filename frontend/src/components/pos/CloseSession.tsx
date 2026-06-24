@@ -48,7 +48,7 @@ export function CloseSession({ session, onBack, onConfirm }: Props) {
 
   useEffect(() => {
     setRows(buildCloseCountRows(session));
-  }, [expectedSnapshot, session.id]);
+  }, [expectedSnapshot, session]);
 
   const updateActual = (index: number, value: number) => {
     setRows((current) => current.map((row, i) => i === index ? { ...row, actual: value } : row));

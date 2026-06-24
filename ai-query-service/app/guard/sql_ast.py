@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from datetime import date, timedelta
+import re
 
 import sqlglot
 from sqlglot import expressions as exp
@@ -9,6 +11,7 @@ from app.query_policy.policy import (
     TABLE_BLOCKED_SELECT_COLUMNS,
     TABLE_TIME_COLUMNS,
 )
+from app.time_utils import today_local
 
 BLOCKED_FUNCTIONS: frozenset[str] = frozenset({
     "system", "file", "url", "remote", "remotesecure", "cluster", "clusterallreplicas",
@@ -51,6 +54,8 @@ def validate_sql_phase1(
     """
     violations: list[str] = []
 
+    violations.extend(_validate_raw_sql_safety(sql))
+
     try:
         statements = sqlglot.parse(sql, dialect="clickhouse")
     except Exception as e:
@@ -89,6 +94,8 @@ def validate_sql_phase1(
     if require_time_filter_tables:
         violations.extend(_validate_required_time_filters(ast, require_time_filter_tables))
 
+    violations.extend(_validate_future_date_bounds(sql))
+
     for func in ast.find_all(exp.Anonymous):
         name = (func.this or "").lower() if isinstance(func.this, str) else getattr(func.this, "name", "").lower()
         if name in BLOCKED_FUNCTIONS:
@@ -108,6 +115,8 @@ def validate_sql_phase1(
 
 def validate_sql(sql: str, *, allowed_tables: frozenset[str] | None = None) -> GuardResult:
     violations: list[str] = []
+
+    violations.extend(_validate_raw_sql_safety(sql))
 
     try:
         statements = sqlglot.parse(sql, dialect="clickhouse")
@@ -156,6 +165,8 @@ def validate_sql(sql: str, *, allowed_tables: frozenset[str] | None = None) -> G
         if name in BLOCKED_FUNCTIONS:
             violations.append(f"Blocked function: {name}")
 
+    violations.extend(_validate_future_date_bounds(sql))
+
     # Rule 4a: the outermost query must have an outlet_id predicate.
     if not _outer_has_outlet_filter(ast):
         violations.append("Missing outlet_id IN (...) filter")
@@ -171,6 +182,35 @@ def validate_sql(sql: str, *, allowed_tables: frozenset[str] | None = None) -> G
             violations.append(f"DDL/DML not allowed: {bad_type.__name__}")
 
     return GuardResult(len(violations) == 0, tuple(violations))
+
+
+def _strip_single_quoted_literals(sql: str) -> str:
+    """Remove quoted literal bodies before raw-token checks."""
+    return re.sub(r"'(?:''|\\'|[^'])*'", "''", sql or "")
+
+
+def _validate_raw_sql_safety(sql: str) -> list[str]:
+    raw = _strip_single_quoted_literals(sql)
+    violations: list[str] = []
+    if "--" in raw or "/*" in raw or "*/" in raw:
+        violations.append("SQL comments are not allowed")
+    return violations
+
+
+def _validate_future_date_bounds(sql: str) -> list[str]:
+    limit = today_local() + timedelta(days=1)
+    dates = {
+        m.group(1)
+        for m in re.finditer(r"\b(?:toDate\s*\(\s*)?'(20\d{2}-\d{2}-\d{2})'", sql or "", flags=re.IGNORECASE)
+    }
+    violations: list[str] = []
+    for value in sorted(dates):
+        try:
+            if date.fromisoformat(value) > limit:
+                violations.append(f"Future date beyond allowed bound: {value}")
+        except ValueError:
+            continue
+    return violations
 
 
 # ── Tenant isolation helpers ──────────────────────────────────────────────────

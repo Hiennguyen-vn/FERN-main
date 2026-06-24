@@ -62,6 +62,31 @@ def test_build_workflow_summary_template_success():
     assert s["graph_outcome"] == "success"
 
 
+def test_build_workflow_summary_exposes_llm_and_template_cache_policy():
+    state = {
+        "intent": "revenue",
+        "trace": [{"node": "supervisor_agent", "llm_degraded": True, "reason": "provider unavailable"}],
+        "response_kind": "clarification",
+        "template_key": None,
+        "template_confidence": 0.7,
+        "template_cache_source": "blocked_llm_unavailable_low_confidence",
+        "llm_used": False,
+        "llm_degraded": True,
+        "llm_degraded_stage": "supervisor_agent",
+        "raw_result": [],
+    }
+    s = build_workflow_summary(state)
+
+    assert s["llm_used"] is False
+    assert s["llm_degraded"] is True
+    assert s["llm_degraded_stage"] == "supervisor_agent"
+    assert s["template_cache"] == {
+        "used": False,
+        "source": "blocked_llm_unavailable_low_confidence",
+        "confidence": 0.7,
+    }
+
+
 def test_build_workflow_summary_codegen_flags():
     auth = AuthContext(
         user_id=1,

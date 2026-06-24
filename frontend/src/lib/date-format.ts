@@ -19,3 +19,14 @@ export function todayLocalISO(): string {
 export function toLocalISODate(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
+
+/** Current local calendar month as date-only API filters. */
+export function currentLocalMonthRange(reference = new Date()): { startDate: string; endDate: string; label: string } {
+  const start = new Date(reference.getFullYear(), reference.getMonth(), 1);
+  const end = new Date(reference.getFullYear(), reference.getMonth() + 1, 0);
+  return {
+    startDate: toLocalISODate(start),
+    endDate: toLocalISODate(end),
+    label: reference.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+  };
+}

@@ -8,7 +8,7 @@ from app.llm.openai_client import LLMUnavailableError
 
 def test_apply_supervisor_degraded_with_verified_template():
     state: GraphState = {"trace": []}
-    verified = {"template_key": "T01_REVENUE", "template_params": {"from_date": "2026-01-01"}}
+    verified = {"template_key": "T01_REVENUE", "template_params": {"from_date": "2026-01-01"}, "confidence": 0.99}
     apply_supervisor_llm_degraded(
         state,
         reason="down",
@@ -19,6 +19,22 @@ def test_apply_supervisor_degraded_with_verified_template():
     assert state["template_key"] == "T01_REVENUE"
     assert state["needs_sql_writer"] is False
     assert state["llm_degraded"] is True
+    assert state["template_cache_source"] == "verified_query_llm_unavailable"
+
+
+def test_apply_supervisor_degraded_blocks_low_confidence_verified_template():
+    state: GraphState = {"trace": []}
+    verified = {"template_key": "T01_REVENUE", "template_params": {"from_date": "2026-01-01"}, "confidence": 0.7}
+    apply_supervisor_llm_degraded(
+        state,
+        reason="down",
+        verified=verified,
+        intent_hint="revenue",
+        time_range={"from_date": "2026-01-01", "to_date": "2026-01-31"},
+    )
+    assert state["template_key"] is None
+    assert state["response_kind"] == "clarification"
+    assert state["template_cache_source"] == "blocked_llm_unavailable_low_confidence"
 
 
 def test_apply_sql_writer_degraded_no_sql():
