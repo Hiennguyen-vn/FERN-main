@@ -28,5 +28,6 @@
     <module>finance-service</module>
     <module>audit-service</module>
     <module>report-service</module>
+    <module>sync-service</module>
   </modules>
 </project>

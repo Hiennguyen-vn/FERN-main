@@ -5,6 +5,8 @@ import com.fern.common.outbox.OutboxDlqForwarder;
 import com.fern.common.outbox.OutboxRelay;
 import com.fern.common.outbox.OutboxWriter;
 import com.fern.common.outbox.OutboxWriter.IdGenerator;
+import com.fern.common.sync.CentralSyncOutboxWriter;
+import com.fern.common.sync.LocalSyncOutboxWriter;
 import com.fern.common.idempotency.IdempotencyGuard;
 import com.fern.common.spring.auth.JwtTokenService;
 import com.fern.common.spring.auth.DeviceTokenRegistry;
@@ -172,6 +174,21 @@ public class FernSharedConfiguration {
   @ConditionalOnMissingBean
   public OutboxWriter outboxWriter(ObjectMapper objectMapper, IdGenerator outboxIdGenerator) {
     return new OutboxWriter(objectMapper, outboxIdGenerator);
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public CentralSyncOutboxWriter centralSyncOutboxWriter(ObjectMapper objectMapper) {
+    return new CentralSyncOutboxWriter(objectMapper);
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public LocalSyncOutboxWriter localSyncOutboxWriter(
+      ObjectMapper objectMapper,
+      @Value("${sync.local-outbox.enabled:false}") boolean enabled
+  ) {
+    return new LocalSyncOutboxWriter(objectMapper, enabled);
   }
 
   @Bean

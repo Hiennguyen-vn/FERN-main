@@ -14,6 +14,7 @@ import com.fern.common.outbox.OutboxWriter;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.common.spring.web.PagedResult;
+import com.fern.common.sync.LocalSyncOutboxWriter;
 import com.fern.common.test.PostgresContainerExtension;
 import com.fern.common.test.TestFixtures;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
@@ -188,6 +189,59 @@ class SalesRepositoryOrderLifecycleIT {
     repository.approveSale(Long.parseLong(sale.id()), TestFixtures.USER_MANAGER_HCM);
 
     assertEquals("2026-05-01", outboxBusinessDate(Long.parseLong(sale.id()), "fern.sales.sale-approved"));
+  }
+
+  @Test
+  void submitSaleAndPaymentWriteLocalSyncOutboxInSameStoreDatabase() {
+    repository = new SalesRepository(
+        dataSource,
+        new SnowflakeIdGenerator(9L),
+        Clock.fixed(Instant.parse("2026-04-27T08:00:00Z"), ZoneOffset.UTC),
+        null,
+        new LocalSyncOutboxWriter(new ObjectMapper().findAndRegisterModules()),
+        new SalesPaymentRepository(dataSource, Clock.fixed(Instant.parse("2026-04-27T08:00:00Z"), ZoneOffset.UTC)),
+        null);
+    SalesDtos.PosSessionView session = repository.openPosSession(new SalesDtos.OpenPosSessionRequest(
+        "SHIFT-SYNC-OUTBOX",
+        TestFixtures.OUTLET_HCM_1,
+        "USD",
+        null,
+        null,
+        "REGISTER-SYNC",
+        "cashier-sync",
+        LocalDate.parse("2026-04-27"),
+        null));
+    SalesDtos.SaleView created = repository.submitSale(new SalesDtos.SubmitSaleRequest(
+        TestFixtures.OUTLET_HCM_1,
+        Long.parseLong(session.id()),
+        "USD",
+        "dine_in",
+        "sync outbox order",
+        List.of(new SalesDtos.SaleLineRequest(
+            PRODUCT_ID,
+            new BigDecimal("1.0000"),
+            BigDecimal.ZERO,
+            BigDecimal.ZERO,
+            null,
+            Set.of(),
+            null,
+            null,
+            null)),
+        null));
+
+    assertEquals(1L, syncOutboxCount("SALE_ORDER_CREATED"));
+
+    repository.approveSale(Long.parseLong(created.id()), TestFixtures.USER_MANAGER_HCM);
+    repository.markPaymentDone(
+        Long.parseLong(created.id()),
+        new SalesDtos.MarkPaymentDoneRequest(
+            "cash",
+            created.totalAmount(),
+            Instant.parse("2026-04-27T08:05:00Z"),
+            "sync-payment-1",
+            "paid"));
+
+    assertEquals(1L, syncOutboxCount("PAYMENT_CREATED"));
   }
 
   @Test
@@ -434,6 +488,14 @@ class SalesRepositoryOrderLifecycleIT {
 
   @Test
   void cancelOrderCreatedSaleIsIdempotentAndPreservesReason() {
+    repository = new SalesRepository(
+        dataSource,
+        new SnowflakeIdGenerator(9L),
+        Clock.fixed(Instant.parse("2026-04-27T08:00:00Z"), ZoneOffset.UTC),
+        null,
+        new LocalSyncOutboxWriter(new ObjectMapper().findAndRegisterModules()),
+        new SalesPaymentRepository(dataSource, Clock.fixed(Instant.parse("2026-04-27T08:00:00Z"), ZoneOffset.UTC)),
+        null);
     SalesDtos.PosSessionView session = repository.openPosSession(new SalesDtos.OpenPosSessionRequest(
         "SHIFT-HCM-CANCEL",
         TestFixtures.OUTLET_HCM_1,
@@ -470,6 +532,7 @@ class SalesRepositoryOrderLifecycleIT {
     assertEquals("cancelled", cancelled.status());
     assertEquals("cancelled", replay.status());
     assertEquals(cancelled.note(), replay.note());
+    assertEquals(1L, syncOutboxCount("SALE_ORDER_CANCELLED"));
   }
 
   @Test
@@ -675,6 +738,7 @@ class SalesRepositoryOrderLifecycleIT {
           """
           TRUNCATE TABLE
             core.outbox_event,
+            core.sync_outbox,
             core.pos_session_reconciliation_line,
             core.pos_session_reconciliation,
             core.payment,
@@ -690,6 +754,19 @@ class SalesRepositoryOrderLifecycleIT {
             core.product
           CASCADE
           """);
+    }
+  }
+
+  private long syncOutboxCount(String eventType) {
+    try (Connection conn = dataSource.getConnection();
+         var ps = conn.prepareStatement("SELECT COUNT(*) FROM core.sync_outbox WHERE event_type = ?")) {
+      ps.setString(1, eventType);
+      try (var rs = ps.executeQuery()) {
+        rs.next();
+        return rs.getLong(1);
+      }
+    } catch (Exception e) {
+      throw new IllegalStateException("Unable to count sync outbox", e);
     }
   }
 

@@ -367,6 +367,7 @@ services:
       AUDIT_SERVICE_URL: http://audit-service:8091
       REPORT_SERVICE_URL: http://report-service:8092
       AI_QUERY_SERVICE_URL: http://ai-query-service:8093
+      SYNC_SERVICE_URL: http://sync-service:8094
       KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:29092}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       SYNC_WS_OUTLET_IDS: ${SYNC_WS_OUTLET_IDS:-1,2,3,4,5}
@@ -680,6 +681,34 @@ services:
       - "127.0.0.1:${REPORT_SERVICE_PORT:-8092}:8092"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8092/actuator/health | grep UP >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  sync-service:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.spring-service
+      args:
+        MODULE_PATH: services/sync-service
+    restart: unless-stopped
+    mem_limit: 384m
+    environment:
+      <<: *service-env
+      SERVER_PORT: 8094
+      SYNC_MODE: ${SYNC_MODE:-CENTRAL}
+      SYNC_ENABLED: ${SYNC_ENABLED:-true}
+      SYNC_UPLOAD_INTERVAL_SECONDS: ${SYNC_UPLOAD_INTERVAL_SECONDS:-15}
+      SYNC_DOWNLOAD_INTERVAL_SECONDS: ${SYNC_DOWNLOAD_INTERVAL_SECONDS:-15}
+      SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-100}
+      CENTRAL_SYNC_URL: ${CENTRAL_SYNC_URL:-http://sync-service:8094}
+    depends_on:
+      master-node:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SYNC_SERVICE_PORT:-8094}:8094"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8094/actuator/health | grep UP >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

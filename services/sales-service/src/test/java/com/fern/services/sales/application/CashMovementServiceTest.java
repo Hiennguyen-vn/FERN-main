@@ -16,6 +16,7 @@ import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
@@ -47,13 +48,13 @@ class CashMovementServiceTest {
   private Connection connection;
 
   @Mock
-  private Connection insertConnection;
-
-  @Mock
   private PreparedStatement statement;
 
   @Mock
   private PreparedStatement insertStatement;
+
+  @Mock
+  private Statement scopeStatement;
 
   @Mock
   private ResultSet resultSet;
@@ -103,8 +104,9 @@ class CashMovementServiceTest {
     when(clock.instant()).thenReturn(now);
     when(idGenerator.generateId()).thenReturn(88001L);
     mockSessionLookup(9001L, 5L, "OPEN");
-    when(dataSource.getConnection()).thenReturn(connection, insertConnection);
-    when(insertConnection.prepareStatement(org.mockito.ArgumentMatchers.contains("INSERT INTO core.cash_movement")))
+    when(connection.getAutoCommit()).thenReturn(false);
+    when(connection.createStatement()).thenReturn(scopeStatement);
+    when(connection.prepareStatement(org.mockito.ArgumentMatchers.contains("INSERT INTO core.cash_movement")))
         .thenReturn(insertStatement);
 
     CashMovementService.CashMovementRequest request =
@@ -124,12 +126,15 @@ class CashMovementServiceTest {
     verify(insertStatement).setLong(8, 77L);
     verify(insertStatement).setLong(9, 99L);
     verify(insertStatement).executeUpdate();
+    verify(connection).commit();
   }
 
   @Test
   void recordThrowsNotFoundWhenSessionDoesNotExist() throws Exception {
     // Given
     when(dataSource.getConnection()).thenReturn(connection);
+    when(connection.getAutoCommit()).thenReturn(false);
+    when(connection.createStatement()).thenReturn(scopeStatement);
     when(connection.prepareStatement(org.mockito.ArgumentMatchers.contains("core.pos_session")))
         .thenReturn(statement);
     when(statement.executeQuery()).thenReturn(resultSet);
@@ -143,6 +148,7 @@ class CashMovementServiceTest {
         .isInstanceOf(ServiceException.class)
         .extracting("statusCode")
         .isEqualTo(404);
+    verify(connection).rollback();
   }
 
   @Test

@@ -4,6 +4,8 @@ import com.fern.common.middleware.ServiceException;
 import com.fern.common.repository.BaseRepository;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.spring.web.QueryConventions;
+import com.fern.common.sync.CentralSyncOutboxWriter;
+import com.fern.common.sync.SyncPayloadSchemas;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import com.fern.services.sales.api.SalesDtos;
 import java.math.BigDecimal;
@@ -22,6 +24,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import javax.sql.DataSource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -32,15 +35,27 @@ public class SalesPromotionRepository extends BaseRepository {
 
   private final SnowflakeIdGenerator snowflakeIdGenerator;
   private final Clock clock;
+  private final CentralSyncOutboxWriter centralSyncOutboxWriter;
+
+  @Autowired
+  public SalesPromotionRepository(
+      DataSource dataSource,
+      SnowflakeIdGenerator snowflakeIdGenerator,
+      Clock clock,
+      CentralSyncOutboxWriter centralSyncOutboxWriter
+  ) {
+    super(dataSource);
+    this.snowflakeIdGenerator = snowflakeIdGenerator;
+    this.clock = clock;
+    this.centralSyncOutboxWriter = centralSyncOutboxWriter;
+  }
 
   public SalesPromotionRepository(
       DataSource dataSource,
       SnowflakeIdGenerator snowflakeIdGenerator,
       Clock clock
   ) {
-    super(dataSource);
-    this.snowflakeIdGenerator = snowflakeIdGenerator;
-    this.clock = clock;
+    this(dataSource, snowflakeIdGenerator, clock, null);
   }
 
   public PagedResult<SalesDtos.PromotionView> listPromotions(
@@ -159,8 +174,10 @@ public class SalesPromotionRepository extends BaseRepository {
       }
       replacePromotionRules(conn, promotionId, normalizedPromoType,
           request.bxgyRule(), request.comboRule(), request.subsidyRule(), now);
-      return findPromotion(conn, promotionId)
+      SalesDtos.PromotionView promotion = findPromotion(conn, promotionId)
           .orElseThrow(() -> new IllegalStateException("Created promotion not found"));
+      appendPromotionSyncEvents(conn, promotion, now);
+      return promotion;
     });
   }
 
@@ -180,8 +197,10 @@ public class SalesPromotionRepository extends BaseRepository {
           throw ServiceException.notFound("Promotion not found: " + promotionId);
         }
       }
-      return findPromotion(conn, promotionId)
+      SalesDtos.PromotionView promotion = findPromotion(conn, promotionId)
           .orElseThrow(() -> new IllegalStateException("Promotion not found after status update"));
+      appendPromotionSyncEvents(conn, promotion, clock.instant());
+      return promotion;
     });
   }
 
@@ -266,9 +285,50 @@ public class SalesPromotionRepository extends BaseRepository {
       } else if (request.promoType() != null) {
         clearPromotionRules(conn, promotionId);
       }
-      return findPromotion(conn, promotionId)
+      SalesDtos.PromotionView promotion = findPromotion(conn, promotionId)
           .orElseThrow(() -> new IllegalStateException("Promotion not found after update"));
+      appendPromotionSyncEvents(conn, promotion, now);
+      return promotion;
     });
+  }
+
+  private void appendPromotionSyncEvents(
+      Connection conn,
+      SalesDtos.PromotionView promotion,
+      Instant updatedAt
+  ) {
+    if (centralSyncOutboxWriter == null) {
+      return;
+    }
+    String aggregateId = promotion.id();
+    long version = centralSyncOutboxWriter.nextVersion(conn, "PROMOTION", aggregateId);
+    SyncPayloadSchemas.PromotionPayload payload = new SyncPayloadSchemas.PromotionPayload(
+        Long.parseLong(promotion.id()),
+        promotion.name(),
+        promotion.promoType(),
+        promotion.status(),
+        promotion.valueAmount(),
+        promotion.valuePercent(),
+        promotion.effectiveFrom(),
+        promotion.effectiveTo(),
+        promotion.outletIds(),
+        promotion.bxgyRule(),
+        promotion.comboRule(),
+        promotion.subsidyRule(),
+        version,
+        updatedAt
+    );
+    if (promotion.outletIds() == null || promotion.outletIds().isEmpty()) {
+      centralSyncOutboxWriter.append(
+          conn, "PROMOTION_UPDATED", "PROMOTION", aggregateId,
+          "ALL_STORES", null, null, payload, version);
+      return;
+    }
+    for (Long outletId : promotion.outletIds()) {
+      centralSyncOutboxWriter.append(
+          conn, "PROMOTION_UPDATED", "PROMOTION", aggregateId,
+          "STORE", outletId, null, payload, version);
+    }
   }
 
   public List<ActivePromotionRow> findActivePromotionsForOutlet(long outletId, Instant now) {

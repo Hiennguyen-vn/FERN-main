@@ -1,8 +1,11 @@
 package com.fern.services.sales.application;
 
 import com.fern.common.middleware.ServiceException;
+import com.fern.common.repository.BaseRepository;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.sync.LocalSyncOutboxWriter;
+import com.fern.common.sync.SyncPayloadSchemas;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -22,19 +25,25 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-public class CashMovementService {
+public class CashMovementService extends BaseRepository {
 
   private static final Set<String> TYPES = Set.of(
       "OPEN_FLOAT", "PAID_IN", "PAID_OUT", "SALE_CASH", "DROP", "CLOSE_COUNT");
 
-  private final DataSource dataSource;
   private final SnowflakeIdGenerator idGenerator;
   private final Clock clock;
+  private final LocalSyncOutboxWriter localSyncOutboxWriter;
 
-  public CashMovementService(DataSource dataSource, SnowflakeIdGenerator idGenerator, Clock clock) {
-    this.dataSource = dataSource;
+  public CashMovementService(
+      DataSource dataSource,
+      SnowflakeIdGenerator idGenerator,
+      Clock clock,
+      LocalSyncOutboxWriter localSyncOutboxWriter
+  ) {
+    super(dataSource);
     this.idGenerator = idGenerator;
     this.clock = clock;
+    this.localSyncOutboxWriter = localSyncOutboxWriter;
   }
 
   public record CashMovementRequest(
@@ -54,35 +63,36 @@ public class CashMovementService {
     if (req.amount == null || req.amount.signum() < 0) {
       throw ServiceException.badRequest("Amount must be >= 0");
     }
-    SessionRow session = lockSession(sessionId);
-    RequestUserContext ctx = RequestUserContextHolder.get();
-    Long userId = ctx == null ? null : ctx.userId();
-    long id = idGenerator.generateId();
-    Instant now = clock.instant();
-    String sql = """
-        INSERT INTO core.cash_movement
-          (id, session_id, outlet_id, type, amount, reason, reference_sale_id,
-           created_by_user_id, approved_by_user_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """;
-    try (Connection conn = dataSource.getConnection();
-         PreparedStatement ps = conn.prepareStatement(sql)) {
-      ps.setLong(1, id);
-      ps.setLong(2, sessionId);
-      ps.setLong(3, session.outletId);
-      ps.setString(4, req.type);
-      ps.setBigDecimal(5, req.amount);
-      ps.setString(6, req.reason);
-      if (req.referenceSaleId == null) ps.setNull(7, Types.BIGINT); else ps.setLong(7, req.referenceSaleId);
-      if (userId == null) ps.setNull(8, Types.BIGINT); else ps.setLong(8, userId);
-      if (req.approvedByUserId == null) ps.setNull(9, Types.BIGINT); else ps.setLong(9, req.approvedByUserId);
-      ps.setTimestamp(10, java.sql.Timestamp.from(now));
-      ps.executeUpdate();
-      return new CashMovementView(id, sessionId, session.outletId, req.type, req.amount,
+    return executeInTransaction(conn -> {
+      SessionRow session = lockSession(conn, sessionId);
+      RequestUserContext ctx = RequestUserContextHolder.get();
+      Long userId = ctx == null ? null : ctx.userId();
+      long id = idGenerator.generateId();
+      Instant now = clock.instant();
+      String sql = """
+          INSERT INTO core.cash_movement
+            (id, session_id, outlet_id, type, amount, reason, reference_sale_id,
+             created_by_user_id, approved_by_user_id, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """;
+      try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        ps.setLong(1, id);
+        ps.setLong(2, sessionId);
+        ps.setLong(3, session.outletId);
+        ps.setString(4, req.type);
+        ps.setBigDecimal(5, req.amount);
+        ps.setString(6, req.reason);
+        if (req.referenceSaleId == null) ps.setNull(7, Types.BIGINT); else ps.setLong(7, req.referenceSaleId);
+        if (userId == null) ps.setNull(8, Types.BIGINT); else ps.setLong(8, userId);
+        if (req.approvedByUserId == null) ps.setNull(9, Types.BIGINT); else ps.setLong(9, req.approvedByUserId);
+        ps.setTimestamp(10, java.sql.Timestamp.from(now));
+        ps.executeUpdate();
+      }
+      CashMovementView view = new CashMovementView(id, sessionId, session.outletId, req.type, req.amount,
           req.reason, req.referenceSaleId, userId, req.approvedByUserId, now);
-    } catch (SQLException e) {
-      throw new IllegalStateException("record cash_movement", e);
-    }
+      appendCashMovementSyncOutbox(conn, view);
+      return view;
+    });
   }
 
   public List<CashMovementView> list(long sessionId) {
@@ -149,6 +159,31 @@ public class CashMovementService {
 
   private record SessionRow(long id, long outletId, String status) {}
 
+  private void appendCashMovementSyncOutbox(Connection conn, CashMovementView movement) {
+    if (localSyncOutboxWriter == null) {
+      return;
+    }
+    localSyncOutboxWriter.append(
+        conn,
+        "CASH_MOVEMENT_CREATED:" + movement.id(),
+        "CASH_MOVEMENT_CREATED",
+        "CASH_MOVEMENT",
+        Long.toString(movement.id()),
+        new SyncPayloadSchemas.CashMovementPayload(
+            movement.id(),
+            movement.outletId(),
+            movement.sessionId(),
+            movement.type(),
+            movement.amount(),
+            movement.reason(),
+            movement.referenceSaleId(),
+            movement.createdByUserId(),
+            movement.approvedByUserId(),
+            movement.createdAt()
+        )
+    );
+  }
+
   private SessionRow lockSession(long sessionId) {
     try (Connection conn = dataSource.getConnection();
          PreparedStatement ps = conn.prepareStatement(
@@ -160,6 +195,17 @@ public class CashMovementService {
       }
     } catch (SQLException e) {
       throw new IllegalStateException("lockSession", e);
+    }
+  }
+
+  private SessionRow lockSession(Connection conn, long sessionId) throws SQLException {
+    try (PreparedStatement ps = conn.prepareStatement(
+        "SELECT id, outlet_id, status FROM core.pos_session WHERE id = ? FOR UPDATE")) {
+      ps.setLong(1, sessionId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) throw ServiceException.notFound("Session not found: " + sessionId);
+        return new SessionRow(rs.getLong(1), rs.getLong(2), rs.getString(3));
+      }
     }
   }
 }

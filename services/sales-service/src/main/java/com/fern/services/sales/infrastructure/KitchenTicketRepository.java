@@ -2,6 +2,8 @@ package com.fern.services.sales.infrastructure;
 
 import com.fern.common.middleware.ServiceException;
 import com.fern.common.repository.BaseRepository;
+import com.fern.common.sync.LocalSyncOutboxWriter;
+import com.fern.common.sync.SyncPayloadSchemas;
 import com.fern.services.sales.api.kitchen.KitchenDtos;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import javax.sql.DataSource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -29,8 +32,16 @@ public class KitchenTicketRepository extends BaseRepository {
   private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
-  public KitchenTicketRepository(DataSource dataSource) {
+  private final LocalSyncOutboxWriter localSyncOutboxWriter;
+
+  @Autowired
+  public KitchenTicketRepository(DataSource dataSource, LocalSyncOutboxWriter localSyncOutboxWriter) {
     super(dataSource);
+    this.localSyncOutboxWriter = localSyncOutboxWriter;
+  }
+
+  public KitchenTicketRepository(DataSource dataSource) {
+    this(dataSource, null);
   }
 
   public record NewTicketItem(
@@ -66,6 +77,7 @@ public class KitchenTicketRepository extends BaseRepository {
       }
       long ticketId = insertTicketRow(conn, newTicket);
       insertTicketItems(conn, ticketId, newTicket.items());
+      appendKitchenTicketSyncOutbox(conn, "KITCHEN_TICKET_CREATED", ticketId);
       return ticketId;
     });
   }
@@ -218,7 +230,9 @@ public class KitchenTicketRepository extends BaseRepository {
         ps.setLong(2, itemId);
         ps.executeUpdate();
       }
-      return rollupTicket(conn, ticketId);
+      String rolled = rollupTicket(conn, ticketId);
+      appendKitchenTicketSyncOutbox(conn, "KITCHEN_TICKET_UPDATED", ticketId);
+      return rolled;
     });
   }
 
@@ -226,17 +240,26 @@ public class KitchenTicketRepository extends BaseRepository {
    * Manual ticket-level transition (e.g. cancel). Skips item rollup.
    */
   public void setTicketStatus(long ticketId, String newStatus) {
-    String tsColumn = switch (newStatus) {
-      case "in_progress" -> "started_at";
-      case "ready"       -> "ready_at";
-      case "served"      -> "served_at";
-      default            -> null;
-    };
-    String sql = "UPDATE core.kitchen_ticket SET status = ?, updated_at = NOW()"
-        + (tsColumn == null ? "" : ", " + tsColumn + " = COALESCE(" + tsColumn + ", NOW())")
-        + " WHERE id = ?";
-    int updated = execute(sql, newStatus, ticketId);
-    if (updated == 0) throw ServiceException.notFound("Kitchen ticket not found: " + ticketId);
+    executeInTransaction(conn -> {
+      String tsColumn = switch (newStatus) {
+        case "in_progress" -> "started_at";
+        case "ready"       -> "ready_at";
+        case "served"      -> "served_at";
+        default            -> null;
+      };
+      String sql = "UPDATE core.kitchen_ticket SET status = ?, updated_at = NOW()"
+          + (tsColumn == null ? "" : ", " + tsColumn + " = COALESCE(" + tsColumn + ", NOW())")
+          + " WHERE id = ?";
+      try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        ps.setString(1, newStatus);
+        ps.setLong(2, ticketId);
+        if (ps.executeUpdate() == 0) {
+          throw ServiceException.notFound("Kitchen ticket not found: " + ticketId);
+        }
+      }
+      appendKitchenTicketSyncOutbox(conn, "KITCHEN_TICKET_UPDATED", ticketId);
+      return null;
+    });
   }
 
   /**
@@ -294,8 +317,86 @@ public class KitchenTicketRepository extends BaseRepository {
         ps.setLong(1, ticketId);
         ps.executeUpdate();
       }
+      appendKitchenTicketSyncOutbox(conn, "KITCHEN_TICKET_UPDATED", ticketId);
       return Optional.of(ticketId);
     });
+  }
+
+  private void appendKitchenTicketSyncOutbox(Connection conn, String eventType, long ticketId) throws Exception {
+    if (localSyncOutboxWriter == null) {
+      return;
+    }
+    SyncPayloadSchemas.KitchenTicketPayload payload = loadKitchenTicketPayload(conn, ticketId);
+    String eventId = "KITCHEN_TICKET_CREATED".equals(eventType)
+        ? eventType + ":" + ticketId
+        : eventType + ":" + ticketId + ":" + System.currentTimeMillis();
+    localSyncOutboxWriter.append(
+        conn,
+        eventId,
+        eventType,
+        "KITCHEN_TICKET",
+        Long.toString(ticketId),
+        payload
+    );
+  }
+
+  private SyncPayloadSchemas.KitchenTicketPayload loadKitchenTicketPayload(Connection conn, long ticketId)
+      throws Exception {
+    TicketRow row;
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT id, sale_id, outlet_id, ordering_table_id, ordering_table_code, ordering_table_name,
+               order_type, status, prep_sla_seconds, notes, sla_breached_at,
+               created_at, started_at, ready_at, served_at
+        FROM core.kitchen_ticket
+        WHERE id = ?
+        """
+    )) {
+      ps.setLong(1, ticketId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) {
+          throw ServiceException.notFound("Kitchen ticket not found: " + ticketId);
+        }
+        row = mapTicketRow(rs);
+      }
+    }
+    List<SyncPayloadSchemas.KitchenTicketItemPayload> items = new ArrayList<>();
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT id, product_id, product_name, qty, status, notes
+        FROM core.kitchen_ticket_item
+        WHERE ticket_id = ?
+        ORDER BY id ASC
+        """
+    )) {
+      ps.setLong(1, ticketId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          items.add(new SyncPayloadSchemas.KitchenTicketItemPayload(
+              rs.getLong("id"),
+              rs.getLong("product_id"),
+              rs.getString("product_name"),
+              rs.getBigDecimal("qty"),
+              rs.getString("status"),
+              rs.getString("notes")
+          ));
+        }
+      }
+    }
+    return new SyncPayloadSchemas.KitchenTicketPayload(
+        row.id,
+        row.saleId,
+        row.outletId,
+        row.orderingTableId,
+        row.orderingTableCode,
+        row.orderingTableName,
+        row.orderType,
+        row.status,
+        row.prepSlaSeconds,
+        row.notes,
+        items,
+        Instant.now()
+    );
   }
 
   private String rollupTicket(Connection conn, long ticketId) throws Exception {

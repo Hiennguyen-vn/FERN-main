@@ -4,6 +4,8 @@ import com.fern.common.middleware.ServiceException;
 import com.fern.common.repository.BaseRepository;
 import com.fern.common.spring.web.PagedResult;
 import com.fern.common.spring.web.QueryConventions;
+import com.fern.common.sync.CentralSyncOutboxWriter;
+import com.fern.common.sync.SyncPayloadSchemas;
 import com.fern.services.product.api.ProductDtos;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.sql.Connection;
@@ -19,6 +21,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import javax.sql.DataSource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.postgresql.util.PSQLException;
 
@@ -31,15 +34,27 @@ public class ProductRepository extends BaseRepository {
 
   private final SnowflakeIdGenerator snowflakeIdGenerator;
   private final Clock clock;
+  private final CentralSyncOutboxWriter centralSyncOutboxWriter;
+
+  @Autowired
+  public ProductRepository(
+      DataSource dataSource,
+      SnowflakeIdGenerator snowflakeIdGenerator,
+      Clock clock,
+      CentralSyncOutboxWriter centralSyncOutboxWriter
+  ) {
+    super(dataSource);
+    this.snowflakeIdGenerator = snowflakeIdGenerator;
+    this.clock = clock;
+    this.centralSyncOutboxWriter = centralSyncOutboxWriter;
+  }
 
   public ProductRepository(
       DataSource dataSource,
       SnowflakeIdGenerator snowflakeIdGenerator,
       Clock clock
   ) {
-    super(dataSource);
-    this.snowflakeIdGenerator = snowflakeIdGenerator;
-    this.clock = clock;
+    this(dataSource, snowflakeIdGenerator, clock, null);
   }
 
   public PagedResult<ProductDtos.ProductView> listProducts(
@@ -131,8 +146,10 @@ public class ProductRepository extends BaseRepository {
         }
         throw e;
       }
-      return findProductById(conn, productId)
+      ProductDtos.ProductView created = findProductById(conn, productId)
           .orElseThrow(() -> new IllegalStateException("Created product not found: " + productId));
+      appendProductSyncEvent(conn, "PRODUCT_CREATED", created, now);
+      return created;
     });
   }
 
@@ -362,8 +379,10 @@ public class ProductRepository extends BaseRepository {
         ps.setTimestamp(10, Timestamp.from(now));
         ps.executeUpdate();
       }
-      return findPriceTransactional(conn, request.productId(), request.outletId(), request.effectiveFrom())
+      ProductDtos.PriceView saved = findPriceTransactional(conn, request.productId(), request.outletId(), request.effectiveFrom())
           .orElseThrow(() -> new IllegalStateException("Saved price not found"));
+      appendPriceSyncEvent(conn, saved, now);
+      return saved;
     });
   }
 
@@ -489,8 +508,10 @@ public class ProductRepository extends BaseRepository {
         }
         throw e;
       }
-      return findProductById(conn, productId)
+      ProductDtos.ProductView updated = findProductById(conn, productId)
           .orElseThrow(() -> new IllegalStateException("Updated product not found: " + productId));
+      appendProductSyncEvent(conn, "PRODUCT_UPDATED", updated, now);
+      return updated;
     });
   }
 
@@ -564,8 +585,107 @@ public class ProductRepository extends BaseRepository {
         ps.setTimestamp(5, Timestamp.from(now));
         ps.executeUpdate();
       }
-      return new ProductDtos.AvailabilityView(request.productId(), request.outletId(), request.available());
+      ProductDtos.AvailabilityView view =
+          new ProductDtos.AvailabilityView(request.productId(), request.outletId(), request.available());
+      appendAvailabilitySyncEvent(conn, view, now);
+      return view;
     });
+  }
+
+  private void appendProductSyncEvent(
+      Connection conn,
+      String eventType,
+      ProductDtos.ProductView product,
+      Instant updatedAt
+  ) {
+    if (centralSyncOutboxWriter == null) {
+      return;
+    }
+    String aggregateId = Long.toString(product.id());
+    long version = centralSyncOutboxWriter.nextVersion(conn, "PRODUCT", aggregateId);
+    centralSyncOutboxWriter.append(
+        conn,
+        eventType,
+        "PRODUCT",
+        aggregateId,
+        "ALL_STORES",
+        null,
+        null,
+        new SyncPayloadSchemas.ProductPayload(
+            product.id(),
+            product.code(),
+            product.name(),
+            product.categoryCode(),
+            product.status(),
+            product.imageUrl(),
+            product.description(),
+            false,
+            version,
+            updatedAt
+        ),
+        version
+    );
+  }
+
+  private void appendPriceSyncEvent(
+      Connection conn,
+      ProductDtos.PriceView price,
+      Instant updatedAt
+  ) {
+    if (centralSyncOutboxWriter == null) {
+      return;
+    }
+    String aggregateId = price.productId() + ":" + price.outletId() + ":" + price.effectiveFrom();
+    long version = centralSyncOutboxWriter.nextVersion(conn, "PRICE_POLICY", aggregateId);
+    centralSyncOutboxWriter.append(
+        conn,
+        "PRICE_POLICY_UPDATED",
+        "PRICE_POLICY",
+        aggregateId,
+        "STORE",
+        price.outletId(),
+        null,
+        new SyncPayloadSchemas.PricePolicyPayload(
+            price.productId(),
+            price.outletId(),
+            price.currencyCode(),
+            price.priceValue(),
+            price.effectiveFrom(),
+            price.effectiveTo(),
+            version,
+            updatedAt
+        ),
+        version
+    );
+  }
+
+  private void appendAvailabilitySyncEvent(
+      Connection conn,
+      ProductDtos.AvailabilityView availability,
+      Instant updatedAt
+  ) {
+    if (centralSyncOutboxWriter == null) {
+      return;
+    }
+    String aggregateId = availability.productId() + ":" + availability.outletId();
+    long version = centralSyncOutboxWriter.nextVersion(conn, "ITEM_AVAILABILITY", aggregateId);
+    centralSyncOutboxWriter.append(
+        conn,
+        "ITEM_AVAILABILITY_UPDATED",
+        "ITEM_AVAILABILITY",
+        aggregateId,
+        "STORE",
+        availability.outletId(),
+        null,
+        new SyncPayloadSchemas.ItemAvailabilityPayload(
+            availability.productId(),
+            availability.outletId(),
+            availability.available(),
+            version,
+            updatedAt
+        ),
+        version
+    );
   }
 
   private Optional<ProductDtos.RecipeView> findRecipeVersion(long productId, String version) {
@@ -935,8 +1055,10 @@ public class ProductRepository extends BaseRepository {
         }
         throw e;
       }
-      return findProductCategory(conn, request.code().trim())
+      ProductDtos.CategoryView category = findProductCategory(conn, request.code().trim())
           .orElseThrow(() -> new IllegalStateException("Created product category not found"));
+      appendCategorySyncEvent(conn, category, clock.instant());
+      return category;
     });
   }
 
@@ -956,9 +1078,40 @@ public class ProductRepository extends BaseRepository {
           throw ServiceException.notFound("Product category not found: " + code);
         }
       }
-      return findProductCategory(conn, code)
+      ProductDtos.CategoryView category = findProductCategory(conn, code)
           .orElseThrow(() -> new IllegalStateException("Updated product category not found: " + code));
+      appendCategorySyncEvent(conn, category, clock.instant());
+      return category;
     });
+  }
+
+  private void appendCategorySyncEvent(
+      Connection conn,
+      ProductDtos.CategoryView category,
+      Instant updatedAt
+  ) {
+    if (centralSyncOutboxWriter == null) {
+      return;
+    }
+    long version = centralSyncOutboxWriter.nextVersion(conn, "CATEGORY", category.code());
+    centralSyncOutboxWriter.append(
+        conn,
+        "CATEGORY_UPDATED",
+        "CATEGORY",
+        category.code(),
+        "ALL_STORES",
+        null,
+        null,
+        new SyncPayloadSchemas.CategoryPayload(
+            category.code(),
+            category.name(),
+            category.isActive(),
+            category.description(),
+            version,
+            updatedAt
+        ),
+        version
+    );
   }
 
   private Optional<ProductDtos.CategoryView> findProductCategory(Connection conn, String code) throws Exception {

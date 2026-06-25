@@ -37,6 +37,7 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
       "/api/v1/gateway/info",
       "/api/v1/gateway/routes",
       "/api/v1/gateway/targets",
+      "/api/sync/handshake",
       "/api/v1/devices/pair"
   );
 
@@ -177,6 +178,20 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
         return new RequestUserContext(userId, null, sessionId, roles, permissions, outletIds,
             true, false, caller, null, null);
       }
+      if ("pos-device".equals(caller)) {
+        if (!isDevicePath(request) && !isTerminalOrderMutation(request)) {
+          throw ServiceException.forbidden("Device token cannot access this endpoint");
+        }
+        Long deviceId = parseLongHeader(request, "X-Internal-Device-Id");
+        Long deviceOutletId = parseLongHeader(request, "X-Internal-Device-Outlet-Id");
+        if (deviceId == null || deviceOutletId == null) {
+          throw ServiceException.unauthorized("Missing trusted device context");
+        }
+        return new RequestUserContext(
+            null, null, null, Set.of(), Set.of(), Set.of(),
+            true, false, caller, deviceId, deviceOutletId
+        );
+      }
       return new RequestUserContext(null, caller, null,
           java.util.Set.of(), jwtClaims.scopes(), java.util.Set.of(),
           true, true, caller, null, null);
@@ -294,6 +309,7 @@ public class RequestAuthenticationFilter extends OncePerRequestFilter {
     String path = request.getRequestURI();
     return path != null
         && (path.startsWith("/api/v1/sync/")
+            || (path.startsWith("/api/sync/") && !path.startsWith("/api/sync/internal/"))
             || path.startsWith("/api/v1/devices/refresh")
             || path.startsWith("/api/v1/telemetry"));
   }

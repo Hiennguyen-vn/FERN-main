@@ -374,9 +374,6 @@ export default function KitchenDisplayPage() {
             <div className="surface-elevated flex min-h-[420px] flex-col items-center justify-center p-8 text-center">
               <Utensils className="h-10 w-10 text-muted-foreground/60" />
               <h3 className="mt-4 text-sm font-semibold text-foreground">Không có ticket trong hàng này</h3>
-              <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                Khi POS gửi order mới, ticket sẽ xuất hiện theo deadline gần nhất trước (EDF).
-              </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">

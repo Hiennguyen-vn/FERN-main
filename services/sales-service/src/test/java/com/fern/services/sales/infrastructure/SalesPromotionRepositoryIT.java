@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fern.common.sync.CentralSyncOutboxWriter;
 import com.fern.common.test.PostgresContainerExtension;
 import com.fern.common.test.TestFixtures;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
@@ -43,12 +45,16 @@ class SalesPromotionRepositoryIT {
     seedProductsAndPublicTable();
     SnowflakeIdGenerator idGenerator = new SnowflakeIdGenerator(2L);
     Clock fixedClock = Clock.fixed(Instant.parse("2026-04-15T08:00:00Z"), ZoneOffset.UTC);
-    promotionRepository = new SalesPromotionRepository(dataSource, idGenerator, fixedClock);
+    promotionRepository = new SalesPromotionRepository(
+        dataSource,
+        idGenerator,
+        fixedClock,
+        new CentralSyncOutboxWriter(new ObjectMapper().findAndRegisterModules()));
     salesRepository = new SalesRepository(dataSource, idGenerator, fixedClock);
   }
 
   @Test
-  void createPromotionPersistsAndLoadsBxgyRule() {
+  void createPromotionPersistsAndLoadsBxgyRule() throws Exception {
     SalesDtos.PromotionView created = promotionRepository.createPromotion(new SalesDtos.CreatePromotionRequest(
         "Buy coffee get cake",
         "buy_x_get_y",
@@ -75,6 +81,7 @@ class SalesPromotionRepositoryIT {
     assertNotNull(found.bxgyRule());
     assertEquals(PRODUCT_COFFEE, found.bxgyRule().buyProductId());
     assertEquals(PRODUCT_CAKE, found.bxgyRule().getProductId());
+    assertEquals(1, countCentralOutbox("PROMOTION_UPDATED", created.id()));
   }
 
   @Test
@@ -189,6 +196,7 @@ class SalesPromotionRepositoryIT {
           """
           TRUNCATE TABLE
             core.sale_item_promotion,
+            core.central_outbox,
             core.sale_record,
             core.promotion,
             core.ordering_table,
@@ -249,6 +257,23 @@ class SalesPromotionRepositoryIT {
       ps.setLong(1, saleId);
       ps.setLong(2, productId);
       ps.setLong(3, promotionId);
+      try (ResultSet rs = ps.executeQuery()) {
+        assertTrue(rs.next());
+        return rs.getInt(1);
+      }
+    }
+  }
+
+  private int countCentralOutbox(String eventType, String aggregateId) throws Exception {
+    try (Connection conn = dataSource.getConnection();
+         PreparedStatement ps = conn.prepareStatement(
+             """
+             SELECT COUNT(*)
+             FROM core.central_outbox
+             WHERE event_type = ? AND aggregate_id = ?
+             """)) {
+      ps.setString(1, eventType);
+      ps.setString(2, aggregateId);
       try (ResultSet rs = ps.executeQuery()) {
         assertTrue(rs.next());
         return rs.getInt(1);

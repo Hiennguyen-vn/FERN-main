@@ -2,6 +2,8 @@ package com.fern.services.org.infrastructure;
 
 import com.fern.common.middleware.ServiceException;
 import com.fern.common.repository.BaseRepository;
+import com.fern.common.sync.CentralSyncOutboxWriter;
+import com.fern.common.sync.SyncPayloadSchemas;
 import com.fern.services.org.api.OrgDtos;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import java.sql.Connection;
@@ -15,6 +17,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import javax.sql.DataSource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -22,15 +25,27 @@ public class OrgRepository extends BaseRepository {
 
   private final SnowflakeIdGenerator snowflakeIdGenerator;
   private final Clock clock;
+  private final CentralSyncOutboxWriter centralSyncOutboxWriter;
+
+  @Autowired
+  public OrgRepository(
+      DataSource dataSource,
+      SnowflakeIdGenerator snowflakeIdGenerator,
+      Clock clock,
+      CentralSyncOutboxWriter centralSyncOutboxWriter
+  ) {
+    super(dataSource);
+    this.snowflakeIdGenerator = snowflakeIdGenerator;
+    this.clock = clock;
+    this.centralSyncOutboxWriter = centralSyncOutboxWriter;
+  }
 
   public OrgRepository(
       DataSource dataSource,
       SnowflakeIdGenerator snowflakeIdGenerator,
       Clock clock
   ) {
-    super(dataSource);
-    this.snowflakeIdGenerator = snowflakeIdGenerator;
-    this.clock = clock;
+    this(dataSource, snowflakeIdGenerator, clock, null);
   }
 
   public List<OrgDtos.RegionView> listRegions() {
@@ -230,8 +245,10 @@ public class OrgRepository extends BaseRepository {
         }
         throw e;
       }
-      return findOutletByIdTransactional(conn, outletId, false)
+      OrgDtos.OutletView outlet = findOutletByIdTransactional(conn, outletId, false)
           .orElseThrow(() -> new IllegalStateException("Created outlet not found: " + outletId));
+      appendStoreConfigSyncEvent(conn, outlet, now);
+      return outlet;
     });
   }
 
@@ -355,8 +372,10 @@ public class OrgRepository extends BaseRepository {
         }
         throw e;
       }
-      return findOutletByIdTransactional(conn, outletId, true)
+      OrgDtos.OutletView outlet = findOutletByIdTransactional(conn, outletId, true)
           .orElseThrow(() -> new IllegalStateException("Updated outlet not found: " + outletId));
+      appendStoreConfigSyncEvent(conn, outlet, clock.instant());
+      return outlet;
     });
   }
 
@@ -402,9 +421,47 @@ public class OrgRepository extends BaseRepository {
           ps.executeUpdate();
         }
       }
-      return findOutletByIdTransactional(conn, outletId, true)
+      OrgDtos.OutletView outlet = findOutletByIdTransactional(conn, outletId, true)
           .orElseThrow(() -> new IllegalStateException("Updated outlet not found: " + outletId));
+      appendStoreConfigSyncEvent(conn, outlet, now);
+      return outlet;
     });
+  }
+
+  private void appendStoreConfigSyncEvent(
+      Connection conn,
+      OrgDtos.OutletView outlet,
+      Instant updatedAt
+  ) {
+    if (centralSyncOutboxWriter == null) {
+      return;
+    }
+    String aggregateId = Long.toString(outlet.id());
+    long version = centralSyncOutboxWriter.nextVersion(conn, "STORE_CONFIG", aggregateId);
+    centralSyncOutboxWriter.append(
+        conn,
+        "STORE_CONFIG_UPDATED",
+        "STORE_CONFIG",
+        aggregateId,
+        "STORE",
+        outlet.id(),
+        null,
+        new SyncPayloadSchemas.StoreConfigPayload(
+            outlet.id(),
+            outlet.regionId(),
+            outlet.code(),
+            outlet.name(),
+            outlet.status(),
+            outlet.address(),
+            outlet.phone(),
+            outlet.email(),
+            outlet.openedAt(),
+            outlet.closedAt(),
+            version,
+            updatedAt
+        ),
+        version
+    );
   }
 
   public OrgDtos.ExchangeRateView upsertExchangeRate(OrgDtos.UpdateExchangeRateRequest request) {

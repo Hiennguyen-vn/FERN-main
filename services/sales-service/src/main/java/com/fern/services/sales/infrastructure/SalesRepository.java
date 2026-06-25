@@ -5,6 +5,8 @@ import com.fern.common.outbox.OutboxWriter;
 import com.fern.common.repository.BaseRepository;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
+import com.fern.common.sync.LocalSyncOutboxWriter;
+import com.fern.common.sync.SyncPayloadSchemas;
 import com.fern.events.sales.PaymentCapturedEvent;
 import com.fern.events.sales.SaleApprovedEvent;
 import com.fern.events.sales.SaleCancelledEvent;
@@ -53,6 +55,7 @@ public class SalesRepository extends BaseRepository {
   private final SnowflakeIdGenerator snowflakeIdGenerator;
   private final Clock clock;
   private final OutboxWriter outboxWriter;
+  private final LocalSyncOutboxWriter localSyncOutboxWriter;
   private final SalesPaymentRepository paymentRepository;
   private final SalesSessionRepository sessionRepository;
   private InventoryAvailabilityClient availabilityClient;
@@ -74,6 +77,7 @@ public class SalesRepository extends BaseRepository {
       SnowflakeIdGenerator snowflakeIdGenerator,
       Clock clock,
       OutboxWriter outboxWriter,
+      LocalSyncOutboxWriter localSyncOutboxWriter,
       SalesPaymentRepository paymentRepository,
       SalesSessionRepository sessionRepository
   ) {
@@ -81,6 +85,7 @@ public class SalesRepository extends BaseRepository {
     this.snowflakeIdGenerator = snowflakeIdGenerator;
     this.clock = clock;
     this.outboxWriter = outboxWriter;
+    this.localSyncOutboxWriter = localSyncOutboxWriter;
     this.paymentRepository = paymentRepository;
     this.sessionRepository = sessionRepository == null
         ? new SalesSessionRepository(dataSource, snowflakeIdGenerator, clock, paymentRepository)
@@ -93,7 +98,7 @@ public class SalesRepository extends BaseRepository {
       Clock clock,
       OutboxWriter outboxWriter
   ) {
-    this(dataSource, snowflakeIdGenerator, clock, outboxWriter,
+    this(dataSource, snowflakeIdGenerator, clock, outboxWriter, null,
         new SalesPaymentRepository(dataSource, clock),
         null);
   }
@@ -597,8 +602,10 @@ public class SalesRepository extends BaseRepository {
     insertSaleItems(conn, saleId, request.outletId(), now, aggregatedLines.values(), now);
     insertSaleItemModifiers(conn, saleId, now, aggregatedLines.values(), now);
     insertSalePromotions(conn, saleId, now, aggregatedLines.values(), now);
-    return findSale(conn, saleId)
+    SalesDtos.SaleView created = findSale(conn, saleId)
         .orElseThrow(() -> new IllegalStateException("Created sale not found"));
+    appendSaleOrderSyncOutbox(conn, created);
+    return created;
   }
 
   public Optional<SalesDtos.SaleView> findSale(long saleId) {
@@ -1224,8 +1231,77 @@ public class SalesRepository extends BaseRepository {
       SalesDtos.SaleView paid = findSale(conn, saleId)
           .orElseThrow(() -> new IllegalStateException("Paid sale not found"));
       appendSaleCompletedOutbox(conn, paid, lockedSale.businessDate());
+      appendPaymentSyncOutbox(conn, paid);
       return paid;
     });
+  }
+
+  private void appendSaleOrderSyncOutbox(Connection conn, SalesDtos.SaleView sale) {
+    if (localSyncOutboxWriter == null) {
+      return;
+    }
+    long saleId = Long.parseLong(sale.id());
+    localSyncOutboxWriter.append(
+        conn,
+        "SALE_ORDER_CREATED:" + sale.id(),
+        "SALE_ORDER_CREATED",
+        "SALE_ORDER",
+        sale.id(),
+        new SyncPayloadSchemas.SaleOrderPayload(
+            saleId,
+            sale.outletId(),
+            parseNullableLong(sale.posSessionId()),
+            sale.publicOrderToken(),
+            sale.currencyCode(),
+            sale.orderType(),
+            sale.status(),
+            sale.paymentStatus(),
+            sale.subtotal(),
+            sale.discount(),
+            sale.taxAmount(),
+            sale.totalAmount(),
+            sale.note(),
+            sale.items().stream()
+                .map(item -> new SyncPayloadSchemas.SaleOrderLinePayload(
+                    item.productId(),
+                    item.productCode(),
+                    item.productName(),
+                    item.quantity(),
+                    item.unitPrice(),
+                    item.discountAmount(),
+                    item.taxAmount(),
+                    item.lineTotal(),
+                    item.promotionIds(),
+                    item.variantId(),
+                    item.variantName()))
+                .toList(),
+            sale.createdAt()
+        )
+    );
+  }
+
+  private void appendPaymentSyncOutbox(Connection conn, SalesDtos.SaleView sale) {
+    if (localSyncOutboxWriter == null || sale.payment() == null) {
+      return;
+    }
+    localSyncOutboxWriter.append(
+        conn,
+        "PAYMENT_CREATED:" + sale.id(),
+        "PAYMENT_CREATED",
+        "PAYMENT_TRANSACTION",
+        sale.id(),
+        new SyncPayloadSchemas.PaymentTransactionPayload(
+            Long.parseLong(sale.id()),
+            sale.outletId(),
+            sale.payment().paymentMethod(),
+            sale.payment().amount(),
+            sale.currencyCode(),
+            sale.payment().status(),
+            sale.payment().paymentTime(),
+            sale.payment().transactionRef(),
+            sale.payment().note()
+        )
+    );
   }
 
   private void appendSaleCompletedOutbox(java.sql.Connection conn, SalesDtos.SaleView sale, LocalDate businessDate) {
@@ -1342,8 +1418,30 @@ public class SalesRepository extends BaseRepository {
       if (inventoryApplied && (reasonRecord == null || reasonRecord.reversesInventory)) {
         appendSaleCancelledOutbox(conn, lockedSale, actorUserId, reason);
       }
+      appendSaleCancelledSyncOutbox(conn, cancelled, reason);
       return cancelled;
     });
+  }
+
+  private void appendSaleCancelledSyncOutbox(Connection conn, SalesDtos.SaleView sale, String reason) {
+    if (localSyncOutboxWriter == null) {
+      return;
+    }
+    localSyncOutboxWriter.append(
+        conn,
+        "SALE_ORDER_CANCELLED:" + sale.id(),
+        "SALE_ORDER_CANCELLED",
+        "SALE_ORDER",
+        sale.id(),
+        new SyncPayloadSchemas.SaleOrderCancelledPayload(
+            Long.parseLong(sale.id()),
+            sale.outletId(),
+            reason,
+            sale.status(),
+            sale.paymentStatus(),
+            clock.instant()
+        )
+    );
   }
 
   public java.util.List<SalesDtos.VoidReasonView> listVoidReasons() {
@@ -2855,6 +2953,11 @@ public class SalesRepository extends BaseRepository {
     }
     String trimmed = value.trim();
     return trimmed.isEmpty() ? null : trimmed;
+  }
+
+  private static Long parseNullableLong(String value) {
+    String trimmed = trimToNull(value);
+    return trimmed == null ? null : Long.parseLong(trimmed);
   }
 
   private Long resolveRegisteredDeviceId(Connection conn, Long deviceId, long outletId) throws Exception {

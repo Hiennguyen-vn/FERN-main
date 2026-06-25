@@ -1,0 +1,85 @@
+server:
+  port: ${SERVER_PORT:8094}
+
+spring:
+  application:
+    name: sync-service
+  threads:
+    virtual:
+      enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+  tracing:
+    sampling:
+      probability: ${OTEL_SAMPLE_RATIO:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+
+info:
+  service:
+    name: ${spring.application.name}
+    description: Offline-first central/store synchronization service.
+
+dependencies:
+  postgres:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/fern}
+    username: ${VAULT_DB_USERNAME:${spring.datasource.username:${POSTGRES_APP_USER:${POSTGRES_USER:fern}}}}
+    password: ${VAULT_DB_PASSWORD:${spring.datasource.password:${POSTGRES_APP_PASSWORD:${POSTGRES_PASSWORD:fern}}}}
+    poolSize: ${DB_POOL_SIZE:16}
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap: ${KAFKA_BOOTSTRAP:localhost:9092}
+  masterNode:
+    baseUrl: ${MASTER_NODE_URL:http://localhost:8082}
+
+sync:
+  mode: ${SYNC_MODE:CENTRAL}
+  enabled: ${SYNC_ENABLED:true}
+  upload-interval-seconds: ${SYNC_UPLOAD_INTERVAL_SECONDS:15}
+  download-interval-seconds: ${SYNC_DOWNLOAD_INTERVAL_SECONDS:15}
+  batch-size: ${SYNC_BATCH_SIZE:100}
+  central-sync-url: ${CENTRAL_SYNC_URL:http://localhost:8094}
+  node-id: ${SYNC_NODE_ID:}
+  node-code: ${SYNC_NODE_CODE:}
+  store-id: ${SYNC_STORE_ID:}
+  node-token-ttl-seconds: ${SYNC_NODE_TOKEN_TTL_SECONDS:7776000}
+
+spring.config.import: ${VAULT_CONFIG_IMPORT:optional:vault://}
+spring.cloud.vault:
+  enabled: ${VAULT_ENABLED:false}
+  uri: ${VAULT_ADDR:http://localhost:8200}
+  token: ${VAULT_TOKEN:}
+  authentication: ${VAULT_AUTHENTICATION:TOKEN}
+  app-role:
+    role-id: ${VAULT_ROLE_ID:}
+    secret-id: ${VAULT_SECRET_ID:}
+  database:
+    enabled: ${VAULT_DATABASE_ENABLED:false}
+    backend: ${VAULT_DATABASE_BACKEND:database}
+    role: ${VAULT_DATABASE_ROLE:fern-${spring.application.name}}
+    username-property: dependencies.postgres.username
+    password-property: dependencies.postgres.password
+  fail-fast: false
+  kv:
+    enabled: true
+    backend: kv
+    default-context: fern/shared
+    application-name: fern/services/${spring.application.name}
+
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_ENABLED:true}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${SPRINGDOC_ENABLED:true}
+    path: /swagger-ui.html

@@ -1,0 +1,365 @@
+@startuml
+title <size:24>System Landscape View</size>
+
+set separator none
+left to right direction
+skinparam ranksep 20
+skinparam nodesep 5
+hide stereotype
+
+<style>
+  root {
+    BackgroundColor: #ffffff;
+    FontColor: #444444;
+  }
+  // Element,Analytics System
+  .Element-RWxlbWVudCxBbmFseXRpY3MgU3lzdGVt {
+    BackgroundColor: #eef2ff;
+    LineColor: #6366f1;
+    LineStyle: 0;
+    LineThickness: 3;
+    FontColor: #3730a3;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,Business System
+  .Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0= {
+    BackgroundColor: #f0fdf4;
+    LineColor: #22c55e;
+    LineStyle: 0;
+    LineThickness: 4;
+    RoundCorner: 20;
+    FontColor: #166534;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,Database System
+  .Element-RWxlbWVudCxEYXRhYmFzZSBTeXN0ZW0= {
+    BackgroundColor: #fef3c7;
+    LineColor: #f59e0b;
+    LineStyle: 0;
+    LineThickness: 4;
+    FontColor: #92400e;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,External System
+  .Element-RWxlbWVudCxFeHRlcm5hbCBTeXN0ZW0= {
+    BackgroundColor: #fff1f2;
+    LineColor: #dc2626;
+    LineStyle: 0;
+    LineThickness: 4;
+    RoundCorner: 20;
+    FontColor: #991b1b;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,Frontend
+  .Element-RWxlbWVudCxGcm9udGVuZA== {
+    BackgroundColor: #e0f2fe;
+    LineColor: #0284c7;
+    LineStyle: 0;
+    LineThickness: 5;
+    RoundCorner: 20;
+    FontColor: #075985;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,Infrastructure System
+  .Element-RWxlbWVudCxJbmZyYXN0cnVjdHVyZSBTeXN0ZW0= {
+    BackgroundColor: #fff7ed;
+    LineColor: #f97316;
+    LineStyle: 0;
+    LineThickness: 3;
+    RoundCorner: 20;
+    FontColor: #9a3412;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,Insight System
+  .Element-RWxlbWVudCxJbnNpZ2h0IFN5c3RlbQ== {
+    BackgroundColor: #fdf2f8;
+    LineColor: #ec4899;
+    LineStyle: 0;
+    LineThickness: 4;
+    RoundCorner: 20;
+    FontColor: #9d174d;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,Message System
+  .Element-RWxlbWVudCxNZXNzYWdlIFN5c3RlbQ== {
+    BackgroundColor: #eff6ff;
+    LineColor: #3b82f6;
+    LineStyle: 0;
+    LineThickness: 3;
+    RoundCorner: 20;
+    FontColor: #1d4ed8;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,Observability System
+  .Element-RWxlbWVudCxPYnNlcnZhYmlsaXR5IFN5c3RlbQ== {
+    BackgroundColor: #f1f5f9;
+    LineColor: #64748b;
+    LineStyle: 0;
+    LineThickness: 3;
+    RoundCorner: 20;
+    FontColor: #0f172a;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,Person
+  .Element-RWxlbWVudCxQZXJzb24= {
+    BackgroundColor: #ecfdf5;
+    LineColor: #16a34a;
+    LineStyle: 0;
+    LineThickness: 4;
+    FontColor: #166534;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,Platform System
+  .Element-RWxlbWVudCxQbGF0Zm9ybSBTeXN0ZW0= {
+    BackgroundColor: #eef2ff;
+    LineColor: #6366f1;
+    LineStyle: 0;
+    LineThickness: 5;
+    RoundCorner: 20;
+    FontColor: #3730a3;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,Search System
+  .Element-RWxlbWVudCxTZWFyY2ggU3lzdGVt {
+    BackgroundColor: #fdf2f8;
+    LineColor: #ec4899;
+    LineStyle: 0;
+    LineThickness: 3;
+    RoundCorner: 20;
+    FontColor: #9d174d;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Element,Tool System
+  .Element-RWxlbWVudCxUb29sIFN5c3RlbQ== {
+    BackgroundColor: #ecfccb;
+    LineColor: #84cc16;
+    LineStyle: 0;
+    LineThickness: 3;
+    RoundCorner: 20;
+    FontColor: #3f6212;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+    MaximumWidth: 450;
+  }
+  // Relationship
+  .Relationship-UmVsYXRpb25zaGlw {
+    LineThickness: 3;
+    LineStyle: 15-15;
+    LineColor: #444444;
+    FontColor: #444444;
+    FontSize: 24;
+    MaximumWidth: 200;
+  }
+  // FERN ERP Platform
+  .Group-RkVSTiBFUlAgUGxhdGZvcm0= {
+    BackgroundColor: #ffffff;
+    LineColor: #444444;
+    LineStyle: 2-2;
+    LineThickness: 2;
+    FontColor: #444444;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+  }
+  // Shared Data and Infrastructure
+  .Group-U2hhcmVkIERhdGEgYW5kIEluZnJhc3RydWN0dXJl {
+    BackgroundColor: #ffffff;
+    LineColor: #444444;
+    LineStyle: 2-2;
+    LineThickness: 2;
+    FontColor: #444444;
+    FontSize: 24;
+    HorizontalAlignment: center;
+    Shadowing: 0;
+  }
+</style>
+
+rectangle "FERN ERP Platform" <<Group-RkVSTiBFUlAgUGxhdGZvcm0=>> as group1 {
+  rectangle "==Master Control Plane\n<size:16>[Software System]</size>\n\nService registry, heartbeat, service discovery, config distribution, feature flags, rollout metadata và health aggregation." <<Element-RWxlbWVudCxQbGF0Zm9ybSBTeXN0ZW0=>> as MasterControlPlane
+  rectangle "==Organization Reference System\n<size:16>[Software System]</size>\n\nCurrency, region, outlet và organizational reference data." <<Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0=>> as OrganizationReferenceSystem
+  rectangle "==Product / Catalog / Pricing System\n<size:16>[Software System]</size>\n\nProduct categories, items, products, allergens, modifier groups, recipes, product availability, tax và outlet pricing." <<Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0=>> as ProductCatalogPricingSystem
+  rectangle "==Procurement System\n<size:16>[Software System]</size>\n\nSupplier, purchase order, goods receipt, supplier invoice, supplier payment và payment allocation workflows." <<Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0=>> as ProcurementSystem
+  rectangle "==Sales / POS / CRM System\n<size:16>[Software System]</size>\n\nPOS sessions, sale records, payments, promotions, customer ordering, CRM/loyalty, sync-facing sales workflows và telemetry routing." <<Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0=>> as SalesPOSCRMSystem
+  rectangle "==Sync System\n<size:16>[Software System]</size>\n\nDevice sync service cho edge/POS synchronization và central sync endpoints." <<Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0=>> as SyncSystem
+  rectangle "==Inventory System\n<size:16>[Software System]</size>\n\nInventory transactions, stock count, waste, goods receipt transactions, manufacturing batches và stock projections." <<Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0=>> as InventorySystem
+  rectangle "==HR System\n<size:16>[Software System]</size>\n\nShift, work shift và employee contract workflows." <<Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0=>> as HRSystem
+  rectangle "==Payroll System\n<size:16>[Software System]</size>\n\nPayroll periods, timesheets, payroll generation, approval và payroll expense handoff." <<Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0=>> as PayrollSystem
+  rectangle "==Finance System\n<size:16>[Software System]</size>\n\nExpense records, purchase/payroll/operating/other expenses và finance document workflows." <<Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0=>> as FinanceSystem
+  rectangle "==Audit System\n<size:16>[Software System]</size>\n\nAudit log persistence và audit-event consumption for traceability." <<Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0=>> as AuditSystem
+  rectangle "==Reporting System\n<size:16>[Software System]</size>\n\nRead-only reporting and aggregate views. Reads from PostgreSQL replica, not primary writes." <<Element-RWxlbWVudCxJbnNpZ2h0IFN5c3RlbQ==>> as ReportingSystem
+  rectangle "==AI Query System\n<size:16>[Software System]</size>\n\nNatural-language BI/query sidecar with guarded SQL, outlet-scope/RBAC injection, ClickHouse/OpenSearch integrations and LLM calls." <<Element-RWxlbWVudCxJbnNpZ2h0IFN5c3RlbQ==>> as AIQuerySystem
+  rectangle "==Local Data Simulator\n<size:16>[Software System]</size>\n\nLocal-only operational data simulator with preview/execute guardrails." <<Element-RWxlbWVudCxUb29sIFN5c3RlbQ==>> as LocalDataSimulator
+  rectangle "==Frontend Web Application\n<size:16>[Software System]</size>\n\nReact/Vite workspace cho admin, POS staff, analyst và customer ordering. Frontend gọi gateway, không gọi trực tiếp service nội bộ." <<Element-RWxlbWVudCxGcm9udGVuZA==>> as FrontendWebApplication
+  rectangle "==API Gateway\n<size:16>[Software System]</size>\n\nSpring Cloud Gateway ingress: route catalog, auth/session handling, rate limiting, circuit breaker, header propagation và public/internal route boundary." <<Element-RWxlbWVudCxQbGF0Zm9ybSBTeXN0ZW0=>> as APIGateway
+  rectangle "==Auth / IAM System\n<size:16>[Software System]</size>\n\nLogin, refresh/session, user, role, permission, device pairing và outlet-scoped authorization context." <<Element-RWxlbWVudCxCdXNpbmVzcyBTeXN0ZW0=>> as AuthIAMSystem
+}
+
+rectangle "Shared Data and Infrastructure" <<Group-U2hhcmVkIERhdGEgYW5kIEluZnJhc3RydWN0dXJl>> as group2 {
+  database "==PostgreSQL Primary\n<size:16>[Software System]</size>\n\nShared fern database / core schema. Primary write store shared by FERN systems; not database-per-service." <<Element-RWxlbWVudCxEYXRhYmFzZSBTeXN0ZW0=>> as PostgreSQLPrimary
+  database "==PostgreSQL Read Replica\n<size:16>[Software System]</size>\n\nStreaming standby database for reporting/read-only workloads." <<Element-RWxlbWVudCxEYXRhYmFzZSBTeXN0ZW0=>> as PostgreSQLReadReplica
+  rectangle "==PgBouncer / HAProxy Pool\n<size:16>[Software System]</size>\n\nOptional pooled database access path for PostgreSQL primary." <<Element-RWxlbWVudCxJbmZyYXN0cnVjdHVyZSBTeXN0ZW0=>> as PgBouncerHAProxyPool
+  rectangle "==Redis + Sentinel\n<size:16>[Software System]</size>\n\nCache, sessions, rate limits, heartbeat registry, hot config and failover-capable Redis topology." <<Element-RWxlbWVudCxJbmZyYXN0cnVjdHVyZSBTeXN0ZW0=>> as RedisSentinel
+  rectangle "==Kafka KRaft\n<size:16>[Software System]</size>\n\nEvent backbone for domain events, audit events, async integration and CDC." <<Element-RWxlbWVudCxNZXNzYWdlIFN5c3RlbQ==>> as KafkaKRaft
+  rectangle "==Kafka Connect / Debezium\n<size:16>[Software System]</size>\n\nCDC pipeline from PostgreSQL into Kafka and analytics targets." <<Element-RWxlbWVudCxNZXNzYWdlIFN5c3RlbQ==>> as KafkaConnectDebezium
+  rectangle "==S3-compatible Object Storage\n<size:16>[Software System]</size>\n\nMinIO local or external S3-compatible buckets for product images and finance documents." <<Element-RWxlbWVudCxFeHRlcm5hbCBTeXN0ZW0=>> as S3compatibleObjectStorage
+  database "==ClickHouse Analytics Store\n<size:16>[Software System]</size>\n\nAnalytics/CDC store for AI Query and analytical projections." <<Element-RWxlbWVudCxBbmFseXRpY3MgU3lzdGVt>> as ClickHouseAnalyticsStore
+  rectangle "==OpenSearch\n<size:16>[Software System]</size>\n\nSearch/RAG/runtime catalog indexes for AI Query." <<Element-RWxlbWVudCxTZWFyY2ggU3lzdGVt>> as OpenSearch
+  rectangle "==Observability Stack\n<size:16>[Software System]</size>\n\nPrometheus, Grafana, Jaeger and exporters for health, metrics and traces." <<Element-RWxlbWVudCxPYnNlcnZhYmlsaXR5IFN5c3RlbQ==>> as ObservabilityStack
+  rectangle "==Vault / Secrets Provider\n<size:16>[Software System]</size>\n\nOptional secret/config source for service credentials." <<Element-RWxlbWVudCxFeHRlcm5hbCBTeXN0ZW0=>> as VaultSecretsProvider
+}
+
+person "==Back-office Admin\n<size:16>[Person]</size>\n\nQuản trị chuỗi: danh mục, mua hàng, kho, nhân sự, lương, tài chính, báo cáo và cấu hình vận hành." <<Element-RWxlbWVudCxQZXJzb24=>> as BackofficeAdmin
+person "==Outlet / POS Staff\n<size:16>[Person]</size>\n\nNhân viên cửa hàng vận hành ca bán, đơn hàng, thanh toán, đồng bộ thiết bị và xử lý tồn kho." <<Element-RWxlbWVudCxQZXJzb24=>> as OutletPOSStaff
+person "==Customer\n<size:16>[Person]</size>\n\nKhách hàng đặt món qua QR/table ordering." <<Element-RWxlbWVudCxQZXJzb24=>> as Customer
+rectangle "==OpenAI-compatible LLM Provider\n<size:16>[Software System]</size>\n\nExternal model provider used by AI Query." <<Element-RWxlbWVudCxFeHRlcm5hbCBTeXN0ZW0=>> as OpenAIcompatibleLLMProvider
+person "==Business Analyst\n<size:16>[Person]</size>\n\nNgười dùng khai thác báo cáo, dashboard và đặt câu hỏi dữ liệu bằng ngôn ngữ tự nhiên." <<Element-RWxlbWVudCxQZXJzb24=>> as BusinessAnalyst
+person "==System Operator\n<size:16>[Person]</size>\n\nNgười vận hành theo dõi health, metrics, traces, service registry và dữ liệu demo." <<Element-RWxlbWVudCxQZXJzb24=>> as SystemOperator
+person "==Developer / QA\n<size:16>[Person]</size>\n\nKỹ sư phát triển, kiểm thử, chạy local services, migrations, simulator và smoke tests." <<Element-RWxlbWVudCxQZXJzb24=>> as DeveloperQA
+
+SalesPOSCRMSystem --> RedisSentinel <<Relationship-UmVsYXRpb25zaGlw>> : "Caches POS/session/revenue data"
+SyncSystem --> RedisSentinel <<Relationship-UmVsYXRpb25zaGlw>> : "Uses sync hot state/cache"
+InventorySystem --> RedisSentinel <<Relationship-UmVsYXRpb25zaGlw>> : "Caches stock/reference data"
+AIQuerySystem --> RedisSentinel <<Relationship-UmVsYXRpb25zaGlw>> : "Uses checkpoint/session memory"
+OrganizationReferenceSystem --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Publishes organization events to"
+ProductCatalogPricingSystem --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Publishes catalog/pricing events to"
+ProcurementSystem --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Publishes procurement events to"
+SalesPOSCRMSystem --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Publishes sales/CRM events to"
+SyncSystem --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Publishes sync events to"
+InventorySystem --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Consumes and publishes inventory events via"
+PayrollSystem --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Publishes payroll events to"
+FinanceSystem --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Consumes finance-relevant events from"
+AuditSystem --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Consumes audit events from"
+AIQuerySystem --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Publishes AI query audit/review events to"
+MasterControlPlane --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Publishes topology/config events to"
+KafkaConnectDebezium --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads CDC changes from"
+KafkaConnectDebezium --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Publishes CDC topics to"
+KafkaConnectDebezium --> ClickHouseAnalyticsStore <<Relationship-UmVsYXRpb25zaGlw>> : "Loads analytical projections into"
+AIQuerySystem --> ClickHouseAnalyticsStore <<Relationship-UmVsYXRpb25zaGlw>> : "Queries analytical data from"
+AIQuerySystem --> OpenSearch <<Relationship-UmVsYXRpb25zaGlw>> : "Searches knowledge/runtime indexes in"
+AIQuerySystem --> OpenAIcompatibleLLMProvider <<Relationship-UmVsYXRpb25zaGlw>> : "Calls model APIs on"
+ProductCatalogPricingSystem --> S3compatibleObjectStorage <<Relationship-UmVsYXRpb25zaGlw>> : "Stores product images in"
+FinanceSystem --> S3compatibleObjectStorage <<Relationship-UmVsYXRpb25zaGlw>> : "Stores finance documents in"
+APIGateway --> VaultSecretsProvider <<Relationship-UmVsYXRpb25zaGlw>> : "Can load secret-backed configuration from"
+AuthIAMSystem --> VaultSecretsProvider <<Relationship-UmVsYXRpb25zaGlw>> : "Can load credentials/configuration from"
+ReportingSystem --> VaultSecretsProvider <<Relationship-UmVsYXRpb25zaGlw>> : "Can load replica credentials from"
+APIGateway --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes health, metrics and traces to"
+AuthIAMSystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+OrganizationReferenceSystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+ProductCatalogPricingSystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+ProcurementSystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+SalesPOSCRMSystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+SyncSystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+InventorySystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+HRSystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+PayrollSystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+FinanceSystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+AuditSystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+ReportingSystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes metrics/traces to"
+AIQuerySystem --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Exposes health/telemetry to"
+ObservabilityStack --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Scrapes primary database metrics"
+ObservabilityStack --> PostgreSQLReadReplica <<Relationship-UmVsYXRpb25zaGlw>> : "Scrapes replica metrics and lag"
+ObservabilityStack --> RedisSentinel <<Relationship-UmVsYXRpb25zaGlw>> : "Scrapes Redis metrics"
+ObservabilityStack --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Scrapes Kafka metrics"
+BackofficeAdmin --> FrontendWebApplication <<Relationship-UmVsYXRpb25zaGlw>> : "Uses admin workflows through"
+OutletPOSStaff --> FrontendWebApplication <<Relationship-UmVsYXRpb25zaGlw>> : "Uses POS/admin workflows through"
+Customer --> FrontendWebApplication <<Relationship-UmVsYXRpb25zaGlw>> : "Places QR/table orders through"
+BusinessAnalyst --> FrontendWebApplication <<Relationship-UmVsYXRpb25zaGlw>> : "Uses reporting and AI query through"
+SystemOperator --> ObservabilityStack <<Relationship-UmVsYXRpb25zaGlw>> : "Monitors runtime state through"
+SystemOperator --> MasterControlPlane <<Relationship-UmVsYXRpb25zaGlw>> : "Inspects service topology and health through"
+DeveloperQA --> LocalDataSimulator <<Relationship-UmVsYXRpb25zaGlw>> : "Runs local demo-data simulation through"
+DeveloperQA --> APIGateway <<Relationship-UmVsYXRpb25zaGlw>> : "Runs smoke tests and local API checks against"
+FrontendWebApplication --> APIGateway <<Relationship-UmVsYXRpb25zaGlw>> : "Calls only through"
+OutletPOSStaff --> SyncSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Syncs POS/edge data through device routes"
+APIGateway --> AuthIAMSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes auth, IAM and device APIs to"
+APIGateway --> MasterControlPlane <<Relationship-UmVsYXRpb25zaGlw>> : "Routes internal control/master APIs to"
+APIGateway --> OrganizationReferenceSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes organization APIs to"
+APIGateway --> ProductCatalogPricingSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes catalog/pricing APIs to"
+APIGateway --> ProcurementSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes procurement APIs to"
+APIGateway --> SalesPOSCRMSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes sales, CRM, public ordering and telemetry APIs to"
+APIGateway --> SyncSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes device/internal sync APIs to"
+APIGateway --> InventorySystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes inventory APIs to"
+APIGateway --> HRSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes HR APIs to"
+APIGateway --> PayrollSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes payroll APIs to"
+APIGateway --> FinanceSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes finance APIs to"
+APIGateway --> AuditSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes audit APIs to"
+APIGateway --> ReportingSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes reporting APIs to"
+APIGateway --> AIQuerySystem <<Relationship-UmVsYXRpb25zaGlw>> : "Routes AI query APIs to"
+AuthIAMSystem --> OrganizationReferenceSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Validates outlet/region assignment context with"
+HRSystem --> AuthIAMSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Looks up employee/user identity via"
+HRSystem --> OrganizationReferenceSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Uses outlet/region metadata from"
+ProductCatalogPricingSystem --> OrganizationReferenceSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Uses outlet/region context from"
+ProcurementSystem --> OrganizationReferenceSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Uses outlet/organization reference data from"
+ProcurementSystem --> ProductCatalogPricingSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Uses product/item reference data from"
+SalesPOSCRMSystem --> OrganizationReferenceSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Uses outlet context from"
+SalesPOSCRMSystem --> ProductCatalogPricingSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Uses products, modifiers, recipes and prices from"
+SyncSystem --> SalesPOSCRMSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Exchanges sales sync state with"
+InventorySystem --> ProductCatalogPricingSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Uses item/product/recipe metadata from"
+InventorySystem --> OrganizationReferenceSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Uses outlet metadata from"
+PayrollSystem --> HRSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Uses timesheet/employee data from"
+PayrollSystem --> OrganizationReferenceSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Uses outlet/region metadata from"
+FinanceSystem --> ProcurementSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Consumes purchase/receipt/invoice expense context from"
+FinanceSystem --> SalesPOSCRMSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Consumes sales/payment revenue context from"
+FinanceSystem --> PayrollSystem <<Relationship-UmVsYXRpb25zaGlw>> : "Consumes payroll expense context from"
+AuditSystem --> KafkaKRaft <<Relationship-UmVsYXRpb25zaGlw>> : "Consumes audit/domain events from"
+ReportingSystem --> MasterControlPlane <<Relationship-UmVsYXRpb25zaGlw>> : "Reads effective config and feature gates from"
+AIQuerySystem --> APIGateway <<Relationship-UmVsYXRpb25zaGlw>> : "Trusts gateway-injected identity/scope headers from"
+AuthIAMSystem --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads/writes IAM and session state"
+MasterControlPlane --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads/writes control-plane state"
+OrganizationReferenceSystem --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads/writes organization reference data"
+ProductCatalogPricingSystem --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads/writes catalog, recipe and pricing data"
+ProcurementSystem --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads/writes procurement state"
+SalesPOSCRMSystem --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads/writes POS, sales, CRM and ordering state"
+SyncSystem --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads/writes sync metadata and state"
+InventorySystem --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads/writes inventory transaction state"
+HRSystem --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads/writes HR state"
+PayrollSystem --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads/writes payroll state"
+FinanceSystem --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Reads/writes finance state"
+AuditSystem --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Writes audit logs"
+LocalDataSimulator --> PostgreSQLPrimary <<Relationship-UmVsYXRpb25zaGlw>> : "Seeds and cleans local demo data"
+PostgreSQLPrimary --> PostgreSQLReadReplica <<Relationship-UmVsYXRpb25zaGlw>> : "Streams WAL replication to"
+ReportingSystem --> PostgreSQLReadReplica <<Relationship-UmVsYXRpb25zaGlw>> : "Reads reporting data from"
+AIQuerySystem --> PostgreSQLReadReplica <<Relationship-UmVsYXRpb25zaGlw>> : "Reads guarded operational data from"
+APIGateway --> RedisSentinel <<Relationship-UmVsYXRpb25zaGlw>> : "Uses rate limiting, route/session cache and hot data"
+AuthIAMSystem --> RedisSentinel <<Relationship-UmVsYXRpb25zaGlw>> : "Caches sessions and claims"
+MasterControlPlane --> RedisSentinel <<Relationship-UmVsYXRpb25zaGlw>> : "Stores heartbeat, registry and config cache"
+OrganizationReferenceSystem --> RedisSentinel <<Relationship-UmVsYXRpb25zaGlw>> : "Caches organization hierarchy"
+ProductCatalogPricingSystem --> RedisSentinel <<Relationship-UmVsYXRpb25zaGlw>> : "Caches product/pricing data"
+
+@enduml
