@@ -5,8 +5,9 @@
 **Phiên bản SRS:** 1.0
 **Source code tham chiếu:**
 
-- Backend: [services/sales-service/.../api/SalesController.java](../../services/sales-service/src/main/java/com/fern/services/sales/api/SalesController.java) (`POST /api/v1/sales/pos-sessions`)
-- Frontend: [frontend/src/components/pos/POSModule.tsx](../../frontend/src/components/pos/POSModule.tsx)
+- Backend: [services/sales-service/.../api/SalesController.java](../../services/sales-service/src/main/java/com/fern/services/sales/api/SalesController.java) (`POST /api/v1/sales/pos-sessions`, `POST .../cash-movements`)
+- Frontend cashier: [frontend/src/routes/pos-order/](../../frontend/src/routes/pos-order/) (`OpenShiftDialog`, `use-pos-session.ts`)
+- Frontend admin: [frontend/src/components/pos/POSModule.tsx](../../frontend/src/components/pos/POSModule.tsx)
 - DB: `db/migrations/V1__core_schema.sql`, `V11__pos_session_reconciliation.sql`
 
 ## 1. Actors & quyền
@@ -23,7 +24,7 @@
   - User đã đăng nhập (`auth_session` hợp lệ), có scope outlet đích.
   - Outlet có `status = active`.
   - Không có `pos_session` nào ở trạng thái `OPEN` cho cùng `(outlet_id, user_id)`.
-- **Hậu điều kiện (thành công):** `pos_session` mới `status = OPEN`, `opened_at = now()`, `opening_cash` đã ghi; event `pos.session.opened` được phát.
+- **Hậu điều kiện (thành công):** `pos_session` mới `status = OPEN`, `opened_at = now()`; nếu có tiền đầu ca thì ghi `pos_cash_movement` loại `OPEN_FLOAT`; event `pos.session.opened` được phát.
 - **Hậu điều kiện (thất bại):** Không tạo session; state outlet/user nguyên vẹn.
 
 ## 3. Thực thể dữ liệu
@@ -41,16 +42,19 @@
 | POST | `/api/v1/sales/pos-sessions` | `SalesController#openSession` |
 | GET  | `/api/v1/sales/pos-sessions` | `SalesController#listSessions` |
 | GET  | `/api/v1/sales/pos-sessions/{id}` | `SalesController#getSession` |
+| POST | `/api/v1/sales/pos-sessions/{id}/cash-movements` | `SalesController#recordCashMovement` (`OPEN_FLOAT`) |
+| GET  | `/api/v1/sales/pos-sessions/{id}/cash-movements/summary` | Tổng tiền mặt dự kiến trước đóng ca |
 
 ## 5. Luồng chính (MAIN)
 
 1. Actor đăng nhập, chọn outlet trong scope.
-2. FE gọi `POST /api/v1/sales/pos-sessions` với body `{ outletId, openingCash, notes? }`.
-3. Service validate scope outlet, kiểm tra không có phiên `OPEN` trùng.
-4. Service insert `pos_session` (`status = OPEN`).
-5. Service phát audit event `pos.session.opened`.
-6. Service trả 201 kèm DTO phiên vừa tạo.
-7. FE điều hướng vào màn bán hàng gắn `sessionId`.
+2. FE gọi `POST /api/v1/sales/pos-sessions` với body `{ sessionCode, outletId, currencyCode, managerId, businessDate, note? }` — **không** có field `openingCash`.
+3. Nếu tiền đầu ca > 0, FE gọi tiếp `POST /api/v1/sales/pos-sessions/{id}/cash-movements` với `{ type: "OPEN_FLOAT", amount, reason? }`.
+4. Service validate scope outlet, kiểm tra không có phiên `OPEN` trùng user/outlet.
+5. Service insert `pos_session` (`status = OPEN`).
+6. Service phát audit event `pos.session.opened`.
+7. Service trả 201 kèm DTO phiên vừa tạo.
+8. FE vào màn bán hàng gắn `sessionId`.
 
 ## 6. Luồng thay thế / lỗi
 
@@ -58,11 +62,11 @@
 - **EXC-1 Phiên đã mở** — Đã có `OPEN` phiên trùng user/outlet → `409 CONFLICT`, code `POS_SESSION_ALREADY_OPEN`.
 - **EXC-2 Ngoài scope** — User không có outlet đích trong `user_role.outlet_id` → `403 FORBIDDEN`, code `SCOPE_DENIED`.
 - **EXC-3 Outlet inactive** — `outlet.status != active` → `409 CONFLICT`, code `OUTLET_NOT_ACTIVE`.
-- **EXC-4 Validation** — `openingCash < 0` hoặc thiếu field → `400 BAD_REQUEST`.
+- **EXC-4 Validation** — `amount < 0` trên cash-movement hoặc thiếu field bắt buộc → `400 BAD_REQUEST`.
 
 ## 7. Quy tắc nghiệp vụ
 
-- **BR-1** — `openingCash >= 0`, đơn vị tiền lấy theo `outlet.currency_code`.
+- **BR-1** — Tiền đầu ca (`OPEN_FLOAT.amount`) >= 0, đơn vị tiền theo `outlet.currency_code`.
 - **BR-2** — Một user không có 2 phiên `OPEN` trùng outlet.
 - **BR-3** — Chỉ `outlet_manager` / `cashier` / `superadmin` được mở phiên.
 - **BR-4** — `opened_at` UTC; FE hiển thị theo `region.timezone_name`.

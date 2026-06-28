@@ -16,14 +16,11 @@ export type SubmitPhase =
   | 'approve_failed'
   | 'payment_failed';
 
-export type UiPayMethod = 'cash' | 'card' | 'qr' | 'voucher';
+import { UI_TO_BACKEND_PAYMENT_METHOD } from '../utils/payment-methods';
 
-const UI_TO_BACKEND_METHOD: Record<UiPayMethod, string> = {
-  cash: 'cash',
-  card: 'card',
-  qr: 'ewallet',
-  voucher: 'voucher',
-};
+export type UiPayMethod = keyof typeof UI_TO_BACKEND_PAYMENT_METHOD;
+
+const UI_TO_BACKEND_METHOD = UI_TO_BACKEND_PAYMENT_METHOD;
 
 const UI_TO_BACKEND_ORDER_TYPE: Record<OrderType, string> = {
   takeaway: 'takeaway',
@@ -54,6 +51,8 @@ export interface PendingSnapshot {
   backendTotal?: number | null;
   method: UiPayMethod;
   orderType: OrderType;
+  customerName?: string;
+  promotionId?: string;
   error?: string;
 }
 
@@ -70,6 +69,7 @@ export interface SubmitArgs {
   vat: number;
   previewTotal: number;
   method: UiPayMethod;
+  promotionId?: string;
 }
 
 function saveSnapshot(snap: PendingSnapshot) {
@@ -97,6 +97,31 @@ export function listPendingOrders(): PendingSnapshot[] {
     } catch { /* ignore */ }
   }
   return out;
+}
+
+const RECOVERABLE_PHASES = new Set<SubmitPhase>([
+  'creating',
+  'created',
+  'approving',
+  'approved',
+  'paying',
+  'create_failed',
+  'approve_failed',
+  'payment_failed',
+]);
+
+export function isRecoverableSubmitPhase(phase: SubmitPhase): boolean {
+  return RECOVERABLE_PHASES.has(phase);
+}
+
+export function listRecoverablePending(outletId: string): PendingSnapshot[] {
+  return listPendingOrders()
+    .filter((snap) => snap.outletId === outletId && isRecoverableSubmitPhase(snap.phase))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function discardPendingSnapshot(idempotencyKey: string) {
+  removeSnapshot(idempotencyKey);
 }
 
 function orderSessionStorage(): Storage | null {
@@ -173,7 +198,7 @@ export function useSubmitOrder() {
         discountAmount: lineDiscount,
         taxAmount: lineTax,
         note: l.note ?? null,
-        promotionIds: [],
+        promotionIds: idx === 0 && args.promotionId ? [args.promotionId] : [],
       };
       if (l.modifierOptionIds && l.modifierOptionIds.length > 0) {
         item.modifierOptionIds = l.modifierOptionIds;
@@ -271,6 +296,8 @@ export function useSubmitOrder() {
       previewTotal: args.previewTotal,
       method: args.method,
       orderType: args.orderType,
+      customerName: args.customerName,
+      promotionId: args.promotionId,
     };
     saveSnapshot(snapshot);
     setPhase('creating');
@@ -336,6 +363,68 @@ export function useSubmitOrder() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, idempotencyKey]);
 
+  const recoverFromSnapshot = useCallback((snap: PendingSnapshot, args: SubmitArgs) => {
+    lastArgsRef.current = args;
+    setIdempotencyKey(snap.idempotencyKey);
+    setSaleId(snap.saleId ?? null);
+    setError(snap.error ? { message: snap.error } : null);
+    setPhase(snap.phase);
+  }, []);
+
+  const continuePending = useCallback(async (snap: PendingSnapshot, args: SubmitArgs) => {
+    if (!token) return;
+    lastArgsRef.current = args;
+    setIdempotencyKey(snap.idempotencyKey);
+    setSaleId(snap.saleId ?? null);
+    setError(snap.error ? { message: snap.error } : null);
+
+    const key = snap.idempotencyKey;
+    const saleStub: SaleDetailView = lastResult ?? {
+      id: snap.saleId ?? '',
+      totalAmount: snap.backendTotal ?? snap.previewTotal,
+    };
+
+    if (snap.phase === 'create_failed' || snap.phase === 'creating') {
+      setPhase('creating');
+      setError(null);
+      try {
+        const payload = buildPayload(args);
+        const sale = await salesApi.createOrder(token, payload, { idempotencyKey: key });
+        setSaleId(sale.id);
+        setLastResult(sale);
+        setPhase('created');
+        saveSnapshot({ ...snap, phase: 'created', saleId: sale.id, backendTotal: sale.totalAmount ?? null });
+        const approved = await doApprove(sale.id);
+        if (!approved) return;
+        await doPayment(args, sale.id, sale, key);
+      } catch (ex) {
+        const err = toSubmitError(ex, 'Không tạo được đơn');
+        setError(err);
+        setPhase('create_failed');
+        saveSnapshot({ ...snap, phase: 'create_failed', error: err.message });
+      }
+      return;
+    }
+
+    if (!snap.saleId) return;
+    setLastResult(saleStub);
+
+    if (snap.phase === 'approve_failed' || snap.phase === 'created' || snap.phase === 'approving') {
+      setPhase('approving');
+      setError(null);
+      const approved = await doApprove(snap.saleId);
+      if (!approved) return;
+      await doPayment(args, snap.saleId, saleStub, key);
+      return;
+    }
+
+    if (snap.phase === 'payment_failed' || snap.phase === 'approved' || snap.phase === 'paying') {
+      setError(null);
+      await doPayment(args, snap.saleId, saleStub, key);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, lastResult]);
+
   return {
     phase,
     saleId,
@@ -346,6 +435,8 @@ export function useSubmitOrder() {
     retryPayment,
     retryCreate,
     retryApprove,
+    recoverFromSnapshot,
+    continuePending,
     reset,
   };
 }

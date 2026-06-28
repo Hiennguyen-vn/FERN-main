@@ -32,11 +32,16 @@ export function QrQueueView({ outletId, outletName, menu, onRequestPayment, orde
 
   const localOrdersQuery = useQrOrders(outletId, !providedOrdersQuery);
   const ordersQuery = providedOrdersQuery ?? localOrdersQuery;
-  const detailQuery = useQrOrderDetail(selectedId);
   const approveMutation = useApproveQrOrder();
   const cancelMutation = useCancelQrOrder();
 
   const allOrders = useMemo(() => ordersQuery.data ?? [], [ordersQuery.data]);
+
+  const listSelected = useMemo(
+    () => allOrders.find((o) => String(o.id) === selectedId) ?? null,
+    [allOrders, selectedId],
+  );
+  const detailQuery = useQrOrderDetail(listSelected);
 
   const counts = useMemo(() => {
     const c = { all: allOrders.length, waiting: 0, approved: 0, paid: 0, cancelled: 0 };
@@ -62,12 +67,10 @@ export function QrQueueView({ outletId, outletName, menu, onRequestPayment, orde
     });
   }, [allOrders, filter, search]);
 
-  const selectedOrder = detailQuery.data
-    ?? allOrders.find((o) => String(o.id) === selectedId)
-    ?? null;
+  const selectedOrder = detailQuery.data ?? listSelected;
 
-  const handleApprove = (saleId: string) => {
-    approveMutation.mutate(saleId, {
+  const handleApprove = (batchId: string) => {
+    approveMutation.mutate(batchId, {
       onSuccess: () => toast.success('Đã duyệt đơn'),
       onError: (err) => toast.error(`Duyệt thất bại: ${err instanceof Error ? err.message : String(err)}`),
     });

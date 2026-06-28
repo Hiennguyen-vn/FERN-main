@@ -1,15 +1,23 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AiQueryModule } from '@/components/ai-query/AiQueryModule';
 import { aiQueryApi } from '@/api/ai-query-api';
+import type { ScopeOption, ShellScope } from '@/types/shell';
 
 beforeAll(() => {
   window.HTMLElement.prototype.scrollIntoView = vi.fn();
 });
 
-vi.mock('@/hooks/use-shell-runtime', () => ({
-  useShellRuntime: () => ({
+type ShellRuntimeTestDouble = {
+  token: string;
+  user: { id: string; displayName: string };
+  scope: ShellScope;
+  availableScopes: ScopeOption[];
+};
+
+const shellRuntimeMock = vi.hoisted((): { runtime: ShellRuntimeTestDouble } => ({
+  runtime: {
     token: 'test-token',
     user: { id: '1', displayName: 'CS Admin' },
     scope: { level: 'region', regionId: '1001', regionName: 'HCM' },
@@ -31,7 +39,11 @@ vi.mock('@/hooks/use-shell-runtime', () => ({
         ],
       },
     ],
-  }),
+  },
+}));
+
+vi.mock('@/hooks/use-shell-runtime', () => ({
+  useShellRuntime: () => shellRuntimeMock.runtime,
 }));
 
 vi.mock('@/api/ai-query-api', () => ({
@@ -43,6 +55,12 @@ vi.mock('@/api/ai-query-api', () => ({
 }));
 
 describe('AiQueryModule', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    shellRuntimeMock.runtime.scope = { level: 'region', regionId: '1001', regionName: 'HCM' };
+    vi.mocked(aiQueryApi.ready).mockResolvedValue({ status: 'ok', issues: [] });
+  });
+
   it('renders shell and empty-state copy', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     await act(async () => {
@@ -53,6 +71,8 @@ describe('AiQueryModule', () => {
       );
     });
     expect(screen.getByText('Insight Desk')).toBeTruthy();
+    expect(screen.getByText('Phạm vi AI:')).toBeTruthy();
+    expect(screen.getByText('HCM · tất cả cửa hàng')).toBeTruthy();
     expect(screen.getByText('Đặt câu hỏi phân tích')).toBeTruthy();
     expect(screen.getByText('Doanh thu 7 ngày qua theo cửa hàng?')).toBeTruthy();
   });
@@ -89,6 +109,55 @@ describe('AiQueryModule', () => {
         'test-token',
       );
       expect(vi.mocked(aiQueryApi.query).mock.calls[0]?.[0]).not.toHaveProperty('requested_outlet_ids');
+    });
+  });
+
+  it('warns and submits only the selected outlet id for all-outlet wording in outlet scope', async () => {
+    shellRuntimeMock.runtime.scope = {
+      level: 'outlet',
+      regionId: '1001',
+      regionName: 'HCM',
+      outletId: '3491811094483714048',
+      outletName: 'Saigon Central',
+    };
+    vi.mocked(aiQueryApi.query).mockResolvedValueOnce({
+      answer: 'ok',
+      template_key: null,
+      confidence: 0.95,
+      row_count: 1,
+      citations: [],
+      correlation_id: 'corr-outlet',
+      latency_ms: 12,
+    });
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await act(async () => {
+      render(
+        <QueryClientProvider client={qc}>
+          <AiQueryModule />
+        </QueryClientProvider>,
+      );
+    });
+
+    expect(screen.getByText('Saigon Central')).toBeTruthy();
+
+    const question = 'doanh thu của tất cả cửa hàng hôm nay';
+    const textarea = screen.getByPlaceholderText('Đặt câu hỏi về doanh thu, tồn kho, sản phẩm, nhân sự... (Enter để gửi)');
+    fireEvent.change(textarea, { target: { value: question } });
+
+    expect(screen.getByText(/Bạn đang ở phạm vi/)).toBeTruthy();
+    expect(screen.getByText(/Nếu muốn so sánh nhiều cửa hàng/)).toBeTruthy();
+
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+
+    await waitFor(() => {
+      expect(aiQueryApi.query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          question,
+          requested_outlet_ids: ['3491811094483714048'],
+        }),
+        'test-token',
+      );
     });
   });
 

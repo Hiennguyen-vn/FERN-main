@@ -47,7 +47,7 @@ describe('sale-order-utils', () => {
     );
 
     expect(mapped).toMatchObject({
-      orderNumber: 'QR-en_123',
+      orderNumber: 'Bàn Table 1',
       sourceLabel: 'Customer table order',
       publicOrderToken: 'pub_ord_token_123',
       tableNumber: 'T1',

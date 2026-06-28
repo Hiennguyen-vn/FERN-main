@@ -30,6 +30,7 @@ export interface AppliedVoucher {
   code: string;
   label: string;
   discount: number;
+  promotionId?: string;
 }
 
 export type OrderType = 'takeaway' | 'dinein';
@@ -71,6 +72,11 @@ export function useCart() {
     setLines((prev) => prev.filter((l) => l.lineId !== lineId));
   }, []);
 
+  const setVoucherApplied = useCallback((next: AppliedVoucher | null, error = '') => {
+    setVoucher(next);
+    setVoucherError(error);
+  }, []);
+
   const applyVoucher = useCallback((code: string) => {
     const up = code.trim().toUpperCase();
     if (!up) {
@@ -94,6 +100,19 @@ export function useCart() {
     setVoucherError('');
   }, [subtotal]);
 
+  const restore = useCallback((snapshot: {
+    lines: CartLine[];
+    orderType: OrderType;
+    customerName?: string;
+  }) => {
+    setLines(snapshot.lines);
+    setOrderType(snapshot.orderType);
+    setCustomerName(snapshot.customerName ?? '');
+    setVoucher(null);
+    setVoucherError('');
+    setLoyaltyPhone('');
+  }, []);
+
   const reset = useCallback(() => {
     setLines([]);
     setCustomerName('');
@@ -115,9 +134,11 @@ export function useCart() {
     voucher,
     voucherError,
     applyVoucher,
+    setVoucherApplied,
     addLine,
     updateQty,
     removeLine,
+    restore,
     reset,
     subtotal,
     discount,

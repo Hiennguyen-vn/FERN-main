@@ -20,7 +20,7 @@ import type {
 } from '@/api/ai-query-api';
 import { isApiError } from '@/api/client';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
-import type { ScopeOption } from '@/types/shell';
+import type { ScopeOption, ShellScope } from '@/types/shell';
 import {
   normalizeQualityIssueLines,
   normalizeQualityVerdict,
@@ -127,6 +127,92 @@ function resolveRequestedOutletIds(
     return /^\d+$/.test(outletId) ? [outletId] : undefined;
   }
   return undefined;
+}
+
+function walkScopeOptions(nodes: ScopeOption[], visit: (node: ScopeOption) => void) {
+  for (const node of nodes) {
+    visit(node);
+    if (node.children?.length) walkScopeOptions(node.children, visit);
+  }
+}
+
+function findScopeOptionById(nodes: ScopeOption[], id?: string | null): ScopeOption | null {
+  const target = String(id ?? '').trim();
+  if (!target) return null;
+  let found: ScopeOption | null = null;
+  walkScopeOptions(nodes, (node) => {
+    if (!found && node.id === target) found = node;
+  });
+  return found;
+}
+
+function countOutletScopeOptions(nodes: ScopeOption[]): number {
+  let count = 0;
+  walkScopeOptions(nodes, (node) => {
+    if (node.level === 'outlet') count += 1;
+  });
+  return count;
+}
+
+type AiScopeDescriptor = {
+  label: string;
+  detail: string;
+  isSingleOutlet: boolean;
+};
+
+function describeAiScope(scope: ShellScope, scopeTree: ScopeOption[] = []): AiScopeDescriptor {
+  if (scope.level === 'outlet') {
+    const outlet = findScopeOptionById(scopeTree, scope.outletId);
+    const outletName = scope.outletName || outlet?.name || 'Outlet đang chọn';
+    return {
+      label: outletName,
+      detail: 'AI chỉ được truy vấn dữ liệu của 1 cửa hàng trong scope hiện tại.',
+      isSingleOutlet: true,
+    };
+  }
+
+  if (scope.level === 'region') {
+    const region = findScopeOptionById(scopeTree, scope.regionId);
+    const regionName = scope.regionName || region?.name || 'Khu vực đang chọn';
+    const outletCount = region ? countOutletScopeOptions([region]) : countOutletScopeOptions(scopeTree);
+    return {
+      label: `${regionName} · tất cả cửa hàng`,
+      detail: outletCount > 0
+        ? `AI có thể so sánh ${outletCount} cửa hàng trong khu vực này.`
+        : 'AI dùng toàn bộ cửa hàng trong khu vực bạn được phép xem.',
+      isSingleOutlet: false,
+    };
+  }
+
+  const outletCount = countOutletScopeOptions(scopeTree);
+  return {
+    label: 'Toàn hệ thống',
+    detail: outletCount > 0
+      ? `AI có thể so sánh ${outletCount} cửa hàng bạn được phép xem.`
+      : 'AI dùng toàn bộ dữ liệu trong phạm vi quyền của bạn.',
+    isSingleOutlet: false,
+  };
+}
+
+function normalizeSearchText(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function asksForMultipleOutlets(question: string): boolean {
+  const text = normalizeSearchText(question);
+  if (!text) return false;
+  return [
+    /\b(tat ca|toan bo|moi|cac|tung) (cac )?(cua hang|outlet|chi nhanh)\b/,
+    /\b(cua hang|outlet|chi nhanh) nao\b/,
+    /\btren (cac|tat ca|toan bo) (cua hang|outlet|chi nhanh)\b/,
+    /\b(toan he thong|ca he thong)\b/,
+    /\ball (outlets?|stores?|branches?)\b/,
+  ].some((pattern) => pattern.test(text));
 }
 
 function formatFileSize(bytes?: number | null): string {
@@ -250,6 +336,18 @@ function formatPercent(value: unknown): string {
   return `${Math.round(n * 100)}%`;
 }
 
+function describeReadinessIssue(issue?: string): string {
+  const raw = String(issue || '').trim();
+  if (!raw) return 'dependencies unhealthy';
+  const folded = raw.toLowerCase();
+  if (folded.includes('llm unavailable')) {
+    return 'LLM tạm thời không khả dụng';
+  }
+  if (folded.includes('clickhouse')) return 'ClickHouse chưa sẵn sàng';
+  if (folded.includes('graph')) return 'Pipeline chưa khởi tạo';
+  return raw;
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function ReadinessIndicator({ readiness, checking }: { readiness: AiServiceReadiness | null | undefined; checking: boolean }) {
@@ -267,7 +365,7 @@ function ReadinessIndicator({ readiness, checking }: { readiness: AiServiceReadi
     </div>
   );
   if (readiness.status === 'degraded') {
-    const hint = readiness.issues?.[0] ?? 'dependencies unhealthy';
+    const hint = describeReadinessIssue(readiness.issues?.[0]);
     return (
       <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 max-w-[220px]" title={readiness.issues?.join('\n')}>
         <AlertTriangle className="h-3 w-3 flex-shrink-0" />
@@ -1213,6 +1311,11 @@ export function AiQueryModule() {
     () => resolveRequestedOutletIds(scope, availableScopes ?? []),
     [availableScopes, scope],
   );
+  const aiScope = useMemo(
+    () => describeAiScope(scope, availableScopes ?? []),
+    [availableScopes, scope],
+  );
+  const showScopeMismatchWarning = aiScope.isSingleOutlet && asksForMultipleOutlets(input);
 
   const { data: readiness, isLoading: checkingReady, refetch: recheckReady } = useQuery({
     queryKey: ['ai-query', 'ready'],
@@ -1372,6 +1475,14 @@ export function AiQueryModule() {
                 </Badge>
               </div>
               <p className="text-[11px] text-muted-foreground mt-0.5">Trả lời từ dữ liệu vận hành — có trích dẫn phạm vi</p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
+                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-1.5 py-0.5 font-medium">
+                  <Database className="h-3 w-3 text-primary" />
+                  <span>Phạm vi AI:</span>
+                  <strong className="font-semibold text-foreground">{aiScope.label}</strong>
+                </span>
+                <span className="hidden sm:inline">{aiScope.detail}</span>
+              </div>
             </div>
           </div>
 
@@ -1475,6 +1586,16 @@ export function AiQueryModule() {
 
       {/* Input */}
       <div className="flex-shrink-0 border-t border-border px-4 sm:px-6 py-4 bg-card/90 backdrop-blur-md">
+        {showScopeMismatchWarning && (
+          <div className="max-w-5xl mx-auto mb-3 rounded-xl border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-500" />
+              <p>
+                Bạn đang ở phạm vi <strong>1 outlet</strong>. Câu hỏi so sánh “tất cả/các cửa hàng” sẽ chỉ dùng dữ liệu của <strong>{aiScope.label}</strong>. Nếu muốn so sánh nhiều cửa hàng, hãy đổi scope ở thanh trên sang khu vực hoặc All outlets.
+              </p>
+            </div>
+          </div>
+        )}
         <div className="max-w-5xl mx-auto w-full flex items-end gap-3">
           <div className="flex-1 relative">
             <textarea

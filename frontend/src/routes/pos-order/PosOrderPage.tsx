@@ -17,18 +17,25 @@ import { PaymentDialog, type PayMethod } from './components/PaymentDialog';
 import { OrderPrintPreview } from './components/OrderPrintPreview';
 import { OutletPicker } from './components/OutletPicker';
 import { OpenShiftDialog } from './components/OpenShiftDialog';
+import { CloseShiftDialog } from './components/CloseShiftDialog';
 import { SubmitStatusOverlay } from './components/SubmitStatusOverlay';
 import { OrdersDrawer } from './components/OrdersDrawer';
-import { useOrdersFeed, type OrderScope } from './hooks/use-orders-feed';
+import type { OrderScope } from './hooks/use-orders-feed';
+import { usePosOrderFeeds } from './hooks/use-pos-order-feeds';
 import { useCart } from './hooks/use-pos-cart';
 import { useOrderHistory, type SavedOrder } from './hooks/use-order-history';
 import { useDraftOrders } from './hooks/use-draft-orders';
 import { usePosMenu, type PosMenuItem } from './hooks/use-pos-menu';
 import { DraftPickerDialog } from './components/DraftPickerDialog';
 import { usePosSession } from './hooks/use-pos-session';
-import { useSubmitOrder } from './hooks/use-submit-order';
+import { useShiftCloseSummary } from './hooks/use-shift-close-summary';
+import { parseUnpaidOrdersError } from './utils/shift-close';
+import { PendingSubmitBanner } from './components/PendingSubmitBanner';
+import { useSubmitOrder, discardPendingSnapshot, listRecoverablePending, type PendingSnapshot } from './hooks/use-submit-order';
+import { lookupPromotionVoucher } from './utils/promo-voucher';
 import { useQrOrders } from './hooks/use-qr-orders';
 import { isWaitingCustomerOrder } from '@/components/pos/customer-order-queue';
+import { UI_TO_BACKEND_PAYMENT_METHOD } from './utils/payment-methods';
 
 interface Props {
   outletId: string;
@@ -55,20 +62,24 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
   const [printOpen, setPrintOpen] = useState(false);
   const [lastOrder, setLastOrder] = useState<SavedOrder | null>(null);
   const [clock, setClock] = useState(() => new Date());
-  const [pendingOrderNo, setPendingOrderNo] = useState(history.nextOrderNo());
+  const [recoverablePending, setRecoverablePending] = useState<PendingSnapshot[]>([]);
+  const [isResumingPending, setIsResumingPending] = useState(false);
   const [drawerScope, setDrawerScope] = useState<OrderScope | null>(null);
   const [view, setView] = useState<'menu' | 'qr-queue'>('menu');
   const [draftPickerOpen, setDraftPickerOpen] = useState(false);
+  const [closeShiftOpen, setCloseShiftOpen] = useState(false);
+  const [closeShiftError, setCloseShiftError] = useState<string | null>(null);
   const qc = useQueryClient();
   const token = session?.accessToken;
   const posSessionId = sessionHook.session?.id ?? null;
-  const feed = useOrdersFeed(outletId, drawerScope ?? 'today', drawerScope !== null, posSessionId);
-  const todayFeed = useOrdersFeed(outletId, 'today', drawerScope === 'today', posSessionId);
-  const pendingFeed = useOrdersFeed(outletId, 'pending', true, posSessionId);
+  const orderFeeds = usePosOrderFeeds({ outletId, posSessionId, drawerScope, closeShiftOpen });
+  const shiftSummary = useShiftCloseSummary(outletId, posSessionId, sessionHook.session, closeShiftOpen);
+  const openingCash = shiftSummary.openingCash;
   const qrOrdersQuery = useQrOrders(outletId);
   const customerWaitingCount = (qrOrdersQuery.data ?? []).filter(isWaitingCustomerOrder).length;
-  const todayCount = todayFeed.data?.length ?? history.orders.length;
-  const pendingCount = pendingFeed.data?.length ?? 0;
+  const todayCount = orderFeeds.todayCount;
+  const pendingCount = orderFeeds.pendingCount;
+  const displayOrderNo = String(todayCount + 1).padStart(4, '0');
   const isPaymentProcessing =
     submit.phase === 'creating' ||
     submit.phase === 'created' ||
@@ -77,6 +88,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
     submit.phase === 'paying';
 
   const [resumeTarget, setResumeTarget] = useState<SaleListItemView | null>(null);
+  const [resumePaid, setResumePaid] = useState(false);
 
   const cancelMutation = useMutation({
     mutationFn: (saleId: string) => salesApi.cancelOrder(token!, saleId),
@@ -87,23 +99,16 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
     },
   });
 
-  const UI_TO_BACKEND_METHOD: Record<PayMethod, string> = {
-    cash: 'cash',
-    card: 'card',
-    qr: 'qr_code',
-    voucher: 'voucher',
-  };
-
   const resumePaymentMutation = useMutation({
     mutationFn: async (args: { saleId: string; amount: number; method: PayMethod }) =>
       salesApi.markPaymentDone(token!, args.saleId, {
-        paymentMethod: UI_TO_BACKEND_METHOD[args.method],
+        paymentMethod: UI_TO_BACKEND_PAYMENT_METHOD[args.method],
         amount: args.amount,
         paymentTime: new Date().toISOString(),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pos-order-feed'] });
-      setResumeTarget(null);
+      setResumePaid(true);
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
@@ -111,25 +116,39 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
     },
   });
 
-  const closeShiftMutation = useMutation({
-    mutationFn: async () => {
-      if (!posSessionId) throw new Error('Chưa có ca để đóng.');
-      return sessionHook.closeSession(posSessionId);
-    },
-    onSuccess: () => {
+  const handleCloseShift = () => {
+    if (!posSessionId) return;
+    setCloseShiftError(null);
+    void shiftSummary.refetch();
+    setCloseShiftOpen(true);
+  };
+
+  const handleCloseShiftSubmit = async (args: {
+    lines: Array<{ paymentMethod: string; actualAmount: number }>;
+    note?: string;
+  }) => {
+    if (!posSessionId) throw new Error('Chưa có ca để đóng.');
+    setCloseShiftError(null);
+    try {
+      await sessionHook.reconcileSession({
+        sessionId: posSessionId,
+        lines: args.lines,
+        note: args.note,
+      });
+      cart.reset();
       qc.invalidateQueries({ queryKey: ['pos-order-feed'] });
-    },
-    onError: (err: unknown) => {
+    } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      const match = msg.match(/SESSION_HAS_UNPAID_ORDERS:(\d+)/);
-      if (match) {
-        alert(`Còn ${match[1]} đơn chưa thanh toán — vui lòng hủy hoặc thanh toán trước khi đóng ca.`);
+      const unpaidCount = parseUnpaidOrdersError(msg);
+      if (unpaidCount != null) {
+        setCloseShiftError(`Còn ${unpaidCount} đơn chưa thanh toán — vui lòng xử lý trước khi đóng ca.`);
         setDrawerScope('pending');
-      } else {
-        alert(`Không đóng ca được: ${msg}`);
+        throw err;
       }
-    },
-  });
+      setCloseShiftError(msg);
+      throw err;
+    }
+  };
 
   const handleCancelOrder = (order: SaleListItemView) => {
     cancelMutation.mutate(String(order.id));
@@ -137,7 +156,13 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
 
   const handleResumeOrder = (order: SaleListItemView) => {
     setDrawerScope(null);
+    setResumePaid(false);
     setResumeTarget(order);
+  };
+
+  const dismissResumePayment = () => {
+    setResumeTarget(null);
+    setResumePaid(false);
   };
 
   const handleResumeConfirm = (method: PayMethod) => {
@@ -150,23 +175,98 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
     });
   };
 
-  const handleCloseShift = () => {
-    if (!posSessionId) return;
-    if (!window.confirm('Đóng ca hiện tại?')) return;
-    closeShiftMutation.mutate();
-  };
-
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
   useEffect(() => {
-    setPendingOrderNo(history.nextOrderNo());
-  }, [history]);
+    setRecoverablePending(listRecoverablePending(outletId));
+  }, [outletId, submit.phase]);
+
+  const buildSubmitArgs = () => ({
+    outletId,
+    currencyCode,
+    posSessionId: sessionHook.session?.id ?? null,
+    orderType: cart.orderType,
+    customerName: cart.customerName || undefined,
+    lines: cart.lines,
+    lineUnitPrice: cart.lineTotal,
+    subtotal: cart.subtotal,
+    discount: cart.discount,
+    vat: cart.vat,
+    previewTotal: cart.total,
+    method: 'cash' as PayMethod,
+    promotionId: cart.voucher?.promotionId,
+  });
+
+  const handleApplyVoucher = async (code: string) => {
+    const trimmed = code.trim();
+    if (!trimmed) {
+      cart.setVoucherApplied(null);
+      return;
+    }
+    if (!token) {
+      cart.applyVoucher(code);
+      return;
+    }
+    try {
+      const result = await lookupPromotionVoucher(token, outletId, trimmed, cart.subtotal);
+      if ('error' in result) {
+        cart.setVoucherApplied(null, result.error);
+        return;
+      }
+      cart.setVoucherApplied(result.voucher);
+    } catch {
+      cart.applyVoucher(code);
+    }
+  };
+
+  const handleResumePending = async (snapshot: PendingSnapshot) => {
+    setIsResumingPending(true);
+    cart.restore({
+      lines: snapshot.lines,
+      orderType: snapshot.orderType,
+      customerName: snapshot.customerName,
+    });
+    const args = {
+      ...buildSubmitArgs(),
+      method: snapshot.method,
+      promotionId: snapshot.promotionId,
+    };
+    try {
+      await submit.continuePending(snapshot, args);
+    } finally {
+      setIsResumingPending(false);
+      setRecoverablePending(listRecoverablePending(outletId));
+    }
+  };
+
+  const handleDiscardPending = (snapshot: PendingSnapshot) => {
+    discardPendingSnapshot(snapshot.idempotencyKey);
+    setRecoverablePending(listRecoverablePending(outletId));
+    if (submit.idempotencyKey === snapshot.idempotencyKey) {
+      submit.reset();
+    }
+  };
 
   useEffect(() => {
     cart.reset();
+    submit.reset();
+    setCategory('all');
+    setPickedItem(null);
+    setOptionsOpen(false);
+    setPaymentOpen(false);
+    setPrintOpen(false);
+    setLastOrder(null);
+    setDrawerScope(null);
+    setView('menu');
+    setDraftPickerOpen(false);
+    setCloseShiftOpen(false);
+    setCloseShiftError(null);
+    setResumeTarget(null);
+    setResumePaid(false);
+    setRecoverablePending(listRecoverablePending(outletId));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outletId]);
 
@@ -211,18 +311,19 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
       vat: cart.vat,
       previewTotal: cart.total,
       method,
+      promotionId: cart.voucher?.promotionId,
     });
   };
 
   useEffect(() => {
-    if (submit.phase !== 'paid') return;
+    if (submit.phase !== 'paid' || !posSessionId) return;
     const backend = submit.lastResult;
     const backendSubtotal = typeof backend?.subtotal === 'number' ? backend.subtotal : cart.subtotal;
     const backendDiscount = typeof backend?.discount === 'number' ? backend.discount : cart.discount;
     const backendTax = typeof backend?.taxAmount === 'number' ? backend.taxAmount : cart.vat;
     const backendTotal = typeof backend?.totalAmount === 'number' ? backend.totalAmount : cart.total;
     const order: SavedOrder = {
-      orderNo: pendingOrderNo,
+      orderNo: displayOrderNo,
       createdAt: new Date().toISOString(),
       orderType: cart.orderType,
       customerName: cart.customerName,
@@ -236,8 +337,19 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
     history.save(order);
     setLastOrder(order);
     void qc.invalidateQueries({ queryKey: ['pos-order-menu', outletId] });
+    void (async () => {
+      await qc.invalidateQueries({ queryKey: ['pos-order-feed', 'today', outletId, posSessionId] });
+      await qc.invalidateQueries({ queryKey: ['pos-order-feed', 'pending', outletId, posSessionId] });
+      await orderFeeds.refetchAll();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submit.phase]);
+  }, [submit.phase, posSessionId, outletId]);
+
+  useEffect(() => {
+    if (!posSessionId) return;
+    void orderFeeds.refetchAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posSessionId]);
 
   const finalizePaidOrder = () => {
     setPaymentOpen(false);
@@ -255,6 +367,17 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
   };
 
   const handleLogout = async () => {
+    if (posSessionId) {
+      setCloseShiftError(null);
+      setCloseShiftOpen(true);
+      return;
+    }
+    await logout();
+    navigate('/login', { replace: true });
+  };
+
+  const handleLogoutAfterClose = async () => {
+    setCloseShiftOpen(false);
     await logout();
     navigate('/login', { replace: true });
   };
@@ -328,18 +451,31 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
           <Button
             variant="outline"
             onClick={handleCloseShift}
-            disabled={closeShiftMutation.isPending}
+            disabled={sessionHook.reconcileSessionState.isPending}
             className="h-9"
             title="Đóng ca"
           >
             <Power className="w-4 h-4 mr-1" /> Đóng ca
           </Button>
         )}
-        <button type="button" onClick={handleLogout} className="w-9 h-9 rounded-md hover:bg-destructive/10 hover:text-destructive inline-flex items-center justify-center" title="Đăng xuất">
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="w-9 h-9 rounded-md hover:bg-destructive/10 hover:text-destructive inline-flex items-center justify-center"
+          title={posSessionId ? 'Đóng ca trước khi đăng xuất' : 'Đăng xuất'}
+        >
           <LogOut className="w-4 h-4" />
         </button>
       </header>
 
+      {recoverablePending[0] && submit.phase === 'idle' && (
+        <PendingSubmitBanner
+          snapshot={recoverablePending[0]}
+          onResume={() => void handleResumePending(recoverablePending[0])}
+          onDiscard={() => handleDiscardPending(recoverablePending[0])}
+          isResuming={isResumingPending}
+        />
+      )}
 
       <div className="flex-1 flex min-h-0">
         {view === 'qr-queue' ? (
@@ -366,7 +502,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
           isLoading={menuQuery.isLoading}
         />
         <CartPanel
-          orderNo={pendingOrderNo}
+          orderNo={displayOrderNo}
           orderType={cart.orderType}
           onOrderTypeChange={cart.setOrderType}
           customerName={cart.customerName}
@@ -378,7 +514,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
           onClear={cart.reset}
           voucher={cart.voucher}
           voucherError={cart.voucherError}
-          onApplyVoucher={cart.applyVoucher}
+          onApplyVoucher={(code) => { void handleApplyVoucher(code); }}
           loyaltyPhone={cart.loyaltyPhone}
           onLoyaltyPhoneChange={cart.setLoyaltyPhone}
           subtotal={cart.subtotal}
@@ -389,7 +525,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
           onSaveDraft={() => {
             if (cart.lines.length === 0) return;
             draftOrders.saveDraft({
-              orderNo: pendingOrderNo,
+              orderNo: displayOrderNo,
               orderType: cart.orderType,
               customerName: cart.customerName,
               lines: cart.lines,
@@ -419,7 +555,7 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
           setPaymentOpen(open);
         }}
         total={lastOrder?.total ?? cart.total}
-        orderNo={lastOrder?.orderNo ?? pendingOrderNo}
+        orderNo={lastOrder?.orderNo ?? displayOrderNo}
         onConfirm={doSubmit}
         onPrintOrder={handlePrintOrder}
         onNewOrder={handleNewOrder}
@@ -442,10 +578,10 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
         open={drawerScope !== null}
         onOpenChange={(v) => { if (!v) setDrawerScope(null); }}
         scope={drawerScope ?? 'today'}
-        isLoading={feed.isLoading}
-        error={feed.error}
-        orders={feed.data ?? []}
-        onRefresh={() => feed.refetch()}
+        isLoading={orderFeeds.drawerLoading}
+        error={orderFeeds.drawerError}
+        orders={orderFeeds.drawerOrders}
+        onRefresh={() => orderFeeds.refetchDrawer()}
         onCancel={handleCancelOrder}
         onResume={handleResumeOrder}
         hasSession={!!posSessionId}
@@ -454,12 +590,14 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
 
       <PaymentDialog
         open={resumeTarget !== null}
-        onOpenChange={(v) => { if (!v) setResumeTarget(null); }}
+        onOpenChange={(v) => { if (!v) dismissResumePayment(); }}
         total={Number(resumeTarget?.totalAmount ?? 0)}
         orderNo={resumeTarget ? String(resumeTarget.id).slice(-6) : ''}
         onConfirm={handleResumeConfirm}
-        onPrintOrder={() => setResumeTarget(null)}
-        onNewOrder={() => setResumeTarget(null)}
+        onPrintOrder={dismissResumePayment}
+        onNewOrder={dismissResumePayment}
+        isPaid={resumePaid}
+        isProcessing={resumePaymentMutation.isPending}
       />
 
       <DraftPickerDialog
@@ -479,12 +617,33 @@ export default function PosOrderPage({ outletId, outletName, currencyCode, outle
       />
 
       <OpenShiftDialog
-        open={sessionHook.needsOpenSession}
+        open={sessionHook.needsOpenSession && !closeShiftOpen}
         outletName={outletName}
         isSubmitting={sessionHook.openSessionState.isPending}
         error={sessionHook.openSessionState.error instanceof Error ? sessionHook.openSessionState.error.message : null}
         onSubmit={async (args) => sessionHook.openSession(args)}
       />
+
+      {sessionHook.session && (
+        <CloseShiftDialog
+          open={closeShiftOpen}
+          onOpenChange={(open) => {
+            setCloseShiftOpen(open);
+            if (!open) setCloseShiftError(null);
+          }}
+          outletName={outletName}
+          session={sessionHook.session}
+          openingCash={openingCash}
+          summary={shiftSummary.summary}
+          summaryLoading={shiftSummary.isLoading}
+          pendingCount={pendingCount}
+          currencyCode={currencyCode}
+          isSubmitting={sessionHook.reconcileSessionState.isPending}
+          error={closeShiftError}
+          onSubmit={handleCloseShiftSubmit}
+          onLogout={handleLogoutAfterClose}
+        />
+      )}
     </div>
   );
 }

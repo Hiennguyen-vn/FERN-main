@@ -192,6 +192,9 @@ export const aiQueryApi = {
             issues: Array.isArray(d.issues)
               ? (d.issues as unknown[]).map((x) => String(x))
               : undefined,
+            warnings: Array.isArray(d.warnings)
+              ? (d.warnings as unknown[]).map((x) => String(x))
+              : undefined,
           };
         }
       }

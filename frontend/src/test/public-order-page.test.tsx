@@ -84,10 +84,9 @@ describe('PublicOrderPage', () => {
 
     renderPublicOrder('/order/tbl_hcm1_u7k29q');
 
-    expect(await screen.findByText(/Order directly from your table/i)).toBeInTheDocument();
     expect(await screen.findByText(/Cafe Latte/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Add to cart/i })).toBeInTheDocument();
-    expect(screen.getByText(/Menu request only/i)).toBeInTheDocument();
+    expect(screen.getByTestId('add-to-cart-5000')).toBeInTheDocument();
+    expect(screen.getByText(/Table 1/i)).toBeInTheDocument();
   });
 
   it('resumes a submitted receipt from the order query parameter', async () => {
@@ -142,9 +141,9 @@ describe('PublicOrderPage', () => {
 
     renderPublicOrder('/order/tbl_hcm1_u7k29q?order=ord_public_123');
 
-    expect(await screen.findByText(/Order received by the kitchen/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Đã gửi yêu cầu gọi món/i)).toBeInTheDocument();
     expect(screen.getByText(/Cafe Latte/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Refresh status/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Làm mới/i })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalled();
@@ -247,10 +246,10 @@ describe('PublicOrderPage', () => {
 
     renderPublicOrder('/order/tbl_hcm1_u7k29q');
 
-    fireEvent.click(await screen.findByRole('button', { name: /Add to cart/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Send order request/i }));
+    fireEvent.click(await screen.findByTestId('add-to-cart-5000'));
+    fireEvent.click(screen.getByTestId('call-order-button'));
 
-    expect(await screen.findByText(/Order received by the kitchen/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Refresh status/i })).toBeInTheDocument();
+    expect(await screen.findByText(/Đã gửi yêu cầu gọi món/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Làm mới/i })).toBeInTheDocument();
   });
 });

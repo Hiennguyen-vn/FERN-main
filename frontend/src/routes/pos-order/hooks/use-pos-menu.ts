@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type { StockBalanceView } from '@/api/inventory-api';
+import { inventoryApi } from '@/api/inventory-api';
 import {
   productApi,
   type AvailabilityView,
@@ -8,6 +9,7 @@ import {
   type RecipeView,
 } from '@/api/product-api';
 import { useAuth } from '@/auth/use-auth';
+import { fetchRecipeMap } from '../utils/menu-data';
 
 export type PosMenuUnavailableCode =
   | 'missing_price'
@@ -177,20 +179,45 @@ export function usePosMenu(outletId: string | null) {
     queryKey: ['pos-order-menu', outletId, token],
     enabled: !!token && !!outletId,
     queryFn: async () => {
-      const [products, prices, outletAvailability] = await Promise.all([
+      const [products, prices, outletAvailability, stockBalances, modifierGroups] = await Promise.all([
         productApi.products(token!),
         productApi.prices(token!, outletId!),
         productApi.availability(token!, { outletId: outletId! }).catch(() => [] as AvailabilityView[]),
+        inventoryApi.balances(token!, outletId!).catch(() => [] as StockBalanceView[]),
+        productApi.modifierGroups(token!).catch(() => [] as ModifierGroupView[]),
       ]);
+
+      const pricedProductIds = prices
+        .map((price) => String(price.productId ?? '').trim())
+        .filter(Boolean);
+
+      const recipeByProduct = await fetchRecipeMap(token!, pricedProductIds);
+
+      const modifierGroupsByProduct = new Map<string, ModifierGroupView[]>();
+      const modifierTargets = pricedProductIds.slice(0, 40);
+      for (let i = 0; i < modifierTargets.length; i += 8) {
+        const chunk = modifierTargets.slice(i, i + 8);
+        const linked = await Promise.allSettled(
+          chunk.map(async (productId) => {
+            const groups = await productApi.modifierGroupsForProduct(token!, productId).catch(() => []);
+            return { productId, groups };
+          }),
+        );
+        for (const result of linked) {
+          if (result.status === 'fulfilled') {
+            modifierGroupsByProduct.set(result.value.productId, result.value.groups);
+          }
+        }
+      }
 
       return mergeMenu(
         products,
         prices,
-        [],
+        modifierGroups,
         buildAvailabilityLookup(outletAvailability),
-        new Map(),
-        null,
-        new Map(),
+        recipeByProduct,
+        buildStockLookup(stockBalances),
+        modifierGroupsByProduct,
       );
     },
     staleTime: 5 * 60_000,

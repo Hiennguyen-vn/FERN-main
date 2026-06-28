@@ -34,7 +34,19 @@ function orderTypeLabel(t?: string | null) {
   if (t === 'takeaway') return { label: 'Mang đi', Icon: ShoppingBag };
   if (t === 'dine_in') return { label: 'Tại quầy', Icon: Store };
   if (t === 'delivery') return { label: 'Giao hàng', Icon: ShoppingBag };
+  if (t === 'online') return { label: 'Gọi món QR', Icon: Store };
   return { label: t ?? '—', Icon: ShoppingBag };
+}
+
+function orderContextLabel(order: SaleListItemView) {
+  const table = order.orderingTableName || order.orderingTableCode;
+  if (table && (order.orderType === 'online' || order.publicOrderToken)) {
+    return `Bàn ${table}`;
+  }
+  if (order.note?.trim()) {
+    return order.note.trim();
+  }
+  return null;
 }
 
 export function OrdersDrawer({ open, onOpenChange, scope, isLoading, error, orders, onRefresh, onResume, onCancel, hasSession = true, cancellingId = null }: Props) {
@@ -95,7 +107,9 @@ export function OrdersDrawer({ open, onOpenChange, scope, isLoading, error, orde
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <TypeIcon className="w-3.5 h-3.5" /> {typeInfo.label}
-                  {order.note && <span className="truncate">· {order.note}</span>}
+                  {orderContextLabel(order) ? (
+                    <span className="truncate font-medium text-foreground">· {orderContextLabel(order)}</span>
+                  ) : null}
                 </div>
                 {items.length > 0 && (
                   <ul className="text-xs space-y-0.5">

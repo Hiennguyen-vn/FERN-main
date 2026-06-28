@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,6 +16,13 @@ export function OpenShiftDialog({ open, outletName, isSubmitting, error, onSubmi
   const [sessionCode, setSessionCode] = useState(() => `POS-${Date.now().toString().slice(-6)}`);
   const [openingCash, setOpeningCash] = useState<string>('0');
   const [note, setNote] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setSessionCode(`POS-${Date.now().toString().slice(-6)}`);
+    setOpeningCash('0');
+    setNote('');
+  }, [open]);
 
   const handleSubmit = async () => {
     await onSubmit({ sessionCode: sessionCode.trim(), openingCash: Number(openingCash) || 0, note: note.trim() || undefined });

@@ -14,6 +14,15 @@ interface Props {
   error?: unknown;
 }
 
+function queueTitle(order: SaleListItemView) {
+  const table = order.orderingTableName || order.orderingTableCode || 'Bàn';
+  const itemCount = order.items?.length ?? 0;
+  const filter = getCustomerOrderQueueFilter(order);
+  if (filter === 'waiting') {
+    return `${table} · ${itemCount} món mới`;
+  }
+  return table;
+}
 function statusLabel(order: SaleListItemView) {
   switch (getCustomerOrderQueueFilter(order)) {
     case 'paid': return { text: 'Đã thanh toán', cls: 'bg-success/10 text-success' };
@@ -84,7 +93,7 @@ export function QrQueueList({ orders, selectedId, onSelect, search, onSearchChan
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div>
                     <div className="text-xs text-muted-foreground">#{shortId(String(o.id))}</div>
-                    <div className="font-semibold">{o.orderingTableName || o.orderingTableCode || 'Không có bàn'}</div>
+                    <div className="font-semibold">{queueTitle(o)}</div>
                   </div>
                   <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${s.cls}`}>{s.text}</span>
                 </div>

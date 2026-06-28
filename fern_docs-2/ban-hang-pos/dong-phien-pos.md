@@ -8,7 +8,8 @@
 - Backend: [SalesController.java](../../services/sales-service/src/main/java/com/fern/services/sales/api/SalesController.java)
   - `POST /api/v1/sales/pos-sessions/{sessionId}/reconcile`
   - `POST /api/v1/sales/pos-sessions/{sessionId}/close`
-- Frontend: [frontend/src/components/pos/POSModule.tsx](../../frontend/src/components/pos/POSModule.tsx)
+- Frontend cashier: [frontend/src/routes/pos-order/components/CloseShiftDialog.tsx](../../frontend/src/routes/pos-order/components/CloseShiftDialog.tsx)
+- Frontend admin: [frontend/src/components/pos/POSModule.tsx](../../frontend/src/components/pos/POSModule.tsx)
 - DB: `V11__pos_session_reconciliation.sql`
 
 ## 1. Actors & quyền
@@ -20,9 +21,9 @@
 
 ## 2. Điều kiện
 
-- **Tiền điều kiện:** `pos_session.status = OPEN` của user; không còn order `DRAFT` hoặc `PENDING_PAYMENT`.
-- **Hậu điều kiện (thành công):** `pos_session.status = CLOSED`, `closed_at`, `expected_cash`, `counted_cash`, `cash_variance`, `reconciler_id` ghi đầy đủ.
-- **Hậu điều kiện (thất bại):** Phiên giữ nguyên OPEN hoặc RECONCILING.
+- **Tiền điều kiện:** `pos_session.status = OPEN` của chính cashier (`managerId` khớp user); không còn đơn `unpaid` trong phiên.
+- **Hậu điều kiện (thành công):** `pos_session.status = reconciled`, `closed_at`, dòng đối soát theo phương thức thanh toán (`cash`, `card`, `ewallet`, …) được ghi đầy đủ.
+- **Hậu điều kiện (thất bại):** Phiên giữ nguyên `OPEN`.
 
 ## 3. Thực thể dữ liệu
 
@@ -34,24 +35,24 @@
 
 | Method | Path | Handler |
 |--------|------|---------|
-| POST | `/api/v1/sales/pos-sessions/{id}/reconcile` | `SalesController#reconcile` |
-| POST | `/api/v1/sales/pos-sessions/{id}/close` | `SalesController#closeSession` |
+| POST | `/api/v1/sales/pos-sessions/{id}/reconcile` | `SalesController#reconcile` — đóng phiên trong một bước |
+| GET | `/api/v1/sales/pos-sessions/{id}/payment-summary` | Tổng theo phương thức (`cash`, `card`, `ewallet`, …) |
+| GET | `/api/v1/sales/pos-sessions/{id}/cash-movements/summary` | `expectedTotal`, `openFloat`, … trước khi đối soát |
 
 ## 5. Luồng chính (MAIN)
 
-1. Actor chọn "Đóng phiên".
-2. Service tính `expected_cash = opening_cash + Σ CASH payments - refunds`.
-3. Actor nhập `counted_cash` + notes; FE gọi `/reconcile`.
-4. Service cập nhật `status = RECONCILING`, ghi `counted_cash`, `cash_variance`.
-5. Actor xác nhận → FE gọi `/close`.
-6. Service UPDATE `status = CLOSED`, `closed_at`.
-7. Event `pos.session.closed` phát audit + xuất sang finance revenue pipeline.
+1. Actor chọn "Đóng ca".
+2. FE lấy tổng dự kiến từ `GET .../cash-movements/summary` và đơn đã thanh toán trong phiên.
+3. Actor nhập tiền mặt thực tế + ghi chú; FE gọi `POST .../reconcile` với `lines[]` theo phương thức thanh toán backend (`cash`, `card`, `ewallet`, `bank_transfer`, `voucher`). QR/Ví map sang `ewallet`.
+4. Service kiểm tra không còn đơn `unpaid`, tính chênh lệch từng phương thức.
+5. Service cập nhật `status = reconciled`, `closed_at`, ghi dòng đối soát và `CLOSE_COUNT` cash-movement nếu có.
+6. Event `pos.session.closed` phát audit + xuất sang finance revenue pipeline.
 
 ## 6. Luồng thay thế / lỗi
 
 - **ALT-1 Chênh lệch vượt ngưỡng** — `|cash_variance|` > policy threshold → cảnh báo FE, buộc notes; có thể yêu cầu approval.
-- **EXC-1 Còn order chưa xử lý** → `409 OPEN_ORDERS_EXIST`.
-- **EXC-2 Đã CLOSED** → `409 SESSION_ALREADY_CLOSED`.
+- **EXC-1 Còn order chưa thanh toán** → `409 SESSION_HAS_UNPAID_ORDERS` (FE giữ dialog, mở drawer "Đang chờ").
+- **EXC-2 Đã reconciled/closed** → `409 SESSION_ALREADY_CLOSED`.
 - **EXC-3 Không phải owner phiên** → `403 SESSION_OWNER_MISMATCH` (trừ khi Outlet Manager ghi đè).
 
 ## 7. Quy tắc nghiệp vụ
@@ -74,15 +75,12 @@ sequenceDiagram
   participant FE as POSModule
   participant S as sales-service
   participant DB as Postgres
-  U->>FE: "Đóng phiên"
-  FE->>S: GET expected_cash
-  S->>DB: Σ payments
-  S-->>FE: expected
-  U->>FE: nhập counted_cash
+  U->>FE: "Đóng ca"
+  FE->>S: GET cash-movements/summary + orders (posSessionId)
+  S-->>FE: expected totals
+  U->>FE: nhập tiền mặt thực tế
   FE->>S: POST /reconcile
-  S->>DB: UPDATE RECONCILING + counted_cash + variance
-  FE->>S: POST /close
-  S->>DB: UPDATE CLOSED + closed_at
+  S->>DB: UPDATE reconciled + closed_at + reconciliation lines
   S-->>FE: 200
 ```
 

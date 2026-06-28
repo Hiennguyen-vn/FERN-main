@@ -11,15 +11,13 @@ export function useCustomerWaitingCount(outletId: string | null | undefined) {
     enabled: !!token && !!outletId,
     refetchInterval: 15000,
     queryFn: async () => {
-      const page = await salesApi.orders(token, {
-        outletId: String(outletId),
-        publicOrderOnly: true,
-        limit: 100,
-        offset: 0,
-        sortBy: 'createdAt',
-        sortDir: 'desc',
-      });
-      return (page.items || []).filter(isWaitingCustomerOrder).length;
+      const batches = await salesApi.publicOrderBatches(token, { outletId: String(outletId) });
+      return batches.filter((batch) =>
+        isWaitingCustomerOrder({
+          status: batch.status === 'pending' ? 'order_created' : batch.status,
+          paymentStatus: batch.paymentStatus,
+        }),
+      ).length;
     },
   });
 }

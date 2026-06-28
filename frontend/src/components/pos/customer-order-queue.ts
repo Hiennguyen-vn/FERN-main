@@ -17,7 +17,7 @@ export function isWaitingCustomerOrder(order: CustomerOrderQueueStatusLike) {
 export function getCustomerOrderQueueFilter(order: CustomerOrderQueueStatusLike): CustomerOrderQueueFilter {
   const status = normalizeStatus(order.backendStatus ?? order.status);
   const paymentStatus = normalizeStatus(order.paymentStatus);
-  if (status === 'cancelled') return 'cancelled';
+  if (status === 'cancelled' || status === 'rejected') return 'cancelled';
   if (paymentStatus === 'paid' || status === 'completed' || status === 'payment_done') return 'paid';
   if (status === 'order_approved') return 'approved';
   return 'waiting';

@@ -121,7 +121,9 @@ export function mapSaleToUi(
   return {
     id: String(sale.id),
     orderNumber: isPublicOrder
-      ? `QR-${String(publicOrderToken || sale.id).slice(-6)}`
+      ? (orderingTableCode
+        ? `Bàn ${orderingTableName || orderingTableCode}`
+        : `QR-${String(publicOrderToken || sale.id).slice(-6)}`)
       : `SO-${String(sale.id).slice(-6)}`,
     sessionId,
     sessionCode: sessionCodeById.get(sessionId) || '—',

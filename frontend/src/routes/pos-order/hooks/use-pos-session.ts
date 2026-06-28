@@ -3,6 +3,15 @@ import { todayLocalISO } from '@/lib/date-format';
 import { salesApi, type PosSessionView } from '@/api/sales-api';
 import { useAuth } from '@/auth/use-auth';
 
+/** Only bind the cashier to their own open session — never adopt another user's shift. */
+export function pickOpenSessionForManager(
+  sessions: PosSessionView[],
+  managerId: string | number | null | undefined,
+): PosSessionView | null {
+  if (managerId == null || managerId === '') return null;
+  return sessions.find((s) => String(s.managerId) === String(managerId)) ?? null;
+}
+
 export function usePosSession(outletId: string | null, currencyCode: string) {
   const { session } = useAuth();
   const token = session?.accessToken;
@@ -14,8 +23,7 @@ export function usePosSession(outletId: string | null, currencyCode: string) {
     enabled: !!token && !!outletId,
     queryFn: async () => {
       const res = await salesApi.posSessions(token!, { outletId: outletId!, status: 'open', limit: 10 });
-      const mine = res.items.find((s) => String(s.managerId) === String(managerId));
-      return mine ?? res.items[0] ?? null;
+      return pickOpenSessionForManager(res.items, managerId);
     },
     staleTime: 10_000,
   });
@@ -31,10 +39,19 @@ export function usePosSession(outletId: string | null, currencyCode: string) {
         businessDate: today,
         note: payload.note ?? null,
       });
-      return opened;
+      if (payload.openingCash > 0) {
+        await salesApi.recordCashMovement(token!, opened.id, {
+          type: 'OPEN_FLOAT',
+          amount: payload.openingCash,
+          reason: payload.note?.trim() || 'Tiền đầu ca',
+        });
+      }
+      return { opened, openingCash: payload.openingCash };
     },
-    onSuccess: () => {
+    onSuccess: ({ opened, openingCash }) => {
+      sessionStorage.setItem(`pos-opening-cash-${opened.id}`, String(openingCash));
       qc.invalidateQueries({ queryKey: ['pos-order-session', outletId, managerId] });
+      qc.invalidateQueries({ queryKey: ['pos-shift-close-summary'] });
     },
   });
 
@@ -42,6 +59,24 @@ export function usePosSession(outletId: string | null, currencyCode: string) {
     mutationFn: async (sessionId: string) => salesApi.closePosSession(token!, sessionId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pos-order-session', outletId, managerId] });
+    },
+  });
+
+  const reconcileMutation = useMutation({
+    mutationFn: async (args: {
+      sessionId: string;
+      lines: Array<{ paymentMethod: string; actualAmount: number }>;
+      note?: string;
+    }) => salesApi.reconcilePosSession(token!, args.sessionId, {
+      lines: args.lines,
+      note: args.note,
+    }),
+    onSuccess: (_data, variables) => {
+      sessionStorage.removeItem(`pos-opening-cash-${variables.sessionId}`);
+      qc.invalidateQueries({ queryKey: ['pos-order-session', outletId, managerId] });
+      qc.invalidateQueries({ queryKey: ['pos-order-feed'] });
+      qc.invalidateQueries({ queryKey: ['pos-shift-close-summary'] });
+      qc.invalidateQueries({ queryKey: ['pos-cash-summary'] });
     },
   });
 
@@ -55,5 +90,7 @@ export function usePosSession(outletId: string | null, currencyCode: string) {
     openSessionState: openMutation,
     closeSession: closeMutation.mutateAsync,
     closeSessionState: closeMutation,
+    reconcileSession: reconcileMutation.mutateAsync,
+    reconcileSessionState: reconcileMutation,
   };
 }

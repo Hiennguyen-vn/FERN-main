@@ -34,6 +34,7 @@ export function QrOrderDetailPanel({ order, isLoading, menu, approveBusy, cancel
   const tax = Number(order.taxAmount ?? 0);
   const total = Number(order.totalAmount ?? 0);
   const items = order.items || [];
+  const payableSaleId = typeof order.saleId === 'string' ? order.saleId : null;
 
   return (
     <aside className="w-[400px] shrink-0 border-l bg-white flex flex-col h-full">
@@ -85,6 +86,11 @@ export function QrOrderDetailPanel({ order, isLoading, menu, approveBusy, cancel
           <span className="font-bold text-lg pos-accent-text">{formatVnd(total)}</span>
         </div>
 
+        {filter === 'approved' && payableSaleId && (
+          <p className="text-xs text-muted-foreground">
+            Hóa đơn bàn — tất cả món đã duyệt cho bàn này.
+          </p>
+        )}
         <div className="pt-3 grid grid-cols-2 gap-2">
           {filter === 'waiting' && (
             <>
@@ -111,7 +117,8 @@ export function QrOrderDetailPanel({ order, isLoading, menu, approveBusy, cancel
           {filter === 'approved' && (
             <Button
               className="h-11 col-span-2 pos-accent-bg hover:opacity-90"
-              onClick={() => onRequestPayment(order as SaleListItemView)}
+              disabled={!payableSaleId}
+              onClick={() => onRequestPayment({ ...(order as SaleListItemView), id: payableSaleId || String(order.id) })}
             >
               <CreditCard className="w-4 h-4 mr-1" /> Thanh toán ({formatVnd(total)})
             </Button>

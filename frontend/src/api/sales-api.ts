@@ -49,12 +49,41 @@ export interface SaleListItemView {
   totalAmount?: number | null;
   note?: string | null;
   createdAt?: string | null;
+  paymentMethod?: string | null;
   items?: SaleLineItemView[];
   payment?: PaymentView | null;
   [key: string]: unknown;
 }
 
 export type SaleDetailView = SaleListItemView;
+
+export interface PublicOrderBatchItemView {
+  productId?: string | null;
+  productCode?: string | null;
+  productName?: string | null;
+  quantity?: number | null;
+  unitPrice?: number | null;
+  lineTotal?: number | null;
+  note?: string | null;
+  status?: string | null;
+}
+
+export interface PublicOrderBatchView {
+  id: string;
+  outletId?: string | null;
+  saleId?: string | null;
+  orderToken?: string | null;
+  orderingTableCode?: string | null;
+  orderingTableName?: string | null;
+  currencyCode?: string | null;
+  status?: string | null;
+  paymentStatus?: string | null;
+  totalAmount?: number | null;
+  note?: string | null;
+  createdAt?: string | null;
+  items?: PublicOrderBatchItemView[];
+  [key: string]: unknown;
+}
 
 export interface PosSessionView {
   id: string;
@@ -69,6 +98,41 @@ export interface PosSessionView {
   note?: string | null;
   orderCount?: number | null;
   totalRevenue?: number | null;
+  [key: string]: unknown;
+}
+
+export interface CashMovementPayload {
+  type: string;
+  amount: number;
+  reason?: string | null;
+  referenceSaleId?: string | number | null;
+  approvedByUserId?: string | number | null;
+}
+
+export interface PosSessionPaymentSummaryLineView {
+  paymentMethod: string;
+  total: number;
+  count: number;
+}
+
+export interface PosSessionPaymentSummaryView {
+  orderCount: number;
+  totalRevenue: number;
+  items: PosSessionPaymentSummaryLineView[];
+}
+
+export interface CashSessionSummaryView {
+  sessionId?: string | null;
+  outletId?: string | null;
+  businessDate?: string | null;
+  openFloat?: number | null;
+  salesCash?: number | null;
+  paidIn?: number | null;
+  paidOut?: number | null;
+  drops?: number | null;
+  counted?: number | null;
+  expectedTotal?: number | null;
+  variance?: number | null;
   [key: string]: unknown;
 }
 
@@ -128,6 +192,7 @@ export interface PublicOrderLineView {
   unitPrice?: number | null;
   lineTotal?: number | null;
   note?: string | null;
+  status?: string | null;
   [key: string]: unknown;
 }
 
@@ -358,8 +423,13 @@ function decodeSale(value: unknown): SaleListItemView {
     totalAmount: asNullableNumber(record.totalAmount),
     note: asNullableString(record.note),
     createdAt: asNullableString(record.createdAt),
+    paymentMethod: asNullableString(record.paymentMethod),
     items: Array.isArray(record.items) ? record.items.map(decodeLineItem) : [],
-    payment: decodePayment(record.payment),
+    payment: decodePayment(record.payment) ?? (
+      record.paymentMethod
+        ? { paymentMethod: asNullableString(record.paymentMethod) }
+        : null
+    ),
   };
 }
 
@@ -441,6 +511,42 @@ function decodePublicOrderLine(value: unknown): PublicOrderLineView {
     unitPrice: asNullableNumber(record.unitPrice),
     lineTotal: asNullableNumber(record.lineTotal),
     note: asNullableString(record.note),
+    status: asNullableString(record.status),
+  };
+}
+
+function decodePublicOrderBatchItem(value: unknown): PublicOrderBatchItemView {
+  const record = asRecord(value) ?? {};
+  return {
+    ...record,
+    productId: asNullableString(record.productId),
+    productCode: asNullableString(record.productCode),
+    productName: asNullableString(record.productName),
+    quantity: asNullableNumber(record.quantity),
+    unitPrice: asNullableNumber(record.unitPrice),
+    lineTotal: asNullableNumber(record.lineTotal),
+    note: asNullableString(record.note),
+    status: asNullableString(record.status),
+  };
+}
+
+function decodePublicOrderBatch(value: unknown): PublicOrderBatchView {
+  const record = asRecord(value) ?? {};
+  return {
+    ...record,
+    id: asId(record.id),
+    outletId: asNullableString(record.outletId),
+    saleId: asNullableString(record.saleId),
+    orderToken: asNullableString(record.orderToken),
+    orderingTableCode: asNullableString(record.orderingTableCode),
+    orderingTableName: asNullableString(record.orderingTableName),
+    currencyCode: asNullableString(record.currencyCode),
+    status: asNullableString(record.status),
+    paymentStatus: asNullableString(record.paymentStatus),
+    totalAmount: asNullableNumber(record.totalAmount),
+    note: asNullableString(record.note),
+    createdAt: asNullableString(record.createdAt),
+    items: Array.isArray(record.items) ? record.items.map(decodePublicOrderBatchItem) : [],
   };
 }
 
@@ -539,6 +645,17 @@ export const salesApi = {
     decodePublicOrderReceipt(await apiRequest(`/api/v1/sales/public/tables/${tableToken}/orders/${orderToken}`)),
   orders: async (token: string, query: SalesOrdersQuery): Promise<PagedResponse<SaleListItemView>> =>
     decodePaged(await apiRequest('/api/v1/sales/orders', { token, query }), decodeSale),
+  publicOrderBatches: async (token: string, query: { outletId?: string }): Promise<PublicOrderBatchView[]> =>
+    decodeArray(await apiRequest('/api/v1/sales/public-order-batches', { token, query }), decodePublicOrderBatch),
+  approvePublicOrderBatch: async (token: string, batchId: string): Promise<SaleDetailView> =>
+    decodeSale(await apiRequest(`/api/v1/sales/public-order-batches/${batchId}/approve`, { method: 'POST', token })),
+  rejectPublicOrderBatch: async (token: string, batchId: string, payload?: { reason?: string | null }): Promise<void> => {
+    await apiRequest(`/api/v1/sales/public-order-batches/${batchId}/reject`, {
+      method: 'POST',
+      token,
+      body: payload ?? {},
+    });
+  },
   monthlyRevenue: async (
     token: string,
     query: { outletId?: string; startDate?: string; endDate?: string },
@@ -599,6 +716,30 @@ export const salesApi = {
     },
   ): Promise<unknown> =>
     apiRequest(`/api/v1/sales/pos-sessions/${sessionId}/reconcile`, { method: 'POST', token, body: payload ?? {} }),
+  recordCashMovement: async (
+    token: string,
+    sessionId: string,
+    payload: CashMovementPayload,
+  ): Promise<unknown> =>
+    apiRequest(`/api/v1/pos/sessions/${sessionId}/cash-movements`, { method: 'POST', token, body: payload }),
+  cashSessionSummary: async (token: string, sessionId: string): Promise<CashSessionSummaryView> =>
+    apiRequest(`/api/v1/pos/sessions/${sessionId}/cash-movements/summary`, { token }) as Promise<CashSessionSummaryView>,
+  posSessionPaymentSummary: async (token: string, sessionId: string): Promise<PosSessionPaymentSummaryView> => {
+    const raw = await apiRequest(`/api/v1/sales/pos-sessions/${sessionId}/payment-summary`, { token }) as Record<string, unknown>;
+    const items = Array.isArray(raw.items) ? raw.items.map((item) => {
+      const row = (item && typeof item === 'object') ? item as Record<string, unknown> : {};
+      return {
+        paymentMethod: String(row.paymentMethod ?? ''),
+        total: Number(row.total ?? 0),
+        count: Number(row.count ?? 0),
+      };
+    }) : [];
+    return {
+      orderCount: Number(raw.orderCount ?? 0),
+      totalRevenue: Number(raw.totalRevenue ?? 0),
+      items,
+    };
+  },
   orderingTables: async (token: string, outletId: string, status?: string): Promise<OrderingTableView[]> =>
     decodeArray(await apiRequest('/api/v1/sales/ordering-tables', { token, query: { outletId, status } }), decodeOrderingTable),
   attachOrderingTable: async (token: string, saleId: string, tableId: string | number | null): Promise<unknown> =>

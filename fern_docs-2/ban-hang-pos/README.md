@@ -1,8 +1,18 @@
 # 📂 Module: Bán hàng & POS
 
 **Service:** `sales-service` ([services/sales-service](../../services/sales-service))
-**Frontend:** [frontend/src/components/pos/](../../frontend/src/components/pos)
+**Frontend cashier:** [frontend/src/routes/pos-order/](../../frontend/src/routes/pos-order/) (`/posorder`)
+**Frontend admin:** [frontend/src/components/pos/](../../frontend/src/components/pos/) (`/pos`)
 **Base API:** `/api/v1/sales`, `/api/v1/sales/public`
+
+## Hai màn hình POS
+
+| Route | Đối tượng | Mở/đóng ca |
+|-------|-----------|------------|
+| `/posorder` | Thu ngân (`PosOrderPage`) | `OpenShiftDialog` / `CloseShiftDialog` — đóng ca qua **một** lần gọi `POST .../reconcile` |
+| `/pos` | Quản lý / admin (`POSModule`) | Danh sách phiên, chi tiết, đối soát — cùng endpoint `reconcile` |
+
+Cả hai UI dùng chung contract backend: tiền đầu ca ghi qua `POST .../cash-movements` (`OPEN_FLOAT`), không gửi `openingCash` trong body mở phiên.
 
 ## Use Cases
 

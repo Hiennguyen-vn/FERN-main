@@ -22,10 +22,10 @@ export function StatusHero({
         <div className="flex items-start gap-4">
           <CheckCircle2 className="h-10 w-10 shrink-0" />
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/80">Payment received</p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight">Thank you — payment complete</h2>
+            <p className="text-xs font-semibold uppercase tracking-wide text-white/80">Đã thanh toán</p>
+            <h2 className="mt-2 text-2xl font-bold tracking-tight">Cảm ơn quý khách!</h2>
             <p className="mt-2 text-sm leading-6 text-white/90">
-              Your order <span className="font-mono font-semibold">{orderRef}</span> is being prepared. Enjoy your meal.
+              Đơn <span className="font-mono font-semibold">{orderRef}</span> đang được chế biến. Chúc quý khách ngon miệng.
             </p>
           </div>
         </div>
@@ -41,10 +41,10 @@ export function StatusHero({
             <UtensilsCrossed className="h-6 w-6" />
           </div>
           <div className="flex-1">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/80">Ready to settle</p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight">Please pay at the counter</h2>
+            <p className="text-xs font-semibold uppercase tracking-wide text-white/80">Sẵn sàng thanh toán</p>
+            <h2 className="mt-2 text-2xl font-bold tracking-tight">Vui lòng thanh toán tại quầy</h2>
             <p className="mt-2 text-sm leading-6 text-white/90">
-              Show this screen to the cashier to complete payment. Staff has accepted your order.
+              Đưa màn hình này cho thu ngân. Nhân viên đã xác nhận đơn của bạn.
             </p>
             <p className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 font-mono text-sm font-semibold tracking-wider">
               {orderRef}
@@ -61,10 +61,10 @@ export function StatusHero({
         <div className="flex items-start gap-4">
           <CircleAlert className="h-10 w-10 shrink-0 text-rose-500" />
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-rose-600">Order cancelled</p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight">Staff cancelled this order</h2>
+            <p className="text-xs font-semibold uppercase tracking-wide text-rose-600">Đã hủy</p>
+            <h2 className="mt-2 text-2xl font-bold tracking-tight">Đơn đã bị hủy</h2>
             <p className="mt-2 text-sm leading-6 text-rose-800">
-              {cancelReason || 'Ask staff for details or submit a new request when ready.'}
+              {cancelReason || 'Vui lòng hỏi nhân viên hoặc gọi món lại khi sẵn sàng.'}
             </p>
           </div>
         </div>
@@ -79,10 +79,10 @@ export function StatusHero({
           <Clock3 className="h-6 w-6" />
         </div>
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[hsl(var(--pos-accent))]">Sent to staff</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Order received by the kitchen</h2>
+          <p className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--pos-accent))]">Chờ xác nhận</p>
+          <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">Đã gửi yêu cầu gọi món</h2>
           <p className="mt-2 text-sm leading-6 text-slate-700">
-            Staff will confirm shortly. Keep this screen open — status updates automatically.
+            Nhân viên sẽ xác nhận trong giây lát. Giữ màn hình này — trạng thái tự cập nhật.
           </p>
           <p className="mt-3 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 font-mono text-sm font-semibold tracking-wider text-slate-900 shadow-sm">
             {orderRef}
