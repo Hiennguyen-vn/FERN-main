@@ -13,6 +13,7 @@ import {
   useQrOrderDetail,
   useQrOrders,
 } from '../hooks/use-qr-orders';
+import { countQrQueueOrders, groupOrdersForQueueFilter } from '../utils/qr-queue-grouping';
 import { QrQueueSidebar } from './QrQueueSidebar';
 import { QrQueueList } from './QrQueueList';
 import { QrOrderDetailPanel } from './QrOrderDetailPanel';
@@ -43,28 +44,23 @@ export function QrQueueView({ outletId, outletName, menu, onRequestPayment, orde
   );
   const detailQuery = useQrOrderDetail(listSelected);
 
-  const counts = useMemo(() => {
-    const c = { all: allOrders.length, waiting: 0, approved: 0, paid: 0, cancelled: 0 };
-    for (const o of allOrders) {
-      const f = getCustomerOrderQueueFilter(o);
-      c[f] += 1;
-    }
-    return c;
-  }, [allOrders]);
+  const counts = useMemo(() => countQrQueueOrders(allOrders), [allOrders]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return allOrders.filter((o) => {
+    const scoped = allOrders.filter((o) => {
       if (filter !== 'all' && getCustomerOrderQueueFilter(o) !== filter) return false;
       if (!q) return true;
       const hay = [
         String(o.id),
+        o.saleId,
         o.orderingTableName,
         o.orderingTableCode,
         o.note,
       ].map((v) => String(v || '').toLowerCase()).join(' ');
       return hay.includes(q);
     });
+    return groupOrdersForQueueFilter(scoped, filter);
   }, [allOrders, filter, search]);
 
   const selectedOrder = detailQuery.data ?? listSelected;

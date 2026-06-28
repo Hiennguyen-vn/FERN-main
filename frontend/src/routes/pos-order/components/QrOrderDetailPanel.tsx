@@ -29,18 +29,22 @@ export function QrOrderDetailPanel({ order, isLoading, menu, approveBusy, cancel
   }
 
   const filter = getCustomerOrderQueueFilter(order);
+  const isTableCheck = filter === 'approved' || filter === 'paid';
+  const payableSaleId = order.saleId ? String(order.saleId) : null;
+  const displayId = isTableCheck && payableSaleId ? payableSaleId : String(order.id);
   const subtotal = Number(order.subtotal ?? 0);
   const discount = Number(order.discount ?? 0);
   const tax = Number(order.taxAmount ?? 0);
   const total = Number(order.totalAmount ?? 0);
   const items = order.items || [];
-  const payableSaleId = typeof order.saleId === 'string' ? order.saleId : null;
 
   return (
     <aside className="w-[400px] shrink-0 border-l bg-white flex flex-col h-full">
       <div className="p-4 border-b">
-        <div className="text-xs text-muted-foreground">Đơn khách QR</div>
-        <div className="text-lg font-bold">#{String(order.id).slice(-8)}</div>
+        <div className="text-xs text-muted-foreground">
+          {isTableCheck ? 'Hóa đơn bàn' : 'Đơn khách QR'}
+        </div>
+        <div className="text-lg font-bold">#{displayId.slice(-8)}</div>
         <div className="mt-1 text-sm text-muted-foreground">
           Bàn: <span className="text-foreground font-medium">{order.orderingTableName || order.orderingTableCode || '—'}</span>
         </div>
@@ -50,13 +54,28 @@ export function QrOrderDetailPanel({ order, isLoading, menu, approveBusy, cancel
           </div>
         )}
         {order.note && <div className="mt-2 text-xs text-muted-foreground">Ghi chú: {order.note}</div>}
+        {isTableCheck && Number(order.batchCount ?? 0) > 1 && (
+          <div className="mt-2 text-xs text-muted-foreground">
+            Gộp {Number(order.batchCount)} lượt gọi QR vào một hóa đơn bàn.
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>}
+        {isLoading && isTableCheck && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" /> Đang tải hóa đơn bàn...
+          </div>
+        )}
+        {isLoading && !isTableCheck && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" /> Đang tải...
+          </div>
+        )}
         {!isLoading && items.length === 0 && (
           <div className="text-sm text-muted-foreground">Không có món.</div>
         )}
+        {!isLoading && items.length > 0 && (
         <ul className="space-y-3">
           {items.map((l, idx) => {
             const name = (l.productId && nameById.get(String(l.productId))) || `Sản phẩm ${idx + 1}`;
@@ -75,6 +94,7 @@ export function QrOrderDetailPanel({ order, isLoading, menu, approveBusy, cancel
             );
           })}
         </ul>
+        )}
       </div>
 
       <div className="p-4 border-t space-y-2">
@@ -117,8 +137,13 @@ export function QrOrderDetailPanel({ order, isLoading, menu, approveBusy, cancel
           {filter === 'approved' && (
             <Button
               className="h-11 col-span-2 pos-accent-bg hover:opacity-90"
-              disabled={!payableSaleId}
-              onClick={() => onRequestPayment({ ...(order as SaleListItemView), id: payableSaleId || String(order.id) })}
+              disabled={!payableSaleId || isLoading}
+              onClick={() => onRequestPayment({
+                ...(order as SaleListItemView),
+                id: payableSaleId || String(order.id),
+                totalAmount: total,
+                subtotal: total,
+              })}
             >
               <CreditCard className="w-4 h-4 mr-1" /> Thanh toán ({formatVnd(total)})
             </Button>

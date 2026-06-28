@@ -17,9 +17,16 @@ interface Props {
 function queueTitle(order: SaleListItemView) {
   const table = order.orderingTableName || order.orderingTableCode || 'Bàn';
   const itemCount = order.items?.length ?? 0;
+  const batchCount = Number(order.batchCount ?? 0);
   const filter = getCustomerOrderQueueFilter(order);
   if (filter === 'waiting') {
     return `${table} · ${itemCount} món mới`;
+  }
+  if (filter === 'approved' || filter === 'paid') {
+    if (batchCount > 1) {
+      return `${table} · ${batchCount} lượt gọi`;
+    }
+    return `${table} · hóa đơn bàn`;
   }
   return table;
 }
@@ -81,6 +88,8 @@ export function QrQueueList({ orders, selectedId, onSelect, search, onSearchChan
           {orders.map((o) => {
             const s = statusLabel(o);
             const active = selectedId === String(o.id);
+            const queueFilter = getCustomerOrderQueueFilter(o);
+            const isGroupedCheck = (queueFilter === 'approved' || queueFilter === 'paid') && Boolean(o.saleId);
             return (
               <button
                 key={o.id}
@@ -101,8 +110,14 @@ export function QrQueueList({ orders, selectedId, onSelect, search, onSearchChan
                   <Clock className="w-3 h-3" /> {timeAgo(o.createdAt)}
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">{(o.items?.length ?? 0)} món</span>
-                  <span className="font-bold pos-accent-text">{formatVnd(Number(o.totalAmount ?? 0))}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {isGroupedCheck && Number(o.batchCount ?? 0) > 1
+                      ? `${Number(o.batchCount)} lượt gọi`
+                      : `${o.items?.length ?? 0} món`}
+                  </span>
+                  <span className="font-bold pos-accent-text">
+                    {isGroupedCheck ? 'Thanh toán chung' : formatVnd(Number(o.totalAmount ?? 0))}
+                  </span>
                 </div>
                 {o.note && <div className="mt-2 text-xs text-muted-foreground line-clamp-2">Ghi chú: {o.note}</div>}
               </button>

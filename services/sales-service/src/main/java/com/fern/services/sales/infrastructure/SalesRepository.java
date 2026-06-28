@@ -580,11 +580,12 @@ public class SalesRepository extends BaseRepository {
             b.created_at,
             t.table_code,
             t.display_name,
-            o.currency_code,
+            r.currency_code,
             COALESCE(SUM(bi.line_total), 0) AS total_amount
           FROM core.public_order_batch b
           JOIN core.ordering_table t ON t.id = b.ordering_table_id
           JOIN core.outlet o ON o.id = b.outlet_id
+          JOIN core.region r ON r.id = o.region_id
           LEFT JOIN core.public_order_batch_item bi ON bi.batch_id = b.id
           WHERE 1 = 1
           """
@@ -593,7 +594,7 @@ public class SalesRepository extends BaseRepository {
       appendOutletScope(sql, params, "b.outlet_id", outletIds);
       sql.append("""
           GROUP BY b.id, b.outlet_id, b.sale_id, b.order_token, b.status, b.note, b.created_at,
-                   t.table_code, t.display_name, o.currency_code
+                   t.table_code, t.display_name, r.currency_code
           ORDER BY b.created_at DESC
           LIMIT 200
           """);
@@ -721,7 +722,7 @@ public class SalesRepository extends BaseRepository {
           b.created_at,
           t.table_code,
           t.display_name,
-          o.currency_code,
+          r.currency_code,
           COALESCE(
             psn.business_date,
             (b.created_at AT TIME ZONE COALESCE(NULLIF(r.timezone_name, ''), ?))::date
