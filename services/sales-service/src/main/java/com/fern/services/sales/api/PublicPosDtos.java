@@ -60,7 +60,8 @@ public final class PublicPosDtos {
       BigDecimal quantity,
       BigDecimal unitPrice,
       BigDecimal lineTotal,
-      String note
+      String note,
+      String status
   ) {
   }
 

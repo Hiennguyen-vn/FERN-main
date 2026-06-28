@@ -148,6 +148,27 @@ public class SalesController {
     return salesService.getSale(saleId);
   }
 
+  @GetMapping("/public-order-batches")
+  public List<SalesDtos.PublicOrderBatchView> listPublicOrderBatches(
+      @RequestParam(required = false) Long outletId
+  ) {
+    return salesService.listPublicOrderBatches(outletId);
+  }
+
+  @PostMapping("/public-order-batches/{batchId}/approve")
+  public SalesDtos.SaleView approvePublicOrderBatch(@PathVariable long batchId) {
+    return salesService.approvePublicOrderBatch(batchId);
+  }
+
+  @PostMapping("/public-order-batches/{batchId}/reject")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void rejectPublicOrderBatch(
+      @PathVariable long batchId,
+      @RequestBody(required = false) SalesDtos.CancelSaleRequest request
+  ) {
+    salesService.rejectPublicOrderBatch(batchId, request);
+  }
+
   @GetMapping("/revenue/monthly")
   public List<SalesDtos.MonthlyRevenueRow> monthlyRevenue(
       @RequestParam(required = false) Long outletId,
@@ -228,6 +249,11 @@ public class SalesController {
   @GetMapping("/pos-sessions/{sessionId}")
   public SalesDtos.PosSessionView getPosSession(@PathVariable long sessionId) {
     return salesService.getPosSession(sessionId);
+  }
+
+  @GetMapping("/pos-sessions/{sessionId}/payment-summary")
+  public SalesDtos.PosSessionPaymentSummaryView getPosSessionPaymentSummary(@PathVariable long sessionId) {
+    return salesService.getPosSessionPaymentSummary(sessionId);
   }
 
   @GetMapping("/outlet-stats")

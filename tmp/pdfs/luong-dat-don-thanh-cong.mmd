@@ -1,0 +1,137 @@
+sequenceDiagram
+    autonumber
+    actor Cashier as Thu ngân (POS UI)
+    participant FE as Frontend<br/>useSubmitOrder
+    participant GW as API Gateway
+    participant SC as SalesController
+    participant SS as SalesService
+    participant PE as PromotionEngine<br/>(optional)
+    participant IG as IdempotencyGuard<br/>(Redis)
+    participant SR as SalesRepository
+    participant PG as PostgreSQL<br/>core.*
+    participant KT as KitchenTicketService<br/>(optional)
+    participant LY as LoyaltyService<br/>(optional)
+    participant OB as OutboxRelay
+    participant KF as Kafka
+    participant INV as inventory-service
+    participant FIN as finance-service
+    participant AUD as audit-service
+
+    rect rgb(240, 248, 255)
+        Note over Cashier,PG: Phase 0 — Tiền điều kiện: Mở phiên POS
+        Cashier->>FE: Mở ca làm việc
+        FE->>GW: POST /api/v1/sales/pos-sessions
+        GW->>SC: openPosSession()
+        SC->>SS: requireSalesWrite() + openPosSession
+        SS->>SR: sessionRepository.openPosSession()
+        SR->>PG: INSERT pos_session (status=OPEN)
+        PG-->>SR: sessionId
+        SR-->>FE: PosSessionView
+    end
+
+    rect rgb(255, 250, 240)
+        Note over Cashier,PG: Phase 1 — Tạo đơn (Submit Order)
+        Cashier->>FE: Chọn SP, modifier, KM → Thanh toán
+        FE->>FE: buildPayload() — phân bổ discount/tax theo line
+        FE->>FE: idempotencyKey = crypto.randomUUID()
+        FE->>GW: POST /api/v1/sales/orders<br/>Header: Idempotency-Key
+        GW->>SC: submitSale(idempotencyKey, deviceId, request)
+        SC->>SS: submitSale()
+
+        SS->>SS: requireOrderSubmissionAccess()<br/>RBAC: sales.order.write + outlet scope
+        SS->>PE: applyPromotions()<br/>resolveUnitPrices + evaluateForCart
+        PE->>SR: resolveUnitPrices(productIds, outletId)
+        SR->>PG: SELECT product_price
+        PE-->>SS: enriched items + promotionIds
+
+        SS->>IG: execute(namespace, key, hash, TTL=BET)
+        IG->>SR: submitSale(enrichedRequest)
+        IG-->>SS: SaleView
+
+        SR->>PG: SELECT pos_session → status=OPEN
+        SR->>SR: aggregateLines()<br/>basePrice + variantDelta + modifierDelta
+        SR->>PG: SELECT product_price, recipe, modifier
+        SR->>SR: validateStockAvailability() — BOM đủ tồn
+        SR->>PG: BEGIN
+        SR->>PG: INSERT sale_record (order_created, unpaid)
+        SR->>PG: INSERT sale_item, sale_item_modifier, sale_item_promotion
+        SR->>PG: COMMIT
+        PG-->>SR: saleId
+        SR-->>SS: SaleView
+        SS-->>FE: 201 Created (order_created)
+        FE->>FE: phase = created, lưu sessionStorage snapshot
+    end
+
+    rect rgb(240, 255, 240)
+        Note over Cashier,PG: Phase 2 — Duyệt đơn (Approve)
+        FE->>GW: POST /api/v1/sales/orders/{saleId}/approve
+        GW->>SC: approveSale(saleId)
+        SC->>SS: approveSale()
+        SS->>SS: requireTerminalOrderMutationAccess()
+        SS->>SR: approveSale(saleId, actorUserId)
+
+        SR->>PG: BEGIN + pg_advisory_xact_lock(saleId)
+        SR->>PG: SELECT sale_record FOR UPDATE
+        SR->>SR: buildInventoryPlan(lockStockRows=true) — đủ tồn
+        SR->>PG: UPDATE sale_record → order_approved
+        SR->>PG: applySaleUsageInventory()<br/>sale_item_transaction + inventory_transaction<br/>UPDATE stock_balance (trừ tồn)
+        SR->>PG: INSERT outbox fern.sales.sale-approved
+        SR->>PG: COMMIT
+        SR-->>SS: SaleView (order_approved)
+
+        opt sale có customer_id
+            SS->>LY: autoEarnLoyalty()<br/>tryClaimLoyaltyEarn + earn()
+            LY->>PG: ghi điểm loyalty
+        end
+        opt orderType = dine_in
+            SS->>KT: createFromSale(saleId)
+            KT->>PG: INSERT kitchen_ticket + items
+            KT->>KF: publish ticket (KDS sync)
+        end
+        SS-->>FE: 200 SaleView (order_approved)
+        FE->>FE: phase = approved
+    end
+
+    rect rgb(255, 240, 245)
+        Note over OB,AUD: Phase 2b — Async: Sale Approved Event
+        OB->>PG: poll core.outbox_event (PENDING)
+        OB->>KF: publish fern.sales.sale-approved
+        OB->>PG: mark outbox PUBLISHED
+        KF->>INV: consumeSaleApproved()
+        INV->>INV: idempotencyGuard
+        INV->>PG: applySaleApproved() — trừ tồn idempotent
+        INV->>PG: reservationService.confirmForSale()
+        KF->>AUD: audit event
+    end
+
+    rect rgb(245, 240, 255)
+        Note over Cashier,PG: Phase 3 — Ghi nhận thanh toán
+        Cashier->>FE: Chọn PT: cash / card / qr / voucher
+        FE->>GW: POST /orders/{saleId}/mark-payment-done
+        GW->>SC: markPaymentDone()
+        SC->>SS: markPaymentDone()
+        SS->>SR: markPaymentDone()
+
+        SR->>PG: BEGIN + lock sale
+        SR->>PG: Kiểm status=order_approved, amount=total_amount
+        SR->>PG: UPSERT payment (status=success)
+        SR->>PG: UPDATE sale_record → payment_done, paid
+        SR->>PG: INSERT outbox sale-completed + payment-captured
+        SR->>PG: COMMIT
+        SR-->>SS: SaleView (payment_done)
+        SS->>SS: evictMonthlyRevenueCache()
+        SS-->>FE: 200 SaleView
+        FE->>FE: phase = paid, xóa pending snapshot
+        FE-->>Cashier: Hiển thị "Payment captured"
+    end
+
+    rect rgb(240, 255, 250)
+        Note over OB,AUD: Phase 3b — Async: Payment Captured → Finance
+        OB->>KF: publish fern.sales.sale-completed
+        OB->>KF: publish fern.sales.payment-captured
+        KF->>FIN: consumePaymentCaptured()
+        FIN->>FIN: idempotencyGuard
+        FIN->>PG: invoiceService.issueInvoice()
+        KF->>AUD: audit events
+        Note over KF: ClickHouse sink đồng bộ analytics
+    end

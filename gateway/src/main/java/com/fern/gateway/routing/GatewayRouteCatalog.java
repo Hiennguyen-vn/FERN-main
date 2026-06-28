@@ -39,6 +39,7 @@ public final class GatewayRouteCatalog {
         new GatewayRoute("/api/v1/customer-allergies", "product-service", productUrl, RouteClass.USER, RateLimitTier.DEFAULT),
         new GatewayRoute("/api/v1/procurement", "procurement-service", procurementUrl, RouteClass.USER, RateLimitTier.DEFAULT),
         new GatewayRoute("/api/v1/sales", "sales-service", salesUrl, RouteClass.USER, RateLimitTier.DEFAULT),
+        new GatewayRoute("/api/v1/pos", "sales-service", salesUrl, RouteClass.USER, RateLimitTier.DEFAULT),
         new GatewayRoute("/api/v1/crm", "sales-service", salesUrl, RouteClass.USER, RateLimitTier.DEFAULT),
         new GatewayRoute("/api/v1/sync", "sales-service", salesUrl, RouteClass.DEVICE, RateLimitTier.SYNC),
         new GatewayRoute("/api/v1/telemetry", "sales-service", salesUrl, RouteClass.DEVICE, RateLimitTier.TELEMETRY),

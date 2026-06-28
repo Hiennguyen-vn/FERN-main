@@ -1,5 +1,5 @@
 x-kafka-common-env: &kafka-common-env
-  KAFKA_HEAP_OPTS: "-Xms128M -Xmx256M"
+  KAFKA_HEAP_OPTS: "-Xms256M -Xmx512M"
   KAFKA_PROCESS_ROLES: broker,controller
   KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
   KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
@@ -251,7 +251,7 @@ services:
     image: confluentinc/cp-kafka:7.8.0
     profiles: ["ha"]
     hostname: kafka-2
-    mem_limit: 1g
+    mem_limit: 1536m
     environment:
       <<: *kafka-common-env
       KAFKA_PROCESS_ROLES: broker
@@ -272,7 +272,7 @@ services:
     image: confluentinc/cp-kafka:7.8.0
     profiles: ["ha"]
     hostname: kafka-3
-    mem_limit: 1g
+    mem_limit: 1536m
     environment:
       <<: *kafka-common-env
       KAFKA_PROCESS_ROLES: broker
@@ -746,14 +746,14 @@ services:
   kafka-connect:
     image: confluentinc/cp-kafka-connect:7.6.0
     profiles: ["cdc"]
-    mem_limit: 1536m
+    mem_limit: 2g
     depends_on:
       kafka:
         condition: service_healthy
       postgres:
         condition: service_healthy
     environment:
-      KAFKA_HEAP_OPTS: "-Xms192M -Xmx384M"
+      KAFKA_HEAP_OPTS: "-Xms256M -Xmx512M"
       CONNECT_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP:-kafka:29092}
       CONNECT_REST_PORT: 8083
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
@@ -766,8 +766,8 @@ services:
       CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: ${KAFKA_CONNECT_REPLICATION_FACTOR:-1}
       CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      CONNECT_PLUGIN_PATH: /usr/share/confluent-hub-components,/usr/share/java/kafka
-      CONNECT_PLUGIN_DISCOVERY: service_load
+      CONNECT_PLUGIN_PATH: /usr/share/confluent-hub-components
+      CONNECT_PLUGIN_DISCOVERY: hybrid_warn
       CONNECT_LOG4J_LOGGERS: org.apache.kafka.connect.runtime.rest=WARN,org.reflections=ERROR
       KAFKA_CONNECT_INSTALL_CLICKHOUSE: ${KAFKA_CONNECT_INSTALL_CLICKHOUSE:-false}
     ports:
@@ -781,7 +781,15 @@ services:
       - |
         confluent-hub install --no-prompt debezium/debezium-connector-postgresql:2.5.4 || true
         if [ "$${KAFKA_CONNECT_INSTALL_CLICKHOUSE:-false}" = "true" ]; then
-          confluent-hub install --no-prompt clickhouse/clickhouse-kafka-connect:0.0.18 || true
+          clickhouse_connector_version="$${CLICKHOUSE_KAFKA_CONNECT_VERSION:-0.0.18}"
+          clickhouse_plugin_root="/usr/share/confluent-hub-components/clickhouse-kafka-connect"
+          rm -rf "$${clickhouse_plugin_root}"
+          mkdir -p "$${clickhouse_plugin_root}"
+          curl -fsSL --retry 3 \
+            "https://github.com/ClickHouse/clickhouse-kafka-connect/releases/download/v$${clickhouse_connector_version}/clickhouse-kafka-connect-v$${clickhouse_connector_version}.zip" \
+            -o /tmp/clickhouse-kafka-connect.zip
+          (cd "$${clickhouse_plugin_root}" && jar xf /tmp/clickhouse-kafka-connect.zip)
+          rm -f /tmp/clickhouse-kafka-connect.zip
         fi
         /etc/confluent/docker/run &
         connect_pid=$$!
@@ -801,7 +809,8 @@ services:
     build:
       context: ./opensearch
     profiles: ["search"]
-    mem_limit: 2g
+    mem_limit: 1g
+    restart: unless-stopped
     environment:
       discovery.type: single-node
       OPENSEARCH_JAVA_OPTS: "-Xms256m -Xmx256m"
@@ -1066,6 +1075,11 @@ services:
       LEARNING_STAGING_EMIT_ENABLED: ${LEARNING_STAGING_EMIT_ENABLED:-false}
       QUERY_REASONING_ENABLED: ${QUERY_REASONING_ENABLED:-true}
       SQL_LOGICAL_CHECK_ENABLED: ${SQL_LOGICAL_CHECK_ENABLED:-true}
+      DETERMINISTIC_SQL_OVERRIDES_ENABLED: ${DETERMINISTIC_SQL_OVERRIDES_ENABLED:-true}
+      SQL_SEMANTIC_REVIEWER_REVIEW_DETERMINISTIC_ENABLED: ${SQL_SEMANTIC_REVIEWER_REVIEW_DETERMINISTIC_ENABLED:-false}
+      SQL_WRITER_SINGLE_SHOT_ENABLED: ${SQL_WRITER_SINGLE_SHOT_ENABLED:-false}
+      SQL_WRITER_PARALLEL_QUERY_EXECUTION_ENABLED: ${SQL_WRITER_PARALLEL_QUERY_EXECUTION_ENABLED:-true}
+      SQL_WRITER_PARALLEL_QUERY_MAX_WORKERS: ${SQL_WRITER_PARALLEL_QUERY_MAX_WORKERS:-4}
       DETERMINISTIC_SUPERVISOR_ENABLED: ${DETERMINISTIC_SUPERVISOR_ENABLED:-true}
       TEMPLATE_RESPONSE_ENABLED: ${TEMPLATE_RESPONSE_ENABLED:-true}
       TEMPLATE_FAST_PATH_ENABLED: ${TEMPLATE_FAST_PATH_ENABLED:-true}

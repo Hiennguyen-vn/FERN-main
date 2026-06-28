@@ -59,6 +59,7 @@ class SalesApiControllerTest {
     controller.listPosSessions(7L, LocalDate.parse("2026-04-27"), null, null,
         "open", 2L, " reg ", "openedAt", "asc", 50, 0);
     controller.getPosSession(10L);
+    controller.getPosSessionPaymentSummary(10L);
     controller.getOutletStats(7L, null);
     controller.listPromotions(7L, "active", Instant.parse("2026-04-27T00:00:00Z"),
         "happy", "effectiveFrom", "desc", 20, 0);
@@ -83,6 +84,7 @@ class SalesApiControllerTest {
     verify(service).markPaymentDone(50L, null);
     verify(service).cancelSale(50L, null);
     verify(service).getPosSession(10L);
+    verify(service).getPosSessionPaymentSummary(10L);
     verify(service).getOutletStats(7L, null);
     verify(service).getPromotion(90L);
     verify(service).deactivatePromotion(90L);

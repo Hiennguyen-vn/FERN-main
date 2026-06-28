@@ -370,6 +370,10 @@ public class SalesService {
     );
   }
 
+  public List<SalesDtos.PublicOrderBatchView> listPublicOrderBatches(Long outletId) {
+    return salesRepository.listPublicOrderBatches(resolveReadableOutletIds(outletId));
+  }
+
   public List<SalesDtos.MonthlyRevenueRow> monthlyRevenue(Long outletId, LocalDate startDate, LocalDate endDate) {
     Set<Long> readable = resolveReadableOutletIds(outletId);
     String cacheKey = buildMonthlyCacheKey(readable, outletId, startDate, endDate);
@@ -466,6 +470,24 @@ public class SalesService {
     }
     emitKitchenTicket(saleId);
     return approved;
+  }
+
+  public SalesDtos.SaleView approvePublicOrderBatch(long batchId) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    SalesDtos.SaleView approved = salesRepository.approvePublicOrderBatch(batchId, context.userId());
+    requireTerminalOrderMutationAccess(context, approved.outletId());
+    if (kitchenTicketService != null) {
+      salesRepository.listPublicOrderBatches(Set.of(approved.outletId())).stream()
+          .filter(batch -> batch.id().equals(Long.toString(batchId)))
+          .findFirst()
+          .ifPresent(batch -> kitchenTicketService.createFromPublicBatch(approved, batch));
+    }
+    return approved;
+  }
+
+  public void rejectPublicOrderBatch(long batchId, SalesDtos.CancelSaleRequest request) {
+    RequestUserContext context = RequestUserContextHolder.get();
+    salesRepository.rejectPublicOrderBatch(batchId, request == null ? null : request.reason(), context.userId());
   }
 
   public SalesDtos.SaleView confirmSale(long saleId) {
@@ -965,6 +987,13 @@ public class SalesService {
         .orElseThrow(() -> ServiceException.notFound("POS session not found: " + sessionId));
     requireSalesRead(session.outletId());
     return session;
+  }
+
+  public SalesDtos.PosSessionPaymentSummaryView getPosSessionPaymentSummary(long sessionId) {
+    SalesDtos.PosSessionView session = salesRepository.findPosSession(sessionId)
+        .orElseThrow(() -> ServiceException.notFound("POS session not found: " + sessionId));
+    requireSalesRead(session.outletId());
+    return salesRepository.getPosSessionPaymentSummary(sessionId);
   }
 
   public SalesDtos.OutletStatsView getOutletStats(long outletId, LocalDate onDate) {

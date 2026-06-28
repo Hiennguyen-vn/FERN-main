@@ -54,16 +54,20 @@ public class KitchenTicketRepository extends BaseRepository {
       List<NewTicketItem> items
   ) {}
 
-  /**
-   * Insert a new ticket + items. Returns existing ticket id if a row already exists for the sale
-   * (idempotent, driven by uq_kitchen_ticket_sale).
-   */
   public long createTicket(NewTicket newTicket) {
     return executeInTransaction(conn -> {
       Optional<Long> existing = findTicketIdBySale(conn, newTicket.saleId());
       if (existing.isPresent()) {
         return existing.get();
       }
+      long ticketId = insertTicketRow(conn, newTicket);
+      insertTicketItems(conn, ticketId, newTicket.items());
+      return ticketId;
+    });
+  }
+
+  public long createTicketAlways(NewTicket newTicket) {
+    return executeInTransaction(conn -> {
       long ticketId = insertTicketRow(conn, newTicket);
       insertTicketItems(conn, ticketId, newTicket.items());
       return ticketId;

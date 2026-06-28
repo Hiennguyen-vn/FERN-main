@@ -1,0 +1,139 @@
+sequenceDiagram
+    autonumber
+    actor NV as Nhân viên POS
+    participant UI as Giao diện POS<br/>(use-submit-order)
+    participant GW as API Gateway<br/>(xác thực JWT, routing)
+    participant CTL as SalesController<br/>(REST API)
+    participant SVC as SalesService<br/>(nghiệp vụ)
+    participant PRO as PromotionEngine
+    participant IDP as IdempotencyGuard<br/>(Redis)
+    participant REP as SalesRepository<br/>(truy cập dữ liệu)
+    participant KDS as KitchenTicketService
+    participant LYL as LoyaltyService
+    participant DB as Lớp dữ liệu<br/>(PostgreSQL core.*)
+
+    Note over NV,DB: Biểu đồ tuần tự — Tạo, phê duyệt và thanh toán đơn bán POS
+
+    rect rgb(240, 248, 255)
+        Note over NV,DB: 0. Tiền điều kiện — Mở phiên POS
+        NV->>UI: Mở ca làm việc
+        UI->>GW: POST /api/v1/sales/pos-sessions
+        GW->>CTL: openPosSession()
+        CTL->>SVC: requireSalesWrite()
+        SVC->>REP: openPosSession()
+        REP->>DB: INSERT pos_session (status=OPEN)
+        DB-->>NV: sessionId
+    end
+
+    rect rgb(255, 250, 240)
+        Note over NV,DB: 1. Tạo đơn hàng
+        NV->>UI: Nhập giỏ hàng, chọn KM, thanh toán
+        UI->>UI: buildPayload()<br/>phân bổ discount / tax theo line
+        UI->>GW: POST /api/v1/sales/orders<br/>Header: Idempotency-Key
+        GW->>CTL: submitSale()
+        CTL->>SVC: submitSale(idempotencyKey, deviceId, request)
+
+        SVC->>SVC: requireOrderSubmissionAccess()<br/>RBAC + phạm vi outlet
+        alt payment trong body
+            SVC-->>UI: 400 — thanh toán tách riêng
+        end
+
+        SVC->>PRO: applyPromotions()<br/>evaluateForCart(outletId, cart)
+        PRO->>REP: resolveUnitPrices(productIds)
+        REP->>DB: SELECT product_price
+        PRO-->>SVC: items + promotionIds đã gán
+
+        alt có Idempotency-Key
+            SVC->>IDP: execute(namespace, key, hash)
+            IDP->>REP: submitSale() [lần đầu]
+            IDP-->>SVC: SaleView (hoặc cache nếu retry)
+        else không có key
+            SVC->>REP: submitSale()
+        end
+
+        REP->>DB: Kiểm pos_session OPEN
+        REP->>REP: aggregateLines()<br/>base + variant + modifier
+        REP->>DB: validateStockAvailability()<br/>theo recipe (BOM)
+        alt thiếu tồn kho
+            REP-->>UI: 409 INSUFFICIENT_STOCK
+        else đủ tồn
+            REP->>DB: INSERT sale_record (order_created, unpaid)
+            REP->>DB: INSERT sale_item, sale_item_modifier
+            REP->>DB: INSERT sale_item_promotion
+            DB-->>UI: 201 Created
+            UI-->>NV: Hiển thị đơn mới
+        end
+    end
+
+    rect rgb(240, 255, 240)
+        Note over NV,DB: 2. Phê duyệt đơn
+        NV->>UI: Duyệt đơn
+        UI->>GW: POST /orders/{id}/approve
+        GW->>CTL: approveSale(saleId)
+        CTL->>SVC: approveSale()
+        SVC->>SVC: requireTerminalOrderMutationAccess()
+        SVC->>REP: approveSale(saleId, actorUserId)
+
+        REP->>DB: pg_advisory_xact_lock + lock sale_record
+        REP->>DB: Kiểm status = order_created
+        REP->>DB: buildInventoryPlan(lockStockRows=true)
+        alt thiếu tồn khi duyệt
+            REP-->>UI: 409 — không đủ hàng
+        else hợp lệ
+            REP->>DB: UPDATE order_approved
+            REP->>DB: applySaleUsageInventory()<br/>inventory_transaction, stock_balance
+            REP-->>SVC: SaleView (order_approved)
+
+            opt sale có customer_id
+                SVC->>LYL: autoEarnLoyalty(saleId)
+                LYL->>REP: tryClaimLoyaltyEarn()
+                LYL->>DB: ghi điểm loyalty
+            end
+            opt orderType = dine_in
+                SVC->>KDS: createFromSale(saleId)
+                KDS->>DB: INSERT kitchen_ticket + items
+            end
+
+            SVC-->>UI: 200 OK
+            UI-->>NV: Đơn đã duyệt
+        end
+    end
+
+    rect rgb(245, 240, 255)
+        Note over NV,DB: 3. Ghi nhận thanh toán
+        NV->>UI: Chọn PT: cash / card / qr / voucher
+        UI->>GW: POST /orders/{id}/mark-payment-done
+        GW->>CTL: markPaymentDone()
+        CTL->>SVC: markPaymentDone()
+        SVC->>SVC: requireTerminalOrderMutationAccess()
+        SVC->>REP: markPaymentDone()
+
+        REP->>DB: lock sale_record
+        REP->>DB: Kiểm status = order_approved
+        REP->>DB: Kiểm amount = total_amount
+        alt số tiền không khớp
+            REP-->>UI: 409 Conflict
+        else hợp lệ
+            REP->>DB: UPSERT payment (success)
+            REP->>DB: UPDATE payment_done, paid
+            REP-->>SVC: SaleView (payment_done)
+            SVC->>SVC: evictMonthlyRevenueCache()
+            SVC-->>UI: 200 OK
+            UI-->>NV: Hoàn tất thanh toán
+        end
+    end
+
+    rect rgb(255, 240, 240)
+        Note over NV,DB: Luồng thay thế — Hủy đơn (void)
+        NV->>UI: Hủy đơn + reasonCode + managerUserId
+        UI->>GW: POST /orders/{id}/cancel
+        GW->>CTL: cancelSale()
+        CTL->>SVC: cancelSale()
+        SVC->>REP: cancelSale()
+        REP->>DB: load void_reason<br/>kiểm manager approval
+        REP->>DB: UPDATE cancelled + audit void
+        SVC->>KDS: cancelBySale(saleId)
+        KDS->>DB: hủy kitchen_ticket
+        REP-->>UI: 200 OK
+        UI-->>NV: Đơn đã hủy
+    end

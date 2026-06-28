@@ -100,6 +100,59 @@ public class KitchenTicketService extends BaseRepository {
     }
   }
 
+  public Optional<KitchenDtos.TicketView> createFromPublicBatch(
+      SalesDtos.SaleView sale,
+      SalesDtos.PublicOrderBatchView batch
+  ) {
+    try {
+      if (sale == null || batch == null || batch.items() == null || batch.items().isEmpty()) return Optional.empty();
+      if (isDryGood(sale.orderType())) return Optional.empty();
+      Long orderingTableId = lookupOrderingTableId(Long.parseLong(sale.id()));
+      List<Long> productIds = batch.items().stream()
+          .map(SalesDtos.PublicOrderBatchItemView::productId)
+          .filter(id -> id != null && !id.isBlank())
+          .map(Long::parseLong)
+          .toList();
+      Map<Long, List<String>> allergensByProduct = loadAllergens(productIds);
+      List<KitchenTicketRepository.NewTicketItem> ticketItems = new ArrayList<>(batch.items().size());
+      for (SalesDtos.PublicOrderBatchItemView line : batch.items()) {
+        long productId = Long.parseLong(line.productId());
+        ticketItems.add(new KitchenTicketRepository.NewTicketItem(
+            productId,
+            line.productName() == null ? line.productCode() : line.productName(),
+            line.quantity(),
+            null,
+            allergensByProduct.getOrDefault(productId, List.of()),
+            line.note()
+        ));
+      }
+      int prepSlaSeconds = KitchenScheduling.computePrepSlaSeconds(
+          ticketItems.stream().map(KitchenTicketRepository.NewTicketItem::qty).toList(),
+          slaBaseSeconds,
+          slaPerItemSeconds
+      );
+      KitchenTicketRepository.NewTicket newTicket = new KitchenTicketRepository.NewTicket(
+          Long.parseLong(sale.id()),
+          sale.outletId(),
+          orderingTableId,
+          sale.orderingTableCode(),
+          sale.orderingTableName(),
+          sale.orderType(),
+          batch.note(),
+          prepSlaSeconds,
+          ticketItems
+      );
+      long ticketId = ticketRepository.createTicketAlways(newTicket);
+      Optional<KitchenDtos.TicketView> view = ticketRepository.findTicket(ticketId);
+      view.ifPresent(syncPublisher::publishTicketCreated);
+      return view;
+    } catch (RuntimeException e) {
+      log.warn("kitchen ticket batch creation failed for sale {} batch {}: {}",
+          sale == null ? null : sale.id(), batch == null ? null : batch.id(), e.getMessage());
+      return Optional.empty();
+    }
+  }
+
   /**
    * Cancel the kitchen ticket for a sale that was cancelled/voided/refunded. Idempotent —
    * no-op when no active ticket exists. Mirrors {@link #createFromSale}: never throws to the

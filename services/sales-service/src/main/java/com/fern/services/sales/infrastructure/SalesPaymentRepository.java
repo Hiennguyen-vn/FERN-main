@@ -13,7 +13,9 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import javax.sql.DataSource;
@@ -96,6 +98,35 @@ public class SalesPaymentRepository extends BaseRepository {
       }
     }
     return totals;
+  }
+
+  List<SalesDtos.PosSessionPaymentSummaryLineView> loadPaymentSummaryBySession(Connection conn, long sessionId)
+      throws Exception {
+    List<SalesDtos.PosSessionPaymentSummaryLineView> lines = new ArrayList<>();
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT p.payment_method::text AS payment_method,
+               COALESCE(SUM(p.amount), 0) AS total_amount,
+               COUNT(DISTINCT p.sale_id) AS order_count
+        FROM core.payment p
+        WHERE p.pos_session_id = ?
+          AND p.status = 'success'::payment_txn_status_enum
+        GROUP BY p.payment_method
+        ORDER BY total_amount DESC
+        """
+    )) {
+      ps.setLong(1, sessionId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          lines.add(new SalesDtos.PosSessionPaymentSummaryLineView(
+              rs.getString("payment_method"),
+              money(rs.getBigDecimal("total_amount")).setScale(2, RoundingMode.HALF_UP),
+              rs.getInt("order_count")
+          ));
+        }
+      }
+    }
+    return lines;
   }
 
   void upsertPayment(

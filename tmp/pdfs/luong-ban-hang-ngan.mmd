@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    actor NV as Thu ngân
+    participant POS as POS Frontend
+    participant API as sales-service
+    participant DB as PostgreSQL
+    participant KF as Kafka
+
+    Note over NV,KF: Luồng bán hàng POS (Order-to-Cash)
+
+    NV->>POS: Chọn SP, thanh toán
+    POS->>API: POST /orders
+    API->>DB: Kiểm phiên OPEN + tồn kho
+    API->>DB: Ghi sale_record (order_created)
+    API-->>POS: 201 Created
+
+    POS->>API: POST /orders/{id}/approve
+    API->>DB: Trừ tồn kho + order_approved
+    API->>DB: Ghi outbox sale-approved
+    API-->>POS: 200 OK
+
+    POS->>API: POST /orders/{id}/mark-payment-done
+    API->>DB: Ghi payment + payment_done
+    API->>DB: Ghi outbox payment-captured
+    API-->>POS: 200 OK
+    POS-->>NV: Hoàn tất
+
+    Note over API,KF: Bất đồng bộ (OutboxRelay)
+    API->>KF: sale-approved → inventory-service
+    API->>KF: payment-captured → finance-service

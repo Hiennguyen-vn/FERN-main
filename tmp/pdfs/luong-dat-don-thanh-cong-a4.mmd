@@ -1,0 +1,48 @@
+sequenceDiagram
+    autonumber
+    actor NV as Thu ngan
+    participant FE as Frontend
+    participant GW as Gateway
+    participant SS as sales-service
+    participant PG as PostgreSQL
+    participant OB as OutboxRelay
+    participant KF as Kafka
+    participant INV as inventory-service
+    participant FIN as finance-service
+
+    Note over NV,FIN: Luong dat don thanh cong (POS)
+
+    NV->>FE: Mo ca
+    FE->>GW: POST /pos-sessions
+    GW->>SS: openPosSession
+    SS->>PG: pos_session OPEN
+
+    NV->>FE: Chon SP, thanh toan
+    FE->>GW: POST /orders (Idempotency-Key)
+    GW->>SS: submitSale
+    SS->>SS: RBAC + PromotionEngine
+    SS->>PG: Kiem ton BOM, INSERT order_created
+    SS-->>FE: 201 Created
+
+    FE->>GW: POST /orders/{id}/approve
+    GW->>SS: approveSale
+    SS->>PG: order_approved + tru ton kho
+    SS->>PG: outbox sale-approved
+    opt CRM / dine_in
+        SS->>PG: loyalty / kitchen_ticket
+    end
+    SS-->>FE: 200 OK
+
+    OB->>PG: poll outbox
+    OB->>KF: sale-approved
+    KF->>INV: tru ton idempotent
+
+    NV->>FE: Xac nhan thanh toan
+    FE->>GW: POST /mark-payment-done
+    GW->>SS: markPaymentDone
+    SS->>PG: payment_done + outbox payment-captured
+    SS-->>FE: 200 OK
+    FE-->>NV: Payment captured
+
+    OB->>KF: payment-captured
+    KF->>FIN: issueInvoice

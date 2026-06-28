@@ -1,0 +1,75 @@
+sequenceDiagram
+    autonumber
+    actor NV as Thu ngân
+    participant POS as POS Frontend
+    participant GW as API Gateway
+    participant SS as sales-service
+    participant DB as PostgreSQL
+
+    rect rgb(240, 248, 255)
+        Note over NV,DB: Bước 0 — Mở phiên POS
+        NV->>POS: Mở ca làm việc
+        POS->>GW: POST /api/v1/sales/pos-sessions
+        GW->>SS: openPosSession()
+        SS->>DB: INSERT pos_session (status=OPEN)
+        DB-->>POS: sessionId
+    end
+
+    rect rgb(255, 250, 240)
+        Note over NV,DB: Bước 1 — Tạo đơn hàng
+        NV->>POS: Chọn sản phẩm, modifier, KM
+        POS->>POS: buildPayload() + Idempotency-Key
+        POS->>GW: POST /api/v1/sales/orders
+        GW->>SS: submitSale()
+        SS->>SS: RBAC + applyPromotions()
+        SS->>DB: Kiểm pos_session OPEN
+        SS->>DB: Tính giá (product_price + variant + modifier)
+        SS->>DB: Kiểm tồn kho theo recipe (BOM)
+        alt thiếu tồn kho
+            SS-->>POS: 409 INSUFFICIENT_STOCK
+        end
+        SS->>DB: INSERT sale_record (order_created, unpaid)
+        SS->>DB: INSERT sale_item, modifier, promotion
+        DB-->>POS: 201 Created
+    end
+
+    rect rgb(240, 255, 240)
+        Note over NV,DB: Bước 2 — Duyệt đơn
+        POS->>GW: POST /orders/{id}/approve
+        GW->>SS: approveSale()
+        SS->>DB: lock sale_record
+        alt status != order_created
+            SS-->>POS: 409 Conflict
+        end
+        SS->>DB: Kiểm tồn kho lần 2 (row lock)
+        SS->>DB: UPDATE status = order_approved
+        SS->>DB: Trừ tồn kho (inventory_transaction)
+        opt có khách hàng CRM
+            SS->>DB: Cộng điểm loyalty
+        end
+        opt đơn cần bếp (dine_in)
+            SS->>DB: Tạo kitchen_ticket (KDS)
+        end
+        DB-->>POS: 200 OK
+    end
+
+    rect rgb(245, 240, 255)
+        Note over NV,DB: Bước 3 — Ghi nhận thanh toán
+        NV->>POS: Chọn PT: cash / card / qr / voucher
+        POS->>GW: POST /orders/{id}/mark-payment-done
+        GW->>SS: markPaymentDone()
+        SS->>DB: Kiểm amount = total_amount
+        SS->>DB: UPSERT payment (success)
+        SS->>DB: UPDATE payment_done, paid
+        DB-->>POS: 200 OK
+        POS-->>NV: Hoàn tất thanh toán
+    end
+
+    rect rgb(255, 240, 240)
+        Note over NV,DB: Luồng thay thế — Hủy đơn (void)
+        NV->>POS: Hủy đơn + reasonCode + manager
+        POS->>GW: POST /orders/{id}/cancel
+        GW->>SS: cancelSale()
+        SS->>DB: UPDATE cancelled + audit void
+        DB-->>POS: 200 OK
+    end

@@ -200,9 +200,14 @@ public class GatewayAuthenticationFilter implements GlobalFilter, Ordered {
         || path.equals("/api/v1/gateway/targets")
         || path.startsWith("/internal/gateway/fallback")
         || path.startsWith("/api/v1/auth/login")
-        || path.startsWith("/api/v1/sales/public")
+        || isPublicSalesCustomerPath(path)
         || path.startsWith("/api/v1/product/product-images")
         || path.equals("/api/v1/devices/pair");
+  }
+
+  /** Customer QR menu/order APIs only — not staff batch management under /public-order-batches. */
+  private static boolean isPublicSalesCustomerPath(String path) {
+    return path.equals("/api/v1/sales/public") || path.startsWith("/api/v1/sales/public/");
   }
 
   private boolean isCorsPreflight(ServerWebExchange exchange) {

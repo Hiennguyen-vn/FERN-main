@@ -389,6 +389,70 @@ class SalesRepositoryOrderLifecycleIT {
   }
 
   @Test
+  void posSessionPaymentSummaryAndListSalesExposePaymentMethods() {
+    SalesDtos.PosSessionView session = repository.openPosSession(new SalesDtos.OpenPosSessionRequest(
+        "SHIFT-HCM-MIXED-PAY",
+        TestFixtures.OUTLET_HCM_1,
+        "USD",
+        null,
+        null,
+        "REGISTER-MIXED",
+        "cashier-mixed",
+        LocalDate.parse("2026-04-27"),
+        "Mixed payments"));
+
+    SalesDtos.SaleView cashSale = submitSaleForSession(session.id(), "Cash order", BigDecimal.ONE);
+    SalesDtos.SaleView cardSale = submitSaleForSession(session.id(), "Card order", BigDecimal.ONE);
+    repository.approveSale(Long.parseLong(cashSale.id()), TestFixtures.USER_MANAGER_HCM);
+    repository.approveSale(Long.parseLong(cardSale.id()), TestFixtures.USER_MANAGER_HCM);
+    repository.markPaymentDone(
+        Long.parseLong(cashSale.id()),
+        new SalesDtos.MarkPaymentDoneRequest(
+            "cash",
+            new BigDecimal("35000.00"),
+            Instant.parse("2026-04-27T09:10:00Z"),
+            "cash-mixed",
+            "paid"));
+    repository.markPaymentDone(
+        Long.parseLong(cardSale.id()),
+        new SalesDtos.MarkPaymentDoneRequest(
+            "card",
+            new BigDecimal("35000.00"),
+            Instant.parse("2026-04-27T09:11:00Z"),
+            "card-mixed",
+            "paid"));
+
+    SalesDtos.PosSessionPaymentSummaryView summary =
+        repository.getPosSessionPaymentSummary(Long.parseLong(session.id()));
+    assertEquals(2, summary.orderCount());
+    assertEquals(0, new BigDecimal("70000.00").compareTo(summary.totalRevenue()));
+    assertEquals(2, summary.items().size());
+    assertTrue(summary.items().stream().anyMatch(line ->
+        "cash".equals(line.paymentMethod()) && line.count() == 1
+            && new BigDecimal("35000.00").compareTo(line.total()) == 0));
+    assertTrue(summary.items().stream().anyMatch(line ->
+        "card".equals(line.paymentMethod()) && line.count() == 1
+            && new BigDecimal("35000.00").compareTo(line.total()) == 0));
+
+    PagedResult<SalesDtos.SaleListItemView> sales = repository.listSales(
+        Set.of(TestFixtures.OUTLET_HCM_1),
+        null,
+        null,
+        null,
+        "paid",
+        false,
+        Long.parseLong(session.id()),
+        null,
+        "createdAt",
+        "desc",
+        20,
+        0);
+    assertEquals(2, sales.items().size());
+    assertTrue(sales.items().stream().anyMatch(item -> "cash".equals(item.paymentMethod())));
+    assertTrue(sales.items().stream().anyMatch(item -> "card".equals(item.paymentMethod())));
+  }
+
+  @Test
   void findSaleLoadsCompositeSaleUsingSingleConnection() {
     SalesDtos.PosSessionView session = repository.openPosSession(new SalesDtos.OpenPosSessionRequest(
         "SHIFT-HCM-FIND",

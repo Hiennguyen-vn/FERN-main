@@ -13,11 +13,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
 public class PublicPosService {
+
+  private static final Logger log = LoggerFactory.getLogger(PublicPosService.class);
 
   private final SalesRepository salesRepository;
   private final Clock clock;
@@ -52,7 +56,7 @@ public class PublicPosService {
     return withPublicTableScope(tableToken, false, table -> {
       SalesRepository.CreatedPublicOrder order = salesRepository.findPublicOrder(tableToken, orderToken)
           .orElseThrow(() -> ServiceException.notFound("Customer order not found"));
-      return toReceipt(table, order.orderToken(), order.sale());
+      return toReceipt(table, order);
     });
   }
 
@@ -61,30 +65,37 @@ public class PublicPosService {
       PublicPosDtos.CreatePublicOrderRequest request
   ) {
     return withPublicTableScope(tableToken, true, table -> {
-      LocalDate businessDate = currentBusinessDate(table);
-      List<PublicPosDtos.PublicMenuItemView> menu =
-          salesRepository.listPublicMenu(table.outletId(), businessDate);
-      Map<String, PublicPosDtos.PublicMenuItemView> menuByProductId =
-          menu.stream()
-              .collect(
-                  java.util.stream.Collectors.toMap(
-                      PublicPosDtos.PublicMenuItemView::productId,
-                      Function.identity(),
-                      (left, right) -> left,
-                      java.util.LinkedHashMap::new));
-      PromotionEngine.Allocation promotionAllocation =
-          computePromotionDiscounts(table.outletId(), request, menuByProductId);
-      Map<Long, BigDecimal> discountByProduct = discountByProduct(promotionAllocation);
+      LocalDate businessDate;
+      Map<String, PublicPosDtos.PublicMenuItemView> menuByProductId;
+      PromotionEngine.Allocation promotionAllocation;
+      Map<Long, BigDecimal> discountByProduct;
+      try {
+        businessDate = currentBusinessDate(table);
+        List<PublicPosDtos.PublicMenuItemView> menu =
+            salesRepository.listPublicMenu(table.outletId(), businessDate);
+        menuByProductId =
+            menu.stream()
+                .collect(
+                    java.util.stream.Collectors.toMap(
+                        PublicPosDtos.PublicMenuItemView::productId,
+                        Function.identity(),
+                        (left, right) -> left,
+                        java.util.LinkedHashMap::new));
+        promotionAllocation =
+            computePromotionDiscounts(table.outletId(), request, menuByProductId);
+        discountByProduct = discountByProduct(promotionAllocation);
+      } catch (RuntimeException exception) {
+        log.error("public order preparation failed for table {}", table.publicToken(), exception);
+        throw exception;
+      }
       SalesRepository.CreatedPublicOrder created;
       try {
-        created = discountByProduct.isEmpty()
-            ? salesRepository.submitPublicOrder(table, request, businessDate)
-            : salesRepository.submitPublicOrder(
-                table,
-                request,
-                businessDate,
-                discountByProduct,
-                promotionAllocation.promotionId());
+        created = salesRepository.submitPublicOrderBatch(
+            table,
+            request,
+            businessDate,
+            discountByProduct,
+            promotionAllocation.promotionId());
       } catch (ServiceException exception) {
         if (exception.getStatusCode() == 409 && exception.getDetails() != null) {
           throw ServiceException.conflict(
@@ -92,7 +103,7 @@ public class PublicPosService {
         }
         throw exception;
       }
-      return toReceipt(table, created.orderToken(), created.sale(), menuByProductId);
+      return toReceipt(table, created, menuByProductId);
     });
   }
 
@@ -134,7 +145,12 @@ public class PublicPosService {
       cart.add(new PromotionEngine.CartLine(productId, item.quantity(), menuItem.priceValue()));
     }
     if (cart.isEmpty()) return PromotionEngine.Allocation.EMPTY;
-    return promotionEngine.evaluateForCart(outletId, cart);
+    try {
+      return promotionEngine.evaluateForCart(outletId, cart);
+    } catch (RuntimeException e) {
+      log.warn("promotion engine evaluation failed for public order outlet {}: {}", outletId, e.getMessage());
+      return PromotionEngine.Allocation.EMPTY;
+    }
   }
 
   private Map<Long, BigDecimal> discountByProduct(PromotionEngine.Allocation allocation) {
@@ -187,8 +203,7 @@ public class PublicPosService {
 
   private PublicPosDtos.PublicOrderReceiptView toReceipt(
       SalesRepository.PublicOrderingTableRecord table,
-      String orderToken,
-      SalesDtos.SaleView sale
+      SalesRepository.CreatedPublicOrder order
   ) {
     LocalDate businessDate = currentBusinessDate(table);
     Map<String, PublicPosDtos.PublicMenuItemView> menuByProductId = salesRepository
@@ -200,28 +215,32 @@ public class PublicPosService {
                 Function.identity(),
                 (left, right) -> left,
                 java.util.LinkedHashMap::new));
-    return toReceipt(table, orderToken, sale, menuByProductId);
+    return toReceipt(table, order, menuByProductId);
   }
 
   private PublicPosDtos.PublicOrderReceiptView toReceipt(
       SalesRepository.PublicOrderingTableRecord table,
-      String orderToken,
-      SalesDtos.SaleView sale,
+      SalesRepository.CreatedPublicOrder order,
       Map<String, PublicPosDtos.PublicMenuItemView> menuByProductId
   ) {
+    SalesDtos.SaleView sale = order.sale();
     return new PublicPosDtos.PublicOrderReceiptView(
-        orderToken,
+        order.orderToken(),
         table.tableCode(),
         table.displayName(),
         table.outletCode(),
         table.outletName(),
-        sale.currencyCode(),
-        sale.status(),
-        sale.paymentStatus(),
-        sale.totalAmount(),
-        sale.note(),
-        sale.createdAt(),
-        sale.items().stream()
+        sale == null ? table.currencyCode() : sale.currencyCode(),
+        sale == null ? order.batchStatus() : sale.status(),
+        sale == null ? "unpaid" : sale.paymentStatus(),
+        sale == null
+            ? order.batchItems().stream()
+                .map(PublicPosDtos.PublicOrderLineView::lineTotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+            : sale.totalAmount(),
+        sale == null ? order.batchNote() : sale.note(),
+        sale == null ? order.batchCreatedAt() : sale.createdAt(),
+        sale == null ? order.batchItems() : sale.items().stream()
             .map(
                 item -> {
                   String productId = Long.toString(item.productId());
@@ -233,7 +252,8 @@ public class PublicPosService {
                       item.quantity(),
                       item.unitPrice(),
                       item.lineTotal(),
-                      item.note());
+                      item.note(),
+                      sale.status());
                 })
             .toList());
   }

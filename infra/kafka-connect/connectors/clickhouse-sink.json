@@ -2,8 +2,8 @@
   "name": "fern-clickhouse-sink",
   "config": {
     "connector.class": "com.clickhouse.kafka.connect.ClickHouseSinkConnector",
-    "tasks.max": "3",
-    "topics": "fern.cdc.core.sale_record,fern.cdc.core.sale_item,fern.cdc.core.payment,fern.cdc.core.inventory_transaction,fern.cdc.core.product,fern.cdc.core.product_category,fern.cdc.core.outlet",
+    "tasks.max": "1",
+    "topics": "fern.cdc.core.sale_record,fern.cdc.core.sale_item,fern.cdc.core.payment,fern.cdc.core.inventory_transaction,fern.cdc.core.product,fern.cdc.core.product_category,fern.cdc.core.outlet,fern.cdc.core.item,fern.cdc.core.recipe,fern.cdc.core.recipe_item",
     "hostname": "clickhouse",
     "port": "8123",
     "database": "cdc",
@@ -18,7 +18,16 @@
     "errors.tolerance": "all",
     "errors.deadletterqueue.topic.name": "fern.outbox.dlq",
     "errors.deadletterqueue.context.headers.enable": "true",
-    "errors.deadletterqueue.topic.replication.factor": "3",
-    "topic2TableMap": "fern.cdc.core.sale_record=sale_record,fern.cdc.core.sale_item=fact_sale,fern.cdc.core.payment=payment,fern.cdc.core.inventory_transaction=inventory_transaction,fern.cdc.core.product=product,fern.cdc.core.product_category=product_category,fern.cdc.core.outlet=outlet"
+    "errors.deadletterqueue.topic.replication.factor": "1",
+    "tableMapping.fern.cdc.core.sale_record": "sale_record",
+    "tableMapping.fern.cdc.core.sale_item": "fact_sale",
+    "tableMapping.fern.cdc.core.payment": "payment",
+    "tableMapping.fern.cdc.core.inventory_transaction": "inventory_transaction",
+    "tableMapping.fern.cdc.core.product": "product",
+    "tableMapping.fern.cdc.core.product_category": "product_category",
+    "tableMapping.fern.cdc.core.outlet": "outlet",
+    "tableMapping.fern.cdc.core.item": "item",
+    "tableMapping.fern.cdc.core.recipe": "recipe",
+    "tableMapping.fern.cdc.core.recipe_item": "recipe_item"
   }
 }

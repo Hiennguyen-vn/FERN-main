@@ -151,6 +151,74 @@ public class SalesRepository extends BaseRepository {
     });
   }
 
+  public CreatedPublicOrder submitPublicOrderBatch(
+      PublicOrderingTableRecord table,
+      PublicPosDtos.CreatePublicOrderRequest request,
+      LocalDate businessDate,
+      Map<Long, BigDecimal> discountByProductId,
+      Long promotionId
+  ) {
+    return executeInTransaction(conn -> {
+      validatePublicOrderItems(conn, table.outletId(), businessDate, request.items());
+      Set<Long> productIds = request.items().stream()
+          .map(item -> parsePublicProductId(item.productId()))
+          .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+      Map<Long, PublicMenuItemRecord> menu = listPublicMenuRecords(conn, table.outletId(), businessDate, productIds);
+      long batchId = snowflakeIdGenerator.generateId();
+      String orderToken = "ord_" + UUID.randomUUID().toString().replace("-", "");
+      Instant now = clock.instant();
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.public_order_batch (
+            id, outlet_id, ordering_table_id, order_token, status, note, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+          """
+      )) {
+        ps.setLong(1, batchId);
+        ps.setLong(2, table.outletId());
+        ps.setLong(3, table.id());
+        ps.setString(4, orderToken);
+        ps.setString(5, trimToNull(request.note()));
+        ps.setTimestamp(6, Timestamp.from(now));
+        ps.setTimestamp(7, Timestamp.from(now));
+        ps.executeUpdate();
+      }
+      for (PublicPosDtos.PublicOrderLineRequest item : request.items()) {
+        long productId = parsePublicProductId(item.productId());
+        PublicMenuItemRecord menuItem = menu.get(productId);
+        if (menuItem == null) {
+          throw ServiceException.conflict("Product is not available for public ordering: " + productId);
+        }
+        BigDecimal quantity = item.quantity();
+        BigDecimal discount = discountByProductId.getOrDefault(productId, BigDecimal.ZERO);
+        BigDecimal tax = BigDecimal.ZERO;
+        BigDecimal lineTotal = menuItem.priceValue().multiply(quantity).subtract(discount).add(tax)
+            .setScale(2, RoundingMode.HALF_UP);
+        try (PreparedStatement ps = conn.prepareStatement(
+            """
+            INSERT INTO core.public_order_batch_item (
+              batch_id, product_id, qty, note, unit_price, discount_amount, tax_amount, line_total, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            """
+        )) {
+          ps.setLong(1, batchId);
+          ps.setLong(2, productId);
+          ps.setBigDecimal(3, quantity);
+          ps.setString(4, trimToNull(item.note()));
+          ps.setBigDecimal(5, menuItem.priceValue());
+          ps.setBigDecimal(6, discount.setScale(2, RoundingMode.HALF_UP));
+          ps.setBigDecimal(7, tax.setScale(2, RoundingMode.HALF_UP));
+          ps.setBigDecimal(8, lineTotal);
+          ps.setTimestamp(9, Timestamp.from(now));
+          ps.setTimestamp(10, Timestamp.from(now));
+          ps.executeUpdate();
+        }
+      }
+      return findPublicOrderBatch(conn, orderToken)
+          .orElseThrow(() -> new IllegalStateException("Created public order batch not found"));
+    });
+  }
+
   public Optional<PublicOrderingTableRecord> findPublicOrderingTable(String tableToken) {
     return queryOne(
         """
@@ -468,6 +536,10 @@ public class SalesRepository extends BaseRepository {
 
   public Optional<CreatedPublicOrder> findPublicOrder(String tableToken, String orderToken) {
     return executeInTransaction(conn -> {
+      Optional<CreatedPublicOrder> batch = findPublicOrderBatch(conn, orderToken);
+      if (batch.isPresent()) {
+        return batch;
+      }
       String sql = """
           SELECT sr.id
           FROM core.sale_record sr
@@ -489,6 +561,271 @@ public class SalesRepository extends BaseRepository {
         }
       }
     });
+  }
+
+  public List<SalesDtos.PublicOrderBatchView> listPublicOrderBatches(Set<Long> outletIds) {
+    if (outletIds != null && outletIds.isEmpty()) {
+      return List.of();
+    }
+    return executeInTransaction(conn -> {
+      StringBuilder sql = new StringBuilder(
+          """
+          SELECT
+            b.id,
+            b.outlet_id,
+            b.sale_id,
+            b.order_token,
+            b.status,
+            b.note,
+            b.created_at,
+            t.table_code,
+            t.display_name,
+            o.currency_code,
+            COALESCE(SUM(bi.line_total), 0) AS total_amount
+          FROM core.public_order_batch b
+          JOIN core.ordering_table t ON t.id = b.ordering_table_id
+          JOIN core.outlet o ON o.id = b.outlet_id
+          LEFT JOIN core.public_order_batch_item bi ON bi.batch_id = b.id
+          WHERE 1 = 1
+          """
+      );
+      List<Object> params = new ArrayList<>();
+      appendOutletScope(sql, params, "b.outlet_id", outletIds);
+      sql.append("""
+          GROUP BY b.id, b.outlet_id, b.sale_id, b.order_token, b.status, b.note, b.created_at,
+                   t.table_code, t.display_name, o.currency_code
+          ORDER BY b.created_at DESC
+          LIMIT 200
+          """);
+      try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+        bindParams(ps, params);
+        try (ResultSet rs = ps.executeQuery()) {
+          List<SalesDtos.PublicOrderBatchView> rows = new ArrayList<>();
+          while (rs.next()) {
+            long batchId = rs.getLong("id");
+            Object saleId = rs.getObject("sale_id");
+            rows.add(new SalesDtos.PublicOrderBatchView(
+                Long.toString(batchId),
+                rs.getLong("outlet_id"),
+                saleId == null ? null : Long.toString(((Number) saleId).longValue()),
+                rs.getString("order_token"),
+                rs.getString("table_code"),
+                rs.getString("display_name"),
+                rs.getString("currency_code"),
+                rs.getString("status"),
+                "approved".equalsIgnoreCase(rs.getString("status")) ? "unpaid" : "pending",
+                rs.getBigDecimal("total_amount"),
+                rs.getString("note"),
+                rs.getTimestamp("created_at").toInstant(),
+                loadPublicOrderBatchItemViews(conn, batchId)
+            ));
+          }
+          return List.copyOf(rows);
+        }
+      }
+    });
+  }
+
+  private List<SalesDtos.PublicOrderBatchItemView> loadPublicOrderBatchItemViews(Connection conn, long batchId)
+      throws Exception {
+    List<SalesDtos.PublicOrderBatchItemView> items = new ArrayList<>();
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT
+          bi.product_id,
+          p.code AS product_code,
+          p.name AS product_name,
+          bi.qty,
+          bi.unit_price,
+          bi.line_total,
+          bi.note,
+          bi.status
+        FROM core.public_order_batch_item bi
+        LEFT JOIN core.product p ON p.id = bi.product_id
+        WHERE bi.batch_id = ?
+        ORDER BY bi.id
+        """
+    )) {
+      ps.setLong(1, batchId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          items.add(new SalesDtos.PublicOrderBatchItemView(
+              Long.toString(rs.getLong("product_id")),
+              rs.getString("product_code"),
+              rs.getString("product_name"),
+              rs.getBigDecimal("qty"),
+              rs.getBigDecimal("unit_price"),
+              rs.getBigDecimal("line_total"),
+              rs.getString("note"),
+              rs.getString("status")
+          ));
+        }
+      }
+    }
+    return List.copyOf(items);
+  }
+
+  private Optional<CreatedPublicOrder> findPublicOrderBatch(Connection conn, String orderToken) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT
+          b.id,
+          b.order_token,
+          b.sale_id,
+          b.status,
+          b.note,
+          b.created_at,
+          t.table_code,
+          t.display_name,
+          o.code AS outlet_code,
+          o.name AS outlet_name,
+          r.currency_code
+        FROM core.public_order_batch b
+        JOIN core.ordering_table t ON t.id = b.ordering_table_id
+        JOIN core.outlet o ON o.id = b.outlet_id
+        JOIN core.region r ON r.id = o.region_id
+        WHERE b.order_token = ?
+        """
+    )) {
+      ps.setString(1, orderToken);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) return Optional.empty();
+        Object saleId = rs.getObject("sale_id");
+        SalesDtos.SaleView sale = saleId == null
+            ? null
+            : findSale(conn, ((Number) saleId).longValue()).orElse(null);
+        return Optional.of(new CreatedPublicOrder(
+            rs.getString("order_token"),
+            sale,
+            rs.getLong("id"),
+            rs.getString("status"),
+            rs.getString("note"),
+            rs.getTimestamp("created_at").toInstant(),
+            loadPublicOrderBatchItems(conn, rs.getLong("id"))
+        ));
+      }
+    }
+  }
+
+  private Optional<PublicOrderBatchRecord> lockPublicOrderBatch(Connection conn, long batchId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT
+          b.id,
+          b.outlet_id,
+          b.ordering_table_id,
+          b.sale_id,
+          b.order_token,
+          b.status,
+          b.note,
+          b.created_at,
+          t.table_code,
+          t.display_name,
+          o.currency_code,
+          COALESCE(
+            psn.business_date,
+            (b.created_at AT TIME ZONE COALESCE(NULLIF(r.timezone_name, ''), ?))::date
+          ) AS business_date
+        FROM core.public_order_batch b
+        JOIN core.ordering_table t ON t.id = b.ordering_table_id
+        JOIN core.outlet o ON o.id = b.outlet_id
+        JOIN core.region r ON r.id = o.region_id
+        LEFT JOIN core.pos_session psn ON psn.id = b.sale_id
+        WHERE b.id = ?
+        FOR UPDATE OF b
+        """
+    )) {
+      ps.setString(1, DEFAULT_OUTLET_TIMEZONE);
+      ps.setLong(2, batchId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) return Optional.empty();
+        Object saleId = rs.getObject("sale_id");
+        return Optional.of(new PublicOrderBatchRecord(
+            rs.getLong("id"),
+            rs.getLong("outlet_id"),
+            rs.getLong("ordering_table_id"),
+            saleId == null ? null : ((Number) saleId).longValue(),
+            rs.getString("order_token"),
+            rs.getString("status"),
+            rs.getString("note"),
+            rs.getTimestamp("created_at").toInstant(),
+            rs.getString("table_code"),
+            rs.getString("display_name"),
+            rs.getString("currency_code"),
+            rs.getObject("business_date", LocalDate.class)
+        ));
+      }
+    }
+  }
+
+  private List<PublicOrderBatchItemRecord> loadPublicOrderBatchItemRecords(Connection conn, long batchId)
+      throws Exception {
+    List<PublicOrderBatchItemRecord> items = new ArrayList<>();
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT product_id, qty, note, unit_price, discount_amount, tax_amount, line_total, status
+        FROM core.public_order_batch_item
+        WHERE batch_id = ?
+        ORDER BY id
+        """
+    )) {
+      ps.setLong(1, batchId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          items.add(new PublicOrderBatchItemRecord(
+              rs.getLong("product_id"),
+              rs.getBigDecimal("qty"),
+              rs.getString("note"),
+              rs.getBigDecimal("unit_price"),
+              rs.getBigDecimal("discount_amount"),
+              rs.getBigDecimal("tax_amount"),
+              rs.getBigDecimal("line_total"),
+              rs.getString("status")
+          ));
+        }
+      }
+    }
+    return List.copyOf(items);
+  }
+
+  private List<PublicPosDtos.PublicOrderLineView> loadPublicOrderBatchItems(Connection conn, long batchId)
+      throws Exception {
+    List<PublicPosDtos.PublicOrderLineView> items = new ArrayList<>();
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT
+          bi.product_id,
+          p.code AS product_code,
+          p.name AS product_name,
+          bi.qty,
+          bi.unit_price,
+          bi.line_total,
+          bi.note,
+          bi.status
+        FROM core.public_order_batch_item bi
+        LEFT JOIN core.product p ON p.id = bi.product_id
+        WHERE bi.batch_id = ?
+        ORDER BY bi.id
+        """
+    )) {
+      ps.setLong(1, batchId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          String productId = Long.toString(rs.getLong("product_id"));
+          items.add(new PublicPosDtos.PublicOrderLineView(
+              productId,
+              rs.getString("product_code"),
+              rs.getString("product_name"),
+              rs.getBigDecimal("qty"),
+              rs.getBigDecimal("unit_price"),
+              rs.getBigDecimal("line_total"),
+              rs.getString("note"),
+              rs.getString("status")
+          ));
+        }
+      }
+    }
+    return List.copyOf(items);
   }
 
   private SalesDtos.SaleView submitSale(
@@ -610,6 +947,20 @@ public class SalesRepository extends BaseRepository {
 
   public Optional<SalesDtos.PosSessionView> findPosSession(long sessionId) {
     return sessionRepository.findPosSession(sessionId);
+  }
+
+  public SalesDtos.PosSessionPaymentSummaryView getPosSessionPaymentSummary(long sessionId) {
+    return executeInTransaction(conn -> {
+      List<SalesDtos.PosSessionPaymentSummaryLineView> items =
+          paymentRepository.loadPaymentSummaryBySession(conn, sessionId);
+      BigDecimal totalRevenue = items.stream()
+          .map(SalesDtos.PosSessionPaymentSummaryLineView::total)
+          .reduce(BigDecimal.ZERO, BigDecimal::add);
+      int orderCount = items.stream()
+          .mapToInt(SalesDtos.PosSessionPaymentSummaryLineView::count)
+          .sum();
+      return new SalesDtos.PosSessionPaymentSummaryView(orderCount, totalRevenue, items);
+    });
   }
 
   public void linkCustomerToSale(long saleId, Long customerId) {
@@ -938,6 +1289,267 @@ public class SalesRepository extends BaseRepository {
       appendSaleApprovedOutbox(conn, approved, lockedSale.businessDate(), actorUserId, allowOversell, oversell);
       return approved;
     });
+  }
+
+  public SalesDtos.SaleView approvePublicOrderBatch(long batchId, Long actorUserId) {
+    return executeInTransaction(conn -> {
+      PublicOrderBatchRecord batch = lockPublicOrderBatch(conn, batchId)
+          .orElseThrow(() -> ServiceException.notFound("Public order batch not found: " + batchId));
+      if (!"pending".equalsIgnoreCase(batch.status())) {
+        if (batch.saleId() != null) {
+          return findSale(conn, batch.saleId())
+              .orElseThrow(() -> new IllegalStateException("Approved batch sale not found"));
+        }
+        throw ServiceException.conflict("Only pending QR order batches can be approved");
+      }
+      List<PublicOrderBatchItemRecord> batchItems = loadPublicOrderBatchItemRecords(conn, batchId);
+      if (batchItems.isEmpty()) {
+        throw ServiceException.conflict("Cannot approve an empty QR order batch");
+      }
+
+      Optional<Long> sessionLookup = sessionRepository.findOpenPosSessionIdForOutlet(conn, batch.outletId());
+      long sessionId = sessionLookup.orElseThrow(() -> ServiceException.conflict(
+          "No open POS session for outlet " + batch.outletId() + " — open a session before approving customer orders"));
+      long saleId = findOpenTableSaleId(conn, batch.orderingTableId()).orElse(0L);
+      SalesDtos.SaleView sale;
+      if (saleId == 0L) {
+        sale = submitSale(conn, new SalesDtos.SubmitSaleRequest(
+            batch.outletId(),
+            sessionId,
+            batch.currencyCode(),
+            "online",
+            buildPublicOrderNote(batch.tableCode(), batch.tableName(), batch.note()),
+            batchItems.stream().map(item -> new SalesDtos.SaleLineRequest(
+                item.productId(),
+                item.quantity(),
+                item.discountAmount(),
+                item.taxAmount(),
+                item.note(),
+                Set.of(),
+                null,
+                null,
+                null
+            )).toList(),
+            null
+        ), batch.businessDate(), new PublicOrderMetadata(batch.orderingTableId(), batch.orderToken()));
+        saleId = Long.parseLong(sale.id());
+        final long createdSaleId = saleId;
+        LockedSaleRecord lockedSale = lockSale(conn, saleId)
+            .orElseThrow(() -> ServiceException.notFound("Sale not found: " + createdSaleId));
+        Map<Long, AggregatedSaleLine> aggregatedLines = loadSaleLinesForInventory(conn, saleId, lockedSale.createdAt());
+        InventoryPlan plan = buildInventoryPlan(conn, batch.outletId(), aggregatedLines, true);
+        if (!plan.shortages().isEmpty()) {
+          throw ServiceException.conflict("One or more items no longer have enough stock to approve this order", plan.shortages());
+        }
+        try (PreparedStatement ps = conn.prepareStatement(
+            """
+            UPDATE core.sale_record
+            SET status = 'order_approved'::sale_order_status_enum,
+                payment_status = 'unpaid'::payment_status_enum,
+                updated_at = NOW()
+            WHERE id = ?
+            """
+        )) {
+          ps.setLong(1, saleId);
+          ps.executeUpdate();
+        }
+        applySaleUsageInventory(
+            conn,
+            saleId,
+            lockedSale.createdAt(),
+            batch.outletId(),
+            lockedSale.businessDate(),
+            clock.instant(),
+            actorUserId,
+            false,
+            plan
+        );
+        sale = findSale(conn, saleId)
+            .orElseThrow(() -> new IllegalStateException("Approved table sale not found"));
+      } else {
+        final long existingSaleId = saleId;
+        LockedSaleRecord lockedSale = lockSale(conn, saleId)
+            .orElseThrow(() -> ServiceException.notFound("Sale not found: " + existingSaleId));
+        Map<Long, AggregatedSaleLine> aggregatedLines = new LinkedHashMap<>();
+        for (PublicOrderBatchItemRecord item : batchItems) {
+          aggregatedLines.put(item.productId(), new AggregatedSaleLine(
+              item.productId(),
+              item.quantity(),
+              item.unitPrice(),
+              item.discountAmount(),
+              item.taxAmount(),
+              Set.of(),
+              item.note(),
+              null,
+              null,
+              Set.of()
+          ));
+        }
+        InventoryPlan plan = buildInventoryPlan(conn, batch.outletId(), aggregatedLines, true);
+        if (!plan.shortages().isEmpty()) {
+          throw ServiceException.conflict("One or more items no longer have enough stock to approve this order", plan.shortages());
+        }
+        appendBatchItemsToSale(conn, saleId, lockedSale.createdAt(), batch.outletId(), batchItems);
+        recalculateSaleTotalsFromItems(conn, saleId);
+        applySaleUsageInventory(
+            conn,
+            saleId,
+            lockedSale.createdAt(),
+            batch.outletId(),
+            lockedSale.businessDate(),
+            clock.instant(),
+            actorUserId,
+            false,
+            plan
+        );
+        sale = findSale(conn, saleId)
+            .orElseThrow(() -> new IllegalStateException("Updated table sale not found"));
+      }
+
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          UPDATE core.public_order_batch
+          SET sale_id = ?,
+              status = 'approved',
+              approved_at = NOW(),
+              approved_by = ?,
+              updated_at = NOW()
+          WHERE id = ?
+          """
+      )) {
+        ps.setLong(1, saleId);
+        if (actorUserId == null) ps.setNull(2, Types.BIGINT); else ps.setLong(2, actorUserId);
+        ps.setLong(3, batchId);
+        ps.executeUpdate();
+      }
+      try (PreparedStatement ps = conn.prepareStatement(
+          "UPDATE core.public_order_batch_item SET status = 'approved', updated_at = NOW() WHERE batch_id = ?"
+      )) {
+        ps.setLong(1, batchId);
+        ps.executeUpdate();
+      }
+      return sale;
+    });
+  }
+
+  public void rejectPublicOrderBatch(long batchId, String reason, Long actorUserId) {
+    executeInTransaction(conn -> {
+      PublicOrderBatchRecord batch = lockPublicOrderBatch(conn, batchId)
+          .orElseThrow(() -> ServiceException.notFound("Public order batch not found: " + batchId));
+      if (!"pending".equalsIgnoreCase(batch.status())) {
+        throw ServiceException.conflict("Only pending QR order batches can be rejected");
+      }
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          UPDATE core.public_order_batch
+          SET status = 'rejected',
+              rejected_at = NOW(),
+              rejected_by = ?,
+              rejection_reason = ?,
+              updated_at = NOW()
+          WHERE id = ?
+          """
+      )) {
+        if (actorUserId == null) ps.setNull(1, Types.BIGINT); else ps.setLong(1, actorUserId);
+        ps.setString(2, trimToNull(reason));
+        ps.setLong(3, batchId);
+        ps.executeUpdate();
+      }
+      try (PreparedStatement ps = conn.prepareStatement(
+          "UPDATE core.public_order_batch_item SET status = 'rejected', updated_at = NOW() WHERE batch_id = ?"
+      )) {
+        ps.setLong(1, batchId);
+        ps.executeUpdate();
+      }
+      return null;
+    });
+  }
+
+  private void appendBatchItemsToSale(
+      Connection conn,
+      long saleId,
+      Instant saleCreatedAt,
+      long outletId,
+      List<PublicOrderBatchItemRecord> items
+  ) throws Exception {
+    for (PublicOrderBatchItemRecord item : items) {
+      BigDecimal lineTotal = item.unitPrice().multiply(item.quantity())
+          .subtract(item.discountAmount()).add(item.taxAmount()).setScale(2, RoundingMode.HALF_UP);
+      try (PreparedStatement ps = conn.prepareStatement(
+          """
+          INSERT INTO core.sale_item (
+            sale_id, sale_created_at, outlet_id, product_id,
+            unit_price, qty, discount_amount, tax_amount, line_total, note, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+          ON CONFLICT (sale_id, sale_created_at, product_id) DO UPDATE
+          SET qty = core.sale_item.qty + EXCLUDED.qty,
+              discount_amount = core.sale_item.discount_amount + EXCLUDED.discount_amount,
+              tax_amount = core.sale_item.tax_amount + EXCLUDED.tax_amount,
+              line_total = core.sale_item.line_total + EXCLUDED.line_total,
+              note = COALESCE(NULLIF(core.sale_item.note, ''), EXCLUDED.note),
+              updated_at = NOW()
+          """
+      )) {
+        ps.setLong(1, saleId);
+        ps.setTimestamp(2, Timestamp.from(saleCreatedAt));
+        ps.setLong(3, outletId);
+        ps.setLong(4, item.productId());
+        ps.setBigDecimal(5, item.unitPrice());
+        ps.setBigDecimal(6, item.quantity());
+        ps.setBigDecimal(7, item.discountAmount());
+        ps.setBigDecimal(8, item.taxAmount());
+        ps.setBigDecimal(9, lineTotal);
+        ps.setString(10, item.note());
+        ps.executeUpdate();
+      }
+    }
+  }
+
+  private void recalculateSaleTotalsFromItems(Connection conn, long saleId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        UPDATE core.sale_record sr
+        SET subtotal = agg.subtotal,
+            discount = agg.discount,
+            tax_amount = agg.tax_amount,
+            total_amount = agg.total_amount,
+            updated_at = NOW()
+        FROM (
+          SELECT
+            COALESCE(SUM(unit_price * qty), 0) AS subtotal,
+            COALESCE(SUM(discount_amount), 0) AS discount,
+            COALESCE(SUM(tax_amount), 0) AS tax_amount,
+            COALESCE(SUM(line_total), 0) AS total_amount
+          FROM core.sale_item
+          WHERE sale_id = ?
+        ) agg
+        WHERE sr.id = ?
+        """
+    )) {
+      ps.setLong(1, saleId);
+      ps.setLong(2, saleId);
+      ps.executeUpdate();
+    }
+  }
+
+  private Optional<Long> findOpenTableSaleId(Connection conn, long orderingTableId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT id
+        FROM core.sale_record
+        WHERE ordering_table_id = ?
+          AND status = 'order_approved'::sale_order_status_enum
+          AND payment_status = 'unpaid'::payment_status_enum
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+        FOR UPDATE
+        """
+    )) {
+      ps.setLong(1, orderingTableId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? Optional.of(rs.getLong("id")) : Optional.empty();
+      }
+    }
   }
 
   private void appendSaleApprovedOutbox(
@@ -1450,9 +2062,18 @@ public class SalesRepository extends BaseRepository {
             sr.total_amount,
             sr.note,
             sr.created_at,
+            pay.payment_method,
             COUNT(*) OVER() AS total_count
           FROM core.sale_record sr
           LEFT JOIN core.ordering_table t ON t.id = sr.ordering_table_id
+          LEFT JOIN LATERAL (
+            SELECT p.payment_method::text AS payment_method
+            FROM core.payment p
+            WHERE p.sale_id = sr.id
+              AND p.status = 'success'::payment_txn_status_enum
+            ORDER BY p.payment_time DESC NULLS LAST, p.sale_created_at DESC
+            LIMIT 1
+          ) pay ON true
           WHERE 1 = 1
           """
       );
@@ -2666,6 +3287,7 @@ public class SalesRepository extends BaseRepository {
           rs.getBigDecimal("tax_amount"),
           rs.getBigDecimal("total_amount"),
           rs.getString("note"),
+          rs.getString("payment_method"),
           rs.getTimestamp("created_at").toInstant()
       );
     } catch (Exception e) {
@@ -3179,8 +3801,16 @@ public class SalesRepository extends BaseRepository {
 
   public record CreatedPublicOrder(
       String orderToken,
-      SalesDtos.SaleView sale
+      SalesDtos.SaleView sale,
+      Long batchId,
+      String batchStatus,
+      String batchNote,
+      Instant batchCreatedAt,
+      List<PublicPosDtos.PublicOrderLineView> batchItems
   ) {
+    public CreatedPublicOrder(String orderToken, SalesDtos.SaleView sale) {
+      this(orderToken, sale, null, null, null, null, List.of());
+    }
   }
 
   private record PublicMenuItemRecord(
@@ -3192,6 +3822,34 @@ public class SalesRepository extends BaseRepository {
       String imageUrl,
       BigDecimal priceValue,
       String currencyCode
+  ) {
+  }
+
+  private record PublicOrderBatchRecord(
+      long id,
+      long outletId,
+      long orderingTableId,
+      Long saleId,
+      String orderToken,
+      String status,
+      String note,
+      Instant createdAt,
+      String tableCode,
+      String tableName,
+      String currencyCode,
+      LocalDate businessDate
+  ) {
+  }
+
+  private record PublicOrderBatchItemRecord(
+      long productId,
+      BigDecimal quantity,
+      String note,
+      BigDecimal unitPrice,
+      BigDecimal discountAmount,
+      BigDecimal taxAmount,
+      BigDecimal lineTotal,
+      String status
   ) {
   }
 

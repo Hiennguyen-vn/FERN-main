@@ -223,7 +223,37 @@ public final class SalesDtos {
       BigDecimal taxAmount,
       BigDecimal totalAmount,
       String note,
+      String paymentMethod,
       Instant createdAt
+  ) {
+  }
+
+  public record PublicOrderBatchItemView(
+      String productId,
+      String productCode,
+      String productName,
+      BigDecimal quantity,
+      BigDecimal unitPrice,
+      BigDecimal lineTotal,
+      String note,
+      String status
+  ) {
+  }
+
+  public record PublicOrderBatchView(
+      String id,
+      long outletId,
+      String saleId,
+      String orderToken,
+      String orderingTableCode,
+      String orderingTableName,
+      String currencyCode,
+      String status,
+      String paymentStatus,
+      BigDecimal totalAmount,
+      String note,
+      Instant createdAt,
+      List<PublicOrderBatchItemView> items
   ) {
   }
 
@@ -264,6 +294,20 @@ public final class SalesDtos {
       BigDecimal discrepancyTotal,
       String note,
       List<PosSessionReconciliationLineView> lines
+  ) {
+  }
+
+  public record PosSessionPaymentSummaryLineView(
+      String paymentMethod,
+      BigDecimal total,
+      int count
+  ) {
+  }
+
+  public record PosSessionPaymentSummaryView(
+      int orderCount,
+      BigDecimal totalRevenue,
+      List<PosSessionPaymentSummaryLineView> items
   ) {
   }
 

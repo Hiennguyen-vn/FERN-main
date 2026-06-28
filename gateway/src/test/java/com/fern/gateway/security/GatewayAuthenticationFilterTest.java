@@ -141,6 +141,26 @@ class GatewayAuthenticationFilterTest {
   }
 
   @Test
+  void publicOrderBatchStaffPathsRequireAuthentication() {
+    GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
+        new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
+        new SpringInternalServiceAuth(INTERNAL_TOKEN),
+        Mockito.mock(AuthSessionService.class),
+        Mockito.mock(DeviceTokenRegistry.class),
+        AUTH_COOKIE_NAME
+    );
+
+    MockServerHttpRequest request = MockServerHttpRequest
+        .get("/api/v1/sales/public-order-batches?outletId=1")
+        .build();
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+    filter.filter(exchange, ignored -> Mono.empty()).block();
+
+    assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+  }
+
+  @Test
   void publicProductImagePathsBypassJwtAndRemainPublic() {
     GatewayAuthenticationFilter filter = new GatewayAuthenticationFilter(
         new JwtTokenService(new ObjectMapper().findAndRegisterModules(), JWT_SECRET),
