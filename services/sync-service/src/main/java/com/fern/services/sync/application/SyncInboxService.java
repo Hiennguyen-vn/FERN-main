@@ -1,7 +1,7 @@
 package com.fern.services.sync.application;
 
 import com.fern.services.sync.api.SyncDtos;
-import com.fern.services.sync.infrastructure.SyncRepository;
+import com.fern.services.sync.state.SyncRepository;
 import org.springframework.stereotype.Service;
 
 @Service

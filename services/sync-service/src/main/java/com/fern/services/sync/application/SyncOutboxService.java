@@ -1,7 +1,7 @@
 package com.fern.services.sync.application;
 
 import com.fern.services.sync.api.SyncDtos;
-import com.fern.services.sync.infrastructure.SyncRepository;
+import com.fern.services.sync.state.SyncRepository;
 import com.fern.services.sync.model.TargetScope;
 import org.springframework.stereotype.Service;
 
@@ -18,7 +18,7 @@ public class SyncOutboxService {
     TargetScope targetScope = request.targetStoreId() == null
         ? TargetScope.ALL_STORES
         : TargetScope.STORE;
-    long version = request.version() == null ? System.currentTimeMillis() : request.version();
+    long version = request.version() == null ? nextVersionFor(request) : request.version();
     return syncRepository.appendCentralOutbox(
         request.eventType(),
         request.aggregateType(),
@@ -29,5 +29,10 @@ public class SyncOutboxService {
         request.targetStoreGroupId(),
         version
     );
+  }
+
+  private long nextVersionFor(SyncDtos.CentralOutboxPublishRequest request) {
+    return Math.abs((request.aggregateType().name() + ":" + request.aggregateId()).hashCode())
+        + System.currentTimeMillis();
   }
 }

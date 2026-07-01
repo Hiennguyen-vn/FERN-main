@@ -3,12 +3,9 @@ package com.fern.services.sync.api;
 import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
-import com.fern.services.sync.application.SyncDownloadService;
-import com.fern.services.sync.application.SyncInboxService;
-import com.fern.services.sync.application.SyncNodeProvisioningService;
-import com.fern.services.sync.application.SyncOutboxService;
-import com.fern.services.sync.application.SyncStatusService;
-import com.fern.services.sync.application.SyncUploadService;
+import com.fern.services.sync.central.CentralSyncFacade;
+import com.fern.services.sync.hub.RegionalHubFacade;
+import com.fern.services.sync.shared.SyncRuntimeRoleResolver;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,32 +21,27 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/sync")
 public class SyncController {
 
-  private final SyncUploadService uploadService;
-  private final SyncDownloadService downloadService;
-  private final SyncInboxService inboxService;
-  private final SyncStatusService statusService;
-  private final SyncOutboxService outboxService;
-  private final SyncNodeProvisioningService nodeProvisioningService;
+  private final CentralSyncFacade centralSyncFacade;
+  private final RegionalHubFacade regionalHubFacade;
+  private final SyncRuntimeRoleResolver runtimeRoleResolver;
 
   public SyncController(
-      SyncUploadService uploadService,
-      SyncDownloadService downloadService,
-      SyncInboxService inboxService,
-      SyncStatusService statusService,
-      SyncOutboxService outboxService,
-      SyncNodeProvisioningService nodeProvisioningService
+      CentralSyncFacade centralSyncFacade,
+      RegionalHubFacade regionalHubFacade,
+      SyncRuntimeRoleResolver runtimeRoleResolver
   ) {
-    this.uploadService = uploadService;
-    this.downloadService = downloadService;
-    this.inboxService = inboxService;
-    this.statusService = statusService;
-    this.outboxService = outboxService;
-    this.nodeProvisioningService = nodeProvisioningService;
+    this.centralSyncFacade = centralSyncFacade;
+    this.regionalHubFacade = regionalHubFacade;
+    this.runtimeRoleResolver = runtimeRoleResolver;
   }
 
+  // Ingest endpoints
   @PostMapping("/upload")
   public SyncDtos.SyncUploadResponse upload(@Valid @RequestBody SyncDtos.SyncUploadRequest request) {
-    return uploadService.upload(request);
+    if (runtimeRoleResolver.isHubRole()) {
+      return regionalHubFacade.upload(request);
+    }
+    return centralSyncFacade.upload(request);
   }
 
   @GetMapping("/download")
@@ -58,18 +50,29 @@ public class SyncController {
       @RequestParam(required = false) String cursor,
       @RequestParam(required = false) Integer limit
   ) {
-    return downloadService.download(storeId, cursor, limit);
+    if (runtimeRoleResolver.isHubRole()) {
+      return regionalHubFacade.download(storeId, cursor, limit);
+    }
+    return centralSyncFacade.download(storeId, cursor, limit);
   }
 
   @PostMapping("/ack")
   @ResponseStatus(HttpStatus.NO_CONTENT)
   public void ack(@Valid @RequestBody SyncDtos.SyncAckRequest request) {
-    inboxService.ack(request);
+    if (runtimeRoleResolver.isHubRole()) {
+      regionalHubFacade.ack(request);
+      return;
+    }
+    centralSyncFacade.ack(request);
   }
 
+  // Feed endpoints
   @GetMapping("/status/{storeId}")
   public SyncDtos.SyncStatusResponse status(@PathVariable long storeId) {
-    return statusService.status(storeId);
+    if (runtimeRoleResolver.isHubRole()) {
+      return regionalHubFacade.status(storeId);
+    }
+    return centralSyncFacade.status(storeId);
   }
 
   @PostMapping("/internal/central-outbox")
@@ -78,34 +81,51 @@ public class SyncController {
       @Valid @RequestBody SyncDtos.CentralOutboxPublishRequest request
   ) {
     requireSyncNodeAdmin();
-    return java.util.Map.of("eventId", Long.toString(outboxService.publishCentralEvent(request)));
+    if (runtimeRoleResolver.isHubRole()) {
+      return java.util.Map.of("eventId", Long.toString(regionalHubFacade.publishCentralEvent(request)));
+    }
+    return java.util.Map.of("eventId", Long.toString(centralSyncFacade.publishCentralEvent(request)));
   }
 
+  // Node lifecycle endpoints
   @PostMapping("/internal/nodes/provision")
   @ResponseStatus(HttpStatus.CREATED)
   public SyncDtos.ProvisionSyncNodeResponse provisionNode(
       @Valid @RequestBody SyncDtos.ProvisionSyncNodeRequest request
   ) {
     requireSyncNodeAdmin();
-    return nodeProvisioningService.provision(request);
+    if (runtimeRoleResolver.isHubRole()) {
+      return regionalHubFacade.provisionNode(request);
+    }
+    return centralSyncFacade.provisionNode(request);
   }
 
   @PostMapping("/internal/nodes/{nodeId}/rotate-secret")
   public SyncDtos.RotateSyncNodeSecretResponse rotateNodeSecret(@PathVariable String nodeId) {
     requireSyncNodeAdmin();
-    return nodeProvisioningService.rotateSecret(nodeId);
+    if (runtimeRoleResolver.isHubRole()) {
+      return regionalHubFacade.rotateNodeSecret(nodeId);
+    }
+    return centralSyncFacade.rotateNodeSecret(nodeId);
   }
 
   @PostMapping("/internal/nodes/{nodeId}/revoke")
   @ResponseStatus(HttpStatus.NO_CONTENT)
   public void revokeNode(@PathVariable String nodeId) {
     requireSyncNodeAdmin();
-    nodeProvisioningService.revoke(nodeId);
+    if (runtimeRoleResolver.isHubRole()) {
+      regionalHubFacade.revokeNode(nodeId);
+      return;
+    }
+    centralSyncFacade.revokeNode(nodeId);
   }
 
   @PostMapping("/handshake")
   public SyncDtos.SyncHandshakeResponse handshake(@Valid @RequestBody SyncDtos.SyncHandshakeRequest request) {
-    return nodeProvisioningService.handshake(request);
+    if (runtimeRoleResolver.isHubRole()) {
+      return regionalHubFacade.handshake(request);
+    }
+    return centralSyncFacade.handshake(request);
   }
 
   private void requireSyncNodeAdmin() {

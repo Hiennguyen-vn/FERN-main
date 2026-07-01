@@ -27,6 +27,23 @@ public final class SyncDtos {
   ) {
   }
 
+  public record SyncDownloadEvent(
+      @NotBlank String eventId,
+      @NotNull EventType eventType,
+      @NotNull AggregateType aggregateType,
+      @NotBlank String aggregateId,
+      @Positive long version,
+      @NotNull Instant occurredAt,
+      @NotNull JsonNode payload,
+      String targetScope,
+      Long targetStoreId,
+      Long targetStoreGroupId
+  ) {
+    public SyncEvent toSyncEvent() {
+      return new SyncEvent(eventId, eventType, aggregateType, aggregateId, version, occurredAt, payload);
+    }
+  }
+
   public record SyncUploadRequest(
       @NotBlank String nodeId,
       @NotNull Long storeId,
@@ -48,7 +65,7 @@ public final class SyncDtos {
   }
 
   public record SyncDownloadResponse(
-      List<SyncEvent> events,
+      List<SyncDownloadEvent> events,
       String nextCursor,
       boolean hasMore
   ) {
@@ -75,7 +92,11 @@ public final class SyncDtos {
       long pendingUploadCount,
       long pendingDownloadCount,
       long failedEventCount,
-      Instant lastSeenAt
+      Instant lastSeenAt,
+      long pendingRelayCount,
+      long failedRelayCount,
+      Instant lastRelayAttemptAt,
+      Instant lastRelaySuccessAt
   ) {
   }
 

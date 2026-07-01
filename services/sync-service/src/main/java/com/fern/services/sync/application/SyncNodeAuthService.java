@@ -5,7 +5,7 @@ import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.RequestUserContext;
 import com.fern.common.spring.auth.RequestUserContextHolder;
 import com.fern.services.sync.api.SyncDtos;
-import com.fern.services.sync.infrastructure.SyncRepository;
+import com.fern.services.sync.state.SyncRepository;
 import org.springframework.stereotype.Service;
 
 @Service

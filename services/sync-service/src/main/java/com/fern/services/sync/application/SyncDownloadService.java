@@ -1,7 +1,7 @@
 package com.fern.services.sync.application;
 
 import com.fern.services.sync.api.SyncDtos;
-import com.fern.services.sync.infrastructure.SyncRepository;
+import com.fern.services.sync.state.SyncRepository;
 import java.util.List;
 import org.springframework.stereotype.Service;
 
@@ -28,16 +28,19 @@ public class SyncDownloadService {
     long offset = parseCursor(cursor);
     List<SyncRepository.CentralOutboxRow> rows = syncRepository.findDownloadEvents(storeId, offset, batchSize + 1);
     boolean hasMore = rows.size() > batchSize;
-    List<SyncDtos.SyncEvent> events = rows.stream()
+    List<SyncDtos.SyncDownloadEvent> events = rows.stream()
         .limit(batchSize)
-        .map(row -> new SyncDtos.SyncEvent(
+        .map(row -> new SyncDtos.SyncDownloadEvent(
             Long.toString(row.id()),
             row.eventType(),
             row.aggregateType(),
             row.aggregateId(),
             row.version(),
             row.createdAt(),
-            row.payload()
+            row.payload(),
+            row.targetScope(),
+            row.targetStoreId(),
+            row.targetStoreGroupId()
         ))
         .toList();
     String nextCursor = events.isEmpty() ? Long.toString(offset) : events.getLast().eventId();
@@ -59,7 +62,7 @@ public class SyncDownloadService {
     try {
       return Long.parseLong(cursor.trim());
     } catch (NumberFormatException e) {
-      return 0L;
+      throw com.fern.common.middleware.ServiceException.badRequest("Invalid sync cursor");
     }
   }
 }

@@ -4,7 +4,7 @@ import com.fern.common.middleware.ServiceException;
 import com.fern.common.spring.auth.JwtTokenService;
 import com.fern.common.utils.services.id.SnowflakeIdGenerator;
 import com.fern.services.sync.api.SyncDtos;
-import com.fern.services.sync.infrastructure.SyncRepository;
+import com.fern.services.sync.state.SyncRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;

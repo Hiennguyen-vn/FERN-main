@@ -1,8 +1,8 @@
 package com.fern.services.sync.application;
 
 import com.fern.services.sync.api.SyncDtos;
-import com.fern.services.sync.infrastructure.SyncRepository;
-import com.fern.services.sync.infrastructure.SyncRepository.UploadInsertResult;
+import com.fern.services.sync.state.SyncRepository;
+import com.fern.services.sync.state.SyncRepository.UploadInsertResult;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
@@ -38,7 +38,7 @@ public class SyncUploadService {
       } catch (Exception e) {
         log.warn("Rejected sync upload event nodeId={} storeId={} eventId={}: {}",
             request.nodeId(), request.storeId(), event.eventId(), e.getMessage());
-        rejected.add(new SyncDtos.RejectedEvent(event.eventId(), "APPLY_FAILED"));
+        rejected.add(new SyncDtos.RejectedEvent(event.eventId(), "INGEST_FAILED"));
       }
     }
     return new SyncDtos.SyncUploadResponse(accepted, duplicated, rejected);

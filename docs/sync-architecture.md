@@ -12,7 +12,7 @@ This design adds a dedicated `sync-service` and keeps existing business services
 - Runtime topology: shared PostgreSQL primary plus PostgreSQL replica for read-heavy consumers such as report paths, not database-per-service.
 - Existing 12 services: `auth-service`, `master-node`, `org-service`, `hr-service`, `product-service`, `procurement-service`, `sales-service`, `inventory-service`, `payroll-service`, `finance-service`, `audit-service`, `report-service`.
 - Existing sync-adjacent code: `sales-service` owns `/api/v1/sync` for POS catalog/stock pull and POS push. The new service uses `/api/sync` to avoid breaking that route.
-- Service conventions: controllers in `api`, application services in `application`, JDBC repositories in `infrastructure`, DTO records in `api`, errors through `ServiceException` and the shared global exception handler.
+- General service conventions still often use `api`, `application`, and `infrastructure`, but `sync-service` now follows a more explicit package map with `central`, `edge`, `orchestration`, `transport.http`, `state`, `apply`, and `tier`.
 
 ## Added Components
 
@@ -25,6 +25,21 @@ This design adds a dedicated `sync-service` and keeps existing business services
 - `core.central_inbox`: idempotent store-to-central accepted event log.
 - `core.sync_outbox`, `core.sync_inbox`, `core.sync_cursor`, `core.local_node_config`: store-local sync agent tables.
 - `core.sync_event_acks`, `core.sync_offsets`, `core.sync_conflicts`, `core.sync_logs`, `core.local_applied_versions`: operational tracking, cursors, conflict logging, and version checks.
+
+## Current Sync-Service Shape
+
+`sync-service` currently separates responsibilities as follows:
+
+- `api` for HTTP controllers and DTOs
+- `central` for central runtime boundary and grouped central use-cases
+- `edge` for edge runtime boundary
+- `orchestration` for tier-neutral sync flow coordination
+- `transport` and `transport.http` for sync transport contracts and HTTP adapters
+- `state` for sync persistence and mutable sync state
+- `apply` and `apply.handlers` for local apply routing and aggregate-specific handlers
+- `tier` for `MASTER` / `REGIONAL` / `OUTLET` policy
+
+This internal shape is important for maintainability, but it is not itself the cross-service contract.
 
 ## Central to Store
 
@@ -206,6 +221,19 @@ Payloads are emitted with shared Java records in `SyncPayloadSchemas` instead of
 - `PaymentTransactionPayload`: payment method, amount, currency, status, payment time, and transaction reference.
 - `SaleOrderCancelledPayload`, `CashMovementPayload`, and `KitchenTicketPayload`: store-owned operational events for append-only central ingestion.
 
+These shared payload records are part of the cross-service sync contract.
+
+Changing:
+
+- `SyncPayloadSchemas`
+- `CentralSyncOutboxWriter`
+- `LocalSyncOutboxWriter`
+- aggregate names
+- event names
+- outbox semantics
+
+should be treated as a contract change across services, not as an internal `sync-service` refactor.
+
 ## Store Apply Handlers
 
 The store-side agent routes downloaded events by `eventType` and `aggregateType`.
@@ -221,6 +249,8 @@ Implemented handlers:
 - `PROMOTION_UPDATED`: upserts `core.promotion` and replaces `core.promotion_scope`.
 
 Central-owned handlers record applied versions in `local_applied_versions` and skip older versions.
+
+For the current producer-to-consumer ownership map, see `docs/sync-cross-service-contracts.md`.
 
 ## Conflict Rules
 
