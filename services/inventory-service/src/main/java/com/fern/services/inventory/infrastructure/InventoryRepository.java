@@ -178,12 +178,18 @@ public class InventoryRepository extends BaseRepository {
             it.unit_cost,
             it.created_by_user_id,
             wr.reason AS waste_reason,
-            it.note,
+            CASE
+              WHEN sit.product_id IS NOT NULL THEN
+                'Sale ' || sit.sale_id::text || ' product ' || COALESCE(p.name, sit.product_id::text)
+              ELSE it.note
+            END AS note,
             it.created_at,
             COUNT(*) OVER() AS total_count
           FROM core.inventory_transaction it
           LEFT JOIN core.item i ON i.id = it.item_id
           LEFT JOIN core.waste_record wr ON wr.inventory_transaction_id = it.id
+          LEFT JOIN core.sale_item_transaction sit ON sit.inventory_transaction_id = it.id
+          LEFT JOIN core.product p ON p.id = sit.product_id
           WHERE it.outlet_id = ?
           """
       );
@@ -644,6 +650,9 @@ public class InventoryRepository extends BaseRepository {
     return executeInTransaction(conn -> {
       int inserted = 0;
       for (GoodsReceiptMovement movement : movements) {
+        if (goodsReceiptItemTransactionExists(conn, movement.goodsReceiptItemId())) {
+          continue;
+        }
         long transactionId = snowflakeIdGenerator.generateId();
         insertInventoryTransaction(
             conn,
@@ -1118,6 +1127,256 @@ public class InventoryRepository extends BaseRepository {
     });
   }
 
+  public int countGoodsReceiptInventoryLinks(long goodsReceiptId) {
+    return queryOne(
+        """
+        SELECT COUNT(*)::int AS cnt
+        FROM core.goods_receipt_transaction grt
+        JOIN core.goods_receipt_item gri ON gri.id = grt.goods_receipt_item_id
+        WHERE gri.receipt_id = ?
+        """,
+        rs -> {
+          try {
+            return rs.getInt("cnt");
+          } catch (SQLException e) {
+            throw new IllegalStateException("Failed to count goods receipt inventory links", e);
+          }
+        },
+        goodsReceiptId
+    ).orElse(0);
+  }
+
+  public int countGoodsReceiptItems(long goodsReceiptId) {
+    return queryOne(
+        """
+        SELECT COUNT(*)::int AS cnt
+        FROM core.goods_receipt_item
+        WHERE receipt_id = ?
+        """,
+        rs -> {
+          try {
+            return rs.getInt("cnt");
+          } catch (SQLException e) {
+            throw new IllegalStateException("Failed to count goods receipt items", e);
+          }
+        },
+        goodsReceiptId
+    ).orElse(0);
+  }
+
+  public Optional<String> findGoodsReceiptStatus(long goodsReceiptId) {
+    return queryOne(
+        """
+        SELECT status
+        FROM core.goods_receipt
+        WHERE id = ?
+        """,
+        rs -> {
+          try {
+            return rs.getString("status");
+          } catch (SQLException e) {
+            throw new IllegalStateException("Failed to map goods receipt status", e);
+          }
+        },
+        goodsReceiptId
+    );
+  }
+
+  public record StuckGoodsReceiptView(
+      long goodsReceiptId,
+      String status,
+      int itemCount,
+      int linkedCount
+  ) {}
+
+  public List<StuckGoodsReceiptView> listPostedGoodsReceiptsMissingInventory(int limit) {
+    return queryList(
+        """
+        SELECT gr.id AS goods_receipt_id,
+               gr.status,
+               (SELECT COUNT(*)::int FROM core.goods_receipt_item gri WHERE gri.receipt_id = gr.id) AS item_count,
+               (SELECT COUNT(*)::int
+                FROM core.goods_receipt_transaction grt
+                JOIN core.goods_receipt_item gri ON gri.id = grt.goods_receipt_item_id
+                WHERE gri.receipt_id = gr.id) AS linked_count
+        FROM core.goods_receipt gr
+        WHERE gr.status = 'posted'
+          AND EXISTS (SELECT 1 FROM core.goods_receipt_item gri WHERE gri.receipt_id = gr.id)
+          AND (
+            SELECT COUNT(*)::int
+            FROM core.goods_receipt_transaction grt
+            JOIN core.goods_receipt_item gri ON gri.id = grt.goods_receipt_item_id
+            WHERE gri.receipt_id = gr.id
+          ) < (
+            SELECT COUNT(*)::int FROM core.goods_receipt_item gri WHERE gri.receipt_id = gr.id
+          )
+        ORDER BY gr.id
+        LIMIT ?
+        """,
+        rs -> {
+          try {
+            return new StuckGoodsReceiptView(
+                rs.getLong("goods_receipt_id"),
+                rs.getString("status"),
+                rs.getInt("item_count"),
+                rs.getInt("linked_count")
+            );
+          } catch (SQLException e) {
+            throw new IllegalStateException("Failed to map stuck goods receipt", e);
+          }
+        },
+        limit
+    );
+  }
+
+  public record FailedGoodsReceiptIdempotencyView(
+      long goodsReceiptId,
+      String idempotencyKey,
+      String status,
+      Instant updatedAt
+  ) {}
+
+  public List<FailedGoodsReceiptIdempotencyView> listFailedGoodsReceiptIdempotency(int limit) {
+    return queryList(
+        """
+        SELECT ik.idempotency_key,
+               ik.status,
+               ik.updated_at,
+               CAST(ik.resource_id AS BIGINT) AS goods_receipt_id
+        FROM core.idempotency_keys ik
+        WHERE ik.service_name = 'inventory-service'
+          AND ik.status = 'failed'
+          AND ik.resource_id ~ '^[0-9]+$'
+          AND EXISTS (
+            SELECT 1
+            FROM core.goods_receipt gr
+            WHERE gr.id = CAST(ik.resource_id AS BIGINT)
+          )
+        ORDER BY ik.updated_at DESC
+        LIMIT ?
+        """,
+        rs -> {
+          try {
+            return new FailedGoodsReceiptIdempotencyView(
+                rs.getLong("goods_receipt_id"),
+                rs.getString("idempotency_key"),
+                rs.getString("status"),
+                rs.getTimestamp("updated_at").toInstant()
+            );
+          } catch (SQLException e) {
+            throw new IllegalStateException("Failed to map failed goods receipt idempotency", e);
+          }
+        },
+        limit
+    );
+  }
+
+  public int deleteFailedIdempotencyForGoodsReceipt(long goodsReceiptId) {
+    return execute(
+        """
+        DELETE FROM core.idempotency_keys
+        WHERE service_name = 'inventory-service'
+          AND status = 'failed'
+          AND resource_id = ?
+        """,
+        Long.toString(goodsReceiptId)
+    );
+  }
+
+  public record GoodsReceiptPostedSummary(
+      long goodsReceiptId,
+      long purchaseOrderId,
+      long supplierId,
+      long outletId,
+      LocalDate businessDate,
+      String currencyCode,
+      BigDecimal totalPrice,
+      Instant postedAt
+  ) {}
+
+  public Optional<GoodsReceiptPostedSummary> findGoodsReceiptPostedSummary(long goodsReceiptId) {
+    return queryOne(
+        """
+        SELECT gr.id AS goods_receipt_id,
+               gr.po_id AS purchase_order_id,
+               po.supplier_id,
+               po.outlet_id,
+               gr.business_date,
+               gr.currency_code,
+               gr.total_price,
+               COALESCE(gr.approved_at, gr.receipt_time) AS posted_at
+        FROM core.goods_receipt gr
+        JOIN core.purchase_order po ON po.id = gr.po_id
+        WHERE gr.id = ?
+        """,
+        rs -> {
+          try {
+            Timestamp postedAt = rs.getTimestamp("posted_at");
+            return new GoodsReceiptPostedSummary(
+                rs.getLong("goods_receipt_id"),
+                rs.getLong("purchase_order_id"),
+                rs.getLong("supplier_id"),
+                rs.getLong("outlet_id"),
+                rs.getDate("business_date").toLocalDate(),
+                rs.getString("currency_code"),
+                rs.getBigDecimal("total_price"),
+                postedAt.toInstant()
+            );
+          } catch (SQLException e) {
+            throw new IllegalStateException("Failed to map goods receipt posted summary", e);
+          }
+        },
+        goodsReceiptId
+    );
+  }
+
+  public List<java.util.Map<String, Object>> listGoodsReceiptOutboxDltPending(int limit) {
+    return queryList(
+        """
+        SELECT id, aggregate_type, aggregate_id, topic, status, dlq_status,
+               attempt_count, last_error, created_at
+        FROM core.outbox_event
+        WHERE status = 'FAILED'
+          AND dlq_status = 'PENDING'
+          AND topic = 'fern.procurement.goods-receipt-posted'
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        rs -> {
+          try {
+            java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("id", rs.getLong("id"));
+            row.put("aggregateType", rs.getString("aggregate_type"));
+            row.put("aggregateId", rs.getLong("aggregate_id"));
+            row.put("topic", rs.getString("topic"));
+            row.put("status", rs.getString("status"));
+            row.put("dlqStatus", rs.getString("dlq_status"));
+            row.put("attempts", rs.getInt("attempt_count"));
+            row.put("lastError", rs.getString("last_error"));
+            row.put("createdAt", rs.getTimestamp("created_at").toInstant().toString());
+            return row;
+          } catch (SQLException e) {
+            throw new IllegalStateException("Failed to map goods receipt outbox DLT row", e);
+          }
+        },
+        limit
+    );
+  }
+
+  public int requeueGoodsReceiptOutboxDlt(long eventId) {
+    return execute(
+        """
+        UPDATE core.outbox_event
+           SET status = 'PENDING', dlq_status = 'NOT_QUEUED',
+               attempt_count = 0, last_error = NULL, retry_after = NOW()
+         WHERE id = ?
+           AND status = 'FAILED'
+           AND topic = 'fern.procurement.goods-receipt-posted'
+        """,
+        eventId
+    );
+  }
+
   public List<GoodsReceiptMovement> findGoodsReceiptMovements(long goodsReceiptId) {
     return queryList(
         """
@@ -1566,6 +1825,22 @@ public class InventoryRepository extends BaseRepository {
       BigDecimal qtyChange,
       BigDecimal unitCost
   ) {
+  }
+
+  private boolean goodsReceiptItemTransactionExists(Connection conn, long goodsReceiptItemId)
+      throws SQLException {
+    try (PreparedStatement ps = conn.prepareStatement(
+        """
+        SELECT 1
+        FROM core.goods_receipt_transaction
+        WHERE goods_receipt_item_id = ?
+        """
+    )) {
+      ps.setLong(1, goodsReceiptItemId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
   }
 
   private boolean saleItemTransactionExists(Connection conn, long saleId, long productId, long itemId)

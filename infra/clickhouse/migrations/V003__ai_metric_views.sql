@@ -1,5 +1,5 @@
 -- Migration V003: flattened AI-facing metric views.
--- These views are intentionally denormalized so ai-query-service templates and
+-- These views are intentionally denormalized so AIA-gent templates and
 -- GenSQL can prefer single-table reads over complex joins.
 
 CREATE DATABASE IF NOT EXISTS analytics;

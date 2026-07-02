@@ -31,6 +31,6 @@
     { "name": "11 - Audit Service", "id": "2cb4db30-5a0f-4a98-b770-cda507e54be0", "uid": "54984523-2cb4db30-5a0f-4a98-b770-cda507e54be0", "service": "audit-service", "port": 8091 },
     { "name": "12 - Report Service", "id": "8b642ae8-9305-4938-8e73-269ca4460c51", "uid": "54984523-8b642ae8-9305-4938-8e73-269ca4460c51", "service": "report-service", "port": 8092 },
     { "name": "13 - Gateway (Public)", "id": "f2e952e0-9a85-41e9-9bbf-0f39da1f6f42", "uid": "54984523-f2e952e0-9a85-41e9-9bbf-0f39da1f6f42", "service": "gateway", "port": 8080 },
-    { "name": "14 - AI Query Service", "id": "a87dbd43-d69f-4128-9f9f-8703d51806da", "uid": "54984523-a87dbd43-d69f-4128-9f9f-8703d51806da", "service": "ai-query-service", "port": 8093 }
+    { "name": "14 - AIA-gent", "id": "a87dbd43-d69f-4128-9f9f-8703d51806da", "uid": "54984523-a87dbd43-d69f-4128-9f9f-8703d51806da", "service": "aia-gent", "port": 8093 }
   ]
 }

@@ -152,6 +152,7 @@ services:
 
   redis-replica-1:
     image: redis:7-alpine
+    profiles: ["ha"]
     hostname: redis-replica-1
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     depends_on:
@@ -168,6 +169,7 @@ services:
 
   redis-replica-2:
     image: redis:7-alpine
+    profiles: ["ha"]
     hostname: redis-replica-2
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     depends_on:
@@ -184,6 +186,7 @@ services:
 
   redis-sentinel-1:
     image: redis:7-alpine
+    profiles: ["ha"]
     hostname: redis-sentinel-1
     command: ["redis-sentinel", "/usr/local/etc/redis/sentinel.conf"]
     depends_on:
@@ -199,6 +202,7 @@ services:
 
   redis-sentinel-2:
     image: redis:7-alpine
+    profiles: ["ha"]
     hostname: redis-sentinel-2
     command: ["redis-sentinel", "/usr/local/etc/redis/sentinel.conf"]
     depends_on:
@@ -214,6 +218,7 @@ services:
 
   redis-sentinel-3:
     image: redis:7-alpine
+    profiles: ["ha"]
     hostname: redis-sentinel-3
     command: ["redis-sentinel", "/usr/local/etc/redis/sentinel.conf"]
     depends_on:
@@ -308,8 +313,8 @@ services:
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-fern_app}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      DEPENDENCIES_REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-fern-master}
-      DEPENDENCIES_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+      DEPENDENCIES_REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-}
+      DEPENDENCIES_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-}
       KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:29092}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP:-kafka:29092}
       MASTER_NODE_URL: http://master-node:8082
@@ -342,6 +347,7 @@ services:
       context: ..
       dockerfile: infra/docker/Dockerfile.gateway
     restart: unless-stopped
+    mem_limit: 512m
     environment: &gateway-env
       JAVA_TOOL_OPTIONS: "${GATEWAY_JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=35 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -XX:+UseSerialGC -Xss256k}"
       DB_URL: ${DB_URL:-jdbc:postgresql://postgres:5432/${POSTGRES_DB:-fern}}
@@ -351,8 +357,8 @@ services:
       POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-core}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-fern-master}
-      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-}
+      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-}
       MASTER_NODE_URL: http://master-node:8082
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set}
       AUTH_SERVICE_URL: http://auth-service:8081
@@ -366,7 +372,7 @@ services:
       FINANCE_SERVICE_URL: http://finance-service:8090
       AUDIT_SERVICE_URL: http://audit-service:8091
       REPORT_SERVICE_URL: http://report-service:8092
-      AI_QUERY_SERVICE_URL: http://ai-query-service:8093
+      AI_QUERY_SERVICE_URL: http://aia-gent:8093
       SYNC_SERVICE_URL: http://sync-service:8094
       KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:29092}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
@@ -377,7 +383,11 @@ services:
       PORT: 8080
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318/v1/traces}
       OTEL_SAMPLE_RATIO: ${OTEL_SAMPLE_RATIO:-0.0}
-      GATEWAY_HTTPCLIENT_RESPONSE_TIMEOUT: ${GATEWAY_HTTPCLIENT_RESPONSE_TIMEOUT:-120s}
+      GATEWAY_HTTPCLIENT_RESPONSE_TIMEOUT: ${GATEWAY_HTTPCLIENT_RESPONSE_TIMEOUT:-180s}
+      # AIA-gent complex questions (large tables, multi-step reasoning) can
+      # take a while — give them 3 minutes before the circuit breaker fires.
+      GATEWAY_AI_QUERY_TIMEOUT: ${GATEWAY_AI_QUERY_TIMEOUT:-180s}
+      GATEWAY_AI_QUERY_SLOW_CALL_THRESHOLD: ${GATEWAY_AI_QUERY_SLOW_CALL_THRESHOLD:-60s}
     depends_on:
       master-node:
         condition: service_healthy
@@ -755,6 +765,7 @@ services:
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - ./clickhouse/config.d/low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
+      - ./clickhouse/users.d/default-settings.xml:/etc/clickhouse-server/users.d/default-settings.xml:ro
       - ./clickhouse/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
       - ./clickhouse/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
       - ./clickhouse/migrations:/docker-entrypoint-initdb.d/migrations:ro
@@ -768,9 +779,9 @@ services:
           "CMD-SHELL",
           "wget -qO- http://localhost:8123/ping >/dev/null && clickhouse-client --query \"EXISTS DATABASE fern\" | grep -qx 1 && clickhouse-client --query \"EXISTS DATABASE analytics\" | grep -qx 1 && clickhouse-client --query \"EXISTS DATABASE cdc\" | grep -qx 1 || exit 1",
         ]
-      interval: 15s
-      timeout: 5s
-      retries: 5
+      interval: 20s
+      timeout: 15s
+      retries: 8
 
   kafka-connect:
     image: confluentinc/cp-kafka-connect:7.6.0
@@ -793,6 +804,8 @@ services:
       CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: ${KAFKA_CONNECT_REPLICATION_FACTOR:-1}
       CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: ${KAFKA_CONNECT_REPLICATION_FACTOR:-1}
       CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: ${KAFKA_CONNECT_REPLICATION_FACTOR:-1}
+      CONNECT_OFFSET_STORAGE_PARTITIONS: "25"
+      CONNECT_STATUS_STORAGE_PARTITIONS: "5"
       CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       CONNECT_PLUGIN_PATH: /usr/share/confluent-hub-components,/usr/share/java/kafka
@@ -810,7 +823,7 @@ services:
       - |
         confluent-hub install --no-prompt debezium/debezium-connector-postgresql:2.5.4 || true
         if [ "$${KAFKA_CONNECT_INSTALL_CLICKHOUSE:-false}" = "true" ]; then
-          confluent-hub install --no-prompt clickhouse/clickhouse-kafka-connect:0.0.18 || true
+          confluent-hub install --no-prompt clickhouse/clickhouse-kafka-connect:latest || true
         fi
         /etc/confluent/docker/run &
         connect_pid=$$!
@@ -830,7 +843,7 @@ services:
     build:
       context: ./opensearch
     profiles: ["search"]
-    mem_limit: 2g
+    mem_limit: 1024m
     environment:
       discovery.type: single-node
       OPENSEARCH_JAVA_OPTS: "-Xms256m -Xmx256m"
@@ -958,6 +971,7 @@ services:
 
   redis-replica-1-exporter:
     image: oliver006/redis_exporter:v1.66.0-alpine
+    profiles: ["ha"]
     restart: unless-stopped
     depends_on:
       redis-replica-1:
@@ -972,6 +986,7 @@ services:
 
   redis-replica-2-exporter:
     image: oliver006/redis_exporter:v1.66.0-alpine
+    profiles: ["ha"]
     restart: unless-stopped
     depends_on:
       redis-replica-2:
@@ -1048,112 +1063,70 @@ services:
     volumes:
       - ../db:/workspace/db:rw
 
-  ai-query-service:
+  aia-gent:
     build:
-      context: ../ai-query-service
+      context: ../AIA-gent
       dockerfile: Dockerfile
     profiles: ["ai"]
-    container_name: ai-query-service
+    container_name: aia-gent
     ports:
       - "127.0.0.1:${AI_QUERY_SERVICE_PORT:-8093}:8093"
+    # Multi-route LLM config (cx/gpt-5.4 → codex-5.5 → gpt-4.1 → gpt-4o-mini → openai direct)
+    # is defined in AIA-gent/.env and forwarded here. The `environment:` block below
+    # overrides infrastructure-specific values (hostnames, ports for other containers).
+    env_file:
+      - ../AIA-gent/.env
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      OPENAI_API_MODE: ${OPENAI_API_MODE:-chat}
-      OPENAI_USER_AGENT: ${OPENAI_USER_AGENT:-FERN-ai-query-service/0.1}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1}
-      OPENAI_MODEL_SUPERVISOR: ${OPENAI_MODEL_SUPERVISOR:-}
-      OPENAI_MODEL_SQL_PLANNER: ${OPENAI_MODEL_SQL_PLANNER:-}
-      OPENAI_MODEL_SQL_GENERATOR: ${OPENAI_MODEL_SQL_GENERATOR:-}
-      OPENAI_MODEL_REVIEWER: ${OPENAI_MODEL_REVIEWER:-}
-      OPENAI_MODEL_FORMATTER: ${OPENAI_MODEL_FORMATTER:-}
-      OPENAI_MODEL_DOC_READER: ${OPENAI_MODEL_DOC_READER:-}
-      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      OPENAI_EMBEDDINGS_ENABLED: ${OPENAI_EMBEDDINGS_ENABLED:-false}
-      OPENAI_TIMEOUT_SECONDS: ${OPENAI_TIMEOUT_SECONDS:-120}
-      OPENAI_MAX_RETRIES: ${OPENAI_MAX_RETRIES:-2}
+      SUPERVISOR_MODEL: ${AIA_SUPERVISOR_MODEL:-openai:gpt-4o}
+      SPECIALIST_MODEL: ${AIA_SPECIALIST_MODEL:-openai:gpt-4o-mini}
+      EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       CLICKHOUSE_HOST: clickhouse
-      CLICKHOUSE_PORT: 8123
-      CLICKHOUSE_DB: fern
+      CLICKHOUSE_PORT: 9000
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-      POSTGRES_HOST: ${AI_QUERY_POSTGRES_HOST:-postgres-replica}
-      POSTGRES_PORT: ${AI_QUERY_POSTGRES_PORT:-5432}
-      POSTGRES_DB: ${POSTGRES_DB:-fern}
-      POSTGRES_USER: ${POSTGRES_USER:-fern}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fern}
-      POSTGRES_STATEMENT_TIMEOUT_SECONDS: ${AI_QUERY_POSTGRES_STATEMENT_TIMEOUT_SECONDS:-10}
+      CLICKHOUSE_DATABASE: ${AIA_CLICKHOUSE_DATABASE:-fern}
       OPENSEARCH_URL: http://opensearch:9200
-      OPENSEARCH_ENABLED: ${OPENSEARCH_ENABLED:-false}
-      OPENSEARCH_CATALOG_INDEX: ${OPENSEARCH_CATALOG_INDEX:-ai_catalog}
-      OPENSEARCH_METADATA_INDEX: ${OPENSEARCH_METADATA_INDEX:-ai_metadata}
-      REDIS_SENTINEL_HOSTS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
-      REDIS_SENTINEL_MASTER: fern-master
-      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:29092}
-      KAFKA_AUDIT_TOPIC: fern.audit.ai-query
-      KAFKA_LEARNING_TOPIC: ${KAFKA_LEARNING_TOPIC:-fern.ai-query.learning.staging}
-      LEARNING_STAGING_EMIT_ENABLED: ${LEARNING_STAGING_EMIT_ENABLED:-false}
-      QUERY_REASONING_ENABLED: ${QUERY_REASONING_ENABLED:-true}
-      SQL_LOGICAL_CHECK_ENABLED: ${SQL_LOGICAL_CHECK_ENABLED:-true}
-      DETERMINISTIC_SUPERVISOR_ENABLED: ${DETERMINISTIC_SUPERVISOR_ENABLED:-true}
-      TEMPLATE_RESPONSE_ENABLED: ${TEMPLATE_RESPONSE_ENABLED:-true}
-      TEMPLATE_FAST_PATH_ENABLED: ${TEMPLATE_FAST_PATH_ENABLED:-true}
-      TEMPLATE_CACHE_ON_LLM_UNAVAILABLE_ENABLED: ${TEMPLATE_CACHE_ON_LLM_UNAVAILABLE_ENABLED:-true}
-      TEMPLATE_CACHE_MIN_CONFIDENCE: ${TEMPLATE_CACHE_MIN_CONFIDENCE:-0.95}
-      CATALOG_DIGEST_ENABLED: ${CATALOG_DIGEST_ENABLED:-false}
-      CATALOG_DIGEST_MAX_TABLES: ${CATALOG_DIGEST_MAX_TABLES:-2}
-      CATALOG_DIGEST_MAX_COLUMNS_PER_TABLE: ${CATALOG_DIGEST_MAX_COLUMNS_PER_TABLE:-40}
-      CATALOG_DIGEST_MAX_CHARS: ${CATALOG_DIGEST_MAX_CHARS:-2800}
-      METADATA_CONTEXT_ENABLED: ${METADATA_CONTEXT_ENABLED:-true}
-      METADATA_CONTEXT_MAX_HITS: ${METADATA_CONTEXT_MAX_HITS:-5}
-      METADATA_CONTEXT_MAX_CHARS: ${METADATA_CONTEXT_MAX_CHARS:-2600}
-      AGENT_EXTENDED_DATASET_ACCESS_ENABLED: ${AGENT_EXTENDED_DATASET_ACCESS_ENABLED:-true}
-      LEARNED_SCENARIO_MATCHING_ENABLED: ${LEARNED_SCENARIO_MATCHING_ENABLED:-true}
-      CODEGEN_SQL_ENABLED: ${CODEGEN_SQL_ENABLED:-true}
-      CODEGEN_ROUTE_MODE: ${CODEGEN_ROUTE_MODE:-no_template_or_low_confidence}
-      CODEGEN_CONFIDENCE_THRESHOLD: ${CODEGEN_CONFIDENCE_THRESHOLD:-0.55}
-      CODEGEN_MAX_OUTER_LIMIT: ${CODEGEN_MAX_OUTER_LIMIT:-1000}
-      MAX_CODEGEN_ATTEMPTS: ${MAX_CODEGEN_ATTEMPTS:-2}
-      MAX_CODEGEN_TRIAL_ROWS: ${MAX_CODEGEN_TRIAL_ROWS:-50}
-      MAX_CODEGEN_TRIAL_TIMEOUT_SECONDS: ${MAX_CODEGEN_TRIAL_TIMEOUT_SECONDS:-10}
-      CODEGEN_REVIEW_ENABLED: ${CODEGEN_REVIEW_ENABLED:-true}
-      CODEGEN_SQL_PLAN_ENABLED: ${CODEGEN_SQL_PLAN_ENABLED:-true}
-      HR_QUERY_ENABLED: ${HR_QUERY_ENABLED:-true}
-      HR_QUERY_MAX_ROWS: ${HR_QUERY_MAX_ROWS:-50}
-      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Ho_Chi_Minh}
+      OPENSEARCH_USERNAME: ""
+      OPENSEARCH_PASSWORD: ""
+      OPENSEARCH_INDEX: ${OPENSEARCH_METADATA_INDEX:-ai_metadata}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-change-me}
-      AGENT_MODE_ENABLED: ${AGENT_MODE_ENABLED:-true}
-      OPENAI_RESPONSES_PREVIOUS_RESPONSE_ID_ENABLED: ${OPENAI_RESPONSES_PREVIOUS_RESPONSE_ID_ENABLED:-false}
-      SQL_WRITER_SELF_CONSISTENCY_N: ${SQL_WRITER_SELF_CONSISTENCY_N:-1}
-      EXPORTS_ENABLED: ${EXPORTS_ENABLED:-true}
-      EXPORTS_STORAGE_DIR: ${EXPORTS_STORAGE_DIR:-/var/lib/fern/exports}
-      EXPORTS_MAX_ROWS: ${EXPORTS_MAX_ROWS:-50000}
-      EXPORTS_TTL_HOURS: ${EXPORTS_TTL_HOURS:-24}
-      EXPORTS_JSON_ENABLED: ${EXPORTS_JSON_ENABLED:-true}
-      SESSION_ENRICHER_ENABLED: ${SESSION_ENRICHER_ENABLED:-true}
-      REVIEWER_AGENT_ENABLED: ${REVIEWER_AGENT_ENABLED:-true}
-      REVIEWER_MAX_TOKENS: ${REVIEWER_MAX_TOKENS:-600}
-      EXECUTIVE_PERSONA_ENABLED: ${EXECUTIVE_PERSONA_ENABLED:-true}
-      FOLLOWUP_SUGGESTIONS_ENABLED: ${FOLLOWUP_SUGGESTIONS_ENABLED:-true}
-      FOLLOWUP_MAX_SUGGESTIONS: ${FOLLOWUP_MAX_SUGGESTIONS:-3}
-      INVESTIGATIVE_MODE_ENABLED: ${INVESTIGATIVE_MODE_ENABLED:-true}
-      WORKFLOW_DEBUG_IN_RESPONSE: ${WORKFLOW_DEBUG_IN_RESPONSE:-false}
-    volumes:
-      - ai-query-exports:/var/lib/fern/exports
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Ho_Chi_Minh}
+      SERVICE_PORT: "8093"
+      SQL_GUARD_ENABLED: "true"
+      RBAC_INJECT_ENABLED: "true"
+      MAX_ROWS_PER_QUERY: "1000"
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:29092}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-aia-gent-fern}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      S3_BUCKET_AI_EXPORTS: ${S3_BUCKET_AI_EXPORTS:-}
+      S3_BUCKET_PRODUCT_IMAGES: ${S3_BUCKET_PRODUCT_IMAGES:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      S3_PATH_STYLE: ${S3_PATH_STYLE:-true}
+      # LLM_ROUTES + per-route vars come from env_file (AIA-gent/.env).
+      # Do NOT set LLM_ROUTES here — it would override the env_file value.
     depends_on:
-      postgres-replica:
-        condition: service_healthy
       clickhouse:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
-      redis-sentinel-1:
-        condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8093/api/v1/ai-query/ready"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8093/api/v1/ai-query/health')",
+        ]
       interval: 15s
-      timeout: 3s
+      timeout: 10s
       retries: 5
+      start_period: 45s
 
 volumes:
   postgres-primary-data:

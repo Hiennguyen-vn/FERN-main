@@ -10,12 +10,12 @@ INFRA_DIR="$(dirname "$SCRIPT_DIR")"
 load_infra_env
 load_manifest
 
-bootstrap_server="kafka:29092,kafka-2:29092,kafka-3:29092"
+bootstrap_server="kafka:29092"
 
-# Pick first healthy broker for `compose exec` target — broker-1 may be down.
+# Pick first healthy broker for `compose exec` target.
 exec_target=""
 running_brokers=0
-for candidate in kafka kafka-2 kafka-3; do
+for candidate in kafka; do
   if compose ps --status running --services 2>/dev/null | grep -qx "$candidate"; then
     running_brokers=$((running_brokers + 1))
     if [[ -z "$exec_target" ]]; then

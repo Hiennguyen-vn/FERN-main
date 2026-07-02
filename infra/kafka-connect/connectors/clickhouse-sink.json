@@ -3,7 +3,7 @@
   "config": {
     "connector.class": "com.clickhouse.kafka.connect.ClickHouseSinkConnector",
     "tasks.max": "3",
-    "topics": "fern.cdc.core.sale_record,fern.cdc.core.sale_item,fern.cdc.core.payment,fern.cdc.core.inventory_transaction,fern.cdc.core.product,fern.cdc.core.product_category,fern.cdc.core.outlet",
+    "topics": "fern.cdc.core.sale_record,fern.cdc.core.sale_item,fern.cdc.core.payment,fern.cdc.core.inventory_transaction,fern.cdc.core.product,fern.cdc.core.product_category,fern.cdc.core.outlet,fern.cdc.core.app_user,fern.cdc.core.shift,fern.cdc.core.work_shift,fern.cdc.core.employee_contract,fern.cdc.core.payroll_period,fern.cdc.core.payroll_timesheet,fern.cdc.core.payroll",
     "hostname": "clickhouse",
     "port": "8123",
     "database": "cdc",
@@ -15,10 +15,11 @@
     "key.converter.schemas.enable": "false",
     "value.converter.schemas.enable": "false",
     "exactlyOnce": "false",
+    "clickhouse.server.settings": "input_format_skip_unknown_fields=1,date_time_input_format=best_effort",
     "errors.tolerance": "all",
     "errors.deadletterqueue.topic.name": "fern.outbox.dlq",
     "errors.deadletterqueue.context.headers.enable": "true",
-    "errors.deadletterqueue.topic.replication.factor": "3",
-    "topic2TableMap": "fern.cdc.core.sale_record=sale_record,fern.cdc.core.sale_item=fact_sale,fern.cdc.core.payment=payment,fern.cdc.core.inventory_transaction=inventory_transaction,fern.cdc.core.product=product,fern.cdc.core.product_category=product_category,fern.cdc.core.outlet=outlet"
+    "errors.deadletterqueue.topic.replication.factor": "1",
+    "topic2TableMap": "fern.cdc.core.sale_record=sale_record,fern.cdc.core.sale_item=fact_sale,fern.cdc.core.payment=payment,fern.cdc.core.inventory_transaction=inventory_transaction,fern.cdc.core.product=product,fern.cdc.core.product_category=product_category,fern.cdc.core.outlet=outlet,fern.cdc.core.app_user=app_user,fern.cdc.core.shift=shift,fern.cdc.core.work_shift=work_shift,fern.cdc.core.employee_contract=employee_contract,fern.cdc.core.payroll_period=payroll_period,fern.cdc.core.payroll_timesheet=payroll_timesheet,fern.cdc.core.payroll=payroll"
   }
 }

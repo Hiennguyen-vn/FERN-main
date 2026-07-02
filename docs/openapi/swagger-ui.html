@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FERN Frontend Surface Swagger UI</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"
+    />
+    <style>
+      body {
+        margin: 0;
+        background: #fafafa;
+      }
+
+      .topbar {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script>
+      async function bootstrap() {
+        const response = await fetch("./frontend-surface.json");
+        const spec = await response.json();
+
+        // Route browser requests through the local proxy to avoid CORS issues
+        // when the docs page is served from a different origin than the gateway.
+        spec.servers = [
+          {
+            url: window.location.origin + "/proxy",
+            description: "Local proxy to gateway :8080",
+          },
+        ];
+
+        window.ui = SwaggerUIBundle({
+          spec,
+          dom_id: "#swagger-ui",
+          deepLinking: true,
+          presets: [SwaggerUIBundle.presets.apis],
+          layout: "BaseLayout",
+        });
+      }
+
+      window.onload = bootstrap;
+    </script>
+  </body>
+</html>

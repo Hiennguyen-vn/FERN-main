@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -343,6 +344,7 @@ class InventoryServiceTest {
         new InventoryRepository.GoodsReceiptMovement(7001L, ITEM_ID, new BigDecimal("4.0000"), new BigDecimal("2.50")));
     when(inventoryRepository.findGoodsReceiptOutletId(6101L)).thenReturn(Optional.of(OUTLET_ID));
     when(inventoryRepository.findGoodsReceiptMovements(6101L)).thenReturn(movements);
+    when(inventoryRepository.countGoodsReceiptItems(6101L)).thenReturn(1);
     when(inventoryRepository.applyGoodsReceiptPosted(
         6101L,
         OUTLET_ID,
@@ -351,6 +353,107 @@ class InventoryServiceTest {
         movements)).thenReturn(1);
 
     assertEquals(1, service.applyGoodsReceiptPosted(event));
+  }
+
+  @Test
+  void applyGoodsReceiptPostedRejectsZeroMovementsWhenItemsExist() {
+    GoodsReceiptPostedEvent event = new GoodsReceiptPostedEvent(
+        6101L,
+        70L,
+        80L,
+        OUTLET_ID,
+        LocalDate.parse("2026-04-27"),
+        "USD",
+        List.of(),
+        BigDecimal.TEN,
+        clock.instant());
+    when(inventoryRepository.findGoodsReceiptOutletId(6101L)).thenReturn(Optional.of(OUTLET_ID));
+    when(inventoryRepository.findGoodsReceiptMovements(6101L)).thenReturn(List.of());
+    when(inventoryRepository.countGoodsReceiptItems(6101L)).thenReturn(2);
+
+    IllegalStateException ex = assertThrows(IllegalStateException.class, () -> service.applyGoodsReceiptPosted(event));
+    assertTrue(ex.getMessage().contains("zero resolvable movements"));
+  }
+
+  @Test
+  void applyGoodsReceiptPostedRejectsSilentZeroInsertWhenLinksMissing() {
+    GoodsReceiptPostedEvent event = new GoodsReceiptPostedEvent(
+        6101L,
+        70L,
+        80L,
+        OUTLET_ID,
+        LocalDate.parse("2026-04-27"),
+        "USD",
+        List.of(),
+        BigDecimal.TEN,
+        clock.instant());
+    List<InventoryRepository.GoodsReceiptMovement> movements = List.of(
+        new InventoryRepository.GoodsReceiptMovement(7001L, ITEM_ID, new BigDecimal("4.0000"), new BigDecimal("2.50")),
+        new InventoryRepository.GoodsReceiptMovement(7002L, ITEM_ID + 1, new BigDecimal("1.0000"), new BigDecimal("3.00"))
+    );
+    when(inventoryRepository.findGoodsReceiptOutletId(6101L)).thenReturn(Optional.of(OUTLET_ID));
+    when(inventoryRepository.findGoodsReceiptMovements(6101L)).thenReturn(movements);
+    when(inventoryRepository.countGoodsReceiptItems(6101L)).thenReturn(2);
+    when(inventoryRepository.applyGoodsReceiptPosted(
+        6101L,
+        OUTLET_ID,
+        LocalDate.parse("2026-04-27"),
+        clock.instant(),
+        movements)).thenReturn(0);
+    when(inventoryRepository.countGoodsReceiptInventoryLinks(6101L)).thenReturn(1);
+
+    IllegalStateException ex = assertThrows(IllegalStateException.class, () -> service.applyGoodsReceiptPosted(event));
+    assertTrue(ex.getMessage().contains("applied zero movements"));
+  }
+
+  @Test
+  void reprocessGoodsReceiptPostedReturnsAlreadyCompleteWhenFullyLinked() {
+    when(inventoryRepository.findGoodsReceiptStatus(6101L)).thenReturn(Optional.of("posted"));
+    when(inventoryRepository.countGoodsReceiptItems(6101L)).thenReturn(2);
+    when(inventoryRepository.countGoodsReceiptInventoryLinks(6101L)).thenReturn(2);
+
+    InventoryService.ReprocessGoodsReceiptResult result = service.reprocessGoodsReceiptPosted(6101L);
+
+    assertTrue(result.alreadyComplete());
+    assertEquals(0, result.movementsInserted());
+    verify(inventoryRepository, never()).deleteFailedIdempotencyForGoodsReceipt(anyLong());
+  }
+
+  @Test
+  void reprocessGoodsReceiptPostedClearsFailedIdempotencyAndAppliesMovements() {
+    GoodsReceiptPostedEvent event = new GoodsReceiptPostedEvent(
+        6101L,
+        70L,
+        80L,
+        OUTLET_ID,
+        LocalDate.parse("2026-04-27"),
+        "USD",
+        List.of(),
+        BigDecimal.TEN,
+        clock.instant());
+    List<InventoryRepository.GoodsReceiptMovement> movements = List.of(
+        new InventoryRepository.GoodsReceiptMovement(7001L, ITEM_ID, new BigDecimal("4.0000"), new BigDecimal("2.50")));
+    when(inventoryRepository.findGoodsReceiptStatus(6101L)).thenReturn(Optional.of("posted"));
+    when(inventoryRepository.countGoodsReceiptItems(6101L)).thenReturn(1);
+    when(inventoryRepository.countGoodsReceiptInventoryLinks(6101L)).thenReturn(0, 1);
+    when(inventoryRepository.deleteFailedIdempotencyForGoodsReceipt(6101L)).thenReturn(1);
+    when(inventoryRepository.findGoodsReceiptPostedSummary(6101L)).thenReturn(Optional.of(
+        new InventoryRepository.GoodsReceiptPostedSummary(
+            6101L, 70L, 80L, OUTLET_ID, LocalDate.parse("2026-04-27"), "USD", BigDecimal.TEN, clock.instant())));
+    when(inventoryRepository.findGoodsReceiptOutletId(6101L)).thenReturn(Optional.of(OUTLET_ID));
+    when(inventoryRepository.findGoodsReceiptMovements(6101L)).thenReturn(movements);
+    when(inventoryRepository.applyGoodsReceiptPosted(
+        6101L,
+        OUTLET_ID,
+        LocalDate.parse("2026-04-27"),
+        clock.instant(),
+        movements)).thenReturn(1);
+
+    InventoryService.ReprocessGoodsReceiptResult result = service.reprocessGoodsReceiptPosted(6101L);
+
+    assertEquals(1, result.movementsInserted());
+    assertEquals(1, result.failedIdempotencyKeysCleared());
+    assertFalse(result.alreadyComplete());
   }
 
   @Test

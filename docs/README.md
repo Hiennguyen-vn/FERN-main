@@ -14,6 +14,10 @@ This folder explains how the backend is structured, how the frontend integrates 
   - normalized PlantUML use case catalog with one reusable diagram per file
 - `openapi/frontend-surface.json`
   - machine-readable OpenAPI contract for the current frontend-facing gateway surface
+- `openapi/swagger-ui.html`
+  - local Swagger UI page for trying the frontend-facing gateway contract through a same-origin proxy
+- `openapi/swagger-proxy.py`
+  - tiny local server that hosts the Swagger UI page and proxies requests to the gateway on `http://127.0.0.1:8080`
 - `project-structure.md`
   - root layout, ownership boundaries, and reactor structure
 - `erp-microservices-architecture.md`

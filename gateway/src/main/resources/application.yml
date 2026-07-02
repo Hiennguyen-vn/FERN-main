@@ -104,7 +104,7 @@ resilience4j:
         baseConfig: default
       sync-service:
         baseConfig: default
-      ai-query-service:
+      aia-gent:
         baseConfig: default
         slowCallDurationThreshold: ${GATEWAY_AI_QUERY_SLOW_CALL_THRESHOLD:45s}
   timelimiter:
@@ -139,10 +139,10 @@ resilience4j:
         baseConfig: default
       sync-service:
         baseConfig: default
-      ai-query-service:
+      aia-gent:
         baseConfig: default
         timeoutDuration: ${GATEWAY_AI_QUERY_TIMEOUT:120s}
-      ai-query-service-api-v1-ai-query:
+      aia-gent-api-v1-ai-query:
         baseConfig: default
         timeoutDuration: ${GATEWAY_AI_QUERY_TIMEOUT:120s}
 

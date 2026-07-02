@@ -163,7 +163,8 @@ function ProtectedShell() {
 
 function LoginRoute() {
   const { session, loading } = useAuth();
-  if (loading) return null;
+  const isBootstrappingAnonymousSession = loading && !session?.accessToken;
+  if (isBootstrappingAnonymousSession) return null;
   if (session?.accessToken) {
     return <Navigate to={resolveLandingPath(session)} replace />;
   }

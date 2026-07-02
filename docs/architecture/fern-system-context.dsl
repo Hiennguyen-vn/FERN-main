@@ -62,7 +62,7 @@ workspace "FERN ERP Platform" "C4 System Context for the current FERN ERP/POS re
             tags "Search System"
         }
 
-        openAiProvider = softwareSystem "OpenAI-compatible LLM Provider" "Model provider bên ngoài được ai-query-service gọi để xử lý natural-language BI/query." {
+        openAiProvider = softwareSystem "OpenAI-compatible LLM Provider" "Model provider bên ngoài được AIA-gent gọi để xử lý natural-language BI/query." {
             tags "External System"
         }
 

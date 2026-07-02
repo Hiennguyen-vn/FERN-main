@@ -1,4 +1,4 @@
-/api/v1/ai-query|ai-query-service|USER|AI_QUERY
+/api/v1/ai-query|aia-gent|USER|AI_QUERY
 /api/v1/allergens|product-service|USER|DEFAULT
 /api/v1/audit|audit-service|USER|DEFAULT
 /api/v1/auth|auth-service|USER|AUTH

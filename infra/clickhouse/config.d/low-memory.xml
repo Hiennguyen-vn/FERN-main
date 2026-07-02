@@ -1,8 +1,8 @@
 <clickhouse>
-  <max_server_memory_usage>1073741824</max_server_memory_usage>
-  <max_server_memory_usage_to_ram_ratio>0.50</max_server_memory_usage_to_ram_ratio>
-  <mark_cache_size>134217728</mark_cache_size>
-  <uncompressed_cache_size>67108864</uncompressed_cache_size>
+  <max_server_memory_usage>2147483648</max_server_memory_usage>
+  <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
+  <mark_cache_size>268435456</mark_cache_size>
+  <uncompressed_cache_size>134217728</uncompressed_cache_size>
   <background_pool_size>16</background_pool_size>
   <background_schedule_pool_size>8</background_schedule_pool_size>
   <background_merges_mutations_concurrency_ratio>2</background_merges_mutations_concurrency_ratio>

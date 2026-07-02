@@ -1,11 +1,15 @@
 package com.fern.services.inventory.application;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fern.common.idempotency.IdempotencyConflictException;
 import com.fern.common.idempotency.IdempotencyGuard;
+import com.fern.common.idempotency.IdempotencyInProgressException;
 import com.fern.common.idempotency.model.IdempotencyResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fern.events.core.EventEnvelope;
@@ -25,6 +29,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.MessageHeaders;
 
 @ExtendWith(MockitoExtension.class)
 class InventoryEventConsumerTest {
@@ -101,6 +107,95 @@ class InventoryEventConsumerTest {
     consumer.consumeGoodsReceiptPosted(rawMessage);
 
     verify(inventoryService).applyGoodsReceiptPosted(payload);
+  }
+
+  @Test
+  void consumeGoodsReceiptPostedRethrowsIdempotencyInProgressForRetry() throws Exception {
+    InventoryEventConsumer consumer = new InventoryEventConsumer(inventoryService, idempotencyGuard, objectMapper);
+    GoodsReceiptPostedEvent payload = new GoodsReceiptPostedEvent(
+        61L,
+        70L,
+        80L,
+        7L,
+        LocalDate.parse("2026-03-27"),
+        "USD",
+        List.of(),
+        BigDecimal.TEN,
+        Instant.parse("2026-03-27T00:00:00Z")
+    );
+    String rawMessage = objectMapper.writeValueAsString(
+        EventEnvelope.create("procurement.goods-receipt-posted", "61", payload, "procurement-service")
+    );
+    when(idempotencyGuard.execute(eq("inventory-service"), any(), eq(rawMessage), any(), any()))
+        .thenThrow(new IdempotencyInProgressException("already in progress"));
+
+    assertThrows(
+        IdempotencyInProgressException.class,
+        () -> consumer.consumeGoodsReceiptPosted(rawMessage)
+    );
+  }
+
+  @Test
+  void consumeGoodsReceiptPostedWrapsIdempotencyConflictAsIllegalState() throws Exception {
+    InventoryEventConsumer consumer = new InventoryEventConsumer(inventoryService, idempotencyGuard, objectMapper);
+    GoodsReceiptPostedEvent payload = new GoodsReceiptPostedEvent(
+        61L,
+        70L,
+        80L,
+        7L,
+        LocalDate.parse("2026-03-27"),
+        "USD",
+        List.of(),
+        BigDecimal.TEN,
+        Instant.parse("2026-03-27T00:00:00Z")
+    );
+    String rawMessage = objectMapper.writeValueAsString(
+        EventEnvelope.create("procurement.goods-receipt-posted", "61", payload, "procurement-service")
+    );
+    when(idempotencyGuard.execute(eq("inventory-service"), any(), eq(rawMessage), any(), any()))
+        .thenThrow(new IdempotencyConflictException("payload mismatch"));
+
+    IllegalStateException ex = assertThrows(
+        IllegalStateException.class,
+        () -> consumer.consumeGoodsReceiptPosted(rawMessage)
+    );
+    assertEquals(IdempotencyConflictException.class, ex.getCause().getClass());
+  }
+
+  @Test
+  void consumeGoodsReceiptPostedRejectsInvalidJson() {
+    InventoryEventConsumer consumer = new InventoryEventConsumer(inventoryService, idempotencyGuard, objectMapper);
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> consumer.consumeGoodsReceiptPosted("{not-json")
+    );
+  }
+
+  @Test
+  void handleDltLogsStructuredContextWithoutThrowing() throws Exception {
+    InventoryEventConsumer consumer = new InventoryEventConsumer(inventoryService, idempotencyGuard, objectMapper);
+    GoodsReceiptPostedEvent payload = new GoodsReceiptPostedEvent(
+        61L,
+        70L,
+        80L,
+        7L,
+        LocalDate.parse("2026-03-27"),
+        "USD",
+        List.of(),
+        BigDecimal.TEN,
+        Instant.parse("2026-03-27T00:00:00Z")
+    );
+    String rawMessage = objectMapper.writeValueAsString(
+        EventEnvelope.create("procurement.goods-receipt-posted", "61", payload, "procurement-service")
+    );
+    MessageHeaders headers = new MessageHeaders(java.util.Map.of(
+        KafkaHeaders.ORIGINAL_TOPIC, "fern.procurement.goods-receipt-posted",
+        KafkaHeaders.RECEIVED_PARTITION, 2,
+        KafkaHeaders.OFFSET, 99L
+    ));
+
+    consumer.handleDlt(rawMessage, (String) headers.get(KafkaHeaders.ORIGINAL_TOPIC), 2, 99L);
   }
 
   @Test

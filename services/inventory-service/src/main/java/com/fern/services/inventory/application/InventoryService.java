@@ -292,14 +292,91 @@ public class InventoryService {
 
   @Transactional
   public int applyGoodsReceiptPosted(GoodsReceiptPostedEvent event) {
-    long outletId = inventoryRepository.findGoodsReceiptOutletId(event.goodsReceiptId())
+    long goodsReceiptId = event.goodsReceiptId();
+    long outletId = inventoryRepository.findGoodsReceiptOutletId(goodsReceiptId)
         .orElse(event.outletId());
-    return inventoryRepository.applyGoodsReceiptPosted(
-        event.goodsReceiptId(),
+    List<InventoryRepository.GoodsReceiptMovement> movements =
+        inventoryRepository.findGoodsReceiptMovements(goodsReceiptId);
+    int itemCount = inventoryRepository.countGoodsReceiptItems(goodsReceiptId);
+    if (movements.isEmpty() && itemCount > 0) {
+      throw new IllegalStateException(
+          "goods-receipt-posted " + goodsReceiptId + " has " + itemCount
+              + " line items but zero resolvable movements");
+    }
+    int inserted = inventoryRepository.applyGoodsReceiptPosted(
+        goodsReceiptId,
         outletId,
         event.businessDate(),
         event.postedAt() == null ? clock.instant() : event.postedAt(),
-        inventoryRepository.findGoodsReceiptMovements(event.goodsReceiptId())
+        movements
+    );
+    if (inserted == 0 && !movements.isEmpty()) {
+      int linked = inventoryRepository.countGoodsReceiptInventoryLinks(goodsReceiptId);
+      if (linked < movements.size()) {
+        throw new IllegalStateException(
+            "goods-receipt-posted " + goodsReceiptId + " applied zero movements while "
+                + linked + "/" + movements.size() + " items are linked");
+      }
+    }
+    return inserted;
+  }
+
+  public record ReprocessGoodsReceiptResult(
+      long goodsReceiptId,
+      int movementsInserted,
+      int linkedCount,
+      int itemCount,
+      int failedIdempotencyKeysCleared,
+      boolean alreadyComplete
+  ) {}
+
+  @Transactional
+  public ReprocessGoodsReceiptResult reprocessGoodsReceiptPosted(long goodsReceiptId) {
+    String status = inventoryRepository.findGoodsReceiptStatus(goodsReceiptId)
+        .orElseThrow(() -> ServiceException.notFound("Goods receipt not found: " + goodsReceiptId));
+    if (!"posted".equalsIgnoreCase(status)) {
+      throw ServiceException.badRequest("Goods receipt " + goodsReceiptId + " is not posted (status=" + status + ")");
+    }
+    int itemCount = inventoryRepository.countGoodsReceiptItems(goodsReceiptId);
+    if (itemCount == 0) {
+      throw ServiceException.badRequest("Goods receipt " + goodsReceiptId + " has no line items");
+    }
+    int linkedBefore = inventoryRepository.countGoodsReceiptInventoryLinks(goodsReceiptId);
+    if (linkedBefore >= itemCount) {
+      return new ReprocessGoodsReceiptResult(goodsReceiptId, 0, linkedBefore, itemCount, 0, true);
+    }
+    int cleared = inventoryRepository.deleteFailedIdempotencyForGoodsReceipt(goodsReceiptId);
+    InventoryRepository.GoodsReceiptPostedSummary summary = inventoryRepository
+        .findGoodsReceiptPostedSummary(goodsReceiptId)
+        .orElseThrow(() -> ServiceException.notFound("Goods receipt summary not found: " + goodsReceiptId));
+    GoodsReceiptPostedEvent event = new GoodsReceiptPostedEvent(
+        summary.goodsReceiptId(),
+        summary.purchaseOrderId(),
+        summary.supplierId(),
+        summary.outletId(),
+        summary.businessDate(),
+        summary.currencyCode(),
+        List.of(),
+        summary.totalPrice(),
+        summary.postedAt()
+    );
+    int inserted = applyGoodsReceiptPosted(event);
+    int linkedAfter = inventoryRepository.countGoodsReceiptInventoryLinks(goodsReceiptId);
+    log.info(
+        "reprocessed goods-receipt {}: inserted={} linked={}/{} clearedFailedIdempotency={}",
+        goodsReceiptId,
+        inserted,
+        linkedAfter,
+        itemCount,
+        cleared
+    );
+    return new ReprocessGoodsReceiptResult(
+        goodsReceiptId,
+        inserted,
+        linkedAfter,
+        itemCount,
+        cleared,
+        false
     );
   }
 

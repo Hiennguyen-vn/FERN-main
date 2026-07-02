@@ -52,7 +52,7 @@ public final class GatewayRouteCatalog {
         new GatewayRoute("/api/v1/audit", "audit-service", auditUrl, RouteClass.USER, RateLimitTier.DEFAULT),
         new GatewayRoute("/api/v1/report", "report-service", reportUrl, RouteClass.USER, RateLimitTier.REPORT),
         new GatewayRoute("/api/v1/reports", "report-service", reportUrl, RouteClass.USER, RateLimitTier.REPORT),
-        new GatewayRoute("/api/v1/ai-query", "ai-query-service", aiQueryUrl, RouteClass.USER, RateLimitTier.AI_QUERY),
+        new GatewayRoute("/api/v1/ai-query", "aia-gent", aiQueryUrl, RouteClass.USER, RateLimitTier.AI_QUERY),
         new GatewayRoute("/api/v1/gateway", "gateway", gatewayUrl, RouteClass.PUBLIC, RateLimitTier.DEFAULT)
     );
   }

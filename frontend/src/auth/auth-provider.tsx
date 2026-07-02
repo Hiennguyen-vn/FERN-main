@@ -61,8 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       session,
       loading:
         (bootstrap.isPending && !session) ||
-        loginMutation.isPending ||
-        refreshMutation.isPending,
+        (refreshMutation.isPending && !!session),
       login: async (username, password) => {
         return loginMutation.mutateAsync({ username, password });
       },

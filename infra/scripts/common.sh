@@ -102,7 +102,7 @@ api_service_name_for_path() {
       printf 'report-service'
       ;;
     /api/v1/ai-query/*)
-      printf 'ai-query-service'
+      printf 'aia-gent'
       ;;
     *)
       return 1

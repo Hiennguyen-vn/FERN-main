@@ -24,7 +24,7 @@ Bản trước suy đoán port sai. Đây là **port thực tế từ docker-com
 | finance-service | 8090 |
 | audit-service | 8091 |
 | report-service | 8092 |
-| ai-query-service | 8093 |
+| aia-gent | 8093 |
 | kafka-connect | 8094 (host) / 8083 (container) |
 
 → **Không trùng port** như bản trước nói. Sắp xếp port liên tục 8080–8093, có thiết kế.
@@ -43,7 +43,7 @@ Ngoài ra:
 1. **Frontend** — Backoffice ERP và POS trung tâm.
 2. **Gateway** — Spring Cloud Gateway.
 3. **Core Services** — 12 microservice Spring Boot (ports 8081–8092).
-4. **AI Query** — Python FastAPI + LangGraph (port 8093).
+4. **AI Query** — `AIA-gent` Python FastAPI service (port 8093).
 5. **Data & Infra** — Postgres (Patroni HA) + ClickHouse + Kafka cluster (3 broker) + Redis + OpenSearch + MinIO + Vault + observability.
 
 ---
@@ -77,8 +77,8 @@ flowchart TB
         REPORT["report-service :8092"]
     end
 
-    subgraph AI["AI QUERY :8093 (Python 3.12 FastAPI)"]
-        AIQ["LangGraph pipeline<br/>Preprocess → Supervisor → Entity Resolver<br/>→ Catalog Digest → Template/Codegen<br/>→ Executor → Reviewer → Formatter"]
+    subgraph AI["AIA-gent :8093 (Python FastAPI)"]
+        AIQ["AIA-gent compat adapter<br/>Core execution → SQL/RAG/analysis runtimes<br/>→ Reviewer/Formatter"]
     end
 
     subgraph DATA["DATA LAYER"]
@@ -139,7 +139,7 @@ flowchart TB
 - Spring Cloud Gateway WebFlux ở 8080.
 - `gateway-lb` (HAProxy) phía trước.
 - Resilience4j circuit breaker per-route.
-- Wire sẵn `AI_QUERY_SERVICE_URL=http://ai-query-service:8093`.
+- Wire sẵn `AI_QUERY_SERVICE_URL=http://aia-gent:8093`.
 - OTEL exporter → Jaeger.
 
 ### 3.3 Core Microservices
@@ -154,14 +154,15 @@ flowchart TB
 
 Common modules (`common/`): `common-model`, `common-utils`, `event-schemas`, `idempotency-core`, `service-common`, `test-support` — chuẩn DDD shared kernel.
 
-### 3.4 AI Query Service (:8093)
+### 3.4 AIA-gent (:8093) — AI Query engine hiện hành
 
-- Python 3.12 FastAPI, có `Dockerfile`, `PLAN.md`, `ARCHI.md`, `DEPRECATION.md`, `evals/`, `knowledge/`.
-- Pipeline LangGraph như sơ đồ.
-- Đọc **postgres-replica** (không đè OLTP).
-- Kafka topics: `fern.audit.ai-query` (audit), `fern.ai-query.learning.staging` (RLHF/feedback loop).
-- Statement timeout 10s mặc định cho Postgres → guard chống query nặng.
-- Volume `ai-query-exports` → ghi file export.
+- Python 3.12 FastAPI, code trong `AIA-gent/` (`Dockerfile`, `README.md`, `INTEGRATION.md`, `AGENTS.md`, `tests/`).
+- Kiến trúc **Supervisor + Specialist** (LangGraph tối giản) — thay thế hoàn toàn `ai-query-service` cũ (đã retired).
+- API contract giữ nguyên `/api/v1/ai-query/*` để tương thích ngược với gateway và frontend.
+- Đọc **ClickHouse** (`analytics.ai_*` cho BI, `cdc.*` cho detail) + có thể fallback đọc Postgres replica.
+- Kafka topics: `fern.audit.ai-query` (audit best-effort).
+- Bảo mật: AST guard (sqlglot) + RBAC outlet_id injection + auth qua `X-Internal-*` headers từ gateway.
+- Volume `aia-gent-logs` cho file audit + query logs.
 
 ### 3.5 Data & Infra
 

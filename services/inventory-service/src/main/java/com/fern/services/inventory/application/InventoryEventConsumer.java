@@ -1,9 +1,12 @@
 package com.fern.services.inventory.application;
 
+import com.fern.common.idempotency.IdempotencyConflictException;
 import com.fern.common.idempotency.IdempotencyGuard;
+import com.fern.common.idempotency.IdempotencyInProgressException;
 import com.fern.common.idempotency.model.IdempotencyResult;
 import com.fern.common.idempotency.model.TtlPolicy;
 import com.fern.common.spring.auth.InternalExecutionContext;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -140,17 +143,28 @@ public class InventoryEventConsumer {
   }
 
   private void consumeGoodsReceiptPostedInternal(String message) {
+    EventEnvelope<GoodsReceiptPostedEvent> envelope;
     try {
-      EventEnvelope<GoodsReceiptPostedEvent> envelope = objectMapper.readValue(
+      envelope = objectMapper.readValue(
           message,
           new TypeReference<EventEnvelope<GoodsReceiptPostedEvent>>() {
           }
       );
-      GoodsReceiptPostedEvent event = envelope.payload();
-      if (event == null) {
-        log.warn("Ignoring goods-receipt-posted event with empty payload");
-        return;
-      }
+    } catch (JsonProcessingException ex) {
+      log.error("goods-receipt-posted: invalid envelope JSON: {}", ex.getOriginalMessage());
+      throw new IllegalStateException("Failed to parse fern.procurement.goods-receipt-posted", ex);
+    }
+    GoodsReceiptPostedEvent event = envelope.payload();
+    if (event == null) {
+      log.warn(
+          "goods-receipt-posted: empty payload eventId={} aggregateId={}",
+          envelope.eventId(),
+          envelope.aggregateId()
+      );
+      return;
+    }
+    String eventContext = goodsReceiptEventContext(envelope, event.goodsReceiptId());
+    try {
       idempotencyGuard.execute(
           "inventory-service",
           idempotencyKey(envelope),
@@ -164,8 +178,15 @@ public class InventoryEventConsumer {
             )), Long.toString(event.goodsReceiptId()));
           }
       );
+    } catch (IdempotencyInProgressException ex) {
+      log.warn("goods-receipt-posted: idempotency in progress {}: {}", eventContext, ex.getMessage());
+      throw ex;
+    } catch (IdempotencyConflictException ex) {
+      log.error("goods-receipt-posted: idempotency conflict {}: {}", eventContext, ex.getMessage());
+      throw new IllegalStateException("Idempotency conflict for " + eventContext, ex);
     } catch (Exception ex) {
-      throw new IllegalStateException("Failed to process fern.procurement.goods-receipt-posted", ex);
+      log.error("goods-receipt-posted: processing failed {}: {}", eventContext, ex.getMessage(), ex);
+      throw new IllegalStateException("Failed to process fern.procurement.goods-receipt-posted " + eventContext, ex);
     }
   }
 
@@ -192,8 +213,38 @@ public class InventoryEventConsumer {
   }
 
   @DltHandler
-  public void handleDlt(String message, @Header(KafkaHeaders.ORIGINAL_TOPIC) String topic) {
-    log.error("Inventory DLT: topic={} payload={}", topic, message);
+  public void handleDlt(
+      String message,
+      @Header(KafkaHeaders.ORIGINAL_TOPIC) String topic,
+      @Header(value = KafkaHeaders.RECEIVED_PARTITION, required = false) Integer partition,
+      @Header(value = KafkaHeaders.OFFSET, required = false) Long offset
+  ) {
+    String eventContext = extractEventContext(message);
+    log.error(
+        "Inventory DLT: topic={} partition={} offset={} context={} payload={}",
+        topic,
+        partition,
+        offset,
+        eventContext,
+        message
+    );
+  }
+
+  private String extractEventContext(String message) {
+    try {
+      JsonNode root = objectMapper.readTree(message);
+      String eventId = root.path("eventId").asText("unknown");
+      String aggregateId = root.path("aggregateId").asText("unknown");
+      return "eventId=" + eventId + " aggregateId=" + aggregateId;
+    } catch (Exception ex) {
+      return "eventId=unknown aggregateId=unknown";
+    }
+  }
+
+  private static String goodsReceiptEventContext(EventEnvelope<?> envelope, long goodsReceiptId) {
+    return "eventId=" + envelope.eventId()
+        + " aggregateId=" + envelope.aggregateId()
+        + " goodsReceiptId=" + goodsReceiptId;
   }
 
   private void consumeStockInRecordedInternal(String message) {

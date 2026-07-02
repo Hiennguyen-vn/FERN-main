@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LazyRoute } from '@/App';
+import { AiQueryModule } from '@/components/ai-query/AiQueryModule';
 import { IAMModule } from '@/components/iam/IAMModule';
 import { ProcurementModule } from '@/components/procurement/ProcurementModule';
 import { WorkforceModule } from '@/components/workforce/WorkforceModule';
@@ -37,6 +39,14 @@ vi.mock('@/auth/use-auth', () => ({
   }),
 }));
 
+vi.mock('@/api/ai-query-api', () => ({
+  aiQueryApi: {
+    ready: vi.fn().mockResolvedValue({ status: 'ok', issues: [] }),
+    query: vi.fn(),
+    requestReview: vi.fn(),
+  },
+}));
+
 function stubFetch() {
   const fetchMock = vi.fn(async (input: string | URL | Request) => {
     const url = String(typeof input === 'string' ? input : input instanceof Request ? input.url : input.toString());
@@ -57,7 +67,26 @@ function stubFetch() {
   vi.stubGlobal('fetch', fetchMock);
 }
 
+function renderWithQueryClient(ui: ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      {ui}
+    </QueryClientProvider>,
+  );
+}
+
 describe('module render smoke', () => {
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -75,7 +104,7 @@ describe('module render smoke', () => {
     consoleError.mockRestore();
   });
 
-  it('renders IAM, Workforce, and Procurement module shells', async () => {
+  it('renders IAM, Workforce, Procurement, and AI Query module shells', async () => {
     stubFetch();
 
     let view = render(<IAMModule />);
@@ -93,5 +122,12 @@ describe('module render smoke', () => {
       expect(screen.getAllByText('Suppliers').length).toBeGreaterThan(0);
       expect(screen.getAllByText('Purchase Orders').length).toBeGreaterThan(0);
     });
+
+    view = renderWithQueryClient(<AiQueryModule />);
+    await waitFor(() => {
+      expect(screen.getByText('Insight Desk')).toBeInTheDocument();
+      expect(screen.getByText('Đặt câu hỏi phân tích')).toBeInTheDocument();
+    });
+    view.unmount();
   });
 });

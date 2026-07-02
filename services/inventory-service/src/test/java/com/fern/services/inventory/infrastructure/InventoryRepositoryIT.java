@@ -31,6 +31,10 @@ class InventoryRepositoryIT {
   private static final long ITEM_ID = 9001L;
   private static final long PRODUCT_ID = 9101L;
   private static final long SALE_ID = 9201L;
+  private static final long SUPPLIER_ID = 9301L;
+  private static final long PO_ID = 9401L;
+  private static final long GR_ID = 9501L;
+  private static final long GR_ITEM_ID = 9601L;
 
   private DataSource dataSource;
   private InventoryRepository repository;
@@ -324,6 +328,100 @@ class InventoryRepositoryIT {
         repository.listStockBalances(TestFixtures.OUTLET_HCM_1, true, null, "qtyOnHand", "asc", 50, 0);
 
     assertTrue(page.items().stream().anyMatch(item -> item.itemId() == ITEM_ID));
+  }
+
+  @Test
+  void applyGoodsReceiptPostedIsIdempotentForReplayedReceiptItems() throws Exception {
+    seedPostedGoodsReceipt();
+    List<InventoryRepository.GoodsReceiptMovement> movements =
+        repository.findGoodsReceiptMovements(GR_ID);
+    assertEquals(1, movements.size());
+
+    int first = repository.applyGoodsReceiptPosted(
+        GR_ID,
+        TestFixtures.OUTLET_HCM_1,
+        LocalDate.parse("2026-04-12"),
+        Instant.parse("2026-04-12T09:00:00Z"),
+        movements);
+    int replay = repository.applyGoodsReceiptPosted(
+        GR_ID,
+        TestFixtures.OUTLET_HCM_1,
+        LocalDate.parse("2026-04-12"),
+        Instant.parse("2026-04-12T09:05:00Z"),
+        movements);
+
+    assertEquals(1, first);
+    assertEquals(0, replay);
+    assertEquals(1, repository.countGoodsReceiptInventoryLinks(GR_ID));
+    assertEquals(1, countRows("core.goods_receipt_transaction"));
+    assertEquals(1, countRows("core.inventory_transaction"));
+  }
+
+  @Test
+  void listPostedGoodsReceiptsMissingInventoryFindsStuckReceipt() throws Exception {
+    seedPostedGoodsReceipt();
+
+    List<InventoryRepository.StuckGoodsReceiptView> stuck =
+        repository.listPostedGoodsReceiptsMissingInventory(10);
+
+    assertEquals(1, stuck.size());
+    assertEquals(GR_ID, stuck.getFirst().goodsReceiptId());
+    assertEquals(1, stuck.getFirst().itemCount());
+    assertEquals(0, stuck.getFirst().linkedCount());
+  }
+
+  @Test
+  void deleteFailedIdempotencyForGoodsReceiptRemovesFailedRows() throws Exception {
+    seedPostedGoodsReceipt();
+    try (Connection conn = dataSource.getConnection();
+         PreparedStatement ps = conn.prepareStatement(
+             """
+             INSERT INTO core.idempotency_keys (
+               service_name, idempotency_key, request_hash, status, expires_at, resource_id
+             ) VALUES ('inventory-service', 'evt:9501', 'abc', 'failed', NOW() + INTERVAL '1 day', '9501')
+             """)) {
+      ps.executeUpdate();
+    }
+
+    assertEquals(1, repository.deleteFailedIdempotencyForGoodsReceipt(GR_ID));
+    assertEquals(0, repository.deleteFailedIdempotencyForGoodsReceipt(GR_ID));
+  }
+
+  private void seedPostedGoodsReceipt() throws Exception {
+    try (Connection conn = dataSource.getConnection();
+         var st = conn.createStatement()) {
+      st.execute(String.format("""
+          INSERT INTO core.supplier_procurement (id, region_id, supplier_code, name, status)
+          VALUES (%d, %d, 'SUP-9301', 'Test Supplier', 'active')
+          ON CONFLICT (id) DO NOTHING
+          """, SUPPLIER_ID, TestFixtures.REGION_HCM));
+      st.execute(String.format("""
+          INSERT INTO core.purchase_order (
+            id, supplier_id, outlet_id, currency_code, order_date, status
+          ) VALUES (%d, %d, %d, 'USD', DATE '2026-04-10', 'approved')
+          ON CONFLICT (id) DO NOTHING
+          """, PO_ID, SUPPLIER_ID, TestFixtures.OUTLET_HCM_1));
+      st.execute(String.format("""
+          INSERT INTO core.purchase_order_item (po_id, item_id, uom_code, qty_ordered, qty_received, status)
+          VALUES (%d, %d, 'EA', 5.0000, 0.0000, 'open')
+          ON CONFLICT (po_id, item_id) DO NOTHING
+          """, PO_ID, ITEM_ID));
+      st.execute(String.format("""
+          INSERT INTO core.goods_receipt (
+            id, po_id, currency_code, receipt_time, business_date, status, total_price, approved_at
+          ) VALUES (
+            %d, %d, 'USD', TIMESTAMPTZ '2026-04-12T08:30:00Z', DATE '2026-04-12', 'posted', 12.50,
+            TIMESTAMPTZ '2026-04-12T09:00:00Z'
+          )
+          ON CONFLICT (id) DO NOTHING
+          """, GR_ID, PO_ID));
+      st.execute(String.format("""
+          INSERT INTO core.goods_receipt_item (
+            id, receipt_id, po_id, item_id, uom_code, qty_received, unit_cost, line_total
+          ) VALUES (%d, %d, %d, %d, 'EA', 5.0000, 2.5000, 12.50)
+          ON CONFLICT (id) DO NOTHING
+          """, GR_ITEM_ID, GR_ID, PO_ID, ITEM_ID));
+    }
   }
 
   private StockInSimpleRecordedEvent stockInEvent(String sourceEventId, BigDecimal quantity) {

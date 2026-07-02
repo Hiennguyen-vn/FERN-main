@@ -525,9 +525,18 @@ interface ChartSpec {
 
 function TrendChart({ spec }: { spec?: ChartSpec | null }) {
   const [open, setOpen] = useState(false);
-  if (!spec?.data?.labels?.length || !spec.data.datasets?.length) return null;
-  const labels = spec.data.labels;
-  const datasets = spec.data.datasets;
+  const title = typeof spec?.title === 'string' && spec.title.trim()
+    ? spec.title
+    : 'Biểu đồ';
+  const imageUrl = typeof spec?.image_url === 'string'
+    ? spec.image_url
+    : typeof spec?.chart_download_url === 'string'
+      ? spec.chart_download_url
+      : null;
+  const hasData = !!spec?.data?.labels?.length && !!spec.data?.datasets?.length;
+  if (!imageUrl && !hasData) return null;
+  const labels = spec?.data?.labels ?? [];
+  const datasets = spec?.data?.datasets ?? [];
   const chartData = labels.map((label, i) => {
     const entry: Record<string, unknown> = { label };
     datasets.forEach((ds) => {
@@ -538,6 +547,50 @@ function TrendChart({ spec }: { spec?: ChartSpec | null }) {
   const dataKeys = datasets.map((ds) => ds.label ?? 'value');
   const colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444'];
 
+  // If backend pre-rendered a PNG (S3/MinIO), just show it — works for bar,
+  // hbar, pie, line uniformly and matches what the visualization specialist
+  // already prepared.
+  if (imageUrl) {
+    return (
+      <div className="mt-2.5 border rounded-lg overflow-hidden text-xs">
+        <button
+          onClick={() => setOpen(v => !v)}
+          className="w-full flex items-center justify-between px-3 py-1.5 bg-indigo-50/60 hover:bg-indigo-50 dark:bg-indigo-950/20 dark:hover:bg-indigo-950/30 transition-colors"
+        >
+          <div className="flex items-center gap-1.5">
+            <BarChart2 className="h-3 w-3 text-indigo-500" />
+            <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-300 uppercase tracking-wide">
+              {title}
+            </span>
+          </div>
+          {open ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+        </button>
+        {open && (
+          <div className="p-3 bg-background/80 flex flex-col items-center gap-2">
+            <img
+              src={imageUrl}
+              alt={title}
+              loading="lazy"
+              className="max-w-full h-auto rounded border border-border/50"
+            />
+            <a
+              href={imageUrl}
+              download
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 underline"
+            >
+              Tải biểu đồ (PNG)
+            </a>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Fallback: no PNG available — render inline via recharts from raw data.
+  if (!hasData) return null;
+
   return (
     <div className="mt-2.5 border rounded-lg overflow-hidden text-xs">
       <button
@@ -546,7 +599,7 @@ function TrendChart({ spec }: { spec?: ChartSpec | null }) {
       >
         <div className="flex items-center gap-1.5">
           <BarChart2 className="h-3 w-3 text-indigo-500" />
-          <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-300 uppercase tracking-wide">Biểu đồ xu hướng</span>
+          <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-300 uppercase tracking-wide">{title}</span>
         </div>
         {open ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
       </button>

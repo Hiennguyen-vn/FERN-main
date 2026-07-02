@@ -22,6 +22,16 @@ function renderLogin() {
   );
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('Login', () => {
   afterEach(() => {
     mocks.login.mockReset();
@@ -43,5 +53,29 @@ describe('Login', () => {
       expect(screen.getByText('Invalid credentials')).toBeInTheDocument();
     });
     expect(screen.getByText(/username or password you entered is incorrect/i)).toBeInTheDocument();
+  });
+
+  it('keeps the login form visible while a failed sign-in resolves', async () => {
+    const pending = deferred<never>();
+    mocks.login.mockReturnValueOnce(pending.promise);
+    renderLogin();
+
+    fireEvent.change(screen.getByLabelText(/username or email/i), {
+      target: { value: 'wrong.user' },
+    });
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: 'wrong-password' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
+
+    expect(screen.getByText(/sign in to your account/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /signing in/i })).toBeInTheDocument();
+
+    pending.reject(new ApiError('Invalid username or password', 401));
+
+    await waitFor(() => {
+      expect(screen.getByText('Invalid credentials')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/sign in to your account/i)).toBeInTheDocument();
   });
 });

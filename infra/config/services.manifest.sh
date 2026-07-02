@@ -3,10 +3,6 @@ FERN_DEPENDENCY_SERVICES=(
   postgres-replica
   redis
   kafka
-  kafka-2
-  kafka-3
-  prometheus
-  grafana
 )
 
 FERN_COMPOSE_LOCAL_MODE_CONFLICT_SERVICES=(

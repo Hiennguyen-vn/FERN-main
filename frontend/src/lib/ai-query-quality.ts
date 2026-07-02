@@ -1,4 +1,4 @@
-/** Shape from ai-query-service reviewer (issues may also be plain strings). */
+/** Shape from the AIA-gent reviewer (issues may also be plain strings). */
 
 export type AiQualityVerdictNormalized = 'approve' | 'minor_revision' | 'major_revision';
 

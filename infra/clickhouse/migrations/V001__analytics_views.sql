@@ -1,4 +1,4 @@
--- Migration V001: analytics.* views for ai-query-service
+-- Migration V001: analytics.* views for AIA-gent compatibility
 -- Apply: clickhouse-client < V001__analytics_views.sql
 -- Idempotent: uses CREATE OR REPLACE VIEW.
 
