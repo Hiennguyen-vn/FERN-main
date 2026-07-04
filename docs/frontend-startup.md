@@ -5,7 +5,7 @@ Use it to run the backend locally, start the frontend, and validate gateway-base
 
 ## 1. What You Are Starting
 
-- Public backend entrypoint: `http://127.0.0.1:8180`
+- Public backend entrypoint: `http://127.0.0.1:8080`
 - Public integration surface today:
   - gateway diagnostics
   - auth login, me, refresh, logout, and session management
@@ -71,19 +71,19 @@ npm install
 npm run dev
 ```
 
-The in-repo frontend proxies `/api` and `/health` to `http://127.0.0.1:8180` by default.
+The in-repo frontend proxies `/api` and `/health` to `http://127.0.0.1:8080` by default.
 If your local gateway runs elsewhere, override it explicitly:
 
 ```sh
 cd frontend
-VITE_DEV_PROXY_TARGET=http://127.0.0.1:9191 npm run dev
+VITE_DEV_PROXY_TARGET=http://127.0.0.1:8080 npm run dev
 ```
 
 Optional direct-base mode (if you do not want to use proxy forwarding):
 
 ```sh
 cd frontend
-VITE_API_BASE_URL=http://127.0.0.1:8180 npm run dev
+VITE_API_BASE_URL=http://127.0.0.1:8080 npm run dev
 ```
 
 The default browser URL is:
@@ -98,7 +98,7 @@ The default browser URL is:
 The default local browser workflow uses the Vite dev proxy:
 
 - browser origin: `http://127.0.0.1:8095`
-- proxied gateway target: `http://127.0.0.1:8180`
+- proxied gateway target: `http://127.0.0.1:8080`
 
 The backend gateway also supports env-driven local browser CORS for alternate dev setups.
 
@@ -122,7 +122,7 @@ If your frontend runs on a different local origin, override `infra/env/services.
 
 Seeded demo users come from [010_workflow_validation_seed.sql](/Users/nguyendinhkhiem/Development/Javas/FERN/db/seeds/010_workflow_validation_seed.sql).
 
-Shared password for `workflow.*` users:
+Shared password for local demo users:
 
 - `Workflow#2026!`
 
@@ -130,10 +130,7 @@ Useful accounts:
 
 | Username | Typical use |
 |---|---|
-| `workflow.admin` | full admin dashboard smoke testing; seeded with every defined outlet role across the workflow outlets |
-| `workflow.hcm.manager` | scoped manager authorization testing |
-| `workflow.us.manager` | alternate region manager testing |
-| `workflow.hcm.cashier` | sales-role testing |
+| `canon.superadmin` | current live local admin smoke-testing account confirmed against the gateway |
 
 If you manually synced an admin account using:
 
@@ -150,7 +147,7 @@ POST /api/v1/auth/login
 Content-Type: application/json
 
 {
-  "username": "workflow.admin",
+  "username": "canon.superadmin",
   "password": "Workflow#2026!"
 }
 ```
@@ -188,7 +185,7 @@ Frontend code keeps the bearer token in runtime state, restores it from `session
 
 Gateway base URL:
 
-- `http://127.0.0.1:8180`
+- `http://127.0.0.1:8080`
 
 Useful reads for the current frontend:
 
@@ -276,7 +273,7 @@ Machine-readable contract:
 
 - If `POST /api/v1/auth/login` works directly on gateway but fails from frontend with `404`, frontend routing is misconfigured.
 - Ensure frontend runs on `http://127.0.0.1:8095` and Vite proxy is active for `/api` and `/health`.
-- If needed, bypass proxy by setting `VITE_API_BASE_URL=http://127.0.0.1:8180`.
+- If needed, bypass proxy by setting `VITE_API_BASE_URL=http://127.0.0.1:8080`.
 
 Backend JSON errors now follow a stable shape:
 

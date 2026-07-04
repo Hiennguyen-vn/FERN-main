@@ -8,7 +8,6 @@ import com.fern.services.sales.api.kitchen.KitchenDtos;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
-import java.sql.Array;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -49,7 +48,6 @@ public class KitchenTicketRepository extends BaseRepository {
       String productName,
       BigDecimal qty,
       Map<String, Object> modifiers,
-      List<String> allergens,
       String notes
   ) {}
 
@@ -121,8 +119,8 @@ public class KitchenTicketRepository extends BaseRepository {
     if (items == null || items.isEmpty()) return;
     String sql = """
         INSERT INTO core.kitchen_ticket_item
-          (ticket_id, product_id, product_name, qty, status, modifiers, allergens, notes)
-        VALUES (?, ?, ?, ?, 'new', ?::jsonb, ?, ?)
+          (ticket_id, product_id, product_name, qty, status, modifiers, notes)
+        VALUES (?, ?, ?, ?, 'new', ?::jsonb, ?)
         """;
     try (PreparedStatement ps = conn.prepareStatement(sql)) {
       for (NewTicketItem item : items) {
@@ -131,10 +129,7 @@ public class KitchenTicketRepository extends BaseRepository {
         ps.setString(3, item.productName());
         ps.setBigDecimal(4, item.qty());
         ps.setString(5, item.modifiers() == null ? null : writeJson(item.modifiers()));
-        Array allergenArray = conn.createArrayOf("text",
-            item.allergens() == null ? new String[0] : item.allergens().toArray(new String[0]));
-        ps.setArray(6, allergenArray);
-        ps.setString(7, item.notes());
+        ps.setString(6, item.notes());
         ps.addBatch();
       }
       ps.executeBatch();
@@ -467,7 +462,7 @@ public class KitchenTicketRepository extends BaseRepository {
       placeholders.append('?');
       ids[i] = rows.get(i).id;
     }
-    String sql = "SELECT id, ticket_id, product_id, product_name, qty, status, modifiers, allergens,"
+    String sql = "SELECT id, ticket_id, product_id, product_name, qty, status, modifiers,"
         + " notes, started_at, ready_at, served_at"
         + " FROM core.kitchen_ticket_item WHERE ticket_id IN (" + placeholders + ")"
         + " ORDER BY id ASC";
@@ -483,20 +478,12 @@ public class KitchenTicketRepository extends BaseRepository {
         Map<String, Object> modifiers = modifiersJson == null
             ? null
             : MAPPER.readValue(modifiersJson, MAP_TYPE);
-        Array arr = rs.getArray("allergens");
-        List<String> allergens;
-        if (arr == null) {
-          allergens = List.of();
-        } else {
-          String[] raw = (String[]) arr.getArray();
-          allergens = raw == null ? List.of() : List.of(raw);
-        }
         String notes = rs.getString("notes");
         Instant startedAt = toInstant(rs.getTimestamp("started_at"));
         Instant readyAt = toInstant(rs.getTimestamp("ready_at"));
         Instant servedAt = toInstant(rs.getTimestamp("served_at"));
         KitchenDtos.TicketItemView view = new KitchenDtos.TicketItemView(
-            id, productId, productName, qty, status, modifiers, allergens, notes,
+            id, productId, productName, qty, status, modifiers, notes,
             startedAt, readyAt, servedAt);
         return new Object[] {ticketId, view};
       } catch (Exception e) {

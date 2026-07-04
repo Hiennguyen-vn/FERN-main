@@ -9,9 +9,7 @@ import com.fern.services.sales.infrastructure.SalesRepository;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -62,7 +60,6 @@ public class KitchenTicketService extends BaseRepository {
         return Optional.empty();
       }
       Long orderingTableId = lookupOrderingTableId(saleId);
-      Map<Long, List<String>> allergensByProduct = loadAllergens(productIds(sale.items()));
       List<KitchenTicketRepository.NewTicketItem> ticketItems = new ArrayList<>(sale.items().size());
       for (SalesDtos.SaleLineView line : sale.items()) {
         ticketItems.add(new KitchenTicketRepository.NewTicketItem(
@@ -70,12 +67,11 @@ public class KitchenTicketService extends BaseRepository {
             displayName(line),
             line.quantity(),
             modifiersToMap(line),
-            allergensByProduct.getOrDefault(line.productId(), List.of()),
             line.note()
         ));
       }
       int prepSlaSeconds = KitchenScheduling.computePrepSlaSeconds(
-          ticketItems.stream().map(KitchenTicketRepository.NewTicketItem::qty).toList(),
+          ticketItems.stream().map(item -> item.qty()).toList(),
           slaBaseSeconds,
           slaPerItemSeconds
       );
@@ -195,41 +191,6 @@ public class KitchenTicketService extends BaseRepository {
     } catch (Exception e) {
       return null;
     }
-  }
-
-  private static LinkedHashSet<Long> productIds(List<SalesDtos.SaleLineView> items) {
-    LinkedHashSet<Long> ids = new LinkedHashSet<>();
-    items.forEach(line -> ids.add(line.productId()));
-    return ids;
-  }
-
-  private Map<Long, List<String>> loadAllergens(Collection<Long> productIds) {
-    if (productIds.isEmpty()) return Map.of();
-    StringBuilder placeholders = new StringBuilder();
-    Object[] params = new Object[productIds.size()];
-    int idx = 0;
-    for (Long id : productIds) {
-      if (idx > 0) placeholders.append(',');
-      placeholders.append('?');
-      params[idx++] = id;
-    }
-    String sql = "SELECT product_id, allergen_code FROM core.product_allergen"
-        + " WHERE product_id IN (" + placeholders + ")";
-    Map<Long, List<String>> result = new LinkedHashMap<>();
-    try (var conn = dataSource.getConnection();
-         PreparedStatement ps = conn.prepareStatement(sql)) {
-      for (int i = 0; i < params.length; i++) ps.setLong(i + 1, (long) params[i]);
-      try (ResultSet rs = ps.executeQuery()) {
-        while (rs.next()) {
-          long pid = rs.getLong(1);
-          String code = rs.getString(2);
-          result.computeIfAbsent(pid, k -> new ArrayList<>()).add(code);
-        }
-      }
-    } catch (Exception e) {
-      log.debug("kitchen allergen lookup failed: {}", e.getMessage());
-    }
-    return result;
   }
 
   private Long lookupOrderingTableId(long saleId) {

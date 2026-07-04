@@ -17,7 +17,7 @@ Usage: ./infra/scripts/seed-workflow-data.sh [--baseline-only]
 Defaults:
   - resets the schema
   - reapplies migrations
-  - seeds 001, 002, 003, and 010 workflow validation data
+  - seeds 001, 002, and 010 workflow validation data
 
 Warning:
   This is destructive to the local FERN database and intended for local workflow validation only.
@@ -59,8 +59,7 @@ echo "This will reset the local workflow database and reseed it from scratch."
 
 for seed in \
   "/workspace/db/seeds/001_reference_seed.sql" \
-  "/workspace/db/seeds/002_sample_operational_seed.sql" \
-  "/workspace/db/seeds/003_demo_seed.sql"
+  "/workspace/db/seeds/002_sample_operational_seed.sql"
 do
   echo "Applying $(basename "$seed")"
   db_tools_psql primary -v ON_ERROR_STOP=1 -f "$seed" >/dev/null

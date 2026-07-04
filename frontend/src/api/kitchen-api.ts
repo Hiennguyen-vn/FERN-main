@@ -10,7 +10,6 @@ export interface KitchenTicketItem {
   qty: string | number;
   status: KitchenItemStatus;
   modifiers?: { entries?: { name?: string; value?: string }[] } | null;
-  allergens?: string[];
   notes?: string | null;
   startedAt?: string | null;
   readyAt?: string | null;

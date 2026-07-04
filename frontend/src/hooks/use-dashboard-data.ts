@@ -9,6 +9,7 @@ import {
   type StockBalanceView,
 } from '@/api/fern-api';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
+import { resolveScopeCurrencyCode } from '@/lib/org-currency';
 
 export interface DashboardKPIs {
   totalRevenue: number;
@@ -128,13 +129,21 @@ export function useDashboardData() {
     setError(null);
     try {
       const scopedOutletId = normalizeNumericOutletId(scope.outletId);
-      const outletResult = await Promise.allSettled([orgApi.outlets(token)]);
-      const outlets = outletResult[0]?.status === 'fulfilled' ? outletResult[0].value : [];
+      const scopedRegionId = normalizeNumericOutletId(scope.regionId);
+      const hierarchyResult = await Promise.allSettled([orgApi.hierarchy(token)]);
+      const hierarchy = hierarchyResult[0]?.status === 'fulfilled' ? hierarchyResult[0].value : { regions: [], outlets: [] };
+      const outlets = hierarchy.outlets;
       const selectedOutletId = scopedOutletId || outlets[0]?.id || '';
       const selectedOutletName = outlets.find((outlet) => outlet.id === selectedOutletId)?.name || scope.outletName || 'Unknown';
+      const currencyCode = resolveScopeCurrencyCode({
+        regions: hierarchy.regions,
+        outlets,
+        outletId: scopedOutletId || undefined,
+        regionId: scopedRegionId,
+      });
 
       const sourceFailures: string[] = [];
-      if (outletResult[0]?.status === 'rejected') {
+      if (hierarchyResult[0]?.status === 'rejected') {
         sourceFailures.push('outlet scope');
       }
 
@@ -202,6 +211,7 @@ export function useDashboardData() {
         outOfStockCount,
         pendingOrders,
         trackedItemsCount: trackedCountResult.status === 'fulfilled' ? trackedCountResult.value : 0,
+        currencyCode,
       });
 
       setRecentOrders(
@@ -230,7 +240,7 @@ export function useDashboardData() {
     } finally {
       setLoading(false);
     }
-  }, [scope.outletId, scope.outletName, token]);
+  }, [scope.outletId, scope.outletName, scope.regionId, token]);
 
   useEffect(() => {
     void fetchData();

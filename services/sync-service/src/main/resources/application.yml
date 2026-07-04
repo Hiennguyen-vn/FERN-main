@@ -40,7 +40,7 @@ dependencies:
   kafka:
     bootstrap: ${KAFKA_BOOTSTRAP:localhost:9092}
   masterNode:
-    baseUrl: ${MASTER_NODE_URL:http://localhost:8082}
+    baseUrl: ${MASTER_NODE_URL:http://master-node:8082}
 
 sync:
   mode: ${SYNC_MODE:CENTRAL}
@@ -48,7 +48,7 @@ sync:
   upload-interval-seconds: ${SYNC_UPLOAD_INTERVAL_SECONDS:15}
   download-interval-seconds: ${SYNC_DOWNLOAD_INTERVAL_SECONDS:15}
   batch-size: ${SYNC_BATCH_SIZE:100}
-  central-sync-url: ${CENTRAL_SYNC_URL:http://localhost:8094}
+  central-sync-url: ${CENTRAL_SYNC_URL:http://sync-service:8094}
   node-id: ${SYNC_NODE_ID:}
   node-code: ${SYNC_NODE_CODE:}
   store-id: ${SYNC_STORE_ID:}

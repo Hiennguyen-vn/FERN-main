@@ -47,9 +47,9 @@ dependencies:
   kafka:
     bootstrap: ${KAFKA_BOOTSTRAP:localhost:9092}
   masterNode:
-    baseUrl: ${MASTER_NODE_URL:http://localhost:8082}
+    baseUrl: ${MASTER_NODE_URL:http://master-node:8082}
   hrService:
-    baseUrl: ${HR_SERVICE_URL:http://localhost:8084}
+    baseUrl: ${HR_SERVICE_URL:http://hr-service:8084}
 
 resilience4j:
   circuitbreaker:

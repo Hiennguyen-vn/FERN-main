@@ -3,7 +3,7 @@
   "info": {
     "title": "FERN Frontend Surface",
     "version": "2026-03-31",
-    "description": "Source-derived OpenAPI contract for the current frontend-facing gateway surface. It includes endpoints actively used by the frontend app or intentionally exposed for frontend diagnostics. It excludes internal control-plane routes, but now includes the auth session lifecycle, shared paged staff list envelopes with total-count metadata, the stock-safe sales, payroll, and procurement actions already exercised by the frontend, the dedicated cashier POS workspace at exact /pos built on existing protected sales and product endpoints, the protected non-cashier staff order queue at exact /order, and the public customer ordering plus public order-status flow under /api/v1/sales/public."
+    "description": "Source-derived OpenAPI contract for the current frontend-facing gateway surface. It includes endpoints actively used by the frontend app or intentionally exposed for frontend diagnostics. It excludes internal control-plane routes, and covers the live auth session lifecycle, org reads, HR schedule reads, product and inventory reads, procurement queues, the protected sales and payroll actions already exercised by the frontend, the dedicated cashier POS workspace at exact /pos, the protected non-cashier staff customer-order queue at exact /order backed by filtered /api/v1/sales/orders reads, and the public customer ordering plus public order-status flow under /api/v1/sales/public/tables/{tableToken}."
   },
   "servers": [
     {

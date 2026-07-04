@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { SaleDetailView, SaleListItemView } from '@/api/fern-api';
-import { mapSaleToUi } from '@/components/pos/sale-order-utils';
+import { formatPosCurrency, mapSaleToUi } from '@/components/pos/sale-order-utils';
 
 describe('sale-order-utils', () => {
+  it('formats VND without decimal places', () => {
+    expect(formatPosCurrency(45000, 'VND')).toBe('₫45,000');
+    expect(formatPosCurrency(23000, 'vnd')).toBe('₫23,000');
+  });
+
   it('maps customer table orders into the staff queue detail model', () => {
     const sale: SaleListItemView = {
       id: '3478000000000000001',

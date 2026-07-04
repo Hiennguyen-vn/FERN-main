@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCw, Search, ShieldAlert } from 'lucide-react';
+import { Loader2, RefreshCw, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { crmApi, type CrmCustomerView } from '@/api/fern-api';
 import { getErrorMessage } from '@/api/decoders';
@@ -8,7 +8,6 @@ import { EmptyState, ServiceUnavailablePage } from '@/components/shell/Permissio
 import { useListQueryState } from '@/hooks/use-list-query-state';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { ListTableSkeleton } from '@/components/ui/list-table-skeleton';
-import { CustomerAllergyEditor } from '@/components/crm/CustomerAllergyEditor';
 import { reportError } from '@/lib/report-error';
 
 function normalizeNumeric(value: string | undefined) {
@@ -29,7 +28,6 @@ export function CRMModule() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [customers, setCustomers] = useState<CrmCustomerView[]>([]);
-  const [allergyTarget, setAllergyTarget] = useState<CrmCustomerView | null>(null);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const listState = useListQueryState<{ outletId?: string }>({
@@ -135,7 +133,7 @@ export function CRMModule() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b bg-muted/30">
-                    {['Customer', 'Reference', 'Outlet', 'Orders', 'Total Spend', 'Last Order', 'Dị ứng'].map((header) => (
+                    {['Customer', 'Reference', 'Outlet', 'Orders', 'Total Spend', 'Last Order'].map((header) => (
                       <th key={header} className="text-left text-[11px] px-4 py-2.5">{header}</th>
                     ))}
                   </tr>
@@ -155,7 +153,7 @@ export function CRMModule() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b bg-muted/30">
-                    {['Customer', 'Reference', 'Outlet', 'Orders', 'Total Spend', 'Last Order', 'Dị ứng'].map((header) => (
+                    {['Customer', 'Reference', 'Outlet', 'Orders', 'Total Spend', 'Last Order'].map((header) => (
                       <th key={header} className="text-left text-[11px] px-4 py-2.5">{header}</th>
                     ))}
                   </tr>
@@ -171,14 +169,6 @@ export function CRMModule() {
                       <td className="px-4 py-2.5 text-xs">{customer.orderCount}</td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground">{customer.totalSpend}</td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDateTime(customer.lastOrderAt)}</td>
-                      <td className="px-4 py-2.5">
-                        <button
-                          onClick={() => setAllergyTarget(customer)}
-                          className="h-6 px-2 rounded border text-[10px] inline-flex items-center gap-1 hover:bg-accent text-muted-foreground hover:text-foreground"
-                        >
-                          <ShieldAlert className="h-3 w-3" /> Sửa
-                        </button>
-                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -198,14 +188,6 @@ export function CRMModule() {
         </div>
       </div>
 
-      {allergyTarget && (
-        <CustomerAllergyEditor
-          open={true}
-          onOpenChange={(open) => { if (!open) setAllergyTarget(null); }}
-          customerId={allergyTarget.id}
-          customerName={allergyTarget.displayName ?? `Khách #${allergyTarget.id}`}
-        />
-      )}
     </div>
   );
 }

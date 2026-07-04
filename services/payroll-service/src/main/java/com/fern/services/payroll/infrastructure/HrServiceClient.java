@@ -39,7 +39,7 @@ public class HrServiceClient {
       RestClient.Builder restClientBuilder,
       SpringInternalServiceAuth internalAuth,
       JwtTokenService jwtTokenService,
-      @Value("${dependencies.hrService.baseUrl:http://localhost:8084}") String hrServiceBaseUrl
+      @Value("${dependencies.hrService.baseUrl:http://hr-service:8084}") String hrServiceBaseUrl
   ) {
     this.restClient = restClientBuilder.build();
     this.internalAuth = internalAuth;

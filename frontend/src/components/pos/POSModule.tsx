@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Loader2, Monitor } from 'lucide-react';
 import { POSSessionList } from '@/components/pos/POSSessionList';
 import { OpenPOSSession } from '@/components/pos/OpenPOSSession';
@@ -21,6 +22,7 @@ import { useShellRuntime } from '@/hooks/use-shell-runtime';
 import {
   authApi,
   crmApi,
+  orgApi,
   productApi,
   salesApi,
   type CrmCustomerView,
@@ -43,6 +45,7 @@ import type { PermissionState } from '@/types/shell';
 import { reportError } from '@/lib/report-error';
 import { cn } from '@/lib/utils';
 import { roundMoney } from '@/lib/money';
+import { resolveScopeCurrencyCode } from '@/lib/org-currency';
 import { toast } from 'sonner';
 
 type POSView =
@@ -124,6 +127,21 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
   } = usePOSSessions();
 
   const scopedOutletId = normalizeNumericId(outletId || scope.outletId);
+  const hierarchyQuery = useQuery({
+    queryKey: ['pos-org-hierarchy', token],
+    queryFn: () => orgApi.hierarchy(token!),
+    enabled: !!token,
+    staleTime: 60_000,
+  });
+  const scopeCurrencyCode = useMemo(
+    () => resolveScopeCurrencyCode({
+      regions: hierarchyQuery.data?.regions ?? [],
+      outlets: hierarchyQuery.data?.outlets ?? [],
+      outletId: scopedOutletId,
+      regionId: scope.regionId,
+    }),
+    [hierarchyQuery.data, scopedOutletId, scope.regionId],
+  );
   const canAccessCustomerReferences = hasCrmReadAccess(session);
   const canAccessOrderingTables = hasPosOrderingTableAccess(session);
 
@@ -176,12 +194,18 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       const totalRevenue = backendRevenue > 0 ? backendRevenue : (stats?.revenue || 0);
       const totalCollected = stats?.collected || 0;
       const outstandingAmount = hasLoadedOrders ? Math.max(0, totalRevenue - totalCollected) : 0;
+      const sessionCurrencyCode = resolveScopeCurrencyCode({
+        regions: hierarchyQuery.data?.regions ?? [],
+        outlets: hierarchyQuery.data?.outlets ?? [],
+        outletId: normalizeNumericId(session.outlet_id),
+        regionId: scope.regionId,
+      });
       return {
         id: session.id,
         code: `POS-${session.business_date.replace(/-/g, '')}-${session.id.slice(0, 3).toUpperCase()}`,
         outletId: session.outlet_id,
         outletName: session.outlet_name || 'Unknown',
-        currencyCode: session.currency_code || undefined,
+        currencyCode: sessionCurrencyCode,
         businessDate: session.business_date,
         openedBy: 'Operator',
         openedAt: session.opened_at,
@@ -201,7 +225,12 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
           : [],
       };
     });
-  }, [dbSessions, orders]);
+  }, [dbSessions, hierarchyQuery.data, orders, scope.regionId]);
+
+  const applyScopeCurrency = useCallback((order: SaleOrder, currencyCode = scopeCurrencyCode): SaleOrder => ({
+    ...order,
+    currencyCode,
+  }), [scopeCurrencyCode]);
 
   const buildSessionContext = useCallback(async () => {
     const sessionCodeById = new Map(
@@ -239,7 +268,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
   ): Promise<SaleOrder[]> => {
     if (!token || items.length === 0) return [];
     return items.map((item) =>
-      mapSaleToUi(
+      applyScopeCurrency(mapSaleToUi(
         item,
         null,
         outletName,
@@ -247,9 +276,9 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
         context.sessionCodeById,
         productNameById,
         context.sessionOperatorNameById,
-      ),
+      )),
     );
-  }, [operatorName, outletName, productNameById, token]);
+  }, [applyScopeCurrency, operatorName, outletName, productNameById, token]);
 
   const mergeOrdersIntoState = useCallback((incoming: SaleOrder[]) => {
     if (incoming.length === 0) return;
@@ -315,9 +344,16 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
             }
           }))
         : rows;
+      const sessionOutletId = dbSessions.find((row) => row.id === sessionId)?.outlet_id;
+      const sessionCurrency = resolveScopeCurrencyCode({
+        regions: hierarchyQuery.data?.regions ?? [],
+        outlets: hierarchyQuery.data?.outlets ?? [],
+        outletId: normalizeNumericId(sessionOutletId),
+        regionId: scope.regionId,
+      });
       const mapped = includeDetails
         ? rowsWithDetails.map((item) =>
-            mapSaleToUi(
+            applyScopeCurrency(mapSaleToUi(
               item,
               item,
               outletName,
@@ -325,9 +361,9 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
               context.sessionCodeById,
               productNameById,
               context.sessionOperatorNameById,
-            ),
+            ), sessionCurrency),
           )
-        : await loadOrdersWithContext(rowsWithDetails, context);
+        : (await loadOrdersWithContext(rowsWithDetails, context)).map((order) => applyScopeCurrency(order, sessionCurrency));
       mergeOrdersIntoState(mapped);
     } catch (error) {
       reportError(error, 'pos.session-orders.load');
@@ -335,7 +371,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     } finally {
       setOrdersLoading(false);
     }
-  }, [buildSessionContext, loadOrdersWithContext, mergeOrdersIntoState, operatorName, outletName, productNameById, token]);
+  }, [applyScopeCurrency, buildSessionContext, dbSessions, hierarchyQuery.data, loadOrdersWithContext, mergeOrdersIntoState, operatorName, outletName, productNameById, scope.regionId, token]);
 
   const ensureOrderDetail = useCallback(async (orderId: string) => {
     if (!token || !orderId) return;
@@ -350,7 +386,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       const detail = await salesApi.orderDetail(token, orderId);
       const context = await buildSessionContext();
       mergeOrdersIntoState([
-        mapSaleToUi(
+        applyScopeCurrency(mapSaleToUi(
           detail,
           detail,
           outletName,
@@ -358,7 +394,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
           context.sessionCodeById,
           productNameById,
           context.sessionOperatorNameById,
-        ),
+        )),
       ]);
     } catch (error) {
       reportError(error, 'pos.sale-order-detail.load');
@@ -366,7 +402,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     } finally {
       setOrderDetailLoadingId((current) => current === orderId ? '' : current);
     }
-  }, [buildSessionContext, mergeOrdersIntoState, operatorName, orders, ordersMap, outletName, productNameById, token]);
+  }, [applyScopeCurrency, buildSessionContext, mergeOrdersIntoState, operatorName, orders, ordersMap, outletName, productNameById, token]);
 
   const handleViewOrder = useCallback((orderId: string) => {
     setView({ screen: 'order-detail', orderId });
@@ -482,11 +518,11 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       toast.error('No numeric outlet available. Configure outlet scope in Settings first.');
       return;
     }
-    const result = await createSession(targetOutlet, 200, note);
+    const result = await createSession(targetOutlet, 200, note, scopeCurrencyCode);
     if (result) {
       setView({ screen: 'session-detail', sessionId: result.id });
     }
-  }, [createSession, dbSessions, outletId, scope.outletId]);
+  }, [createSession, dbSessions, outletId, scope.outletId, scopeCurrencyCode]);
 
   const handleCloseSession = useCallback(async (
     sessionId: string,
@@ -553,10 +589,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       toast.error(message);
       return { ok: false, errorMessage: message };
     }
-    const currencyCode =
-      typeof session?.currencyCode === 'string' && session.currencyCode.trim().length > 0
-        ? session.currencyCode.trim().toUpperCase()
-        : 'USD';
+    const currencyCode = scopeCurrencyCode;
 
     type DraftSaleLine = {
       productId: string | null;
@@ -662,7 +695,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
       toast.error(message);
       return { ok: false, errorMessage: message };
     }
-  }, [fetchOrders, getOrder, getSession, scopedOutletId, token]);
+  }, [fetchOrders, getOrder, getSession, scopedOutletId, scopeCurrencyCode, token]);
 
   const handleCancelOrder = useCallback(async (
     orderId: string,
@@ -829,14 +862,13 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
         sessionCode={session.code}
         outletName={outletName}
         cashierName={operatorName}
-        currencyCode={session.currencyCode}
+        currencyCode={scopeCurrencyCode}
         onBack={() => setView({ screen: 'session-detail', sessionId: view.sessionId })}
         onCheckout={(items, promo, promoDiscount) => {
           const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
           const adjustedSubtotal = subtotal - promoDiscount;
-          const currencyCode = session.currencyCode || 'USD';
-          const taxAmount = roundMoney(adjustedSubtotal * 0.08, currencyCode);
-          const total = roundMoney(adjustedSubtotal + taxAmount, currencyCode);
+          const taxAmount = roundMoney(adjustedSubtotal * 0.08, scopeCurrencyCode);
+          const total = roundMoney(adjustedSubtotal + taxAmount, scopeCurrencyCode);
           setView({ screen: 'payment', sessionId: view.sessionId, items, promo, total, subtotal, taxAmount, promoDiscount });
         }}
       />
@@ -863,7 +895,7 @@ export function POSModule({ outletName, operatorName, outletId }: Props) {
     return (
       <PaymentCapture
         orderTotal={view.total}
-        currencyCode={getOrder(view.orderId || '')?.currencyCode || getSession(view.sessionId)?.currencyCode || 'USD'}
+        currencyCode={getOrder(view.orderId || '')?.currencyCode || scopeCurrencyCode}
         lineItems={view.items}
         promoCode={view.promo}
         promoDiscount={view.promoDiscount}
@@ -985,7 +1017,7 @@ function EditPOSSession({ session, onBack, onSave }: {
           </div>
           <div className="space-y-4">
             <div>
-              <Label className="text-xs">Opening Float ($)</Label>
+              <Label className="text-xs">Opening Float ({session.currency_code || 'USD'})</Label>
               <Input
                 type="number"
                 value={openingFloat}

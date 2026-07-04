@@ -7,13 +7,13 @@ BEGIN;
 
    Roles & outlets:
      superadmin      → all outlets (fan-out)
-     admin           → HCM outlets (2000, 2002)
-     region_manager  → HCM region outlets (2000, 2002, 2004)
+     admin           → VN outlets (2000, 2004)
+     region_manager  → VN region outlets (2000, 2004)
      outlet_manager  → single outlet (2000)  [already exists as workflow.hcm.manager]
      staff           → single outlet (2000)  [uses cashier code]
      procurement     → single outlet (2000)  [uses procurement_officer code]
-     finance         → HCM region outlets (2000, 2002)
-     hr              → HCM region outlets (2000, 2002)
+     finance         → VN region outlets (2000, 2004)
+     hr              → VN region outlets (2000, 2004)
      kitchen_staff   → single outlet (2000)
    ========================================================= */
 
@@ -60,18 +60,17 @@ INSERT INTO core.user_role (user_id, role_code, outlet_id)
 SELECT 4001, 'superadmin', o.id FROM core.outlet o
 ON CONFLICT (user_id, role_code, outlet_id) DO NOTHING;
 
--- admin: HCM outlets (governance scope)
+-- admin: VN outlets (governance scope)
 INSERT INTO core.user_role (user_id, role_code, outlet_id)
 VALUES
   (4002, 'admin', 2000),
-  (4002, 'admin', 2002)
+  (4002, 'admin', 2004)
 ON CONFLICT (user_id, role_code, outlet_id) DO NOTHING;
 
--- region_manager: all VN-HCM region outlets (region 1000 = VN, includes HCM + sub-regions)
+-- region_manager: VN outlets available in the workflow seed
 INSERT INTO core.user_role (user_id, role_code, outlet_id)
 VALUES
   (4003, 'region_manager', 2000),
-  (4003, 'region_manager', 2002),
   (4003, 'region_manager', 2004)
 ON CONFLICT (user_id, role_code, outlet_id) DO NOTHING;
 
@@ -97,14 +96,14 @@ ON CONFLICT (user_id, role_code, outlet_id) DO NOTHING;
 INSERT INTO core.user_role (user_id, role_code, outlet_id)
 VALUES
   (4008, 'finance', 2000),
-  (4008, 'finance', 2002)
+  (4008, 'finance', 2004)
 ON CONFLICT (user_id, role_code, outlet_id) DO NOTHING;
 
 -- hr: region scope via fan-out
 INSERT INTO core.user_role (user_id, role_code, outlet_id)
 VALUES
   (4009, 'hr', 2000),
-  (4009, 'hr', 2002)
+  (4009, 'hr', 2004)
 ON CONFLICT (user_id, role_code, outlet_id) DO NOTHING;
 
 -- kitchen_staff: single outlet

@@ -34,7 +34,7 @@ public class KitchenSyncPublisher {
       SpringInternalServiceAuth internalAuth,
       JwtTokenService jwtTokenService,
       ObjectMapper objectMapper,
-      @Value("${gateway.base-url:http://gateway:8082}") String gatewayBaseUrl
+      @Value("${gateway.base-url:http://gateway:8080}") String gatewayBaseUrl
   ) {
     this.restClient = restClientBuilder.build();
     this.internalAuth = internalAuth;

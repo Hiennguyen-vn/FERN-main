@@ -97,7 +97,7 @@ npm install
 npm run dev
 ```
 
-The in-repo frontend proxies `/api` and `/health` to `http://127.0.0.1:8180` by default.
+The in-repo frontend proxies `/api` and `/health` to `http://127.0.0.1:8080` by default.
 Override that with `VITE_DEV_PROXY_TARGET` if your local gateway runs elsewhere.
 
 The gateway smoke suite now includes seeded frontend-critical checks for:

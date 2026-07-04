@@ -104,6 +104,42 @@ VALUES
   (3013, 'workflow.hcm.cashier', 'RkVSTldvcmtmbG93U2VlZA==:7QetsR9u6R7RCXQD74G6D9hlmHzBSmeqzB3Pv0DrmDo=', 'Workflow HCM Cashier', 'VN-HCM-CASHIER-3013', 'workflow.hcm.cashier@example.com', 'active')
 ON CONFLICT (id) DO NOTHING;
 
+INSERT INTO core.product (
+  id,
+  code,
+  name,
+  category_code,
+  status,
+  created_by_user_id,
+  updated_by_user_id
+)
+VALUES
+  (5001, 'ESPRESSO', 'Espresso', 'beverage', 'active', 3010, 3010)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO core.recipe (
+  product_id,
+  version,
+  yield_qty,
+  yield_uom_code,
+  status,
+  created_by_user_id
+)
+VALUES
+  (5001, 'v1', 1.0000, 'cup', 'active', 3010)
+ON CONFLICT (product_id, version) DO NOTHING;
+
+INSERT INTO core.recipe_item (
+  product_id,
+  version,
+  item_id,
+  uom_code,
+  qty
+)
+VALUES
+  (5001, 'v1', 4000, 'g', 20.0000)
+ON CONFLICT (product_id, version, item_id) DO NOTHING;
+
 INSERT INTO core.user_role (user_id, role_code, outlet_id)
 SELECT
   3010,
@@ -114,7 +150,7 @@ CROSS JOIN core.outlet o
 UNION ALL
 SELECT 3011, 'outlet_manager', 2000
 UNION ALL
-SELECT 3011, 'outlet_manager', 2002
+SELECT 3011, 'outlet_manager', 2004
 UNION ALL
 SELECT 3012, 'outlet_manager', 2001
 UNION ALL
@@ -153,7 +189,7 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO core.promotion_scope (promotion_id, outlet_id)
 VALUES
   (9400, 2000),
-  (9400, 2002)
+  (9400, 2004)
 ON CONFLICT (promotion_id, outlet_id) DO NOTHING;
 
 INSERT INTO core.product_outlet_availability (product_id, outlet_id, is_available)
@@ -218,7 +254,7 @@ VALUES
   (9503, 2003, 4001, 15000.0000, DATE '2024-07-01', TIMESTAMPTZ '2024-07-01 07:30:00-04', 'purchase_in', 0.0010, 3012),
   (9504, 2004, 4000, 30.0000, DATE '2024-07-01', TIMESTAMPTZ '2024-07-01 07:00:00+07', 'purchase_in', 250000.0000, 3010),
   (9505, 2004, 4001, 30000.0000, DATE '2024-07-01', TIMESTAMPTZ '2024-07-01 07:00:00+07', 'purchase_in', 0.0200, 3010)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 INSERT INTO core.supplier_payment (
   id,
@@ -255,7 +291,7 @@ INSERT INTO core.supplier_payment_allocation (
 )
 VALUES
   (8300, 8200, 1200000.00, 'Fully allocated seeded payment')
-ON CONFLICT (payment_id, invoice_id) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 INSERT INTO core.payroll_period (
   id,

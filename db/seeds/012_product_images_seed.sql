@@ -229,6 +229,48 @@ UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-151991502
 UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1551024506-0bccd828d307?auto=format&fit=crop&w=600&q=80' WHERE code = 'SIM-2Y-2026-05-19-PROD-0060';
 
 -- Ad-hoc items with no unique match (fallback to generic VN food)
+-- Current 2025-2026 POS demo batch uses the same 60-dish lineup as 2Y.
+-- Mirror the stable image assignments so local POS shows thumbnails too.
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80' WHERE code IN (
+  'SIM-2025-2026-PROD-0001','SIM-2025-2026-PROD-0002','SIM-2025-2026-PROD-0003',
+  'SIM-2025-2026-PROD-0004','SIM-2025-2026-PROD-0005','SIM-2025-2026-PROD-0006',
+  'SIM-2025-2026-PROD-0007','SIM-2025-2026-PROD-0008','SIM-2025-2026-PROD-0009',
+  'SIM-2025-2026-PROD-0010'
+);
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1512058564366-18510be2db19?auto=format&fit=crop&w=600&q=80' WHERE code IN (
+  'SIM-2025-2026-PROD-0011','SIM-2025-2026-PROD-0012','SIM-2025-2026-PROD-0013',
+  'SIM-2025-2026-PROD-0014','SIM-2025-2026-PROD-0015','SIM-2025-2026-PROD-0016',
+  'SIM-2025-2026-PROD-0017','SIM-2025-2026-PROD-0018'
+);
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1482049016688-2d3e1b311543?auto=format&fit=crop&w=600&q=80' WHERE code IN (
+  'SIM-2025-2026-PROD-0019','SIM-2025-2026-PROD-0020','SIM-2025-2026-PROD-0021','SIM-2025-2026-PROD-0022'
+);
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1515003197210-e0cd71810b5f?auto=format&fit=crop&w=600&q=80' WHERE code IN (
+  'SIM-2025-2026-PROD-0023','SIM-2025-2026-PROD-0024','SIM-2025-2026-PROD-0025',
+  'SIM-2025-2026-PROD-0026','SIM-2025-2026-PROD-0027','SIM-2025-2026-PROD-0028',
+  'SIM-2025-2026-PROD-0029','SIM-2025-2026-PROD-0030','SIM-2025-2026-PROD-0031',
+  'SIM-2025-2026-PROD-0032'
+);
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=600&q=80' WHERE code IN (
+  'SIM-2025-2026-PROD-0033','SIM-2025-2026-PROD-0034','SIM-2025-2026-PROD-0035',
+  'SIM-2025-2026-PROD-0036','SIM-2025-2026-PROD-0037','SIM-2025-2026-PROD-0038',
+  'SIM-2025-2026-PROD-0039','SIM-2025-2026-PROD-0040'
+);
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=600&q=80' WHERE code IN (
+  'SIM-2025-2026-PROD-0041','SIM-2025-2026-PROD-0042','SIM-2025-2026-PROD-0043',
+  'SIM-2025-2026-PROD-0044','SIM-2025-2026-PROD-0045','SIM-2025-2026-PROD-0046',
+  'SIM-2025-2026-PROD-0047','SIM-2025-2026-PROD-0048'
+);
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80' WHERE code IN (
+  'SIM-2025-2026-PROD-0049','SIM-2025-2026-PROD-0050','SIM-2025-2026-PROD-0051',
+  'SIM-2025-2026-PROD-0052','SIM-2025-2026-PROD-0053'
+);
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1517701604599-bb29b565090c?auto=format&fit=crop&w=600&q=80' WHERE code = 'SIM-2025-2026-PROD-0054';
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=600&q=80' WHERE code = 'SIM-2025-2026-PROD-0055';
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1556679343-c7306c1976bc?auto=format&fit=crop&w=600&q=80' WHERE code IN ('SIM-2025-2026-PROD-0056','SIM-2025-2026-PROD-0057','SIM-2025-2026-PROD-0058');
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1519915028121-7d3463d20b13?auto=format&fit=crop&w=600&q=80' WHERE code = 'SIM-2025-2026-PROD-0059';
+UPDATE core.product SET image_url = 'https://images.unsplash.com/photo-1551024506-0bccd828d307?auto=format&fit=crop&w=600&q=80' WHERE code = 'SIM-2025-2026-PROD-0060';
+
 UPDATE core.product SET image_url = 'https://source.unsplash.com/600x600/?vietnamese,food' WHERE code = 'HN';
 UPDATE core.product SET image_url = 'https://source.unsplash.com/600x600/?banh,da,heo,pork,skin' WHERE code = 'HN11';
 

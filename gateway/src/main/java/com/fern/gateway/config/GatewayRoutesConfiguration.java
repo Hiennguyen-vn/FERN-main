@@ -10,6 +10,7 @@ import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
 import org.springframework.cloud.gateway.route.RouteLocator;
 import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
+import static org.springframework.cloud.gateway.support.RouteMetadataUtils.RESPONSE_TIMEOUT_ATTR;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -89,6 +90,7 @@ public class GatewayRoutesConfiguration {
       );
       // Capture as effectively-final for lambda capture
       final RedisRateLimiter routeRateLimiter = policy.rateLimiter();
+      final long routeResponseTimeoutMs = responseTimeoutMs(route);
       routes.route(routeId, spec -> spec
           .path(route.pathPrefix(), route.pathPrefix() + "/**")
           .filters(filters -> {
@@ -110,6 +112,7 @@ public class GatewayRoutesConfiguration {
             });
             return filters;
           })
+          .metadata(RESPONSE_TIMEOUT_ATTR, routeResponseTimeoutMs)
           .uri(route.baseUrl()));
     }
     return routes.build();
@@ -130,6 +133,35 @@ public class GatewayRoutesConfiguration {
       case AI_QUERY -> new GatewayRoutePolicy(aiQueryRateLimiter);
       case DEFAULT -> new GatewayRoutePolicy(defaultRateLimiter);
     };
+  }
+
+  /**
+   * Per-route upstream response timeout (ms) applied via SCG route metadata.
+   *
+   * <p>The global {@code spring.cloud.gateway.httpclient.response-timeout} (10s) is too short for
+   * long-running AI queries and heavy reports: Netty aborts the upstream connection before the
+   * response arrives, surfacing as a "socket hang up" at the browser/dev proxy. These tiers get a
+   * longer per-route timeout aligned with their resilience4j time limiters. Other tiers fall back
+   * to the global default by returning it here.
+   */
+  private static long responseTimeoutMs(GatewayRoute route) {
+    return switch (route.rateLimitTier()) {
+      case AI_QUERY -> envLong("GATEWAY_AI_QUERY_RESPONSE_TIMEOUT_MS", 125_000L);
+      case REPORT -> envLong("GATEWAY_REPORT_RESPONSE_TIMEOUT_MS", 60_000L);
+      default -> envLong("GATEWAY_DEFAULT_RESPONSE_TIMEOUT_MS", 10_000L);
+    };
+  }
+
+  private static long envLong(String name, long defaultValue) {
+    String raw = System.getenv(name);
+    if (raw == null || raw.isBlank()) {
+      return defaultValue;
+    }
+    try {
+      return Long.parseLong(raw.trim());
+    } catch (NumberFormatException ex) {
+      return defaultValue;
+    }
   }
 
   static String circuitBreakerName(GatewayRoute route) {

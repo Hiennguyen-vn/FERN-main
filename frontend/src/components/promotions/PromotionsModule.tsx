@@ -68,15 +68,28 @@ export function PromotionsModule() {
   const [outlets, setOutlets] = useState<OrgOutlet[]>([]);
   const [regions, setRegions] = useState<OrgRegion[]>([]);
   const [selectedOutletIds, setSelectedOutletIds] = useState<string[]>([]);
+  const availableOutletIds = useMemo(() => new Set(outlets.map((outlet) => outlet.id)), [outlets]);
 
   useEffect(() => {
     if (!token) return;
     orgApi.hierarchy(token).then((h) => {
-      setRegions(h.regions.map((r) => ({ id: r.id, code: r.code, name: r.name })));
-      setOutlets(h.outlets.map((o) => ({ id: o.id, code: o.code, name: o.name, regionId: o.regionId })));
-      setSelectedOutletIds(outletId ? [outletId] : []);
+      const nextRegions = h.regions.map((r) => ({ id: r.id, code: r.code, name: r.name }));
+      const nextOutlets = h.outlets.map((o) => ({ id: o.id, code: o.code, name: o.name, regionId: o.regionId }));
+      const nextOutletIds = new Set(nextOutlets.map((outlet) => outlet.id));
+      setRegions(nextRegions);
+      setOutlets(nextOutlets);
+      setSelectedOutletIds((prev) => {
+        const preferred = outletId && nextOutletIds.has(outletId) ? [outletId] : [];
+        const filtered = prev.filter((id) => nextOutletIds.has(id));
+        return filtered.length > 0 ? filtered : preferred;
+      });
     }).catch(() => {});
   }, [token, outletId]);
+
+  useEffect(() => {
+    if (availableOutletIds.size === 0) return;
+    setSelectedOutletIds((prev) => prev.filter((id) => availableOutletIds.has(id)));
+  }, [availableOutletIds]);
 
   const load = useCallback(async () => {
     if (!token) {
@@ -141,19 +154,20 @@ export function PromotionsModule() {
       toast.error('Name and effective start are required');
       return;
     }
-    if (selectedOutletIds.length === 0) {
+    const validSelectedOutletIds = selectedOutletIds.filter((id) => availableOutletIds.has(id));
+    if (validSelectedOutletIds.length === 0) {
       toast.error('Select at least one outlet');
       return;
     }
 
-    const payload = buildCreatePromotionPayload(form, selectedOutletIds);
+    const payload = buildCreatePromotionPayload(form, validSelectedOutletIds);
 
     try {
       await salesApi.createPromotion(token, payload);
       toast.success('Promotion created');
       setCreateOpen(false);
       setForm(createDefaultPromotionFormValues());
-      setSelectedOutletIds(outletId ? [outletId] : []);
+      setSelectedOutletIds(outletId && availableOutletIds.has(outletId) ? [outletId] : []);
       await load();
     } catch (error) {
       console.error('Create promotion failed:', error);

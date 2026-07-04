@@ -164,7 +164,9 @@ public final class CleanupRepository {
         counts.put("purchase_order_item", count(conn, "SELECT COUNT(*) FROM core.purchase_order_item WHERE po_id IN (SELECT id FROM tmp_cleanup_po_ids)"));
         counts.put("purchase_order", count(conn, "SELECT COUNT(*) FROM core.purchase_order WHERE id IN (SELECT id FROM tmp_cleanup_po_ids)"));
         counts.put("supplier_procurement", count(conn, "SELECT COUNT(*) FROM core.supplier_procurement WHERE id IN (SELECT id FROM tmp_cleanup_supplier_ids)"));
-        counts.put("product_allergen", count(conn, "SELECT COUNT(*) FROM core.product_allergen WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)"));
+        counts.put("product_allergen", tableExists(conn, "core", "product_allergen")
+                ? count(conn, "SELECT COUNT(*) FROM core.product_allergen WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)")
+                : 0L);
         counts.put("product_modifier_group", count(conn, "SELECT COUNT(*) FROM core.product_modifier_group WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)"));
         counts.put("product_variant", count(conn, "SELECT COUNT(*) FROM core.product_variant WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)"));
         counts.put("product_outlet_availability", count(conn, "SELECT COUNT(*) FROM core.product_outlet_availability WHERE product_id IN (SELECT id FROM tmp_cleanup_product_ids)"));
@@ -319,8 +321,12 @@ public final class CleanupRepository {
                 """);
         runDeleteStep(conn, deleted, tracker, "supplier_procurement", "core.supplier_procurement supp", "supp",
                 "supp.id IN (SELECT id FROM tmp_cleanup_supplier_ids)");
-        runDeleteStep(conn, deleted, tracker, "product_allergen", "core.product_allergen pal", "pal",
-                "pal.product_id IN (SELECT id FROM tmp_cleanup_product_ids)");
+        if (tableExists(conn, "core", "product_allergen")) {
+            runDeleteStep(conn, deleted, tracker, "product_allergen", "core.product_allergen pal", "pal",
+                    "pal.product_id IN (SELECT id FROM tmp_cleanup_product_ids)");
+        } else {
+            deleted.put("product_allergen", 0L);
+        }
         runDeleteStep(conn, deleted, tracker, "product_modifier_group", "core.product_modifier_group pmg", "pmg",
                 "pmg.product_id IN (SELECT id FROM tmp_cleanup_product_ids)");
         runDeleteStep(conn, deleted, tracker, "product_variant", "core.product_variant pv", "pv",
@@ -548,5 +554,22 @@ public final class CleanupRepository {
 
     private static String sqlString(String value) {
         return '\'' + value.replace("'", "''") + '\'';
+    }
+
+    private static boolean tableExists(Connection conn, String schemaName, String tableName) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM information_schema.tables
+                  WHERE table_schema = ?
+                    AND table_name = ?
+                )
+                """)) {
+            ps.setString(1, schemaName);
+            ps.setString(2, tableName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getBoolean(1);
+            }
+        }
     }
 }

@@ -1,29 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Search, Monitor, Wifi, User, ShoppingBag, Plus, Minus,
-  Trash2, ArrowLeft, Loader2,
+  Trash2, ArrowLeft, Loader2, Package,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { ProductItem, OrderLineItem } from '@/types/pos';
 import { cn } from '@/lib/utils';
 import { productApi, salesApi, type PriceView, type ProductView, type PromotionView } from '@/api/fern-api';
-import { fnbApi, type CustomerAllergyView, type ProductAllergenView } from '@/api/fnb-api';
+import { fnbApi } from '@/api/fnb-api';
 import { crmApi, type CrmCustomerView } from '@/api/crm-api';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
 import { normalizeNumericId } from '@/constants/pos';
 import { calculatePromotionDiscount } from '@/components/pos/promotion-utils';
 import { ModifierPicker, type SelectedModifier } from '@/components/fnb/ModifierPicker';
-import { AllergenBadgeRow } from '@/components/fnb/AllergenBadgeRow';
 import { EmptyState } from '@/components/shell/PermissionStates';
-import { AlertTriangle, UserPlus, X } from 'lucide-react';
+import { UserPlus, X } from 'lucide-react';
 import { t } from '@/lib/i18n';
 import { roundMoney } from '@/lib/money';
 import { formatPosCurrency } from '@/components/pos/sale-order-utils';
 import { toast } from 'sonner';
 
 type CartItem = OrderLineItem;
-type ProductAllergenMapEntry = { productId: number; allergens: ProductAllergenView[] };
 
 interface Props {
   sessionCode: string;
@@ -57,9 +55,8 @@ export function OrderEntry({ sessionCode, outletName, cashierName, currencyCode,
   const [modifierCheckCache] = useState<Map<string, boolean>>(() => new Map());
   const [modifierCheckPending] = useState<Set<string>>(() => new Set());
 
-  // Customer + allergy state
+  // Customer state
   const [customer, setCustomer] = useState<CrmCustomerView | null>(null);
-  const [customerAllergies, setCustomerAllergies] = useState<CustomerAllergyView[]>([]);
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerOptions, setCustomerOptions] = useState<CrmCustomerView[]>([]);
@@ -78,20 +75,14 @@ export function OrderEntry({ sessionCode, outletName, cashierName, currencyCode,
 
       setLoadingProducts(true);
       try {
-        const [rawProducts, rawPrices, allergenMap] = await Promise.all([
+        const [rawProducts, rawPrices] = await Promise.all([
           productApi.products(token),
           scopedOutletId ? productApi.prices(token, scopedOutletId) : Promise.resolve([]),
-          fnbApi.listAllProductAllergens(token).catch((): ProductAllergenMapEntry[] => []),
         ]);
 
         const priceByProductId = new Map<string, number>();
         rawPrices.forEach((price: PriceView) => {
           priceByProductId.set(String(price.productId), toNumber(price.priceValue));
-        });
-
-        const allergensByProductId = new Map<string, ProductItem['allergens']>();
-        allergenMap.forEach((entry) => {
-          allergensByProductId.set(String(entry.productId), entry.allergens);
         });
 
         const mapped: ProductItem[] = rawProducts.flatMap((product: ProductView) => {
@@ -107,8 +98,8 @@ export function OrderEntry({ sessionCode, outletName, cashierName, currencyCode,
             category: String(product.categoryCode ?? 'Uncategorized'),
             price,
             sku: String(product.code ?? productId),
+            imageUrl: product.imageUrl ?? null,
             available: true,
-            allergens: allergensByProductId.get(productId) ?? [],
           }];
         });
 
@@ -242,35 +233,11 @@ export function OrderEntry({ sessionCode, outletName, cashierName, currencyCode,
     setCustomerSearchOpen(false);
     setCustomerSearch('');
     setCustomerOptions([]);
-    if (token) {
-      fnbApi.getCustomerAllergies(token, c.id)
-        .then(setCustomerAllergies)
-        .catch(() => setCustomerAllergies([]));
-    }
   };
 
   const clearCustomer = () => {
     setCustomer(null);
-    setCustomerAllergies([]);
   };
-
-  // Compute allergen overlap: customer allergies × cart product allergens
-  const allergenOverlap = useMemo(() => {
-    if (customerAllergies.length === 0 || cart.length === 0) return [];
-    const customerCodes = new Map(customerAllergies.map((a) => [a.code, a]));
-    const hits: Array<{ product: string; allergy: CustomerAllergyView }> = [];
-    for (const line of cart) {
-      const product = products.find((p) => p.id === line.productId);
-      if (!product?.allergens) continue;
-      for (const al of product.allergens) {
-        const matched = customerCodes.get(al.code);
-        if (matched) hits.push({ product: line.productName, allergy: matched });
-      }
-    }
-    return hits;
-  }, [cart, customerAllergies, products]);
-
-  const hasSevereAllergyHit = allergenOverlap.some((h) => h.allergy.severity === 'SEVERE' || h.allergy.severity === 'AVOID');
 
   const updateQuantity = (lineId: string, delta: number) => {
     setCart((prev) =>
@@ -374,9 +341,6 @@ export function OrderEntry({ sessionCode, outletName, cashierName, currencyCode,
               >
                 <UserPlus className="h-3 w-3 text-primary" />
                 <span className="font-medium truncate max-w-[120px]">{customer.displayName ?? `Khách #${customer.id}`}</span>
-                {customerAllergies.length > 0 && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/15 text-destructive font-medium">{customerAllergies.length} dị ứng</span>
-                )}
                 <X className="h-2.5 w-2.5 text-muted-foreground" />
               </button>
             ) : (
@@ -438,36 +402,6 @@ export function OrderEntry({ sessionCode, outletName, cashierName, currencyCode,
         </div>
       )}
 
-      {allergenOverlap.length > 0 && (
-        <div
-          role="alert"
-          aria-live="assertive"
-          className={cn(
-            'px-4 py-2.5 border-b flex items-start gap-2',
-            hasSevereAllergyHit ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200',
-          )}
-        >
-          <AlertTriangle className={cn('h-4 w-4 flex-shrink-0 mt-0.5', hasSevereAllergyHit ? 'text-red-700' : 'text-amber-700')} />
-          <div className="flex-1 text-xs">
-            <p className={cn('font-semibold', hasSevereAllergyHit ? 'text-red-800' : 'text-amber-800')}>
-              Cảnh báo dị ứng: {customer?.displayName ?? 'khách hàng'} có {allergenOverlap.length} mục trùng allergen
-            </p>
-            <ul className="mt-1 space-y-0.5">
-              {allergenOverlap.slice(0, 5).map((h, i) => (
-                <li key={i} className="text-[11px]">
-                  <span className="font-medium">{h.product}</span> ↔ {h.allergy.label}
-                  <span className={cn('ml-1 px-1 rounded text-[10px] font-mono', h.allergy.severity === 'SEVERE' ? 'bg-destructive/20 text-destructive font-bold' : h.allergy.severity === 'AVOID' ? 'bg-warning/20 text-warning' : 'bg-muted text-muted-foreground')}>
-                    {h.allergy.severity}
-                  </span>
-                  {h.allergy.note && <span className="ml-1 italic text-muted-foreground">— {h.allergy.note}</span>}
-                </li>
-              ))}
-              {allergenOverlap.length > 5 && <li className="text-[10px] text-muted-foreground">+{allergenOverlap.length - 5} mục khác…</li>}
-            </ul>
-          </div>
-        </div>
-      )}
-
       <div className="flex flex-1 min-h-0">
         <div className="flex-1 flex flex-col min-w-0 md:border-r pb-[64px] md:pb-0">
           <div className="p-3 border-b space-y-2.5">
@@ -521,6 +455,30 @@ export function OrderEntry({ sessionCode, outletName, cashierName, currencyCode,
                     {!product.available && (
                       <div aria-hidden="true" className="absolute inset-0 rounded-lg pointer-events-none bg-[repeating-linear-gradient(45deg,transparent_0_8px,rgba(220,38,38,0.04)_8px_16px)]" />
                     )}
+                    <div className="mb-2 overflow-hidden rounded-md border bg-muted/40 aspect-[4/3] flex items-center justify-center">
+                      {product.imageUrl ? (
+                        <img
+                          src={String(product.imageUrl)}
+                          alt={product.name}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                          onError={(event) => {
+                            const img = event.target as HTMLImageElement;
+                            img.style.display = 'none';
+                            const fallback = img.nextElementSibling as HTMLElement | null;
+                            if (fallback) fallback.style.display = 'flex';
+                          }}
+                        />
+                      ) : null}
+                      <div
+                        className={cn(
+                          'h-full w-full items-center justify-center text-muted-foreground/60',
+                          product.imageUrl ? 'hidden' : 'flex',
+                        )}
+                      >
+                        <Package className="h-5 w-5" />
+                      </div>
+                    </div>
                     <div className="flex items-start justify-between gap-1">
                       <p className={cn('text-xs font-medium leading-tight flex-1', !product.available && 'line-through text-muted-foreground')}>{product.name}</p>
                       {!product.available && (
@@ -528,11 +486,6 @@ export function OrderEntry({ sessionCode, outletName, cashierName, currencyCode,
                       )}
                     </div>
                     <p className="text-[10px] text-muted-foreground mt-0.5">{product.category}</p>
-                    {product.allergens && product.allergens.length > 0 ? (
-                      <div className="mt-1">
-                        <AllergenBadgeRow allergens={product.allergens} size="xs" />
-                      </div>
-                    ) : null}
                     <div className="flex items-center justify-between mt-2">
                       <span className={cn('text-sm font-semibold', product.available ? 'text-foreground' : 'text-muted-foreground line-through')}>
                         {formatPosCurrency(product.price, resolvedCurrencyCode)}
@@ -659,10 +612,10 @@ export function OrderEntry({ sessionCode, outletName, cashierName, currencyCode,
             </div>
             <Button
               className="w-full h-9 text-xs mt-2"
-              disabled={cart.length === 0 || hasSevereAllergyHit}
+              disabled={cart.length === 0}
               onClick={() => onCheckout(cart, appliedPromoId, promoDiscount)}
             >
-              {hasSevereAllergyHit ? t('pos.cart.checkout.severe') : `${t('pos.cart.checkout')} — ${formatPosCurrency(total, resolvedCurrencyCode)}`}
+              {`${t('pos.cart.checkout')} — ${formatPosCurrency(total, resolvedCurrencyCode)}`}
             </Button>
           </div>
         </div>
@@ -690,19 +643,12 @@ export function OrderEntry({ sessionCode, outletName, cashierName, currencyCode,
           </button>
           <Button
             size="sm"
-            variant={hasSevereAllergyHit ? 'destructive' : 'default'}
+            variant="default"
             className="h-9 text-xs px-4 gap-1"
-            disabled={cart.length === 0 || hasSevereAllergyHit}
+            disabled={cart.length === 0}
             onClick={() => onCheckout(cart, appliedPromoId, promoDiscount)}
           >
-            {hasSevereAllergyHit ? (
-              <>
-                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-                Bị chặn
-              </>
-            ) : (
-              t('pos.cart.checkout')
-            )}
+            {t('pos.cart.checkout')}
           </Button>
         </div>
       </div>

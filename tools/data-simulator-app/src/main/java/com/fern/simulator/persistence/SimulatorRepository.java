@@ -1435,6 +1435,9 @@ public final class SimulatorRepository {
     public static void insertProductAllergen(Connection conn,
                                                com.fern.simulator.engine.SimulationContext.ProductAllergenEvent e)
             throws SQLException {
+        if (!tableExists(conn, "core", "product_allergen")) {
+            return;
+        }
         String sql = """
             INSERT INTO core.product_allergen (product_id, allergen_code, is_traces)
             VALUES (?, ?, ?)
@@ -1445,6 +1448,23 @@ public final class SimulatorRepository {
             ps.setString(2, e.allergenCode());
             ps.setBoolean(3, e.isTraces());
             ps.executeUpdate();
+        }
+    }
+
+    private static boolean tableExists(Connection conn, String schemaName, String tableName) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM information_schema.tables
+                  WHERE table_schema = ?
+                    AND table_name = ?
+                )
+                """)) {
+            ps.setString(1, schemaName);
+            ps.setString(2, tableName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getBoolean(1);
+            }
         }
     }
 

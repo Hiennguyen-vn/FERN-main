@@ -18,7 +18,6 @@ public final class KitchenDtos {
       BigDecimal qty,
       String status,
       Map<String, Object> modifiers,
-      List<String> allergens,
       String notes,
       Instant startedAt,
       Instant readyAt,

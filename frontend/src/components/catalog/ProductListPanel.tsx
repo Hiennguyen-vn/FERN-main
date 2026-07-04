@@ -3,12 +3,10 @@ import { Package, Search, RefreshCw, Plus, ChevronRight, Loader2 } from 'lucide-
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { productApi, type ProductView } from '@/api/fern-api';
-import { fnbApi, type ProductAllergenView } from '@/api/fnb-api';
 import { getErrorMessage } from '@/api/decoders';
 import { useListQueryState } from '@/hooks/use-list-query-state';
 import { ListPaginationControls } from '@/components/ui/list-pagination-controls';
 import { StatusBadge } from '@/components/catalog/StatusBadge';
-import { AllergenBadgeRow } from '@/components/fnb/AllergenBadgeRow';
 
 const CATEGORY_OPTIONS = ['beverage'];
 
@@ -22,7 +20,6 @@ interface ProductListPanelProps {
 
 export function ProductListPanel({ token, selectedId, onSelect, compact, canCreate = true }: ProductListPanelProps) {
   const [products, setProducts] = useState<ProductView[]>([]);
-  const [allergenMap, setAllergenMap] = useState<Map<string, ProductAllergenView[]>>(new Map());
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -51,17 +48,6 @@ export function ProductListPanel({ token, selectedId, onSelect, compact, canCrea
   }, [token, query.debouncedSearch, query.sortBy, query.sortDir, query.limit, query.offset]);
 
   useEffect(() => { void load(); }, [load]);
-
-  useEffect(() => {
-    if (!token) return;
-    fnbApi.listAllProductAllergens(token)
-      .then((entries) => {
-        const m = new Map<string, ProductAllergenView[]>();
-        entries.forEach((e) => m.set(String(e.productId), e.allergens));
-        setAllergenMap(m);
-      })
-      .catch(() => setAllergenMap(new Map()));
-  }, [token]);
 
   const create = async () => {
     if (!form.code.trim() || !form.name.trim()) { toast.error('Code and Name required'); return; }
@@ -173,10 +159,6 @@ export function ProductListPanel({ token, selectedId, onSelect, compact, canCrea
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium truncate">{String(p.name || '—')}</p>
                 <p className="text-[10px] text-muted-foreground font-mono">{String(p.code || p.id)}</p>
-                {(() => {
-                  const al = allergenMap.get(String(p.id));
-                  return al && al.length > 0 ? <div className="mt-1"><AllergenBadgeRow allergens={al} size="xs" /></div> : null;
-                })()}
               </div>
               <StatusBadge status={p.status} />
               <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />

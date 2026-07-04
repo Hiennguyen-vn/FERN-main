@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { todayLocalISO } from '@/lib/date-format';
 import {
   Package, BookOpen, DollarSign, Store, X, Loader2, Save, Edit2, Check,
-  Plus, ArrowRight, AlertTriangle, MapPin, ImageIcon, Upload, ShieldAlert,
+  Plus, ArrowRight, AlertTriangle, MapPin, ImageIcon, Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -10,16 +10,13 @@ import {
   productApi, orgApi,
   type ProductView, type RecipeView, type PriceView, type AvailabilityView, type FoodCostView,
 } from '@/api/fern-api';
-import { fnbApi, type ProductAllergenView, type ProductAllergenInput } from '@/api/fnb-api';
 import { getErrorMessage } from '@/api/decoders';
 import { EmptyState } from '@/components/shell/PermissionStates';
 import { StatusBadge } from '@/components/catalog/StatusBadge';
 import { ScopePill } from '@/components/catalog/shared';
 import { getProductImageUploadErrorMessage, prepareProductImageFile } from '@/components/catalog/product-image-upload';
-import { AllergenSelector } from '@/components/fnb/AllergenSelector';
-import { AllergenBadgeRow } from '@/components/fnb/AllergenBadgeRow';
 
-type DetailTab = 'identity' | 'recipe' | 'pricing' | 'availability' | 'allergens';
+type DetailTab = 'identity' | 'recipe' | 'pricing' | 'availability';
 
 interface OrgOutlet { id: string; code: string; name: string; regionId: string | number; }
 interface OrgRegion { id: string; code: string; name: string; currencyCode: string; }
@@ -53,10 +50,6 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
 
   // Item names for recipe display
   const [itemNames, setItemNames] = useState<Record<string, string>>({});
-
-  // Allergens
-  const [allergens, setAllergens] = useState<ProductAllergenView[]>([]);
-  const [savingAllergens, setSavingAllergens] = useState(false);
 
   // Food cost rollup
   const [foodCost, setFoodCost] = useState<FoodCostView | null>(null);
@@ -116,15 +109,13 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
     if (!token) return;
     setLoading(true);
     try {
-      const [r, avail, allerg, fc] = await Promise.all([
+      const [r, avail, fc] = await Promise.all([
         productApi.recipe(token, pid).catch(() => null as RecipeView | null),
         productApi.availability(token, { productId: pid }).catch(() => [] as AvailabilityView[]),
-        fnbApi.getProductAllergens(token, pid).catch(() => [] as ProductAllergenView[]),
         productApi.listFoodCosts(token, pid).catch(() => [] as FoodCostView[]),
       ]);
       setRecipe(r);
       setAvailability(avail);
-      setAllergens(allerg);
       setFoodCost(fc.length > 0 ? fc[0] : null);
 
       // Load prices at current outlet
@@ -265,19 +256,6 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
     } catch (e) { toast.error(getErrorMessage(e, 'Failed to set price')); } finally { setSaving(''); }
   };
 
-  const saveAllergens = async (next: ProductAllergenInput[]) => {
-    setSavingAllergens(true);
-    try {
-      const updated = await fnbApi.setProductAllergens(token, pid, next);
-      setAllergens(updated);
-      toast.success('Allergens saved');
-    } catch (e) {
-      toast.error(getErrorMessage(e, 'Failed to save allergens'));
-    } finally {
-      setSavingAllergens(false);
-    }
-  };
-
   // Toggle availability
   const toggleAvailability = async (oid: string, current: boolean) => {
     if (!canManageCatalog) return;
@@ -297,13 +275,11 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
       { key: 'recipe', label: 'Recipe', icon: BookOpen },
       { key: 'pricing', label: 'Pricing', icon: DollarSign },
       { key: 'availability', label: `Outlets (${availCount}/${outlets.length})`, icon: Store },
-      { key: 'allergens', label: `Allergens${allergens.length > 0 ? ` (${allergens.length})` : ''}`, icon: ShieldAlert },
     ]
     : [
       { key: 'identity', label: 'Product', icon: Package },
       { key: 'recipe', label: 'Recipe', icon: BookOpen },
       { key: 'pricing', label: 'Pricing', icon: DollarSign },
-      { key: 'allergens', label: `Allergens${allergens.length > 0 ? ` (${allergens.length})` : ''}`, icon: ShieldAlert },
     ];
   const priceCount = allPrices.length || prices.length;
   const pricedOutletIds = new Set(allPrices.map(p => String(p.outletId)));
@@ -920,30 +896,6 @@ export function ProductDetailPanel({ product, token, outletId, canManageCatalog,
                   </div>
                 );
               })()
-            )}
-          </div>
-        ) : tab === 'allergens' ? (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
-                Allergen declarations
-              </p>
-              {allergens.length > 0 && (
-                <AllergenBadgeRow allergens={allergens} size="sm" showLabel />
-              )}
-            </div>
-            {allergens.length === 0 && (
-              <p className="text-xs text-muted-foreground">Chưa khai báo allergen cho sản phẩm này.</p>
-            )}
-            <AllergenSelector
-              value={allergens}
-              onChange={(next) => { void saveAllergens(next); }}
-              disabled={!canManageCatalog || savingAllergens}
-            />
-            {savingAllergens && (
-              <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-                <Loader2 className="h-3 w-3 animate-spin" /> Đang lưu...
-              </p>
             )}
           </div>
         ) : null}

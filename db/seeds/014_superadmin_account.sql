@@ -13,7 +13,7 @@ INSERT INTO core.app_user (id, username, password_hash, full_name, employee_code
 VALUES (
     9001,
     'canon.superadmin',
-    'mMX5EVSuLZtnwzMkv/HY1w==:7qx0MpNYzor8hT8V5lGC7764svCEMiqRC8EVfBAS8UI=',
+    'RkVSTldvcmtmbG93U2VlZA==:7QetsR9u6R7RCXQD74G6D9hlmHzBSmeqzB3Pv0DrmDo=',
     'Canon Superadmin',
     'CANON-SUPER-9001',
     'canon.superadmin@example.com',

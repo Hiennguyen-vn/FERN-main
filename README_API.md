@@ -17,7 +17,7 @@ The first real browser app now lives at:
 
 Use the Gateway only.
 
-- HTTP base URL (local): `http://127.0.0.1:8180`
+- HTTP base URL (local): `http://127.0.0.1:8080`
 - Gateway service info:
   - `GET /api/v1/gateway/routes`
   - `GET /api/v1/gateway/targets`

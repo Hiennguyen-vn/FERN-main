@@ -550,12 +550,6 @@ function TicketCard({
                       </div>
                     )}
 
-                    {item.allergens && item.allergens.length > 0 && (
-                      <div className="mt-2 inline-flex items-center gap-1 rounded-md bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive">
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        {item.allergens.join(', ')}
-                      </div>
-                    )}
 
                     {item.notes && (
                       <div className="mt-2 rounded-lg border border-dashed border-border bg-muted/40 px-2.5 py-2 text-sm italic text-foreground">

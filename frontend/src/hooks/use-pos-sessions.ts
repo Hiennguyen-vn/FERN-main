@@ -6,6 +6,7 @@ import { orgApi, salesApi, type PosSessionView } from '@/api/fern-api';
 import { useAuth } from '@/auth/use-auth';
 import { useShellRuntime } from '@/hooks/use-shell-runtime';
 import { normalizeNumericId } from '@/constants/pos';
+import { normalizeCurrencyCode } from '@/lib/org-currency';
 
 const POS_SESSION_PAGE_SIZE = 100;
 
@@ -111,7 +112,12 @@ export function usePOSSessions() {
     setPage(0);
   }, [scope.outletId, token]);
 
-  const createSession = async (outletId: string, _openingFloat: number, notes?: string) => {
+  const createSession = async (
+    outletId: string,
+    _openingFloat: number,
+    notes?: string,
+    currencyCode?: string,
+  ) => {
     if (!token) {
       toast.error('Please sign in first');
       return null;
@@ -131,7 +137,7 @@ export function usePOSSessions() {
       const created = toRecord(await salesApi.openPosSession(token, {
         sessionCode,
         outletId: scopedOutletId,
-        currencyCode: 'USD',
+        currencyCode: normalizeCurrencyCode(currencyCode),
         managerId,
         businessDate,
         note: notes || null,

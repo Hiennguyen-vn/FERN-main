@@ -22,7 +22,7 @@ public class SyncProperties {
   @Min(1)
   private int batchSize = 100;
   @NotBlank
-  private String centralSyncUrl = "http://localhost:8094";
+  private String centralSyncUrl = "http://sync-service:8094";
   private SyncTier tier;
   private String nodeId = "";
   private String nodeCode = "";
