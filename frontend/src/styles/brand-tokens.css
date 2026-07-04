@@ -50,3 +50,10 @@
 .brand-surface .pulse-ring {
   animation: brand-pulse-ring 1.8s ease-out infinite;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-surface .pop,
+  .brand-surface .pulse-ring {
+    animation: none;
+  }
+}
