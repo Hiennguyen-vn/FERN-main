@@ -226,6 +226,7 @@ public class KitchenTicketRepository extends BaseRepository {
         ps.executeUpdate();
       }
       String rolled = rollupTicket(conn, ticketId);
+      incrementSyncVersion(conn, ticketId);
       appendKitchenTicketSyncOutbox(conn, "KITCHEN_TICKET_UPDATED", ticketId);
       return rolled;
     });
@@ -252,6 +253,7 @@ public class KitchenTicketRepository extends BaseRepository {
           throw ServiceException.notFound("Kitchen ticket not found: " + ticketId);
         }
       }
+      incrementSyncVersion(conn, ticketId);
       appendKitchenTicketSyncOutbox(conn, "KITCHEN_TICKET_UPDATED", ticketId);
       return null;
     });
@@ -312,9 +314,32 @@ public class KitchenTicketRepository extends BaseRepository {
         ps.setLong(1, ticketId);
         ps.executeUpdate();
       }
+      incrementSyncVersion(conn, ticketId);
       appendKitchenTicketSyncOutbox(conn, "KITCHEN_TICKET_UPDATED", ticketId);
       return Optional.of(ticketId);
     });
+  }
+
+  /**
+   * Increment sync_version atomically; call BEFORE appendKitchenTicketSyncOutbox so the
+   * version read in that method reflects the current update.
+   */
+  private void incrementSyncVersion(Connection conn, long ticketId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        "UPDATE core.kitchen_ticket SET sync_version = sync_version + 1 WHERE id = ?")) {
+      ps.setLong(1, ticketId);
+      ps.executeUpdate();
+    }
+  }
+
+  private long readSyncVersion(Connection conn, long ticketId) throws Exception {
+    try (PreparedStatement ps = conn.prepareStatement(
+        "SELECT sync_version FROM core.kitchen_ticket WHERE id = ?")) {
+      ps.setLong(1, ticketId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? rs.getLong(1) : 0L;
+      }
+    }
   }
 
   private void appendKitchenTicketSyncOutbox(Connection conn, String eventType, long ticketId) throws Exception {
@@ -322,9 +347,12 @@ public class KitchenTicketRepository extends BaseRepository {
       return;
     }
     SyncPayloadSchemas.KitchenTicketPayload payload = loadKitchenTicketPayload(conn, ticketId);
+    long syncVersion = readSyncVersion(conn, ticketId);
+    // CREATED uses version 0 (default) — stable because there is only one creation.
+    // UPDATED uses the incremented sync_version — stable across retries for the same change.
     String eventId = "KITCHEN_TICKET_CREATED".equals(eventType)
         ? eventType + ":" + ticketId
-        : eventType + ":" + ticketId + ":" + System.currentTimeMillis();
+        : eventType + ":" + ticketId + ":" + syncVersion;
     localSyncOutboxWriter.append(
         conn,
         eventId,

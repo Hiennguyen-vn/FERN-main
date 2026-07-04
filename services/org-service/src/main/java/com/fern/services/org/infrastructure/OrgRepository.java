@@ -288,8 +288,10 @@ public class OrgRepository extends BaseRepository {
         }
         throw e;
       }
-      return findRegionByIdTransactional(conn, regionId)
+      OrgDtos.RegionView region = findRegionByIdTransactional(conn, regionId)
           .orElseThrow(() -> new IllegalStateException("Created region not found: " + regionId));
+      appendRegionSyncEvent(conn, region, now);
+      return region;
     });
   }
 
@@ -330,8 +332,10 @@ public class OrgRepository extends BaseRepository {
           throw ServiceException.notFound("Region not found: " + regionId);
         }
       }
-      return findRegionByIdTransactional(conn, regionId)
+      OrgDtos.RegionView region = findRegionByIdTransactional(conn, regionId)
           .orElseThrow(() -> new IllegalStateException("Updated region not found: " + regionId));
+      appendRegionSyncEvent(conn, region, clock.instant());
+      return region;
     });
   }
 
@@ -457,6 +461,44 @@ public class OrgRepository extends BaseRepository {
             outlet.email(),
             outlet.openedAt(),
             outlet.closedAt(),
+            version,
+            updatedAt
+        ),
+        version
+    );
+  }
+
+  /**
+   * Publish REGION_UPDATED to central_outbox scoped to ALL_STORES.
+   * Region must arrive at store-edge before STORE_CONFIG (outlet) to satisfy
+   * the FK core.outlet.region_id → core.region.id.
+   */
+  private void appendRegionSyncEvent(
+      Connection conn,
+      OrgDtos.RegionView region,
+      Instant updatedAt
+  ) {
+    if (centralSyncOutboxWriter == null) {
+      return;
+    }
+    String aggregateId = Long.toString(region.id());
+    long version = centralSyncOutboxWriter.nextVersion(conn, "REGION", aggregateId);
+    centralSyncOutboxWriter.append(
+        conn,
+        "REGION_UPDATED",
+        "REGION",
+        aggregateId,
+        "ALL_STORES",
+        null,
+        null,
+        new SyncPayloadSchemas.RegionPayload(
+            region.id(),
+            region.code(),
+            region.name(),
+            region.parentRegionId(),
+            region.currencyCode(),
+            region.timezoneName(),
+            "REGION",
             version,
             updatedAt
         ),
